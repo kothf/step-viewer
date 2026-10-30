@@ -1,15 +1,24 @@
 name: Release
 
-# Push a tag like v1.1.0 (matching package.json) to publish:
+# Push a tag like v1.4.0 (matching package.json) to publish, or press "Run workflow" on the
+# Actions tab: it releases main's package.json version (or the version typed in), tagging main
+# itself once the tests pass. Either way it publishes:
 #   - a GitHub release with step-viewer-<version>.tar.gz + .sha256
 #     (consumed by aerocat.tech, pinned by version and checksum)
 #   - the same build to GitHub Pages
 on:
   push:
     tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.4.0 (empty: package.json's version). Must match package.json."
+        required: false
+        default: ""
 
 permissions:
   contents: write
+  actions: read
   pages: write
   id-token: write
 
@@ -29,40 +38,81 @@ jobs:
           node-version: 22
           cache: npm
 
+      # TAG: the pushed tag, or for Run workflow v<version> (the typed one, else package.json's)
       - name: Tag must match package.json version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           pkg="$(node -p "require('./package.json').version")"
-          if [ "${GITHUB_REF_NAME#v}" != "$pkg" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $pkg"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="v${INPUT_VERSION#v}"; [ "$tag" = "v" ] && tag="v$pkg"
+            if [ "$GITHUB_REF_TYPE" != "branch" ]; then echo "::error::Run workflow from a branch (main), not from a tag"; exit 1; fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then echo "::error::Tag $tag already exists"; exit 1; fi
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          if [ "${tag#v}" != "$pkg" ]; then
+            echo "::error::Tag $tag does not match package.json version $pkg"
             exit 1
           fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - run: npm ci
 
+      # CI on main packages and smoke-tests every commit, and is running the moment a merge
+      # lands: wait for that run and use its result instead of testing again. Only when the
+      # commit has no CI run (or it was cancelled) is the smoke test run here.
+      - name: CI result for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 90); do
+            # one look per round, so a run that finishes between two looks is not taken for "no run"
+            s="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json status,conclusion \
+              --jq '[(map(select(.conclusion == "success")) | length), (map(select(.conclusion == "failure")) | length), (map(select(.status != "completed")) | length)] | map(tostring) | join(" ")')"
+            read -r ok failed pending <<< "$s"
+            if [ "$ok" -gt 0 ]; then echo "CI passed on $GITHUB_SHA"; echo "TESTED=1" >> "$GITHUB_ENV"; exit 0; fi
+            if [ "$failed" -gt 0 ]; then echo "::error::CI failed on $GITHUB_SHA: fix main (or re-run the failed CI job), then release again"; exit 1; fi
+            if [ "$pending" -eq 0 ] && [ "$i" -gt 6 ]; then break; fi
+            sleep 10
+          done
+          echo "::notice::No finished CI run on $GITHUB_SHA: testing here"
+
       - name: Cache Playwright's browser
+        if: env.TESTED != '1'
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-shell-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Browser for the tests
+        if: env.TESTED != '1'
         run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
 
       - name: Package
-        run: npm run package -- "${GITHUB_REF_NAME#v}"
+        run: npm run package -- "${TAG#v}"
 
       - name: Smoke test (packaged build)
+        if: env.TESTED != '1'
         run: npm test
 
       - name: Release notes from CHANGELOG.md
-        run: npm run --silent release-notes -- "$GITHUB_REF_NAME" > release-notes.md
+        run: npm run --silent release-notes -- "$TAG" > release-notes.md
+
+      # Run workflow: the tag goes on the commit just tested (a tag pushed with the workflow's own
+      # token starts no second run)
+      - name: Tag the release (Run workflow)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
-            --title "STEP Viewer $GITHUB_REF_NAME" \
+          gh release create "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 \
+            --title "STEP Viewer $TAG" \
             --notes-file release-notes.md \
             --verify-tag
 

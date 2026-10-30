@@ -60,8 +60,8 @@ Stack: TypeScript, Vite, Three.js, three-mesh-bvh, occt-import-js (OpenCASCADE 7
 ### Releasing
 
 1. Bump `version` in `package.json` and add a section to `CHANGELOG.md`.
-2. Tag and push: `git tag v1.1.0 && git push origin v1.1.0`.
-3. The Release workflow tests the build, publishes `step-viewer-<version>.tar.gz` (+ `.sha256`) as a GitHub release and deploys GitHub Pages. aerocat.tech pins the release in its `vendor.json`.
+2. Get it onto `main`, then press **Actions → Release → Run workflow** (on main): it releases `package.json`'s version (or the one typed in) and tags main itself after the tests pass. Pushing a tag (`git tag v1.4.0 && git push origin v1.4.0`) does the same. Don't create the release by hand in GitHub's Releases page: the workflow makes it.
+3. The Release workflow uses CI's result for that commit (or runs the smoke test itself), publishes `step-viewer-<version>.tar.gz` (+ `.sha256`) as a GitHub release and deploys GitHub Pages. aerocat.tech pins the release in its `vendor.json`; a workflow there proposes the upgrade as a pull request.
 
 ## License
 

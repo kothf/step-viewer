@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- Releases can be started from GitHub's Actions tab (Release → Run workflow): it tags `main` itself after the tests pass, so no tag push is needed. The release reuses the CI result of the commit instead of testing again, and CI on `main` now runs every commit at once.
+
 ## [1.3.0] - 2026-10-30
 
 ### Added

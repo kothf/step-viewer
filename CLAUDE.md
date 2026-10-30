@@ -20,11 +20,12 @@ The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright 
 
 ## Releasing
 
-1. Bump `version` in `package.json` (`npm version X.Y.Z --no-git-tag-version`) and add a dated section to `CHANGELOG.md` (Keep a Changelog style, update the compare links at the bottom).
-2. `npm run package && npm test` must pass.
-3. Commit to `main`, push, then `git tag -a vX.Y.Z -m "STEP Viewer X.Y.Z" && git push origin vX.Y.Z`.
-4. `.github/workflows/release.yml` tests, publishes `step-viewer-X.Y.Z.tar.gz` + `.sha256` as a GitHub release and deploys GitHub Pages.
-5. aerocat.tech (repo `kothf/astro_source-new_theme`) pins the release in `vendor.json` (version + SHA-256 from the release's `.sha256` asset). Its daily vendor-update workflow opens the bump PR; the NUC deploys `main` within ~5 minutes of merging. Check the pin after merging; don't assume.
+1. Bump `version` in `package.json` (`npm version X.Y.Z --no-git-tag-version`) and add a dated section to `CHANGELOG.md` (Keep a Changelog style, update the compare links at the bottom). `npm run release-notes -- X.Y.Z` must print it.
+2. `npm run package && npm test` must pass locally.
+3. Get it onto `main` (merge the PR, or commit and push). CI runs on every commit on `main`.
+4. Release with **Actions → Release → Run workflow** on `main`; Claude starts it without asking as soon as the bump is on `main` (from the cloud: the GitHub `actions_run_trigger` tool, workflow `release.yml`, ref `main`). It releases `package.json`'s version (or the one typed in), reuses that commit's CI result (testing itself only if CI has no finished run), and tags `main` itself once that passes, so no tag push is needed. Pushing a `vX.Y.Z` tag by hand still works the same way. Don't create releases in GitHub's Releases page: the workflow makes them.
+5. `.github/workflows/release.yml` publishes `step-viewer-X.Y.Z.tar.gz` + `.sha256` as a GitHub release, deploys GitHub Pages and, with the `SITE_DISPATCH_TOKEN` secret set, starts aerocat.tech's vendor update at once.
+6. aerocat.tech (repo `kothf/astro_source-new_theme`) pins the release in `vendor.json` (version + SHA-256 from the release's `.sha256` asset). Its vendor-update workflow (dispatched by the release, otherwise daily) opens the bump PR; the NUC deploys `main` within ~5 minutes of merging. Check the pin after merging; don't assume.
 
 ## Code map
 

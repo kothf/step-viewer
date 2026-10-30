@@ -8,9 +8,11 @@ on:
 permissions:
   contents: read
 
+# a newer push to a PR cancels its older run; on main every commit gets its own run at once (no
+# waiting for the one before), since the release of that commit uses its result instead of testing again
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
