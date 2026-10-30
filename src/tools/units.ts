@@ -1,3 +1,5 @@
+import { dirToLocal, toLocal } from "./csys";
+
 export type Unit = "mm" | "cm" | "m" | "in" | "ft";
 
 const UNITS: Record<Unit, { f: number; d: number }> = {
@@ -22,8 +24,11 @@ export const fmtArea = (mm2: number) => fmtNum(mm2 * UNITS[units.current].f ** 2
 export const fmtVol = (mm3: number) => fmtNum(mm3 * UNITS[units.current].f ** 3) + ` ${units.current}³`;
 export const fmtAngle = (rad: number) => `${((rad * 180) / Math.PI).toFixed(units.decimals ?? 3)}°`;
 export const fmtMass = (g: number) => (g >= 1000 ? `${(g / 1000).toFixed(4)} kg` : `${g.toFixed(3)} g`);
-export const fmtVec = (v: { x: number; y: number; z: number }, len = true) =>
-  len ? `X ${fmtLen(v.x, false)}  Y ${fmtLen(v.y, false)}  Z ${fmtLen(v.z, false)}` : `(${v.x.toFixed(4)}, ${v.y.toFixed(4)}, ${v.z.toFixed(4)})`;
+/** A position (len) or a direction, in the active coordinate system. */
+export const fmtVec = (w: { x: number; y: number; z: number }, len = true) => {
+  const v = len ? toLocal(w) : dirToLocal(w);
+  return len ? `X ${fmtLen(v.x, false)}  Y ${fmtLen(v.y, false)}  Z ${fmtLen(v.z, false)}` : `(${v.x.toFixed(4)}, ${v.y.toFixed(4)}, ${v.z.toFixed(4)})`;
+};
 
 export function fmtNum(x: number) {
   const a = Math.abs(x);

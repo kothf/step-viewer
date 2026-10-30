@@ -7,7 +7,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { SectionManager } from "./viewer/Section";
-import { Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
+import { quadrants, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO,
@@ -16,6 +16,7 @@ import {
 } from "./tools/measure";
 import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnalysis } from "./tools/analysis";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
+import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
 import type { EdgeInfo, PartData, TreeNode } from "./topology";
@@ -83,6 +84,11 @@ const hl = {
 hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
+const csysMark = new THREE.AxesHelper(1);
+(csysMark.material as THREE.LineBasicMaterial).depthTest = false;
+csysMark.renderOrder = 2000;
+csysMark.visible = false;
+viewer.scene.add(csysMark);
 
 function overlayFace(color: number, opacity: number) {
   const m = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
@@ -179,6 +185,7 @@ function resetForNewModel() {
   clearAnalysis(viewer);
   stopDrag();
   hl.com.visible = false;
+  setCsys(null, false);
   state.selection = null;
   state.selectedNode = null;
   state.selectedParts = [];
@@ -642,6 +649,53 @@ function showBody(part: Part) {
   viewer.invalidate();
 }
 
+/** Makes `c` the active coordinate system (null: global); positions, directions and ΔX/ΔY/ΔZ follow it. */
+function setCsys(c: Csys | null, refresh = true) {
+  csys.active = c;
+  csysMark.visible = !!c;
+  const reset = $("#csys-reset");
+  reset.hidden = !c;
+  if (c) reset.textContent = `⌖ CSYS: ${c.name} · back to global`;
+  if (c) {
+    csysMark.position.set(...c.origin);
+    csysMark.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.x), new THREE.Vector3(...c.y), new THREE.Vector3(...c.z)));
+    csysMark.scale.setScalar(viewer.modelSize * 0.08);
+  }
+  if (!refresh) return;
+  refreshMeasurements();
+  renderProps();
+  if (c) toast(`Coordinates relative to ${c.name}`);
+  viewer.invalidate();
+}
+
+/** A frame on a picked entity: planar face (Z its normal), straight edge (X along it), circle (Z its axis) or vertex (world axes). */
+function csysFrom(e: Entity): Csys | null {
+  const t = (v: THREE.Vector3) => v.toArray() as [number, number, number];
+  if (e.kind === "point") return makeCsys("vertex", t(e.point), [0, 0, 1]);
+  if (e.kind === "edge") {
+    const ed = e.edge!;
+    if (ed.type === "line") {
+      const dir = new THREE.Vector3(...ed.dir!);
+      // Z: the normal of a planar face on the edge, else world Z, made square to the edge.
+      const plane = ed.faces.map(i => e.part.data.faces[i]).find(f => f?.type === "plane" && f.normal);
+      let z = plane ? new THREE.Vector3(...plane.normal!) : new THREE.Vector3(0, 0, 1);
+      if (Math.abs(z.dot(dir)) > 0.999) z = new THREE.Vector3(0, Math.abs(dir.z) > 0.9 ? 1 : 0, Math.abs(dir.z) > 0.9 ? 0 : 1);
+      z.addScaledVector(dir, -z.dot(dir));
+      return makeCsys("edge", t(viewer.toWorld(e.part, ed.start)), t(z), ed.dir!);
+    }
+    if (ed.center && ed.axis) return makeCsys("circle centre", t(viewer.toWorld(e.part, ed.center)), ed.axis);
+    return null;
+  }
+  const f = e.face!;
+  if (f.type === "plane" && f.normal) {
+    // X along the face's longest straight edge, if it has one.
+    const lines = f.edges.map(i => e.part.data.edges[i]).filter(x => x?.type === "line").sort((a, b) => b.length - a.length);
+    return makeCsys("face", t(viewer.toWorld(e.part, f.centroid)), f.normal, lines[0]?.dir);
+  }
+  if (f.type === "cylinder" && f.axis) return makeCsys("cylinder axis", t(viewer.toWorld(e.part, f.center)), f.axis);
+  return null;
+}
+
 function setCircleMode(mode: CircleMode) {
   state.circleMode = mode;
   if (state.livePicks.length === 2) showLive(state.livePicks);
@@ -702,7 +756,10 @@ function renderReadout() {
     const e = state.selection;
     if (e && !state.livePair && e.kind === "face" && e.face?.type === "plane") add("✂ Section here", () => addSectionFromFace(e));
     if (e && !state.livePair) add("⬚ Whole part", () => showBody(e.part));
+    const frame = e && !state.livePair ? csysFrom(e) : null;
+    if (frame) add("⌖ CSYS here", () => setCsys(frame));
   }
+  if (csys.active) add("⌖ Global CSYS", () => setCsys(null));
   box.hidden = false;
 }
 
@@ -752,9 +809,9 @@ function hover() {
   marker.hidden = false;
   marker.dataset.kind = snap.kind;
   marker.style.transform = `translate(${((scr.x + 1) / 2) * viewer.size.x}px, ${((1 - scr.y) / 2) * viewer.size.y}px)`;
-  const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
+  const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", quadrant: "Quadrant", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
   const tag = (snap.section && snap.kind !== "onCap" ? "Cut " : "") + labels[snap.kind];
-  marker.innerHTML = snap.kind === "onFace" ? "" : `<span class="snap-tag">${tag}</span>`;
+  marker.innerHTML = `<i class="glyph"></i>` + (snap.kind === "onFace" ? "" : `<span class="snap-tag">${tag}</span>`);
   $("#st-snap").textContent = tag;
   $("#st-coord").textContent = fmtVec(snap.point) + (snap.normal ? `   n ${fmtVec(snap.normal, false)}` : "");
   const ent = entityFromSnap(snap);
@@ -877,6 +934,7 @@ function setDecimals(d: string) {
   renderProps();
   renderSections();
 }
+$("#csys-reset").addEventListener("click", () => setCsys(null));
 $<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
 $<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
 {
@@ -1252,4 +1310,4 @@ window.addEventListener("keydown", e => {
 renderProps();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants } });

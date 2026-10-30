@@ -18,6 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The readout card has its own units and decimals switches. Click any value in it to copy it (a single length or angle is copied as the bare number).
 - Feet as a display unit, and a Decimals setting (auto or 0 to 6 places).
 - JSON export of measurements: raw values in millimetres and radians, world points, every detail row, and the text as displayed.
+- User coordinate system: "⌖ CSYS here" in the readout sets a frame on a planar face (Z its normal, X along its longest edge), a straight edge (X along it), a circle or cylinder (Z its axis) or a vertex. Coordinates, directions and ΔX/ΔY/ΔZ everywhere (readout, properties, status bar, the axis legs) re-project at once; "Global CSYS" goes back. Exports keep world values.
+- Quadrant snaps (0°, 90°, 180°, 270°) on circles and arcs, ranked with midpoints.
+
+### Changed
+- Snap markers: vertex a solid orange square, midpoint a green triangle, quadrant a green diamond, centre a cyan circle with crosshair, face a blue diamond. Snap radius 15 px; circle centres rank with vertices.
 
 ## [1.2.0] - 2026-10-30
 

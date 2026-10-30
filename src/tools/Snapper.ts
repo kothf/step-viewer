@@ -5,7 +5,7 @@ import type { EdgeInfo, FaceInfo } from "../topology";
 /** Cut curves supplied by the section manager (part-local coordinates). */
 export type SectionSource = () => { part: Part; edges: EdgeInfo[] }[];
 
-export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "faceCenter" | "onEdge" | "onFace" | "onCap";
+export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "quadrant" | "faceCenter" | "onEdge" | "onFace" | "onCap";
 
 export interface Snap {
   kind: SnapKind;
@@ -20,7 +20,8 @@ export interface Snap {
   px: number;
 }
 
-const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 1, midpoint: 2, faceCenter: 3, onEdge: 4, onFace: 5, onCap: 5 };
+/** Vertices and centres first, then midpoints and quadrants, face centres, and points anywhere on an edge or face. */
+const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 0.5, midpoint: 2, quadrant: 2, faceCenter: 3, onEdge: 4, onFace: 5, onCap: 5 };
 
 export const SNAP_FILTERS = {
   vertex: true, midpoint: true, center: true, edge: true,
@@ -34,7 +35,7 @@ export const SNAP_FILTERS = {
  * hole's centre lies over empty space) are scored in screen space.
  */
 export class Snapper {
-  radiusPx = 14;
+  radiusPx = 15;
   private current: Snap | null = null;
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
@@ -76,6 +77,9 @@ export class Snapper {
       }
       if (SNAP_FILTERS.midpoint && !e.closed) consider("midpoint", v.toWorld(part, e.mid), part, { edge: e, section });
       if (SNAP_FILTERS.center && e.center) consider("circleCenter", v.toWorld(part, e.center), part, { edge: e, section });
+      if (SNAP_FILTERS.midpoint && e.center && e.axis && e.radius) {
+        for (const q of quadrants(e)) consider("quadrant", v.toWorld(part, q), part, { edge: e, section });
+      }
       if (SNAP_FILTERS.edge) {
         let bestD = Infinity;
         const out = new THREE.Vector3();
@@ -169,4 +173,27 @@ export class Snapper {
   }
 
   reset() { this.current = null; }
+}
+
+/**
+ * 0°, 90°, 180° and 270° points of a circle or arc: world X (or Y, for a circle
+ * square to X) projected into its plane, then turned about the axis. Points an
+ * arc does not reach are left out.
+ */
+export function quadrants(e: EdgeInfo): THREE.Vector3[] {
+  const c = new THREE.Vector3(...e.center!), n = new THREE.Vector3(...e.axis!).normalize(), r = e.radius!;
+  const u = Math.abs(n.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  u.addScaledVector(n, -u.dot(n)).normalize();
+  const w = n.clone().cross(u);
+  const pts = [u, w, u.clone().negate(), w.clone().negate()].map(d => c.clone().addScaledVector(d, r));
+  if (e.type === "circle") return pts;
+  // On the arc if close to its polyline (chords sag by at most a small fraction of r).
+  const seg = new THREE.Line3(), tmp = new THREE.Vector3();
+  return pts.filter(p => {
+    for (let i = 3; i < e.pts.length; i += 3) {
+      seg.set(new THREE.Vector3(e.pts[i - 3], e.pts[i - 2], e.pts[i - 1]), new THREE.Vector3(e.pts[i], e.pts[i + 1], e.pts[i + 2]));
+      if (seg.closestPointToPoint(p, true, tmp).distanceTo(p) < 0.02 * r) return true;
+    }
+    return false;
+  });
 }

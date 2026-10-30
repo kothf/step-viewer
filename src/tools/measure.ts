@@ -4,6 +4,7 @@ import type { Part, Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, FaceInfo, V3 } from "../topology";
 import type { Snap } from "./Snapper";
 import { fmtAngle, fmtArea, fmtLen, fmtVec, fmtVol } from "./units";
+import { dirToLocal } from "./csys";
 
 export interface Entity {
   kind: "point" | "edge" | "face";
@@ -52,7 +53,7 @@ let seq = 0;
 const newId = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 export function entityFromSnap(s: Snap): Entity {
-  if (s.kind === "vertex") return { kind: "point", point: s.point, part: s.part, edge: s.edge };
+  if (s.kind === "vertex" || s.kind === "quadrant") return { kind: "point", point: s.point, part: s.part, edge: s.edge };
   if (s.kind === "onCap") return { kind: "point", point: s.point, part: s.part, normal: s.normal };
   if (s.kind === "onFace" || s.kind === "faceCenter") return { kind: "face", point: s.point, part: s.part, face: s.face, normal: s.normal };
   return { kind: "edge", point: s.point, part: s.part, edge: s.edge };
@@ -380,9 +381,11 @@ export function measureBBox(v: Viewer, parts: Part[], color: string): Measuremen
 export function formatMeasurement(m: Measurement): { title: string; value: string; details: string[]; pairs?: [string, string][] } {
   const d = m.data;
   const L = (x: unknown) => fmtLen(x as number);
+  // Axis components of the drawn segment, in the active CSYS.
+  const dl = (k: "x" | "y" | "z") => L(Math.abs(dirToLocal(V(m.points[1]).sub(V(m.points[0])))[k]));
   switch (m.type) {
-    case "distance": return { title: "Distance", value: L(m.value), details: [`ΔX ${L(d.dx)}`, `ΔY ${L(d.dy)}`, `ΔZ ${L(d.dz)}`] };
-    case "minDistance": return { title: "Min distance", value: L(m.value), details: [`${d.a} → ${d.b}`, d.note ? String(d.note) : "", d.planeGap !== undefined && Math.abs((d.planeGap as number) - m.value) > 1e-9 ? `Plane gap ${L(d.planeGap)}` : "", `ΔX ${L(d.dx)}  ΔY ${L(d.dy)}  ΔZ ${L(d.dz)}`].filter(Boolean) };
+    case "distance": return { title: "Distance", value: L(m.value), details: [`ΔX ${dl("x")}`, `ΔY ${dl("y")}`, `ΔZ ${dl("z")}`] };
+    case "minDistance": return { title: "Min distance", value: L(m.value), details: [`${d.a} → ${d.b}`, d.note ? String(d.note) : "", d.planeGap !== undefined && Math.abs((d.planeGap as number) - m.value) > 1e-9 ? `Plane gap ${L(d.planeGap)}` : "", `ΔX ${dl("x")}  ΔY ${dl("y")}  ΔZ ${dl("z")}`].filter(Boolean) };
     case "angle3": return { title: "Angle", value: fmtAngle(m.value), details: [`Supplement ${fmtAngle(d.supplement as number)}`] };
     case "angle": return { title: "Angle", value: fmtAngle(m.value), details: [String(d.mode), `Supplement ${fmtAngle(d.supplement as number)}`] };
     case "radius": return { title: "Radius", value: "R " + L(m.value), details: [`Ø ${L(m.value * 2)}`, `Centre ${fmtVec(new THREE.Vector3(...(d.center as V3)))}`] };
@@ -414,7 +417,8 @@ export function formatMeasurement(m: Measurement): { title: string; value: strin
 
 // ---------- smart measure ----------
 
-type RowKind = "len" | "ang" | "area" | "vol" | "pos" | "dir" | "box" | "lens" | "text";
+/** "dx"/"dy"/"dz": a world difference vector shown as its size along that axis of the active CSYS. */
+type RowKind = "len" | "ang" | "area" | "vol" | "pos" | "dir" | "box" | "lens" | "dx" | "dy" | "dz" | "text";
 type Row = [string, RowKind, number | number[] | string];
 
 /** Which distance two round features report: centre to centre, nearest rims or farthest rims. */
@@ -434,6 +438,7 @@ function fmtRow(kind: RowKind, x: unknown, fallback?: V3): string {
     case "dir": return fmtVec(V(x as V3), false);
     case "box": return (x as number[]).map((s, i, a) => fmtLen(s, i === a.length - 1)).join(" × ");
     case "lens": return (x as number[]).map(s => fmtLen(s)).join(" / ");
+    case "dx": case "dy": case "dz": return fmtLen(Math.abs(dirToLocal(V(x as V3))[kind[1] as "x" | "y" | "z"]));
     case "text": return String(x);
   }
 }
@@ -445,8 +450,10 @@ function smart(geo: Measurement, title: string, value: number, kind: RowKind, ro
   return geo;
 }
 
-const deltas = (a: THREE.Vector3, b: THREE.Vector3): Row[] =>
-  [["ΔX", "len", Math.abs(b.x - a.x)], ["ΔY", "len", Math.abs(b.y - a.y)], ["ΔZ", "len", Math.abs(b.z - a.z)]];
+const deltas = (a: THREE.Vector3, b: THREE.Vector3): Row[] => {
+  const d = v3(b.clone().sub(a));
+  return [["ΔX", "dx", d], ["ΔY", "dy", d], ["ΔZ", "dz", d]];
+};
 
 /** Total length of a face's boundary loops (outer and holes). */
 function facePerimeter(part: Part, f: FaceInfo) {

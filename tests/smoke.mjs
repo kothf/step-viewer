@@ -192,6 +192,27 @@ try {
   check(json.units.length === "mm" && last.title === "Distance" && near(last.value, 10, 1e-9) && last.rows.some(r => r.label === "ΔX") && last.points.length === 2,
     `JSON export: ${json.measurements.length} measurements, last ${last.title} ${last.value}`);
 
+  // --- user CSYS: values re-expressed in a frame on an edge ---
+  const cs = await page.evaluate(() => {
+    const { viewer, state, handlePick, setCsys, csysFrom } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const e = p.data.edges.find(x => x.type === "line" && Math.abs(x.dir[0]) < 0.5);
+    const V = x => ({ kind: "vertex", point: new V3(...x), part: p, edge: e, px: 0 });
+    const det = () => [...document.querySelectorAll("#readout .det span")].map(s => s.textContent.trim());
+    handlePick(null);
+    setCsys(csysFrom({ kind: "edge", point: new V3(...e.mid), part: p, edge: e }));
+    handlePick(V(e.start)); const origin = state.live && document.querySelector("#readout .val").textContent.trim();
+    handlePick(V(e.end)); const local = det().filter(t => t.startsWith("Δ"));
+    const reset = !document.querySelector("#csys-reset").hidden;
+    setCsys(null); const world = det().filter(t => t.startsWith("Δ"));
+    handlePick(null);
+    return { origin, local, world, reset, dir: e.dir };
+  });
+  check(cs.origin === "X 0.000  Y 0.000  Z 0.000" && cs.reset, `CSYS on an edge: its start is the origin (${cs.origin})`);
+  check(cs.local.join("|") === "ΔX 10.000 mm|ΔY 0.000 mm|ΔZ 0.000 mm" && cs.world.join("|") !== cs.local.join("|"),
+    `CSYS on an edge: ΔX runs along it (${cs.local.join(", ")}; global ${cs.world.join(", ")})`);
+
   // --- section: caps, profile curves, cut area, snapping and measuring on the cut ---
   await page.$eval('[data-sec="z"]', el => el.click());
   await page.waitForTimeout(200);
@@ -254,6 +275,22 @@ try {
   check(as1.circles > 0 && as1.cylinders > 0, `as1 circles ${as1.circles}, cylinders ${as1.cylinders}`);
   check(as1.allClosed, "every as1 part is a closed solid");
   check(as1.protocol, "header shows AP214");
+
+  // Quadrant snaps: at the radius, in the plane, and only where an arc actually runs (STEP halves get 2-3 each).
+  const quad = await page.evaluate(() => {
+    const { viewer, quadrants } = window.__sv;
+    const V3 = viewer.camera.position.constructor;
+    const circles = viewer.parts.flatMap(p => p.data.edges).filter(e => e.type === "circle" || e.type === "arc");
+    let worst = 0, counts = new Set();
+    for (const e of circles) {
+      const q = quadrants(e), c = new V3(...e.center), n = new V3(...e.axis);
+      counts.add(q.length);
+      for (const p of q) worst = Math.max(worst, Math.abs(p.distanceTo(c) - e.radius), Math.abs(p.clone().sub(c).dot(n)));
+    }
+    return { circles: circles.length, counts: [...counts].sort(), worst };
+  });
+  check(quad.circles > 0 && quad.counts.every(n => n <= 4) && quad.counts.some(n => n >= 2 && n < 4) && quad.worst < 1e-9,
+    `quadrants on ${quad.circles} circles/arcs: ${quad.counts.join(", ")} per edge (max error ${quad.worst})`);
 
   // Coplanar round faces of two different parts: pitch between their centres, never 0.
   const pitch = await page.evaluate(() => {

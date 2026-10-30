@@ -31,7 +31,7 @@ The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright 
 - `src/worker/import.worker.ts`: occt loading and import, mesh quality presets.
 - `src/topology.ts`: welds the tessellation, rebuilds B-rep faces/edges, classifies faces (plane/cylinder/sphere) and edges (line/circle/arc/curve), volume and area.
 - `src/viewer/`: `Viewer.ts` (scene, cameras, display modes, explode), `Section.ts` (up to 3 planes, stencil caps, hatching, gizmo), `SectionProfile.ts` (cut curves and area), `NavCube.ts`.
-- `src/tools/`: `Snapper.ts` (snapping), `measure.ts` (all measurements, including `smartMeasure`), `Annotations.ts` (labels on the model), `analysis.ts` (mass, draft, wall thickness), `exporters.ts`, `units.ts`.
+- `src/tools/`: `Snapper.ts` (snapping), `measure.ts` (all measurements, including `smartMeasure`), `Annotations.ts` (labels on the model), `analysis.ts` (mass, draft, wall thickness), `exporters.ts`, `units.ts`, `csys.ts` (active user coordinate system: positions, directions and axis deltas are re-expressed only when formatted; stored values stay world mm).
 - `src/main.ts`: UI controller. The default tool `"select"` is **Smart measure**: one click shows an entity's size, a second click the relation between two entities. The result is "live" until the next click and can be pinned. Labels on the model stay one line; details go in the `#readout` card.
 
 ## Conventions

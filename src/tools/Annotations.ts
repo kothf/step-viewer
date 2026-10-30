@@ -4,6 +4,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import { formatMeasurement, type Measurement } from "./measure";
+import { csys } from "./csys";
 
 interface Drawn { group: THREE.Group; label: HTMLDivElement }
 
@@ -71,13 +72,17 @@ export class Annotations {
     return { group, label };
   }
 
-  /** ΔX, ΔY, ΔZ legs from a to b along the world axes: red, green, blue. */
+  /** ΔX, ΔY, ΔZ legs from a to b along the axes of the active CSYS (world by default): red, green, blue. */
   private triad(a: number[], b: number[]) {
     const g = new THREE.Group();
-    const corners = [a, [b[0], a[1], a[2]], [b[0], b[1], a[2]], b];
+    const c = csys.active;
+    const axes = c ? [c.x, c.y, c.z] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const corners = [new THREE.Vector3(...a)];
+    for (const ax of axes) corners.push(corners.at(-1)!.clone().addScaledVector(new THREE.Vector3(...ax), d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]));
     [0xe03131, 0x2f9e44, 0x1c7ed6].forEach((color, i) => {
-      if (Math.abs(corners[i + 1][i] - corners[i][i]) < 1e-9) return;
-      const geo = new LineSegmentsGeometry().setPositions([...corners[i], ...corners[i + 1]]);
+      if (corners[i + 1].distanceTo(corners[i]) < 1e-9) return;
+      const geo = new LineSegmentsGeometry().setPositions([...corners[i].toArray(), ...corners[i + 1].toArray()]);
       const mat = new LineMaterial({ color, linewidth: 1.6, depthTest: false, transparent: true, dashed: true, dashSize: 2, gapSize: 1.5 });
       mat.resolution.copy(this.viewer.size);
       const line = new LineSegments2(geo, mat);
