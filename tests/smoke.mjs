@@ -180,12 +180,20 @@ try {
     setUnits("mm"); setDecimals("");
     document.querySelector("#readout .val .cp").click();
     const copied = state.lastCopied;
+    const box = document.querySelector("#readout");
+    const floating = box.classList.contains("floating") && box.style.left !== "";
+    box.querySelector(".dock").click();
+    const docked = !box.classList.contains("floating") && box.style.left === "";
+    box.querySelector(".dock").click();
+    const parts = state.live.data.parts;
     document.querySelector("#readout .acts button").click(); // Pin
-    return { title: state.measurements.at(-1)?.data.title, triad: state.measurements.at(-1)?.data.triad, axes, mm, ft, ft2, copied };
+    return { title: state.measurements.at(-1)?.data.title, triad: state.measurements.at(-1)?.data.triad, axes, mm, ft, ft2, copied, floating, docked, parts };
   });
   check(hud.title === "Distance" && hud.triad === 1 && hud.axes.length === 1, `smart: point to point draws the axis legs (${hud.axes.join(",")})`);
   check(hud.mm === "10.000 mm" && hud.ft === "0.03281 ft" && hud.ft2 === "0.03 ft", `readout units and decimals: ${hud.mm} / ${hud.ft} / ${hud.ft2}`);
   check(hud.copied === "10.000", `click copies the bare value (${hud.copied})`);
+  check(hud.floating && hud.docked, `readout floats beside the measurement and docks back (${hud.floating}, ${hud.docked})`);
+  check(/Cube 10x10 #1$/.test(hud.parts ?? ""), `measurement records its component (${hud.parts})`);
   const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#m-json", el => el.click())]);
   const json = JSON.parse(await readFile(await dl.path(), "utf8"));
   const last = json.measurements.at(-1);
@@ -329,6 +337,17 @@ try {
   await page.$eval("#explode", el => { el.value = "1"; el.dispatchEvent(new Event("input")); });
   const moved = await page.evaluate(() => window.__sv.viewer.parts.filter(p => p.group.position.length() > 1e-6).length);
   check(moved > 0, `explode moved ${moved} parts`);
+
+  // --- virtual corners: where a rounded corner's straight edges would meet ---
+  await open("rounded-cube/rounded-cube.step");
+  const vc = await page.evaluate(() => {
+    const { viewer, virtualCorners } = window.__sv;
+    const p = viewer.parts[0];
+    const fs = p.data.faces.filter(f => f.type === "plane" && p.data.edges.some(e => f.edges.includes(e.id) && e.type !== "line"));
+    return { faces: fs.length, corners: fs.map(f => virtualCorners(p, f)), max: p.data.bboxMax, plain: virtualCorners(p, p.data.faces.find(f => f.type === "plane" && f.edges.every(i => p.data.edges[i].type === "line"))).length };
+  });
+  check(vc.faces === 2 && vc.corners.every(c => c.length === 1 && Math.abs(c[0][0] - vc.max[0]) < 1e-6 && Math.abs(c[0][2] - vc.max[2]) < 1e-6) && vc.plain === 0,
+    `intersection snaps: the rounded corner's sharp point on ${vc.faces} faces (${JSON.stringify(vc.corners)}), none on a plain square`);
 
   // --- freeform face: radii of curvature from the tessellation (a cone: finite across, flat along) ---
   await open("conical-surface/conical-surface.step");

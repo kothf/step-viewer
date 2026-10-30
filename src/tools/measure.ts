@@ -53,7 +53,7 @@ let seq = 0;
 const newId = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 export function entityFromSnap(s: Snap): Entity {
-  if (s.kind === "vertex" || s.kind === "quadrant") return { kind: "point", point: s.point, part: s.part, edge: s.edge };
+  if (s.kind === "vertex" || s.kind === "quadrant" || s.kind === "intersection") return { kind: "point", point: s.point, part: s.part, edge: s.edge };
   if (s.kind === "onCap") return { kind: "point", point: s.point, part: s.part, normal: s.normal };
   if (s.kind === "onFace" || s.kind === "faceCenter") return { kind: "face", point: s.point, part: s.part, face: s.face, normal: s.normal };
   return { kind: "edge", point: s.point, part: s.part, edge: s.edge };

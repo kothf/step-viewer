@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import type { Part, Viewer } from "../viewer/Viewer";
-import type { EdgeInfo, FaceInfo } from "../topology";
+import type { EdgeInfo, FaceInfo, V3 } from "../topology";
 
 /** Cut curves supplied by the section manager (part-local coordinates). */
 export type SectionSource = () => { part: Part; edges: EdgeInfo[] }[];
 
-export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "quadrant" | "faceCenter" | "onEdge" | "onFace" | "onCap";
+export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "quadrant" | "intersection" | "faceCenter" | "onEdge" | "onFace" | "onCap";
 
 export interface Snap {
   kind: SnapKind;
@@ -20,8 +20,8 @@ export interface Snap {
   px: number;
 }
 
-/** Vertices and centres first, then midpoints and quadrants, face centres, and points anywhere on an edge or face. */
-const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 0.5, midpoint: 2, quadrant: 2, faceCenter: 3, onEdge: 4, onFace: 5, onCap: 5 };
+/** Vertices and centres first, then midpoints and quadrants, edge intersections and face centres, and points anywhere on an edge or face. */
+const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 0.5, midpoint: 2, quadrant: 2, intersection: 3, faceCenter: 3, onEdge: 4, onFace: 5, onCap: 5 };
 
 export const SNAP_FILTERS = {
   vertex: true, midpoint: true, center: true, edge: true,
@@ -110,6 +110,14 @@ export class Snapper {
       const part = v.partOf(hit.object);
       const face = part.data.faces[part.triFace[hit.faceIndex!]];
       for (const eid of face.edges) edgeCandidates(part, part.data.edges[eid]);
+      if (SNAP_FILTERS.vertex) {
+        // This face's virtual corners and its neighbours' (a fillet under the cursor rounds off the corner of the faces beside it).
+        const near = new Set([face.id, ...face.edges.flatMap(i => part.data.edges[i]?.faces ?? [])]);
+        for (const fi of near) {
+          const nf = part.data.faces[fi];
+          if (nf) for (const x of virtualCorners(part, nf)) consider("intersection", v.toWorld(part, x), part, { face: nf });
+        }
+      }
       if (SNAP_FILTERS.center) consider("faceCenter", v.toWorld(part, face.center), part, { face, normal: this.faceNormal(part, face, hit) });
       const n = this.faceNormal(part, face, hit);
       const onFace: Snap = { kind: "onFace", point: hit.point.clone(), part, face, normal: n, px: 0 };
@@ -196,4 +204,43 @@ export function quadrants(e: EdgeInfo): THREE.Vector3[] {
     }
     return false;
   });
+}
+
+const cornerCache = new WeakMap<Part, Map<number, V3[]>>();
+
+/**
+ * Where the extensions of a face's straight edges meet away from any vertex:
+ * the sharp corner a fillet or chamfer rounds off. Part-local coordinates.
+ */
+export function virtualCorners(part: Part, f: FaceInfo): V3[] {
+  let m = cornerCache.get(part);
+  if (!m) cornerCache.set(part, (m = new Map()));
+  const hit = m.get(f.id);
+  if (hit) return hit;
+  const edges = f.edges.map(i => part.data.edges[i]).filter(Boolean);
+  const lines = edges.filter(e => e.type === "line" && e.dir).slice(0, 64);
+  const ends = edges.flatMap(e => [e.start, e.end]);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of ends) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+  const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1;
+  const tol = 1e-6 * size;
+  const out: V3[] = [];
+  const V = (a: V3) => new THREE.Vector3(a[0], a[1], a[2]);
+  for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+    const a = lines[i], b = lines[j];
+    const d1 = V(a.dir!), d2 = V(b.dir!), p1 = V(a.start), p2 = V(b.start);
+    const bb = d1.dot(d2), den = 1 - bb * bb;
+    if (den < 1e-9) continue;
+    const r = p1.clone().sub(p2), c = d1.dot(r), ff = d2.dot(r);
+    const q1 = p1.clone().addScaledVector(d1, (bb * ff - c) / den), q2 = p2.clone().addScaledVector(d2, (ff - bb * c) / den);
+    if (q1.distanceTo(q2) > tol) continue;
+    const x = q1.add(q2).multiplyScalar(0.5);
+    if (ends.some(e => x.distanceTo(V(e)) < tol * 100)) continue;
+    // Only corners close to both edges: far crossings of unrelated edges are noise.
+    const far = (e: EdgeInfo) => Math.min(x.distanceTo(V(e.start)), x.distanceTo(V(e.end))) > Math.max(e.length, 0.5 * size);
+    if (far(a) || far(b)) continue;
+    if (!out.some(o => x.distanceTo(V(o)) < tol * 100)) out.push([x.x, x.y, x.z]);
+  }
+  m.set(f.id, out);
+  return out;
 }

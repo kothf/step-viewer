@@ -20,9 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - JSON export of measurements: raw values in millimetres and radians, world points, every detail row, and the text as displayed.
 - User coordinate system: "⌖ CSYS here" in the readout sets a frame on a planar face (Z its normal, X along its longest edge), a straight edge (X along it), a circle or cylinder (Z its axis) or a vertex. Coordinates, directions and ΔX/ΔY/ΔZ everywhere (readout, properties, status bar, the axis legs) re-project at once; "Global CSYS" goes back. Exports keep world values.
 - Quadrant snaps (0°, 90°, 180°, 270°) on circles and arcs, ranked with midpoints.
+- Intersection snaps (red X): where a face's straight edges would meet past a fillet or chamfer, offered on that face and on the fillet beside it.
+- The readout card floats beside the measurement and follows it as the view turns; ⇲ docks it in the corner (remembered).
+- Measurements record their component (tree path and part number), shown in a new Component column of the CSV export and PDF report.
 
 ### Changed
-- Snap markers: vertex a solid orange square, midpoint a green triangle, quadrant a green diamond, centre a cyan circle with crosshair, face a blue diamond. Snap radius 15 px; circle centres rank with vertices.
+- Snap markers: vertex a solid orange square, midpoint a green triangle, quadrant a green diamond, centre a cyan circle with crosshair, intersection a red X, face a blue diamond. Snap radius 15 px; circle centres rank with vertices.
 
 ## [1.2.0] - 2026-10-30
 

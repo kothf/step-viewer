@@ -7,7 +7,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { SectionManager } from "./viewer/Section";
-import { quadrants, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
+import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO,
@@ -67,6 +67,8 @@ const state = {
   livePicks: [] as Entity[],
   /** Two round features: centre to centre, nearest or farthest rims. Kept between picks. */
   circleMode: "center" as CircleMode,
+  /** Readout card beside the measurement (true) or docked in the corner. */
+  readoutFloat: storage.get("sv:readout") !== "dock",
   /** Last value copied from the readout. */
   lastCopied: "",
 };
@@ -491,7 +493,11 @@ function showAll() {
 const TOOL_KEYS: Record<string, Tool> = { d: "distance", m: "minDistance", r: "radius", c: "centerDistance", l: "arcLength", a: "angle", n: "point", b: "bbox" };
 
 function setTool(t: Tool) {
-  if (t === "bbox") { addMeasurement(measureBBox(viewer, state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible), nextColor())); return; }
+  if (t === "bbox") {
+    const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
+    addMeasurement(tagParts(measureBBox(viewer, parts, nextColor()), parts));
+    return;
+  }
   state.tool = t;
   state.picks = [];
   hl.pickMarks.clear();
@@ -594,7 +600,7 @@ function handlePick(snap: Snap | null) {
   pickMark(ent.point);
   if (state.picks.length < info.picks) { updateHint(); viewer.invalidate(); return; }
   try {
-    addMeasurement(measure(viewer, state.tool as MeasureType, state.picks, nextColor()));
+    addMeasurement(tagParts(measure(viewer, state.tool as MeasureType, state.picks, nextColor()), state.picks.map(p => p.part)));
   } catch (err) {
     toast(err instanceof MeasureError ? err.message : `Measurement failed: ${(err as Error).message}`, true);
   }
@@ -602,6 +608,13 @@ function handlePick(snap: Snap | null) {
   hl.pickMarks.clear();
   updateHint();
   viewer.invalidate();
+}
+
+/** Records which components a measurement was taken on (tree path and part number), for reports. */
+function tagParts(m: Measurement, parts: Part[]) {
+  const ids = [...new Set(parts.map(p => `${p.path || p.data.name} #${p.idx + 1}`))];
+  if (ids.length) m.data.parts = ids.slice(0, 6).join("; ") + (ids.length > 6 ? `; +${ids.length - 6} more` : "");
+  return m;
 }
 
 function sameEntity(a: Entity, b: Entity) {
@@ -613,7 +626,7 @@ function sameEntity(a: Entity, b: Entity) {
 /** Measures one entity (its size) or two (the relation between them) and shows it until the next click. */
 function showLive(picks: Entity[]) {
   try {
-    state.live = smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value, { circleMode: state.circleMode });
+    state.live = tagParts(smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value, { circleMode: state.circleMode }), picks.map(p => p.part));
     state.livePicks = picks;
   } catch (err) {
     state.live = null;
@@ -638,7 +651,7 @@ function clearLive() {
 
 /** Bounding box, volume, area and centre of gravity of the part the live entity belongs to. */
 function showBody(part: Part) {
-  state.live = smartBody(viewer, part, $<HTMLInputElement>("#m-color").value);
+  state.live = tagParts(smartBody(viewer, part, $<HTMLInputElement>("#m-color").value), [part]);
   state.livePicks = [];
   state.livePair = true;
   state.selection = null;
@@ -733,12 +746,18 @@ function renderReadout() {
     : f.details.map(d => `<span>${esc(d)}</span>`);
   const unitOpts = UNIT_LIST.map(u => `<option${u === units.current ? " selected" : ""}>${u}</option>`).join("");
   const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? "auto" : `${d} dp`}</option>`).join("");
-  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><select data-hud="units" title="Units">${unitOpts}</select><select data-hud="decimals" title="Decimal places">${decOpts}</select><button class="x" title="Close (Esc)">✕</button></span></div>
+  box.classList.toggle("floating", state.readoutFloat);
+  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${state.readoutFloat ? "Dock in the corner" : "Float next to the measurement"}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="Units">${unitOpts}</select><select data-hud="decimals" title="Decimal places">${decOpts}</select><button class="x close" title="Close (Esc)">✕</button></span></div>
     <div class="val"><b class="cp" title="Click to copy">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${x.label}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+  box.querySelector(".dock")!.addEventListener("click", () => {
+    state.readoutFloat = !state.readoutFloat;
+    storage.set("sv:readout", state.readoutFloat ? "float" : "dock");
+    renderReadout();
+  });
   box.querySelectorAll<HTMLElement>(".cp").forEach(el => el.addEventListener("click", () => copyValue(el.textContent ?? "")));
   box.querySelector<HTMLSelectElement>('[data-hud="units"]')!.addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
   box.querySelector<HTMLSelectElement>('[data-hud="decimals"]')!.addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
-  box.querySelector(".x")!.addEventListener("click", () => {
+  box.querySelector(".close")!.addEventListener("click", () => {
     if (m === state.live) handlePick(null);
     else { state.selectedMeasurement = null; refreshMeasurements(); }
   });
@@ -761,7 +780,29 @@ function renderReadout() {
   }
   if (csys.active) add("⌖ Global CSYS", () => setCsys(null));
   box.hidden = false;
+  placeReadout();
 }
+
+/**
+ * A floating readout sits beside its measurement's label and follows it as the
+ * view turns, flipping sides and staying inside the viewport; docked, it keeps to the corner.
+ */
+function placeReadout() {
+  const box = $("#readout");
+  if (box.hidden) return;
+  const m = state.live ?? state.measurements.find(x => x.id === state.selectedMeasurement);
+  if (!state.readoutFloat || !m) { box.style.left = box.style.top = ""; return; }
+  const p = new THREE.Vector3(...m.labelAt).project(viewer.camera);
+  const x = ((p.x + 1) / 2) * viewer.size.x, y = ((1 - p.y) / 2) * viewer.size.y;
+  const w = box.offsetWidth, h = box.offsetHeight, gap = 24, pad = 8;
+  let left = x + gap;
+  if (left + w > viewer.size.x - pad) left = x - gap - w;
+  let top = y + gap;
+  if (top + h > viewer.size.y - pad) top = y - gap - h;
+  box.style.left = `${Math.max(pad, Math.min(left, viewer.size.x - w - pad))}px`;
+  box.style.top = `${Math.max(pad, Math.min(top, viewer.size.y - h - pad))}px`;
+}
+viewer.onRender(placeReadout);
 
 
 // ---------- pointer handling ----------
@@ -809,7 +850,7 @@ function hover() {
   marker.hidden = false;
   marker.dataset.kind = snap.kind;
   marker.style.transform = `translate(${((scr.x + 1) / 2) * viewer.size.x}px, ${((1 - scr.y) / 2) * viewer.size.y}px)`;
-  const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", quadrant: "Quadrant", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
+  const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", quadrant: "Quadrant", intersection: "Intersection", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
   const tag = (snap.section && snap.kind !== "onCap" ? "Cut " : "") + labels[snap.kind];
   marker.innerHTML = `<i class="glyph"></i>` + (snap.kind === "onFace" ? "" : `<span class="snap-tag">${tag}</span>`);
   $("#st-snap").textContent = tag;
@@ -1310,4 +1351,4 @@ window.addEventListener("keydown", e => {
 renderProps();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners } });
