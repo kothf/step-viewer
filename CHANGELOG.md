@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
+### Added
+- Section profiles: where a plane cuts the model, the cut curves are computed, drawn on top of the caps and classified like model edges (line, circle, arc, curve). Cylinders cut square to their axis and spheres give exact circles with the surface's radius and centre.
+- Measuring on the cut: snapping to profile curves, their vertices, midpoints and circle centres, and to points on the cap faces. "Snap to cut only" restricts snapping to the section plane; otherwise cut features join the normal 3D snaps.
+- Cut area per plane (net of holes), with the number of curves and circles.
+- 3-point section plane; planes named XY / YZ / XZ; up to 3 planes at once.
+- Plane gizmo: drag the arrow to move or the rings to tilt the plane; numeric offset with a step and −/+ buttons; azimuth and elevation of the normal in degrees.
+- ANSI31 hatching on caps (on by default) and caps coloured per part.
+
 ## [1.0.0] - 2026-10-30
 
 ### Added
@@ -21,5 +31,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/kothf/step-viewer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kothf/step-viewer/releases/tag/v1.0.0

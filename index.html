@@ -105,20 +105,28 @@
       </div>
     </details>
 
-    <details><summary>Section</summary>
+    <details id="sec-panel"><summary>Section</summary>
+      <div class="row wrap" id="sec-add">
+        <button class="btn small" data-sec="z" title="Plane parallel to XY (normal Z)">+ XY</button>
+        <button class="btn small" data-sec="x" title="Plane parallel to YZ (normal X)">+ YZ</button>
+        <button class="btn small" data-sec="y" title="Plane parallel to XZ (normal Y)">+ XZ</button>
+        <button class="btn small" data-sec="face" title="Plane on the selected planar face">+ Face</button>
+        <button class="btn small" data-sec="3pt" title="Plane through three picked points">+ 3 points</button>
+        <button class="btn small" data-sec="view" title="Plane facing the camera through the model centre">+ View</button>
+      </div>
+      <div id="sec-list" class="sec-list"><p class="muted" style="margin:4px 0">Up to 3 planes. The cut curves are drawn and can be snapped to for measuring.</p></div>
       <div class="row wrap">
-        <button class="btn small" data-sec="x">+ X plane</button>
-        <button class="btn small" data-sec="y">+ Y plane</button>
-        <button class="btn small" data-sec="z">+ Z plane</button>
-        <button class="btn small" data-sec="face" title="Plane through the selected planar face">+ From face</button>
-        <button class="btn small" data-sec="view" title="Plane facing the camera through the model centre">+ From view</button>
-      </div>
-      <div id="sec-list" class="sec-list"></div>
-      <div class="row">
-        <label class="chk"><input type="checkbox" id="caps" checked /> Solid caps</label>
+        <label class="chk"><input type="checkbox" id="caps" checked /> Caps</label>
+        <label class="chk" title="ANSI31 45° hatching on the caps"><input type="checkbox" id="hatch" checked /> Hatch</label>
+        <label class="chk" title="Each part's cap in the part's colour"><input type="checkbox" id="caps-part" /> By part</label>
         <input type="color" id="cap-color" value="#d4553f" title="Cap colour" />
-        <button class="btn small" id="sec-clear">Remove all</button>
       </div>
+      <div class="row wrap">
+        <label class="chk"><input type="checkbox" id="profiles" checked /> Profile lines</label>
+        <input type="color" id="profile-color" value="#ffd43b" title="Profile colour" />
+        <label class="chk" title="Snap only to the cut: profile curves, their vertices, midpoints and centres, and the cap faces"><input type="checkbox" id="snap-plane" /> Snap to cut only</label>
+      </div>
+      <div class="row"><button class="btn small" id="sec-clear">Remove all</button></div>
     </details>
 
     <details><summary>Exploded view</summary>

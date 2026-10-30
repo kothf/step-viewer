@@ -42,7 +42,7 @@ export class Annotations {
       mat.resolution.copy(this.viewer.size);
       const line = new LineSegments2(g, mat);
       if (m.type === "bbox") line.computeLineDistances();
-      line.renderOrder = 1000;
+      line.renderOrder = 2000;
       line.raycast = () => {};
       group.add(line);
     }
@@ -50,7 +50,7 @@ export class Annotations {
     if (dotPts.length) {
       const g = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(dotPts.flat(), 3));
       const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 7, sizeAttenuation: false, depthTest: false, transparent: true }));
-      dots.renderOrder = 1001;
+      dots.renderOrder = 2001;
       dots.raycast = () => {};
       group.add(dots);
     }

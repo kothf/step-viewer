@@ -172,7 +172,7 @@ function covariance(pts: V3[], c: V3): number[] {
 
 // ---------- edge classification ----------
 
-function classifyEdge(pts: V3[], closed: boolean, tol: number): Partial<EdgeInfo> {
+export function classifyEdge(pts: V3[], closed: boolean, tol: number): Partial<EdgeInfo> {
   const n = pts.length;
   const a = pts[0], b = pts[n - 1];
   const chord = sub(b, a);
@@ -208,6 +208,25 @@ function classifyEdge(pts: V3[], closed: boolean, tol: number): Partial<EdgeInfo
     }
   }
   return { type: "curve" };
+}
+
+/** Builds an edge (length, arc-length midpoint, analytic type) from a polyline. */
+export function makeEdge(id: number, pts: V3[], faces: [number, number], closed: boolean, tol: number): EdgeInfo | null {
+  let length = 0;
+  for (let i = 1; i < pts.length; i++) length += len(sub(pts[i], pts[i - 1]));
+  if (length <= 0) return null;
+  let acc = 0, mid: V3 = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    const sl = len(sub(pts[i], pts[i - 1]));
+    if (acc + sl >= length / 2) { const t = (length / 2 - acc) / (sl || 1); mid = addS(pts[i - 1], sub(pts[i], pts[i - 1]), t); break; }
+    acc += sl;
+  }
+  const cls = classifyEdge(pts, closed, tol);
+  return {
+    id, pts: pts.flat(), faces, closed, length,
+    type: cls.type ?? "curve", start: pts[0], end: pts[pts.length - 1], mid,
+    dir: cls.dir, center: cls.center, axis: cls.axis, radius: cls.radius, sweep: cls.sweep,
+  };
 }
 
 // ---------- face classification ----------
@@ -370,25 +389,12 @@ export function analyzeMesh(m: OcctMesh): PartData {
   for (const [gk, segs] of groups) {
     const [fa, fb] = gk.split("|").map(Number) as [number, number];
     for (const chain of chainSegments(segs, weldPos)) {
-      const pts = chain.map(w => weldPos[w]);
       const closed = chain.length > 2 && chain[0] === chain[chain.length - 1];
-      let length = 0;
-      for (let i = 1; i < pts.length; i++) length += len(sub(pts[i], pts[i - 1]));
-      if (length <= 0) continue;
-      // Midpoint by arc length.
-      let acc = 0, mid: V3 = pts[0];
-      for (let i = 1; i < pts.length; i++) {
-        const sl = len(sub(pts[i], pts[i - 1]));
-        if (acc + sl >= length / 2) { const t = (length / 2 - acc) / (sl || 1); mid = addS(pts[i - 1], sub(pts[i], pts[i - 1]), t); break; }
-        acc += sl;
-      }
-      const cls = classifyEdge(pts, closed, tol);
-      const id = edges.length;
-      edges.push({
-        id, pts: pts.flat(), faces: [fa, fb], closed, length,
-        type: cls.type ?? "curve", start: pts[0], end: pts[pts.length - 1], mid,
-        dir: cls.dir, center: cls.center, axis: cls.axis, radius: cls.radius, sweep: cls.sweep,
-      });
+      const edge = makeEdge(edges.length, chain.map(w => weldPos[w]), [fa, fb], closed, tol);
+      if (!edge) continue;
+      const pts = chain.map(w => weldPos[w]);
+      const id = edge.id;
+      edges.push(edge);
       faces[fa]?.edges.push(id);
       if (fb >= 0) faces[fb]?.edges.push(id);
       for (let i = 1; i < pts.length; i++) segOut.push(...pts[i - 1], ...pts[i]);
@@ -421,7 +427,7 @@ export function analyzeMesh(m: OcctMesh): PartData {
 }
 
 /** Chains undirected segments into polylines, breaking at junctions and sharp corners. */
-function chainSegments(segs: [number, number][], pos: V3[]): number[][] {
+export function chainSegments(segs: [number, number][], pos: V3[]): number[][] {
   const adj = new Map<number, number[]>();
   for (const [a, b] of segs) {
     (adj.get(a) ?? adj.set(a, []).get(a)!).push(b);

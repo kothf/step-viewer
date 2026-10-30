@@ -214,7 +214,7 @@ export class Viewer {
         polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
       });
       const mesh = new THREE.Mesh(geom, material as THREE.Material);
-      mesh.renderOrder = 10;
+      mesh.renderOrder = 1000; // after section caps (Section.ts)
       mesh.userData.partIdx = idx;
 
       const eg = new LineSegmentsGeometry();
@@ -222,7 +222,7 @@ export class Viewer {
       const edgeMaterial = new LineMaterial({ color: this.edgeColor.getHex(), linewidth: 1.3, worldUnits: false });
       edgeMaterial.resolution.set(this.size.x, this.size.y);
       const edges = new LineSegments2(eg, edgeMaterial);
-      edges.renderOrder = 11;
+      edges.renderOrder = 1001;
       edges.visible = data.edgeSegs.length > 0;
       edges.raycast = () => {};
 

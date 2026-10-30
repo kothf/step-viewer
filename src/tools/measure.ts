@@ -52,15 +52,17 @@ const newId = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 export function entityFromSnap(s: Snap): Entity {
   if (s.kind === "vertex") return { kind: "point", point: s.point, part: s.part, edge: s.edge };
+  if (s.kind === "onCap") return { kind: "point", point: s.point, part: s.part, normal: s.normal };
   if (s.kind === "onFace" || s.kind === "faceCenter") return { kind: "face", point: s.point, part: s.part, face: s.face, normal: s.normal };
   return { kind: "edge", point: s.point, part: s.part, edge: s.edge };
 }
 
 export function describeEntity(e: Entity) {
-  if (e.kind === "point") return "Vertex";
+  if (e.kind === "point") return e.normal ? "Section point" : "Vertex";
   if (e.kind === "edge") {
     const ed = e.edge!;
-    return ed.type === "line" ? "Line edge" : ed.type === "circle" ? `Circle R${fmtLen(ed.radius!)}` : ed.type === "arc" ? `Arc R${fmtLen(ed.radius!)}` : "Curve edge";
+    const what = ed.type === "line" ? "Line edge" : ed.type === "circle" ? `Circle R${fmtLen(ed.radius!)}` : ed.type === "arc" ? `Arc R${fmtLen(ed.radius!)}` : "Curve edge";
+    return ed.id < 0 ? `Section ${what.toLowerCase()}` : what;
   }
   const f = e.face!;
   return f.type === "plane" ? "Planar face" : f.type === "cylinder" ? `Cylinder R${fmtLen(f.radius!)}` : f.type === "sphere" ? `Sphere R${fmtLen(f.radius!)}` : "Freeform face";

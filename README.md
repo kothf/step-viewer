@@ -16,7 +16,8 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
   - point coordinates and surface normal, bounding box
   - colour-coded, pinned per file in the browser, exported as CSV or a PDF inspection report
 - **Contextual toolbar**: click a hole edge and get Radius / Diameter / Centre to…; click a planar face and get Distance to… / Angle to… / Section here.
-- **Sections**: X, Y, Z, from a face or from the view; several at once; solid caps (stencil buffer); slider plus numeric offset; flip.
+- **Sections**: up to 3 planes: XY / YZ / XZ, on a face, through 3 points or facing the view. Solid caps (stencil buffer) with ANSI31 hatching or per-part colours; a gizmo to drag and tilt the plane; numeric offset, step, azimuth/elevation; flip.
+- **Measuring on the cut**: the cut profile is computed and drawn; snap to its curves, vertices, midpoints and circle centres (exact for cylinders cut square-on), or to the cap face. "Snap to cut only" keeps snapping in the section plane. Cut area per plane.
 - **Exploded view** following the assembly hierarchy, plus dragging single parts.
 - **Mass properties**: volume, mass (material presets or custom density), surface area, centre of mass, bounding box.
 - **Analysis**: draft angle against a pull direction; wall thickness by ray casting.

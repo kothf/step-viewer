@@ -138,6 +138,11 @@ details > :last-child { margin-bottom: 12px; }
 .sp .ctl { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .sp .ctl input[type="range"] { flex: 1; min-width: 0; }
 .sp .ctl input[type="number"] { width: 84px; }
+.sp .ctl.angles input[type="number"] { width: 64px; }
+.sp .ctl .lbl { color: var(--muted); font-size: 11px; }
+.sp .stat { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+.sp.active { border-color: var(--accent); }
+.btn.tiny { padding: 1px 6px; font-size: 11px; }
 .legend { display: flex; gap: 10px; font-size: 11px; margin: 4px 0; }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: -1px; }
 .legend.gradient { align-items: center; }
@@ -182,6 +187,7 @@ details > :last-child { margin-bottom: 12px; }
 .snap-marker[data-kind="circleCenter"], .snap-marker[data-kind="faceCenter"] { border-radius: 50%; }
 .snap-marker[data-kind="circleCenter"]::after, .snap-marker[data-kind="faceCenter"]::after { content: "+"; position: absolute; inset: -4px 0 0; text-align: center; color: #f59f00; font: 700 14px/18px system-ui; }
 .snap-marker[data-kind="onEdge"] { width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #f59f00; border-color: #fff; }
+.snap-marker[data-kind="onCap"] { width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; border-color: #d4553f; background: #d4553f55; }
 .snap-marker[data-kind="onFace"] { width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; border-color: #2f6fed; background: #2f6fed55; }
 .snap-tag { position: absolute; left: 12px; top: 10px; font: 600 10px system-ui; color: #b06f00; background: #fff8e6; border-radius: 3px; padding: 0 3px; white-space: nowrap; }
 .tool-hint {

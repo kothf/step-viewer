@@ -79,10 +79,48 @@ try {
   check(near(m.bbox, Math.sqrt(300), 1e-6), `bounding box diagonal √300 (${m.bbox})`);
   check(/Mass\s*7\.850 g/.test(cube.mass), "steel cube mass 7.850 g");
 
-  // --- section with caps renders without errors ---
+  // --- section: caps, profile curves, cut area, snapping and measuring on the cut ---
   await page.$eval('[data-sec="z"]', el => el.click());
-  const sec = await page.evaluate(() => ({ planes: window.__sv.viewer.clipPlanes.length, items: document.querySelectorAll("#sec-list .sp").length }));
-  check(sec.planes === 1 && sec.items === 1, "Z section plane added");
+  await page.waitForTimeout(200);
+  const sec = await page.evaluate(() => {
+    const { viewer, section, state, handlePick, setTool } = window.__sv;
+    const V3 = viewer.camera.position.constructor;
+    const sp = section.planes[0];
+    const area = sp.result.area;
+    const edges = section.profiles().flatMap(p => p.edges);
+    const part = viewer.parts[0];
+    const lines = edges.filter(e => e.type === "line");
+    // Opposite sides of the 10×10 square cut.
+    const a = lines[0], b = lines.find(e => Math.abs(e.dir[0] * a.dir[0] + e.dir[1] * a.dir[1] + e.dir[2] * a.dir[2]) > 0.99 && e !== a);
+    state.measurements = [];
+    setTool("minDistance");
+    handlePick({ kind: "onEdge", point: new V3(...a.mid), part, edge: a, section: true, px: 0 });
+    handlePick({ kind: "onEdge", point: new V3(...b.mid), part, edge: b, section: true, px: 0 });
+    setTool("select");
+    // A second and third plane, then a fourth must be refused.
+    document.querySelector('[data-sec="x"]').click();
+    document.querySelector('[data-sec="y"]').click();
+    const fourth = section.add("extra", new V3(1, 1, 0), 0);
+    return {
+      planes: viewer.clipPlanes.length, area, quarter: sp.result.area, curves: edges.length, lines: lines.length,
+      gap: state.measurements[0]?.value, fourth: fourth === null,
+    };
+  });
+  check(near(sec.area, 100, 1e-6), `Z cut of the cube has area 100 mm² (${sec.area})`);
+  check(near(sec.quarter, 25, 1e-6), `with X and Y planes too the Z cut is a quarter (${sec.quarter})`);
+  check(sec.curves === 4 && sec.lines === 4, `cut profile is 4 straight curves (${sec.lines}/${sec.curves})`);
+  check(near(sec.gap, 10, 1e-6), `distance across the cut 10 mm (${sec.gap})`);
+  check(sec.planes === 3 && sec.fourth, `three planes at most (${sec.planes} active, fourth refused: ${sec.fourth})`);
+
+  // 3-point plane
+  const p3 = await page.evaluate(() => {
+    const { section } = window.__sv;
+    const V3 = window.__sv.viewer.camera.position.constructor;
+    section.clear();
+    const sp = section.addFromPoints([new V3(0, 0, 4), new V3(10, 0, 4), new V3(0, 10, 4)]);
+    return { axisZ: Math.abs(sp.axis.z), offset: Math.abs(sp.offset) };
+  });
+  check(near(p3.axisZ, 1, 1e-9) && near(p3.offset, 4, 1e-9), `3-point plane z=4 (|nz| ${p3.axisZ}, |offset| ${p3.offset})`);
 
   // --- CAX-IF as1 assembly: tree, circles and holes ---
   await open("cax-if/as1-oc-214.stp");

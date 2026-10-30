@@ -2,7 +2,10 @@ import * as THREE from "three";
 import type { Part, Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, FaceInfo } from "../topology";
 
-export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "faceCenter" | "onEdge" | "onFace";
+/** Cut curves supplied by the section manager (part-local coordinates). */
+export type SectionSource = () => { part: Part; edges: EdgeInfo[] }[];
+
+export type SnapKind = "vertex" | "circleCenter" | "midpoint" | "faceCenter" | "onEdge" | "onFace" | "onCap";
 
 export interface Snap {
   kind: SnapKind;
@@ -12,12 +15,18 @@ export interface Snap {
   edge?: EdgeInfo;
   /** World normal at the picked surface point (onFace / faceCenter). */
   normal?: THREE.Vector3;
+  /** Feature of a section profile rather than of the model. */
+  section?: boolean;
   px: number;
 }
 
-const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 1, midpoint: 2, faceCenter: 3, onEdge: 4, onFace: 5 };
+const PRIORITY: Record<SnapKind, number> = { vertex: 0, circleCenter: 1, midpoint: 2, faceCenter: 3, onEdge: 4, onFace: 5, onCap: 5 };
 
-export const SNAP_FILTERS = { vertex: true, midpoint: true, center: true, edge: true };
+export const SNAP_FILTERS = {
+  vertex: true, midpoint: true, center: true, edge: true,
+  /** With a section active: snap only to the cut (profiles and cap faces), not to the 3D model. */
+  planeOnly: false,
+};
 
 /**
  * Two stages: a BVH raycast finds the face under the cursor, then the snap
@@ -29,6 +38,8 @@ export class Snapper {
   private current: Snap | null = null;
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
+
+  sectionSource: SectionSource | null = null;
 
   constructor(private viewer: Viewer) {}
 
@@ -51,20 +62,20 @@ export class Snapper {
 
     const consider = (kind: SnapKind, world: THREE.Vector3, part: Part, extra: Partial<Snap>) => {
       if (!this.toScreen(world, scr)) return;
-      if (v.clipPlanes.some(pl => pl.distanceToPoint(world) < -1e-6)) return;
+      if (v.clipPlanes.some(pl => pl.distanceToPoint(world) < -1e-6 * v.modelSize)) return;
       const px = scr.distanceTo(cursor);
       if (px > R) return;
       const s: Snap = { kind, point: world.clone(), part, px, ...extra };
       if (!best || score(s) < score(best)) best = s;
     };
 
-    const edgeCandidates = (part: Part, e: EdgeInfo) => {
+    const edgeCandidates = (part: Part, e: EdgeInfo, section = false) => {
       if (SNAP_FILTERS.vertex) {
-        consider("vertex", v.toWorld(part, e.start), part, { edge: e });
-        if (!e.closed) consider("vertex", v.toWorld(part, e.end), part, { edge: e });
+        consider("vertex", v.toWorld(part, e.start), part, { edge: e, section });
+        if (!e.closed) consider("vertex", v.toWorld(part, e.end), part, { edge: e, section });
       }
-      if (SNAP_FILTERS.midpoint && !e.closed) consider("midpoint", v.toWorld(part, e.mid), part, { edge: e });
-      if (SNAP_FILTERS.center && e.center) consider("circleCenter", v.toWorld(part, e.center), part, { edge: e });
+      if (SNAP_FILTERS.midpoint && !e.closed) consider("midpoint", v.toWorld(part, e.mid), part, { edge: e, section });
+      if (SNAP_FILTERS.center && e.center) consider("circleCenter", v.toWorld(part, e.center), part, { edge: e, section });
       if (SNAP_FILTERS.edge) {
         let bestD = Infinity;
         const out = new THREE.Vector3();
@@ -76,25 +87,36 @@ export class Snapper {
           const d = ray.distanceSqToSegment(this.tmpA, this.tmpB, undefined, seg);
           if (d < bestD) { bestD = d; out.copy(seg); }
         }
-        if (bestD < Infinity) consider("onEdge", out, part, { edge: e });
+        if (bestD < Infinity) consider("onEdge", out, part, { edge: e, section });
       }
     };
 
-    if (hit) {
+    const profiles = this.sectionSource?.() ?? [];
+    const restricted = SNAP_FILTERS.planeOnly && profiles.length > 0;
+    for (const pr of profiles) for (const e of pr.edges) edgeCandidates(pr.part, e, true);
+    const cap = this.capPoint(ray, hit);
+    if (cap) {
+      const s: Snap = { kind: "onCap", point: cap.point, part: cap.part, normal: cap.normal, section: true, px: 0 };
+      if (!best || score(s) < score(best)) best = s;
+    }
+
+    if (restricted) {
+      // Cut features only.
+    } else if (hit) {
       const part = v.partOf(hit.object);
       const face = part.data.faces[part.triFace[hit.faceIndex!]];
       for (const eid of face.edges) edgeCandidates(part, part.data.edges[eid]);
       if (SNAP_FILTERS.center) consider("faceCenter", v.toWorld(part, face.center), part, { face, normal: this.faceNormal(part, face, hit) });
       const n = this.faceNormal(part, face, hit);
       const onFace: Snap = { kind: "onFace", point: hit.point.clone(), part, face, normal: n, px: 0 };
-      if (!best || score(onFace) < score(best)) best = onFace;
+      if (!cap && (!best || score(onFace) < score(best))) best = onFace;
     } else if (v.mode === "wireframe" || v.mode === "hlr") {
       // No face under the cursor: test edges of every visible part.
       for (const part of v.parts) if (part.visible) for (const e of part.data.edges) edgeCandidates(part, e);
     }
 
     // Circle centres anywhere on screen (holes): cheap projection of all of them.
-    if (SNAP_FILTERS.center) {
+    if (SNAP_FILTERS.center && !restricted) {
       let budget = 30000;
       for (const part of v.parts) {
         if (!part.visible) continue;
@@ -106,6 +128,27 @@ export class Snapper {
     }
 
     return (this.current = this.hysteresis(best, cursor));
+  }
+
+  /**
+   * Where the ray meets a section cap: the nearest enabled plane point that is
+   * kept by the other planes and lies inside material (the first model hit
+   * beyond it is a back face, i.e. the ray is travelling inside a solid).
+   */
+  private capPoint(ray: THREE.Ray, hit: THREE.Intersection | null) {
+    const v = this.viewer;
+    if (!hit || !hit.face || !v.clipPlanes.length) return null;
+    const hitNormal = hit.face.normal;
+    if (hitNormal.dot(ray.direction) <= 0) return null;
+    let best: { point: THREE.Vector3; part: Part; normal: THREE.Vector3; t: number } | null = null;
+    for (const pl of v.clipPlanes) {
+      const t = ray.distanceToPlane(pl);
+      if (t === null || t >= hit.distance) continue;
+      const point = ray.at(t, new THREE.Vector3());
+      if (v.clipPlanes.some(o => o !== pl && o.distanceToPoint(point) < 0)) continue;
+      if (!best || t < best.t) best = { point, part: v.partOf(hit.object), normal: pl.normal.clone().negate(), t };
+    }
+    return best;
   }
 
   private faceNormal(part: Part, face: FaceInfo, hit: THREE.Intersection) {

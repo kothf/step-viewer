@@ -6,7 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
-import { SectionManager, type SectionPlane } from "./viewer/Section";
+import { SectionManager } from "./viewer/Section";
 import { Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
@@ -17,7 +17,7 @@ import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnaly
 import { exportMesh, inspectionReport, measurementsCsv, snapshot, download } from "./tools/exporters";
 import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
-import type { PartData, TreeNode } from "./topology";
+import type { EdgeInfo, PartData, TreeNode } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -41,7 +41,8 @@ new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
 applyThemeToViewer();
 
 // ---------- state ----------
-type Tool = MeasureType | "select";
+/** "plane3" picks three points for a section plane. */
+type Tool = MeasureType | "select" | "plane3";
 const state = {
   fileName: "",
   fileKey: "",
@@ -66,7 +67,7 @@ const hl = {
   pickMarks: new THREE.Group(),
   com: new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshBasicMaterial({ color: 0xe03131, depthTest: false })),
 };
-hl.com.renderOrder = 999;
+hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
 
@@ -75,13 +76,13 @@ function overlayFace(color: number, opacity: number) {
     color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   }));
-  m.visible = false; m.renderOrder = 20; m.raycast = () => {};
+  m.visible = false; m.renderOrder = 1010; m.raycast = () => {};
   return m;
 }
 function overlayEdge(color: number, width: number) {
   const mat = new LineMaterial({ color, linewidth: width, depthTest: false, transparent: true });
   const l = new LineSegments2(new LineSegmentsGeometry(), mat);
-  l.visible = false; l.renderOrder = 21; l.raycast = () => {};
+  l.visible = false; l.renderOrder = 1011; l.raycast = () => {};
   return l;
 }
 function showFace(o: THREE.Mesh, part: Part | null, faceId?: number) {
@@ -96,9 +97,9 @@ function showFace(o: THREE.Mesh, part: Part | null, faceId?: number) {
   (o.material as THREE.Material).clippingPlanes = viewer.clipPlanes;
   o.visible = true;
 }
-function showEdge(o: LineSegments2, part: Part | null, edgeId?: number) {
-  if (!part || edgeId === undefined) { o.visible = false; return; }
-  const pts = part.data.edges[edgeId].pts, seg: number[] = [];
+function showEdge(o: LineSegments2, part: Part | null, edge?: EdgeInfo) {
+  if (!part || !edge) { o.visible = false; return; }
+  const pts = edge.pts, seg: number[] = [];
   for (let i = 3; i < pts.length; i += 3) seg.push(pts[i - 3], pts[i - 2], pts[i - 1], pts[i], pts[i + 1], pts[i + 2]);
   o.geometry.dispose();
   o.geometry = new LineSegmentsGeometry().setPositions(seg);
@@ -106,10 +107,10 @@ function showEdge(o: LineSegments2, part: Part | null, edgeId?: number) {
   (o.material as LineMaterial).resolution.copy(viewer.size);
   o.visible = true;
 }
-function showEntity(face: THREE.Mesh, edge: LineSegments2, e: { part: Part; face?: { id: number }; edge?: { id: number }; kind?: string } | null) {
+function showEntity(face: THREE.Mesh, edge: LineSegments2, e: { part: Part; face?: { id: number }; edge?: EdgeInfo; kind?: string } | null) {
   const isEdge = !!e && (e.kind === "edge" || (!e.kind && !!e.edge && !e.face));
   showFace(face, e && !isEdge && e.face ? e.part : null, e?.face?.id);
-  showEdge(edge, e && isEdge ? e.part : null, e?.edge?.id);
+  showEdge(edge, e && isEdge ? e.part : null, e?.edge);
   viewer.invalidate();
 }
 
@@ -482,13 +483,14 @@ function setTool(t: Tool) {
 function updateHint() {
   const h = $("#tool-hint");
   if (state.tool === "select") { h.hidden = true; return; }
-  const info = TOOL_INFO[state.tool];
+  const info = state.tool === "plane3" ? PLANE3_INFO : TOOL_INFO[state.tool];
   const n = state.picks.length;
   h.hidden = false;
   h.innerHTML = `<b>${info.title}</b> · ${info.hint} · pick ${n + 1}/${info.picks} · <span class="muted">Esc to cancel</span>`;
 }
 
 $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool as Tool)));
+const PLANE3_INFO = { title: "Section plane", picks: 3, hint: "Pick three points on the plane" };
 
 const PALETTE = ["#e8590c", "#2f9e44", "#1c7ed6", "#ae3ec9", "#f08c00", "#0ca678", "#e03131", "#5f3dc4"];
 let colorIdx = 0;
@@ -511,7 +513,7 @@ function addMeasurement(m: Measurement) {
 function pickMark(p: THREE.Vector3) {
   const m = new THREE.Mesh(new THREE.SphereGeometry(viewer.modelSize * 0.004, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf59f00, depthTest: false }));
   m.position.copy(p);
-  m.renderOrder = 998;
+  m.renderOrder = 2000;
   hl.pickMarks.add(m);
 }
 
@@ -537,6 +539,16 @@ function handlePick(snap: Snap | null) {
     return;
   }
   if (!snap) return;
+  if (state.tool === "plane3") {
+    state.picks.push(entityFromSnap(snap));
+    pickMark(snap.point);
+    if (state.picks.length < 3) { updateHint(); viewer.invalidate(); return; }
+    const sp = section.addFromPoints(state.picks.map(p => p.point));
+    if (!sp) toast("The three points are in line; pick points that span a plane", true);
+    setTool("select");
+    renderSections();
+    return;
+  }
   const info = TOOL_INFO[state.tool];
   const ent = entityFromSnap(snap);
   const needsPoint = state.tool === "distance" || state.tool === "angle3" || state.tool === "point";
@@ -638,9 +650,10 @@ function hover() {
   marker.hidden = false;
   marker.dataset.kind = snap.kind;
   marker.style.transform = `translate(${((scr.x + 1) / 2) * viewer.size.x}px, ${((1 - scr.y) / 2) * viewer.size.y}px)`;
-  const labels: Record<string, string> = { vertex: "Vertex", midpoint: "Midpoint", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
-  marker.innerHTML = snap.kind === "onFace" ? "" : `<span class="snap-tag">${labels[snap.kind]}</span>`;
-  $("#st-snap").textContent = labels[snap.kind];
+  const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
+  const tag = (snap.section && snap.kind !== "onCap" ? "Cut " : "") + labels[snap.kind];
+  marker.innerHTML = snap.kind === "onFace" ? "" : `<span class="snap-tag">${tag}</span>`;
+  $("#st-snap").textContent = tag;
   $("#st-coord").textContent = fmtVec(snap.point) + (snap.normal ? `   n ${fmtVec(snap.normal, false)}` : "");
   const ent = entityFromSnap(snap);
   showEntity(hl.hoverFace, hl.hoverEdge, ent.kind === "point" ? null : ent);
@@ -719,6 +732,7 @@ function setProjection(p: "perspective" | "orthographic") {
   viewer.setProjection(p);
   $$("#projection button").forEach(b => b.classList.toggle("on", b.dataset.proj === p));
   if (dragControls) dragControls.camera = viewer.camera;
+  section.updateCamera();
 }
 $$("#projection button").forEach(b => b.addEventListener("click", () => setProjection(b.dataset.proj as "perspective")));
 const VIEWS: Record<string, THREE.Vector3> = {
@@ -759,16 +773,24 @@ $$<HTMLInputElement>("[data-snap]").forEach(c => c.addEventListener("change", ()
 }));
 
 // ---------- section ----------
+snapper.sectionSource = () => section.profiles();
+section.onDragging = on => { dragging = on; };
+section.onChange = () => updateSectionReadouts();
+
 function addSection(kind: string) {
   if (!viewer.parts.length) return;
+  if (!section.canAdd) { toast("Up to 3 section planes", true); return; }
   const c = viewer.computeBounds().getCenter(new THREE.Vector3());
   let axis: THREE.Vector3, label: string;
   if (kind === "x" || kind === "y" || kind === "z") {
     axis = new THREE.Vector3(kind === "x" ? 1 : 0, kind === "y" ? 1 : 0, kind === "z" ? 1 : 0);
-    label = kind.toUpperCase();
+    label = { x: "YZ", y: "XZ", z: "XY" }[kind];
   } else if (kind === "view") {
     axis = viewer.camera.getWorldDirection(new THREE.Vector3()).negate();
     label = "View";
+  } else if (kind === "3pt") {
+    setTool("plane3");
+    return;
   } else {
     const e = state.selection;
     if (!e || e.kind !== "face" || e.face?.type !== "plane") { toast("Select a planar face first", true); return; }
@@ -779,6 +801,7 @@ function addSection(kind: string) {
   renderSections();
 }
 function addSectionFromFace(e: Entity) {
+  if (!section.canAdd) { toast("Up to 3 section planes", true); return null; }
   const n = new THREE.Vector3(...e.face!.normal!);
   const p = viewer.toWorld(e.part, e.face!.centroid);
   const sp = section.add("Face", n, p.dot(n) - viewer.modelSize * 1e-4);
@@ -787,39 +810,101 @@ function addSectionFromFace(e: Entity) {
 }
 $$("[data-sec]").forEach(b => b.addEventListener("click", () => addSection(b.dataset.sec!)));
 $("#sec-clear").addEventListener("click", () => { section.clear(); renderSections(); });
-$<HTMLInputElement>("#caps").addEventListener("change", e => section.setCaps((e.target as HTMLInputElement).checked));
+const onChk = (id: string, fn: (on: boolean) => void) => $<HTMLInputElement>(id).addEventListener("change", e => fn((e.target as HTMLInputElement).checked));
+onChk("#caps", on => section.setCaps(on));
+onChk("#hatch", on => section.setHatch(on));
+onChk("#caps-part", on => section.setCapsByPart(on));
+onChk("#profiles", on => section.setProfiles(on));
+onChk("#snap-plane", on => { SNAP_FILTERS.planeOnly = on; });
 $<HTMLInputElement>("#cap-color").addEventListener("input", e => section.setCapColor((e.target as HTMLInputElement).value));
+$<HTMLInputElement>("#profile-color").addEventListener("input", e => section.setProfileColor((e.target as HTMLInputElement).value));
+
+const unitFactor = () => ({ mm: 1, cm: 10, m: 1000, in: 25.4 })[units.current];
 
 function renderSections() {
   const host = $("#sec-list");
-  host.innerHTML = "";
-  const f = { mm: 1, cm: 10, m: 1000, in: 25.4 }[units.current];
+  host.innerHTML = section.planes.length ? "" : `<p class="muted" style="margin:4px 0">Up to 3 planes. The cut curves are drawn and can be snapped to for measuring.</p>`;
+  $$<HTMLButtonElement>("#sec-add button").forEach(b => (b.disabled = !section.canAdd));
+  const f = unitFactor();
   for (const sp of section.planes) {
     const [lo, hi] = section.range(sp);
+    const ang = section.angles(sp);
     const el = document.createElement("div");
-    el.className = "sp";
-    const n = sp.axis;
-    el.innerHTML = `<div class="hd"><input type="checkbox" ${sp.enabled ? "checked" : ""} title="Enable"><span>${esc(sp.label)} plane</span>
-      <span class="muted mono" style="font-size:10.5px">n(${n.x.toFixed(2)}, ${n.y.toFixed(2)}, ${n.z.toFixed(2)})</span><span class="spacer"></span>
-      <button class="btn small" data-a="flip" title="Flip side">⇅</button><button class="btn small" data-a="del" title="Remove">✕</button></div>
-      <div class="ctl"><input type="range" min="${lo}" max="${hi}" step="${(hi - lo) / 1000 || 0.001}" value="${sp.offset}">
-      <input type="number" step="any" value="${(sp.offset / f).toFixed(4)}" title="Offset (${units.current})"></div>`;
-    const [chk, range, num] = el.querySelectorAll("input") as unknown as HTMLInputElement[];
+    el.className = "sp" + (section.active === sp ? " active" : "");
+    el.dataset.id = sp.id;
+    const g = section.active === sp ? section.gizmoMode : null;
+    el.innerHTML = `<div class="hd"><input type="checkbox" ${sp.enabled ? "checked" : ""} title="Enable"><span>${esc(sp.label)}</span>
+      <span class="spacer"></span>
+      <button class="btn tiny ${g === "translate" ? "on" : ""}" data-a="move" title="Move gizmo (drag the arrow)">↕</button>
+      <button class="btn tiny ${g === "rotate" ? "on" : ""}" data-a="rot" title="Rotate gizmo (drag the rings)">⟳</button>
+      <button class="btn tiny" data-a="flip" title="Flip the kept side">⇅</button>
+      <button class="btn tiny" data-a="del" title="Remove">✕</button></div>
+      <div class="ctl"><input type="range" data-k="range" min="${lo}" max="${hi}" step="${(hi - lo) / 1000 || 0.001}" value="${sp.offset}">
+      <input type="number" data-k="off" step="any" value="${(sp.offset / f).toFixed(4)}" title="Offset along the normal (${units.current})"></div>
+      <div class="ctl"><span class="lbl">Step</span><input type="number" data-k="step" step="any" min="0" value="${(Math.max((hi - lo) / 100, 1e-6) / f).toPrecision(3)}" title="Step (${units.current})">
+      <button class="btn tiny" data-a="minus">−</button><button class="btn tiny" data-a="plus">+</button></div>
+      <div class="ctl angles"><span class="lbl">Az</span><input type="number" data-k="az" step="1" value="${ang.az.toFixed(2)}" title="Normal azimuth from +X about Z (°)">
+      <span class="lbl">El</span><input type="number" data-k="el" step="1" value="${ang.el.toFixed(2)}" title="Normal elevation from the XY plane (°)"></div>
+      <div class="stat" data-k="stat"></div>`;
+    const q = <T extends HTMLElement>(sel: string) => el.querySelector(sel) as T;
+    const chk = q<HTMLInputElement>('input[type="checkbox"]'), range = q<HTMLInputElement>('[data-k="range"]'), num = q<HTMLInputElement>('[data-k="off"]');
+    const step = q<HTMLInputElement>('[data-k="step"]'), az = q<HTMLInputElement>('[data-k="az"]'), elv = q<HTMLInputElement>('[data-k="el"]');
     chk.addEventListener("change", () => { section.setEnabled(sp, chk.checked); updateSectionDeps(); });
     range.addEventListener("input", () => { section.setOffset(sp, parseFloat(range.value)); num.value = (sp.offset / f).toFixed(4); });
     num.addEventListener("change", () => { const v = parseFloat(num.value) * f; if (isFinite(v)) { section.setOffset(sp, v); range.value = String(v); } });
-    el.querySelector('[data-a="flip"]')!.addEventListener("click", () => section.flip(sp));
-    el.querySelector('[data-a="del"]')!.addEventListener("click", () => { section.remove(sp); renderSections(); });
+    const nudge = (k: number) => {
+      const d = (parseFloat(step.value) || 0) * f * k;
+      section.setOffset(sp, sp.offset + d);
+      num.value = (sp.offset / f).toFixed(4); range.value = String(sp.offset);
+    };
+    q('[data-a="minus"]').addEventListener("click", () => nudge(-1));
+    q('[data-a="plus"]').addEventListener("click", () => nudge(1));
+    const angChange = () => { const a = parseFloat(az.value), e = parseFloat(elv.value); if (isFinite(a) && isFinite(e)) { section.setAngles(sp, a, e); renderSections(); } };
+    az.addEventListener("change", angChange);
+    elv.addEventListener("change", angChange);
+    q('[data-a="move"]').addEventListener("click", () => { section.setGizmo(sp, "translate"); renderSections(); });
+    q('[data-a="rot"]').addEventListener("click", () => { section.setGizmo(sp, "rotate"); renderSections(); });
+    q('[data-a="flip"]').addEventListener("click", () => section.flip(sp));
+    q('[data-a="del"]').addEventListener("click", () => { section.remove(sp); renderSections(); });
     host.appendChild(el);
   }
+  updateSectionReadouts();
   updateSectionDeps();
+}
+
+/** Refreshes numbers in the plane cards in place (gizmo drags, profile updates) without rebuilding them. */
+function updateSectionReadouts() {
+  const f = unitFactor();
+  for (const sp of section.planes) {
+    const el = document.querySelector<HTMLElement>(`#sec-list .sp[data-id="${sp.id}"]`);
+    if (!el) continue;
+    const set = (k: string, val: string) => {
+      const i = el.querySelector<HTMLInputElement>(`[data-k="${k}"]`);
+      if (i && document.activeElement !== i) i.value = val;
+    };
+    const ang = section.angles(sp);
+    set("off", (sp.offset / f).toFixed(4));
+    set("az", ang.az.toFixed(2));
+    set("el", ang.el.toFixed(2));
+    if (section.active === sp) {
+      const [lo, hi] = section.range(sp);
+      const r = el.querySelector<HTMLInputElement>('[data-k="range"]')!;
+      r.min = String(lo); r.max = String(hi);
+      if (document.activeElement !== r) r.value = String(sp.offset);
+    }
+    const stat = el.querySelector<HTMLElement>('[data-k="stat"]')!;
+    const res = sp.result;
+    if (!sp.enabled || !res) { stat.textContent = ""; continue; }
+    const curves = res.profiles.reduce((a, p) => a + p.edges.length, 0);
+    const circles = res.profiles.reduce((a, p) => a + p.edges.filter(e => e.type === "circle").length, 0);
+    stat.textContent = `Cut area ${fmtArea(res.area)} · ${res.profiles.length} part(s) · ${curves} curves${circles ? ` · ${circles} circles` : ""}`;
+  }
 }
 function updateSectionDeps() {
   // Overlays follow the same clipping.
   for (const o of [hl.hoverFace, hl.selFace]) (o.material as THREE.Material).clippingPlanes = viewer.clipPlanes;
   viewer.invalidate();
 }
-void (null as SectionPlane | null);
 
 // ---------- explode & manual drag ----------
 $<HTMLInputElement>("#explode").addEventListener("input", e => {
@@ -1010,6 +1095,7 @@ window.addEventListener("keydown", e => {
     if (state.tool !== "select") setTool("select");
     else { handlePick(null); state.selectedMeasurement = null; refreshMeasurements(); }
     stopDrag();
+    if (section.active) { section.setGizmo(null, null); renderSections(); }
     return;
   }
   if (!viewer.parts.length) return;
