@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-30
+
 ### Added
 - Smart measure covers the full single and two-entity matrix:
   - Straight edge: midpoint alongside length, direction and ΔX/ΔY/ΔZ. Arc: the normal of its plane.
@@ -67,7 +69,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kothf/step-viewer/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kothf/step-viewer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kothf/step-viewer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kothf/step-viewer/releases/tag/v1.0.0

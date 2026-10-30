@@ -1,6 +1,6 @@
 {
   "name": "step-viewer",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Browser STEP/IGES viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties, draft and wall-thickness analysis.",
   "scripts": {
     "predev": "node scripts/copy-occt.mjs",
