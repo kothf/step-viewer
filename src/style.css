@@ -187,6 +187,8 @@ details > :last-child { margin-bottom: 12px; }
 .readout .ttl { color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 10px; }
 .readout .val { font: 650 16px var(--mono); margin: 1px 0 3px; }
 .readout .det { font: 11px var(--mono); color: var(--muted); display: grid; gap: 1px; max-height: 30vh; overflow: auto; overflow-wrap: anywhere; }
+.readout .modes { display: flex; margin: 2px 0 5px; font-size: 11px; }
+.readout .modes button { padding: 3px 7px; }
 .readout .acts { display: flex; gap: 4px; margin-top: 6px; }
 .readout .acts:empty { display: none; }
 .readout button.x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 13px; line-height: 1; }

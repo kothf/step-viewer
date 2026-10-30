@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Smart measure covers the full single and two-entity matrix:
+  - Straight edge: midpoint alongside length, direction and ΔX/ΔY/ΔZ. Arc: the normal of its plane.
+  - Planar face: perimeter (all loops). Cylinder: length along the axis and a point on the axis.
+  - Freeform face: smallest and largest radius of curvature, estimated from the tessellation.
+  - Whole part ("⬚ Whole part" in the readout): bounding box, volume, surface area and centre of gravity.
+  - Point to straight edge or plane: perpendicular distance to the infinite line or plane, with the foot point and whether it lies on the edge or its extension.
+  - Parallel edges: alignment offset. Non-parallel straight edges: intersection point, real or on the extension, or the skew distance between the lines. Non-parallel planes: direction of the intersection line and a point on it.
+  - Two round features: minimum edge-to-edge and maximum outer span next to centre to centre, with a Centre to centre / Minimum / Maximum switch in the readout that redraws the dimension, and the axis relation (parallel, concentric, perpendicular, skewed).
+
 ## [1.2.0] - 2026-10-30
 
 ### Added

@@ -10,7 +10,8 @@ import { SectionManager } from "./viewer/Section";
 import { Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
-  describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartMeasure, TOOL_INFO,
+  CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO,
+  type CircleMode,
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
 import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnalysis } from "./tools/analysis";
@@ -60,6 +61,10 @@ const state = {
   live: null as Measurement | null,
   /** The live result is between two entities, so the next click starts over. */
   livePair: false,
+  /** Entities behind the live result, so a mode switch can measure them again. */
+  livePicks: [] as Entity[],
+  /** Two round features: centre to centre, nearest or farthest rims. Kept between picks. */
+  circleMode: "center" as CircleMode,
 };
 annotations.lookup = id => (state.live?.id === id ? state.live : state.measurements.find(m => m.id === id));
 
@@ -598,9 +603,11 @@ function sameEntity(a: Entity, b: Entity) {
 /** Measures one entity (its size) or two (the relation between them) and shows it until the next click. */
 function showLive(picks: Entity[]) {
   try {
-    state.live = smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value);
+    state.live = smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value, { circleMode: state.circleMode });
+    state.livePicks = picks;
   } catch (err) {
     state.live = null;
+    state.livePicks = [];
     toast(`Measurement failed: ${(err as Error).message}`, true);
   }
   state.livePair = picks.length === 2;
@@ -614,8 +621,27 @@ function clearLive() {
   if (!state.live && !state.livePair) return;
   state.live = null;
   state.livePair = false;
+  state.livePicks = [];
   hl.pickMarks.clear();
   refreshMeasurements();
+}
+
+/** Bounding box, volume, area and centre of gravity of the part the live entity belongs to. */
+function showBody(part: Part) {
+  state.live = smartBody(viewer, part, $<HTMLInputElement>("#m-color").value);
+  state.livePicks = [];
+  state.livePair = true;
+  state.selection = null;
+  hl.pickMarks.clear();
+  showEntity(hl.selFace, hl.selEdge, null);
+  refreshMeasurements();
+  updateHint();
+  viewer.invalidate();
+}
+
+function setCircleMode(mode: CircleMode) {
+  state.circleMode = mode;
+  if (state.livePicks.length === 2) showLive(state.livePicks);
 }
 
 function pinLive() {
@@ -637,11 +663,12 @@ function renderReadout() {
   const f = formatMeasurement(m);
   box.style.setProperty("--c", m.color);
   box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><button class="x" title="Close (Esc)">✕</button></div>
-    <div class="val">${esc(f.value)}</div><div class="det">${f.details.map(d => `<span>${esc(d)}</span>`).join("")}</div><div class="acts"></div>`;
+    <div class="val">${esc(f.value)}</div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${x.label}</button>`).join("")}</div>` : ""}<div class="det">${f.details.map(d => `<span>${esc(d)}</span>`).join("")}</div><div class="acts"></div>`;
   box.querySelector(".x")!.addEventListener("click", () => {
     if (m === state.live) handlePick(null);
     else { state.selectedMeasurement = null; refreshMeasurements(); }
   });
+  box.querySelectorAll<HTMLElement>("[data-cmode]").forEach(b => b.addEventListener("click", () => setCircleMode(b.dataset.cmode as CircleMode)));
   const acts = box.querySelector(".acts")!;
   const add = (label: string, fn: () => void) => {
     const b = document.createElement("button");
@@ -654,6 +681,7 @@ function renderReadout() {
     add("📌 Pin", pinLive);
     const e = state.selection;
     if (e && !state.livePair && e.kind === "face" && e.face?.type === "plane") add("✂ Section here", () => addSectionFromFace(e));
+    if (e && !state.livePair) add("⬚ Whole part", () => showBody(e.part));
   }
   box.hidden = false;
 }
@@ -1190,4 +1218,4 @@ window.addEventListener("keydown", e => {
 renderProps();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, handlePick, setTool } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, handlePick, setTool, showBody, setCircleMode } });

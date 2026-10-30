@@ -34,19 +34,20 @@ export class Annotations {
     const group = new THREE.Group();
     group.visible = m.visible;
     const color = new THREE.Color(m.color);
+    const boxy = m.type === "bbox" || m.data.style === "box";
     if (m.segments.length) {
       const pos: number[] = [];
       for (const [a, b] of m.segments) pos.push(...m.points[a], ...m.points[b]);
       const g = new LineSegmentsGeometry().setPositions(pos);
-      const mat = new LineMaterial({ color: color.getHex(), linewidth: selected ? 3.2 : 2.2, depthTest: false, transparent: true, dashed: m.type === "bbox", dashSize: 3, gapSize: 2 });
+      const mat = new LineMaterial({ color: color.getHex(), linewidth: selected ? 3.2 : 2.2, depthTest: false, transparent: true, dashed: boxy, dashSize: 3, gapSize: 2 });
       mat.resolution.copy(this.viewer.size);
       const line = new LineSegments2(g, mat);
-      if (m.type === "bbox") line.computeLineDistances();
+      if (boxy) line.computeLineDistances();
       line.renderOrder = 2000;
       line.raycast = () => {};
       group.add(line);
     }
-    const dotPts = m.type === "bbox" || m.type === "arcLength" ? [] : m.points;
+    const dotPts = boxy || m.type === "arcLength" ? [] : m.points;
     if (dotPts.length) {
       const g = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(dotPts.flat(), 3));
       const dots = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 7, sizeAttenuation: false, depthTest: false, transparent: true }));

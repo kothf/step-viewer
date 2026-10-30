@@ -3,7 +3,7 @@ import { ExtendedTriangle, MeshBVH, type HitPointInfo } from "three-mesh-bvh";
 import type { Part, Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, FaceInfo, V3 } from "../topology";
 import type { Snap } from "./Snapper";
-import { fmtAngle, fmtArea, fmtLen, fmtVec } from "./units";
+import { fmtAngle, fmtArea, fmtLen, fmtVec, fmtVol } from "./units";
 
 export interface Entity {
   kind: "point" | "edge" | "face";
@@ -413,37 +413,105 @@ export function formatMeasurement(m: Measurement): { title: string; value: strin
 
 // ---------- smart measure ----------
 
-type RowKind = "len" | "ang" | "area" | "pos" | "dir" | "text";
+type RowKind = "len" | "ang" | "area" | "vol" | "pos" | "dir" | "box" | "lens" | "text";
 type Row = [string, RowKind, number | number[] | string];
+
+/** Which distance two round features report: centre to centre, nearest rims or farthest rims. */
+export type CircleMode = "center" | "min" | "max";
+export const CIRCLE_MODES: { mode: CircleMode; label: string }[] = [
+  { mode: "center", label: "Centre to centre" }, { mode: "min", label: "Minimum" }, { mode: "max", label: "Maximum" },
+];
+export interface SmartOptions { circleMode?: CircleMode }
 
 function fmtRow(kind: RowKind, x: unknown, fallback?: V3): string {
   switch (kind) {
     case "len": return fmtLen(x as number);
     case "ang": return fmtAngle(x as number);
     case "area": return fmtArea(x as number);
+    case "vol": return fmtVol(x as number);
     case "pos": return fmtVec(V((Array.isArray(x) ? x : fallback) as V3));
     case "dir": return fmtVec(V(x as V3), false);
+    case "box": return (x as number[]).map((s, i, a) => fmtLen(s, i === a.length - 1)).join(" × ");
+    case "lens": return (x as number[]).map(s => fmtLen(s)).join(" / ");
     case "text": return String(x);
   }
 }
 
-function smart(geo: Measurement, title: string, value: number, kind: RowKind, rows: Row[], prefix = ""): Measurement {
+function smart(geo: Measurement, title: string, value: number, kind: RowKind, rows: Row[], prefix = "", extra: Measurement["data"] = {}): Measurement {
   geo.type = "smart";
   geo.value = value;
-  geo.data = { title, kind, prefix, rows: JSON.stringify(rows) };
+  geo.data = { title, kind, prefix, rows: JSON.stringify(rows), ...extra };
   return geo;
 }
 
 const deltas = (a: THREE.Vector3, b: THREE.Vector3): Row[] =>
   [["ΔX", "len", Math.abs(b.x - a.x)], ["ΔY", "len", Math.abs(b.y - a.y)], ["ΔZ", "len", Math.abs(b.z - a.z)]];
 
+/** Total length of a face's boundary loops (outer and holes). */
+function facePerimeter(part: Part, f: FaceInfo) {
+  return f.edges.reduce((s, id) => s + (part.data.edges[id]?.length ?? 0), 0);
+}
+
+/** Extent of a face along an axis through `origin`: [min, max] of the projections of its vertices. */
+function axialExtent(part: Part, f: FaceInfo, origin: V3, axis: V3): [number, number] {
+  const P = part.data.positions, I = part.data.index;
+  let lo = Infinity, hi = -Infinity;
+  for (let k = f.triStart * 3; k < (f.triStart + f.triCount) * 3; k++) {
+    const i = 3 * I[k];
+    const t = (P[i] - origin[0]) * axis[0] + (P[i + 1] - origin[1]) * axis[1] + (P[i + 2] - origin[2]) * axis[2];
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  return [lo, hi];
+}
+
+/**
+ * Smallest and largest normal curvature of a face, estimated along its
+ * tessellation edges from the exact vertex normals OCCT supplies:
+ * k = Δn·Δp / |Δp|².
+ */
+export function curvatureRange(part: Part, f: FaceInfo): { kMin: number; kMax: number } | null {
+  const P = part.data.positions, N = part.data.normals, I = part.data.index;
+  let kMin = Infinity, kMax = 0;
+  for (let t = f.triStart; t < f.triStart + f.triCount; t++) {
+    for (let k = 0; k < 3; k++) {
+      const i = 3 * I[3 * t + k], j = 3 * I[3 * t + (k + 1) % 3];
+      const dx = P[j] - P[i], dy = P[j + 1] - P[i + 1], dz = P[j + 2] - P[i + 2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < 1e-18) continue;
+      const kk = Math.abs(((N[j] - N[i]) * dx + (N[j + 1] - N[i + 1]) * dy + (N[j + 2] - N[i + 2]) * dz) / d2);
+      if (kk < kMin) kMin = kk;
+      if (kk > kMax) kMax = kk;
+    }
+  }
+  return kMin === Infinity ? null : { kMin, kMax };
+}
+
+/** Radius for a curvature; flat (or nearly) reads as ∞. */
+const curvRow = (label: string, k: number, size: number): Row =>
+  k * size < 1e-4 ? [label, "text", "∞ (flat)"] : [label, "len", 1 / k];
+
 /**
  * Picks what to measure from the entities themselves: one entity gives its own
  * size (diameter, length, area, position), two give the relation between them
  * (pitch, plane gap, angle or shortest distance) with the other values as details.
  */
-export function smartMeasure(v: Viewer, picks: Entity[], color: string): Measurement {
-  return picks.length === 1 ? smartSingle(v, picks[0], color) : smartPair(v, picks[0], picks[1], color);
+export function smartMeasure(v: Viewer, picks: Entity[], color: string, opts: SmartOptions = {}): Measurement {
+  return picks.length === 1 ? smartSingle(v, picks[0], color) : smartPair(v, picks[0], picks[1], color, opts);
+}
+
+/** Size of a whole part: bounding box, volume, surface area and centre of gravity. */
+export function smartBody(v: Viewer, part: Part, color: string): Measurement {
+  const geo = measureBBox(v, [part], color);
+  const d = part.data, s = [geo.data.x, geo.data.y, geo.data.z] as number[];
+  const volume = Math.abs(d.volume);
+  const rows: Row[] = [["Box", "box", s]];
+  if (d.closed) rows.push(["Volume", "vol", volume]);
+  rows.push(["Surface area", "area", d.area]);
+  if (d.closed) rows.push(["Centre of gravity", "pos", v3(v.toWorld(part, d.com))]);
+  else rows.push(["Note", "text", "open shell: no volume"]);
+  rows.push(["Part", "text", d.name || `#${part.idx + 1}`]);
+  return smart(geo, "Part", d.closed ? volume : d.area, d.closed ? "vol" : "area", rows, "", { style: "box" });
 }
 
 function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
@@ -455,64 +523,124 @@ function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
   if (e.kind === "edge") {
     const ed = e.edge!;
     if (c && ed.type === "arc" && !closesCircle(e.part, ed)) {
-      const rows: Row[] = [["Diameter", "len", c.radius! * 2], ["Arc length", "len", ed.length], ["Sweep", "ang", ed.sweep ?? 0], ["Centre", "pos", v3(c.center)]];
+      const rows: Row[] = [["Diameter", "len", c.radius! * 2], ["Arc length", "len", ed.length], ["Sweep", "ang", ed.sweep ?? 0], ["Centre", "pos", v3(c.center)], ["Normal", "dir", v3(c.axis!)]];
       return smart(measure(v, "radius", [e], color), "Arc", c.radius!, "len", rows, "R ");
     }
     if (c) {
-      const rows: Row[] = [["Radius", "len", c.radius!], ["Circumference", "len", 2 * Math.PI * c.radius!], ["Centre", "pos", v3(c.center)], ["Axis", "dir", v3(c.axis!)]];
+      const rows: Row[] = [["Radius", "len", c.radius!], ["Circumference", "len", 2 * Math.PI * c.radius!], ["Centre", "pos", v3(c.center)], ["Normal", "dir", v3(c.axis!)]];
       return smart(measure(v, "diameter", [e], color), desc.startsWith("Section") ? "Section circle" : "Circle", c.radius! * 2, "len", rows, "Ø ");
     }
     const geo = measure(v, "arcLength", [e], color);
     const a = v.toWorld(e.part, ed.start), b = v.toWorld(e.part, ed.end);
-    const rows: Row[] = ed.type === "line" ? [...deltas(a, b), ["Direction", "dir", ed.dir!]] : [["Chord", "len", a.distanceTo(b)]];
+    const rows: Row[] = ed.type === "line"
+      ? [...deltas(a, b), ["Direction", "dir", ed.dir!], ["Midpoint", "pos", v3(v.toWorld(e.part, ed.mid))]]
+      : [["Chord", "len", a.distanceTo(b)]];
     return smart(geo, ed.type === "line" ? "Edge length" : "Curve length", ed.length, "len", rows);
   }
   const f = e.face!;
   const area: Row = ["Area", "area", f.area];
   if (c) {
     const rows: Row[] = [["Radius", "len", c.radius!], area];
-    if (f.type === "cylinder") rows.push(["Axis", "dir", v3(c.axis!)]);
-    else rows.push(["Centre", "pos", v3(c.center)]);
-    if (f.type === "plane") rows.push(["Normal", "dir", f.normal!]);
+    if (f.type === "cylinder") {
+      const [lo, hi] = axialExtent(e.part, f, f.center, f.axis!);
+      rows.push(["Length", "len", hi - lo], ["Axis", "dir", v3(c.axis!)], ["Axis point", "pos", v3(v.toWorld(e.part, f.center))]);
+    } else rows.push(["Centre", "pos", v3(c.center)]);
+    if (f.type === "plane") rows.push(["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", f.normal!]);
     const title = f.type === "cylinder" ? "Cylinder" : f.type === "sphere" ? "Sphere" : "Circular face";
     return smart(measure(v, "diameter", [e], color), title, c.radius! * 2, "len", rows, f.type === "sphere" ? "SØ " : "Ø ");
   }
   const geo = measure(v, "point", [e], color);
-  const rows: Row[] = [["Point", "pos", v3(e.point)]];
-  if (f.type === "plane") rows.push(["Normal", "dir", f.normal!], ["Centroid", "pos", v3(v.toWorld(e.part, f.centroid))]);
-  else if (e.normal) rows.push(["Normal here", "dir", v3(e.normal)]);
-  return smart(geo, f.type === "plane" ? "Planar face" : "Face", f.area, "area", rows);
+  if (f.type === "plane") {
+    const rows: Row[] = [["Perimeter", "len", facePerimeter(e.part, f)], ["Normal", "dir", f.normal!], ["Centroid", "pos", v3(v.toWorld(e.part, f.centroid))], ["Point", "pos", v3(e.point)]];
+    return smart(geo, "Planar face", f.area, "area", rows);
+  }
+  const rows: Row[] = [];
+  const k = curvatureRange(e.part, f);
+  if (k) rows.push(curvRow("Min radius of curvature ≈", k.kMax, v.modelSize), curvRow("Max radius of curvature ≈", k.kMin, v.modelSize));
+  rows.push(["Point", "pos", v3(e.point)]);
+  if (e.normal) rows.push(["Normal here", "dir", v3(e.normal)]);
+  return smart(geo, "Face", f.area, "area", rows);
 }
 
-function smartPair(v: Viewer, A: Entity, B: Entity, color: string): Measurement {
+function axisRelation(a: Circleish, b: Circleish, coaxial: boolean): string {
+  if (!a.axis || !b.axis) return "";
+  const cos = Math.abs(a.axis.dot(b.axis));
+  if (cos > 1 - 1e-6) return coaxial ? "Concentric" : "Parallel";
+  if (cos < 1e-6) return "Perpendicular";
+  return `Skewed ${fmtAngle(Math.acos(Math.min(1, cos)))}`;
+}
+
+function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOptions): Measurement {
   const mid = (a: THREE.Vector3, b: THREE.Vector3) => a.clone().add(b).multiplyScalar(0.5);
   const line = (a: THREE.Vector3, b: THREE.Vector3) => base("smart", 0, color, [a, b], [[0, 1]], mid(a, b));
+  const tol = 1e-6 * (1 + v.modelSize);
   const sd = shortestDistance(v, A, B);
   const gapRow: Row = ["Shortest distance", "len", sd.d];
   const names: Row = ["Between", "text", `${describeEntity(A)} → ${describeEntity(B)}`];
   const ca = circleOf(v, A), cb = circleOf(v, B);
 
-  // Holes, bosses, arcs, cylinders: centre to centre, pitch for parallel axes.
+  // Holes, bosses, arcs, cylinders: centre to centre (pitch for parallel axes), nearest or farthest rims.
   if (ca && cb) {
     const w = cb.center.clone().sub(ca.center);
-    const rows: Row[] = [["Centre distance", "len", w.length()]];
-    const dia = (c: Circleish) => (c.radius ? c.radius * 2 : 0);
-    if (ca.axis && cb.axis && Math.abs(ca.axis.dot(cb.axis)) > 1 - 1e-6) {
-      const axial = w.dot(ca.axis);
-      const perp = w.clone().addScaledVector(ca.axis, -axial);
-      if (perp.length() < 1e-6 * (1 + w.length())) {
-        rows.push(["Ø", "text", `${fmtLen(dia(ca))} / ${fmtLen(dia(cb))}`], gapRow, names);
-        return smart(line(ca.center, cb.center), "Coaxial, axial distance", Math.abs(axial), "len", rows);
-      }
-      const foot = ca.center.clone().add(perp);
-      const geo = base("smart", 0, color, [ca.center, foot, cb.center], [[0, 1], [1, 2]], mid(ca.center, foot));
-      if (Math.abs(axial) > 1e-6 * (1 + w.length())) rows.push(["Axial offset", "len", Math.abs(axial)]);
-      rows.push(...deltas(ca.center, cb.center), ["Ø", "text", `${fmtLen(dia(ca))} / ${fmtLen(dia(cb))}`], gapRow, names);
-      if (Math.abs(axial) < 1e-6 * (1 + w.length())) geo.segments = [[0, 1]];
-      return smart(geo, "Pitch (axis to axis)", perp.length(), "len", rows);
+    const r1 = ca.radius ?? 0, r2 = cb.radius ?? 0;
+    const parallel = !!(ca.axis && cb.axis && Math.abs(ca.axis.dot(cb.axis)) > 1 - 1e-6);
+    const axial = parallel ? w.dot(ca.axis!) : 0;
+    // Parallel axes: measure square to them, in the plane of the first circle; otherwise centre to centre in 3D.
+    const span = parallel ? w.clone().addScaledVector(ca.axis!, -axial) : w.clone();
+    const L = span.length();
+    const coaxial = L < 1e-6 * (1 + w.length());
+    const dias: Row = ["Ø", "lens", [2 * r1, 2 * r2]];
+    const relation = axisRelation(ca, cb, coaxial);
+    const relRow: Row[] = relation ? [["Axes", "text", relation]] : [];
+    if (coaxial) {
+      const rows: Row[] = [["Centre distance", "len", w.length()], dias, ["Radial gap", "len", Math.abs(r1 - r2)], ...relRow, gapRow, names];
+      return smart(line(ca.center, cb.center), parallel ? "Coaxial, axial distance" : "Concentric", Math.abs(axial), "len", rows);
     }
-    rows.push(...deltas(ca.center, cb.center), gapRow, names);
-    return smart(line(ca.center, cb.center), "Centre to centre", w.length(), "len", rows);
+    const u = span.clone().divideScalar(L);
+    const minD = L - r1 - r2, maxD = L + r1 + r2;
+    const mode: CircleMode = r1 > 0 && r2 > 0 ? opts.circleMode ?? "center" : "center";
+    const rows: Row[] = [["Centre distance", "len", w.length()]];
+    if (parallel) rows.push(["Pitch", "len", L]);
+    if (Math.abs(axial) > tol) rows.push(["Axial offset", "len", Math.abs(axial)]);
+    rows.push([minD < 0 ? "Min edge to edge (overlap)" : "Min edge to edge", "len", minD], ["Max outer span", "len", maxD]);
+    rows.push(...deltas(ca.center, cb.center), dias, ...relRow, gapRow, names);
+    const axialVec = parallel ? ca.axis!.clone().multiplyScalar(axial) : new THREE.Vector3();
+    const s = mode === "max" ? -1 : 1;
+    const a = mode === "center" ? ca.center.clone() : ca.center.clone().addScaledVector(u, s * r1);
+    const b = mode === "center" ? ca.center.clone().add(span) : ca.center.clone().add(span).addScaledVector(u, -s * r2);
+    const pts = [a, b, b.clone().add(axialVec)];
+    const geo = base("smart", 0, color, pts, Math.abs(axial) > tol ? [[0, 1], [1, 2]] : [[0, 1]], mid(a, b));
+    const extra: Measurement["data"] = r1 > 0 && r2 > 0 ? { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode } : {};
+    if (mode === "min") return smart(geo, minD < 0 ? "Edge to edge (overlap)" : "Edge to edge (min)", minD, "len", rows, "", extra);
+    if (mode === "max") return smart(geo, "Overall span (max)", maxD, "len", rows, "", extra);
+    return smart(geo, parallel ? "Pitch (axis to axis)" : "Centre to centre", L, "len", rows, "", extra);
+  }
+
+  // A point against a straight edge or a plane: square to the infinite line or plane, with the foot.
+  const pt = A.kind === "point" ? A : B.kind === "point" ? B : null;
+  const other = pt === A ? B : A;
+  if (pt && other.kind === "edge" && other.edge!.type === "line") {
+    const ed = other.edge!;
+    const p0 = v.toWorld(other.part, ed.start), p1 = v.toWorld(other.part, ed.end), dir = V(ed.dir!);
+    const t = pt.point.clone().sub(p0).dot(dir), edgeLen = p0.distanceTo(p1);
+    const foot = p0.clone().addScaledVector(dir, t);
+    const onEdge = t >= -tol && t <= edgeLen + tol;
+    const d = pt.point.distanceTo(foot);
+    const rows: Row[] = [["Foot on line", "pos", v3(foot)], ["Foot lies", "text", onEdge ? "on the edge" : "on the extension"]];
+    if (Math.abs(sd.d - d) > tol) rows.push(gapRow);
+    rows.push(names);
+    const geo = line(pt.point, foot);
+    if (!onEdge) { geo.points.push(v3(t < 0 ? p0 : p1)); geo.segments.push([1, 2]); }
+    return smart(geo, "Point to line", d, "len", rows);
+  }
+  if (pt && other.kind === "face" && other.face!.type === "plane") {
+    const n = V(other.face!.normal!);
+    const d = pt.point.clone().sub(other.point).dot(n);
+    const foot = pt.point.clone().addScaledVector(n, -d);
+    const rows: Row[] = [["Foot on plane", "pos", v3(foot)]];
+    if (Math.abs(sd.d - Math.abs(d)) > tol) rows.push(["Shortest to the face", "len", sd.d]);
+    rows.push(names);
+    return smart(line(pt.point, foot), "Point to plane", Math.abs(d), "len", rows);
   }
 
   // A hole or boss against a face or a straight edge: from its centre.
@@ -540,6 +668,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string): Measurement 
   }
 
   const da = directionOf(A), db = directionOf(B);
+  const lineEdge = (e: Entity) => e.kind === "edge" && e.edge!.type === "line";
   if (da && db) {
     const raw = da.v.angleTo(db.v), acute = Math.min(raw, Math.PI - raw);
     const parallel = da.kind === db.kind ? acute < 1e-6 : Math.abs(acute - Math.PI / 2) < 1e-6;
@@ -551,24 +680,62 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string): Measurement 
       const off = n ? n.clone().multiplyScalar(w.dot(n)) : w.clone().addScaledVector(da.v, -w.dot(da.v));
       const dist = off.length();
       const title = da.kind === "plane" && db.kind === "plane" ? "Parallel faces" : da.kind === "line" && db.kind === "line" ? "Parallel lines" : "Parallel to the face";
-      if (dist > 1e-6 * (1 + v.modelSize)) {
-        const rows: Row[] = [["Normal distance", "len", dist]];
+      // Two straight edges side by side: how far one is slid along the other (midpoint to midpoint).
+      const align: Row[] = lineEdge(A) && lineEdge(B)
+        ? [["Alignment offset", "len", Math.abs(v.toWorld(B.part, B.edge!.mid).sub(v.toWorld(A.part, A.edge!.mid)).dot(da.v))]]
+        : [];
+      if (dist > tol) {
+        const rows: Row[] = [["Normal distance", "len", dist], ...align];
         if (Math.abs(sd.d - dist) > 1e-6) rows.push(gapRow);
         rows.push(names);
         return smart(line(pa, pa.clone().add(off)), title, dist, "len", rows);
       }
       // Coplanar / collinear: what is left is how far apart they sit.
-      const rows: Row[] = [["Plane gap", "len", 0], ...deltas(sd.a, sd.b), names];
+      const rows: Row[] = [["Plane gap", "len", 0], ...align, ...deltas(sd.a, sd.b), names];
       return smart(line(sd.a, sd.b), da.kind === "plane" && db.kind === "plane" ? "Coplanar faces" : "Collinear", sd.d, "len", rows);
     }
-    const geo = measure(v, "angle", [A, B], color);
-    const rows: Row[] = [["Supplement", "ang", Math.PI - geo.value], ["Mode", "text", String(geo.data.mode)], gapRow, names];
+    let geo = measure(v, "angle", [A, B], color);
+    const rows: Row[] = [["Supplement", "ang", Math.PI - geo.value], ["Mode", "text", String(geo.data.mode)]];
+    if (lineEdge(A) && lineEdge(B)) {
+      // Closest points of the two infinite lines: they meet (on the edges or on their extensions) or pass skew.
+      const p1 = v.toWorld(A.part, A.edge!.start), p2 = v.toWorld(B.part, B.edge!.start);
+      const d1 = da.v, d2 = db.v, r = p1.clone().sub(p2);
+      const b = d1.dot(d2), c = d1.dot(r), f = d2.dot(r), den = 1 - b * b;
+      const s = (b * f - c) / den, t = (f - b * c) / den;
+      const q1 = p1.clone().addScaledVector(d1, s), q2 = p2.clone().addScaledVector(d2, t);
+      const skew = q1.distanceTo(q2);
+      if (skew < tol) {
+        const X = mid(q1, q2);
+        const real = s >= -tol && s <= A.edge!.length + tol && t >= -tol && t <= B.edge!.length + tol;
+        rows.push(["Intersection", "pos", v3(X)], ["Intersection is", "text", real ? "on both edges" : "on the extension (virtual)"]);
+        const ma = v.toWorld(A.part, A.edge!.mid), mb = v.toWorld(B.part, B.edge!.mid);
+        if (X.distanceTo(ma) < 20 * v.modelSize && X.distanceTo(mb) < 20 * v.modelSize) {
+          geo = { ...geo, points: [v3(ma), v3(X), v3(mb)], segments: [[0, 1], [1, 2]], labelAt: v3(X) };
+        }
+      } else {
+        rows.push(["Skew distance (lines)", "len", skew]);
+      }
+    } else if (da.kind === "plane" && db.kind === "plane" && A.kind === "face" && B.kind === "face") {
+      // Two planes meet in a line: its direction and the point on it nearest the picks.
+      const dir = da.v.clone().cross(db.v).normalize();
+      const m = new THREE.Matrix3().set(da.v.x, da.v.y, da.v.z, db.v.x, db.v.y, db.v.z, dir.x, dir.y, dir.z);
+      const rhs = new THREE.Vector3(da.v.dot(A.point), db.v.dot(B.point), dir.dot(mid(A.point, B.point)));
+      const X = rhs.applyMatrix3(m.invert());
+      rows.push(["Intersection line", "dir", v3(dir)], ["Through", "pos", v3(X)]);
+    }
+    rows.push(gapRow, names);
     return smart(geo, "Angle", geo.value, "ang", rows);
   }
 
   const rows: Row[] = [...deltas(sd.a, sd.b)];
   const c = ca ?? cb, p = A.kind === "point" ? A.point : B.kind === "point" ? B.point : null;
-  if (c && p) rows.push(["To centre", "len", p.distanceTo(c.center)]);
+  if (c && p) {
+    rows.push(["To centre", "len", p.distanceTo(c.center)]);
+    if (c.axis) {
+      const w = p.clone().sub(c.center);
+      rows.push(["To axis", "len", w.addScaledVector(c.axis, -w.dot(c.axis)).length()]);
+    }
+  }
   rows.push(names);
   const title = A.kind === "point" && B.kind === "point" ? "Distance" : "Shortest distance";
   return smart(line(sd.a, sd.b), title, sd.d, "len", rows);

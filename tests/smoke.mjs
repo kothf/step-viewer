@@ -101,6 +101,67 @@ try {
   check(smart.cleared, "smart: clicking empty space clears the result");
   check(/^v\d+\.\d+\.\d+$/.test(smart.version), `version shown under the name (${smart.version})`);
 
+  // --- smart metric matrix: edges, vertices, planes and the whole part ---
+  const mx = await page.evaluate(() => {
+    const { viewer, state, handlePick, setTool, showBody } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const faces = p.data.faces, edges = p.data.edges;
+    const F = f => ({ kind: "faceCenter", point: new V3(...f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    const E = e => ({ kind: "onEdge", point: new V3(...e.mid), part: p, edge: e, px: 0 });
+    const P = (x, e) => ({ kind: "vertex", point: new V3(...x), part: p, edge: e, px: 0 });
+    const eq = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6;
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const top = faces.find(f => f.normal?.[2] > 0.99), side = faces.find(f => Math.abs(f.normal?.[0]) > 0.99);
+    const read = () => {
+      const rows = Object.fromEntries(JSON.parse(state.live.data.rows).map(([k, , x]) => [k, x]));
+      return { title: state.live.data.title, value: state.live.value, rows };
+    };
+    const one = x => { handlePick(null); handlePick(x); const r = read(); handlePick(null); return r; };
+    const two = (a, b) => { handlePick(null); handlePick(a); handlePick(b); const r = read(); handlePick(null); return r; };
+    setTool("select");
+    const e0 = edges[0];
+    // Edges touching e0 at its start, parallel to it on the same face, and skew to it.
+    const touching = edges.find(e => e !== e0 && (eq(e.start, e0.start) || eq(e.end, e0.start)));
+    const par = edges.find(e => e !== e0 && Math.abs(dot(e.dir, e0.dir)) > 0.99 && e.faces.some(f => e0.faces.includes(f)));
+    const skew = edges.find(e => Math.abs(dot(e.dir, e0.dir)) < 0.01 && !eq(e.start, e0.start) && !eq(e.end, e0.start) && !eq(e.start, e0.end) && !eq(e.end, e0.end));
+    // A corner not on top: 10 mm under the top face.
+    const low = edges.flatMap(e => [e.start, e.end]).find(x => x[2] < top.center[2] - 5);
+    // A corner off e0's line, and how far from it.
+    const offLine = edges.flatMap(e => [e.start, e.end]).find(x => { const w = [x[0] - e0.start[0], x[1] - e0.start[1], x[2] - e0.start[2]]; const t = dot(w, e0.dir); return Math.hypot(w[0] - t * e0.dir[0], w[1] - t * e0.dir[1], w[2] - t * e0.dir[2]) > 5; });
+    const offW = [offLine[0] - e0.start[0], offLine[1] - e0.start[1], offLine[2] - e0.start[2]], offT = dot(offW, e0.dir);
+    const offD = Math.hypot(offW[0] - offT * e0.dir[0], offW[1] - offT * e0.dir[1], offW[2] - offT * e0.dir[2]);
+    const r = {
+      edge: one(E(e0)), face: one(F(top)),
+      ptPlane: two(P(low), F(top)), ptLine: { ...two(P(offLine), E(e0)), expect: offD },
+      par: two(E(e0), E(par)), meet: { ...two(E(e0), E(touching)), at: e0.start }, skew: two(E(e0), E(skew)),
+      planes: two(F(top), F(side)),
+    };
+    r.topZ = top.center[2];
+    r.mid = [0, 1, 2].map(k => (p.data.bboxMin[k] + p.data.bboxMax[k]) / 2);
+    handlePick(F(top)); showBody(p); r.body = read(); handlePick(null);
+    return r;
+  });
+  check(mx.edge.title === "Edge length" && near(mx.edge.value, 10, 1e-9) && mx.edge.rows.Midpoint?.length === 3 && mx.edge.rows.Direction?.length === 3,
+    `smart: straight edge gives length, direction and midpoint (${mx.edge.value})`);
+  check(near(mx.face.rows.Perimeter, 40, 1e-9) && mx.face.rows.Centroid?.length === 3, `smart: planar face perimeter 40 mm (${mx.face.rows.Perimeter})`);
+  check(mx.ptPlane.title === "Point to plane" && near(mx.ptPlane.value, 10, 1e-9) && near(mx.ptPlane.rows["Foot on plane"][2], mx.topZ, 1e-9),
+    `smart: corner to top plane 10 mm with its foot on the plane (${mx.ptPlane.value})`);
+  check(mx.ptLine.title === "Point to line" && near(mx.ptLine.value, mx.ptLine.expect, 1e-9) && mx.ptLine.rows["Foot on line"]?.length === 3,
+    `smart: corner to line, square to it (${mx.ptLine.value} vs ${mx.ptLine.expect})`);
+  check(mx.par.title === "Parallel lines" && near(mx.par.value, 10, 1e-9) && near(mx.par.rows["Alignment offset"], 0, 1e-9),
+    `smart: parallel edges 10 mm apart, aligned (${mx.par.value}, offset ${mx.par.rows["Alignment offset"]})`);
+  check(mx.meet.title === "Angle" && near(mx.meet.value, Math.PI / 2, 1e-9) && mx.meet.rows["Intersection is"] === "on both edges"
+    && Math.hypot(...mx.meet.rows.Intersection.map((x, i) => x - mx.meet.at[i])) < 1e-6,
+    `smart: touching edges meet at their shared corner at 90° (${mx.meet.rows.Intersection})`);
+  check(mx.skew.title === "Angle" && near(mx.skew.rows["Skew distance (lines)"], 10, 1e-9) && near(mx.skew.rows["Shortest distance"], 10, 1e-9),
+    `smart: skew edges 10 mm apart (${mx.skew.rows["Skew distance (lines)"]})`);
+  check(mx.planes.title === "Angle" && near(Math.abs(mx.planes.rows["Intersection line"][1]), 1, 1e-9),
+    `smart: top and side faces meet along Y (${mx.planes.rows["Intersection line"]})`);
+  check(mx.body.title === "Part" && near(mx.body.value, 1000, 1e-6) && near(mx.body.rows["Surface area"], 600, 1e-6)
+    && mx.body.rows.Box.every(x => near(x, 10, 1e-6)) && mx.body.rows["Centre of gravity"].every((x, i) => near(x, mx.mid[i], 1e-6)),
+    `smart: whole part 10×10×10, V=${mx.body.value}, CG ${mx.body.rows["Centre of gravity"]}`);
+
   // --- section: caps, profile curves, cut area, snapping and measuring on the cut ---
   await page.$eval('[data-sec="z"]', el => el.click());
   await page.waitForTimeout(200);
@@ -181,17 +242,40 @@ try {
       if (Math.abs(b.c.clone().sub(a.c).dot(new V3(...a.f.normal))) > 1e-6) continue;
       const pick = r => ({ kind: "faceCenter", point: r.c, part: r.p, face: r.f, normal: new V3(...r.f.normal), px: 0 });
       handlePick(pick(a)); handlePick(pick(b));
-      return { rounds: rounds.length, title: state.live.data.title, value: state.live.value, expect: a.c.distanceTo(b.c) };
+      const res = { rounds: rounds.length, title: state.live.data.title, value: state.live.value, expect: a.c.distanceTo(b.c) };
+      const [da, db] = JSON.parse(state.live.data.rows).find(r => r[0] === "Ø")[2];
+      const { setCircleMode } = window.__sv;
+      setCircleMode("min"); res.min = [state.live.data.title, state.live.value, res.expect - (da + db) / 2];
+      setCircleMode("max"); res.max = [state.live.data.title, state.live.value, res.expect + (da + db) / 2];
+      setCircleMode("center"); res.back = state.live.value;
+      res.toggle = document.querySelectorAll("#readout [data-cmode]").length;
+      return res;
     }
     return { rounds: rounds.length };
   });
   check(pitch.title === "Pitch (axis to axis)" && near(pitch.value, pitch.expect, 1e-3) && pitch.value > 0,
     `smart: coplanar round faces give the pitch (${pitch.rounds} round faces, ${pitch.value} vs ${pitch.expect})`);
+  check(pitch.toggle === 3 && near(pitch.min?.[1], pitch.min?.[2], 1e-3) && near(pitch.max?.[1], pitch.max?.[2], 1e-3) && near(pitch.back, pitch.value, 1e-9),
+    `smart: round features toggle min ${pitch.min?.[1]} / max ${pitch.max?.[1]} edge distance`);
 
   // explode moves parts apart
   await page.$eval("#explode", el => { el.value = "1"; el.dispatchEvent(new Event("input")); });
   const moved = await page.evaluate(() => window.__sv.viewer.parts.filter(p => p.group.position.length() > 1e-6).length);
   check(moved > 0, `explode moved ${moved} parts`);
+
+  // --- freeform face: radii of curvature from the tessellation (a cone: finite across, flat along) ---
+  await open("conical-surface/conical-surface.step");
+  const cone = await page.evaluate(() => {
+    const { viewer, state, handlePick } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const f = p.data.faces.find(x => x.type === "other");
+    handlePick({ kind: "onFace", point: viewer.toWorld(p, f.centroid), part: p, face: f, normal: new V3(0, 0, 1), px: 0 });
+    const rows = Object.fromEntries(JSON.parse(state.live.data.rows).map(([k, , x]) => [k, x]));
+    handlePick(null);
+    return { min: rows["Min radius of curvature ≈"], max: rows["Max radius of curvature ≈"] };
+  });
+  check(typeof cone.min === "number" && cone.min > 1 && cone.min < 20 && /flat/.test(cone.max), `smart: cone face curvature radii ${cone.min} / ${cone.max}`);
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
