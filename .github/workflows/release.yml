@@ -1,0 +1,94 @@
+name: Release
+
+# Push a tag like v1.1.0 (matching package.json) to publish:
+#   - a GitHub release with step-viewer-<version>.tar.gz + .sha256
+#     (consumed by aerocat.tech, pinned by version and checksum)
+#   - the same build to GitHub Pages
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tag must match package.json version
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME#v}" != "$pkg" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Cache Playwright's browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-shell-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Browser for the tests
+        run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
+
+      - name: Package
+        run: npm run package -- "${GITHUB_REF_NAME#v}"
+
+      - name: Smoke test (packaged build)
+        run: npm test
+
+      - name: Release notes from CHANGELOG.md
+        run: npm run --silent release-notes -- "$GITHUB_REF_NAME" > release-notes.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar.gz.sha256 \
+            --title "STEP Viewer $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      # Starts the site's vendor update as soon as the release exists (it opens the
+      # PR that pins this version). Needs a SITE_DISPATCH_TOKEN secret: a token
+      # allowed to run workflows in kothf/astro_source-new_theme. Without it the
+      # step is skipped and the site's scheduled vendor update picks it up.
+      - name: Ask aerocat.tech to pick up this release
+        env:
+          SITE_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$SITE_TOKEN" ]; then echo "::notice::No SITE_DISPATCH_TOKEN secret: the vendor update was not dispatched"; exit 0; fi
+          GH_TOKEN="$SITE_TOKEN" gh workflow run vendor-update.yml --repo kothf/astro_source-new_theme --ref main
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/step-viewer
+
+  pages:
+    needs: release
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,38 @@
+{
+  "name": "step-viewer",
+  "version": "1.0.0",
+  "description": "Browser STEP/IGES viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties, draft and wall-thickness analysis.",
+  "scripts": {
+    "predev": "node scripts/copy-occt.mjs",
+    "dev": "vite",
+    "build": "node scripts/copy-occt.mjs && tsc && vite build",
+    "typecheck": "tsc",
+    "package": "node scripts/package.mjs",
+    "test": "node tests/smoke.mjs dist/step-viewer",
+    "release-notes": "node scripts/release-notes.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "jspdf": "^2.5.2",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.170.0",
+    "three-mesh-bvh": "^0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/three": "^0.170.0",
+    "playwright": "^1.63.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  },
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kothf/step-viewer.git"
+  },
+  "homepage": "https://aerocat.tech/tools/step-viewer/",
+  "engines": {
+    "node": ">=20"
+  }
+}

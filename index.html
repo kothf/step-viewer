@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>STEP Viewer</title>
+  <meta name="description" content="Browser STEP/IGES viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, draft and wall-thickness analysis, reports and mesh export. Files never leave your computer." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 10v12L16 29 4 22V10z' fill='%233d8bfd'/%3E%3Cpath d='M16 3v26M4 10l12 7 12-7' stroke='%23fff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span>STEP Viewer</span></div>
+    <label class="btn primary" title="Open STEP / IGES / BREP (Ctrl+O)">
+      <input id="file-input" type="file" accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep" hidden />
+      <span>Open file</span>
+    </label>
+    <select id="quality" title="Tessellation quality (applies on next open)">
+      <option value="draft">Draft mesh</option>
+      <option value="normal" selected>Normal mesh</option>
+      <option value="fine">Fine mesh</option>
+    </select>
+    <div class="sep"></div>
+    <div class="seg" id="display-mode" role="radiogroup" aria-label="Display mode">
+      <button data-mode="shadedEdges" class="on" title="Shaded with edges (1)">Shaded+Edges</button>
+      <button data-mode="shaded" title="Shaded (2)">Shaded</button>
+      <button data-mode="wireframe" title="Wireframe (3)">Wire</button>
+      <button data-mode="hlr" title="Hidden line removal (4)">HLR</button>
+      <button data-mode="xray" title="X-ray (5)">X-ray</button>
+    </div>
+    <div class="seg" id="projection">
+      <button data-proj="perspective" class="on" title="Perspective (P)">Persp</button>
+      <button data-proj="orthographic" title="Orthographic (O)">Ortho</button>
+    </div>
+    <div class="seg" id="views">
+      <button data-view="fit" title="Fit all (F)">Fit</button>
+      <button data-view="iso" title="Isometric (0)">Iso</button>
+      <button data-view="front" title="Front">Front</button>
+      <button data-view="top" title="Top">Top</button>
+      <button data-view="right" title="Right">Right</button>
+    </div>
+    <div class="spacer"></div>
+    <label class="chk" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> AO</label>
+    <button class="icon" id="theme" title="Toggle light/dark theme">◐</button>
+    <button class="icon" id="help-btn" title="Shortcuts">?</button>
+  </header>
+
+  <aside class="left panel">
+    <div class="tabs">
+      <button data-tab="tree" class="on">Model tree</button>
+      <button data-tab="measures">Measurements <span id="m-count" class="pill">0</span></button>
+    </div>
+    <section id="tab-tree" class="tab on">
+      <input id="tree-search" type="search" placeholder="Filter: name, size>50, vol<1000" />
+      <div id="tree" class="tree"><p class="muted pad">No model loaded.</p></div>
+    </section>
+    <section id="tab-measures" class="tab">
+      <div id="m-list" class="m-list"><p class="muted pad">Measurements you take appear here.</p></div>
+      <div class="row pad">
+        <button id="m-csv" class="btn small">CSV</button>
+        <button id="m-pdf" class="btn small">PDF report</button>
+        <button id="m-clear" class="btn small danger">Clear all</button>
+      </div>
+    </section>
+  </aside>
+
+  <main class="viewport" id="viewport">
+    <div id="labels" class="labels"></div>
+    <div id="snap-marker" class="snap-marker" hidden></div>
+    <canvas id="navcube" class="navcube" width="110" height="110"></canvas>
+    <div id="tool-hint" class="tool-hint" hidden></div>
+    <div id="float-bar" class="float-bar" hidden></div>
+    <div id="empty" class="empty">
+      <div class="empty-card">
+        <svg viewBox="0 0 32 32" width="56" height="56"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
+        <h2>Drop a STEP file here</h2>
+        <p>AP203 · AP214 · AP242, plus IGES and BREP. Parsed by OpenCASCADE in your browser: the file never leaves your computer.</p>
+        <label class="btn primary"><input id="file-input-2" type="file" accept=".step,.stp,.iges,.igs,.brep" hidden />Choose file…</label>
+      </div>
+    </div>
+    <div id="loading" class="loading" hidden><div class="spinner"></div><div id="loading-text">Loading…</div><div class="bar"><i id="loading-bar"></i></div></div>
+    <div id="toast" class="toast" hidden></div>
+  </main>
+
+  <aside class="right panel" id="right">
+    <details open id="sec-selection"><summary>Properties</summary><div id="props" class="props"><p class="muted">Open a model to begin.</p></div></details>
+
+    <details open><summary>Measure</summary>
+      <div class="tools-grid" id="tools">
+        <button data-tool="select" class="on" title="Select (Esc)">⌖ Select</button>
+        <button data-tool="distance" title="Point to point (D)">↔ Point–point</button>
+        <button data-tool="minDistance" title="Shortest distance between entities (M)">⇤ Min distance</button>
+        <button data-tool="radius" title="Radius (R)">R Radius</button>
+        <button data-tool="diameter" title="Diameter">Ø Diameter</button>
+        <button data-tool="centerDistance" title="Centre to centre / hole pitch (C)">⊙ Centre–centre</button>
+        <button data-tool="arcLength" title="Edge / arc length (L)">⌒ Edge length</button>
+        <button data-tool="angle" title="Angle between edges or faces (A)">∠ Angle</button>
+        <button data-tool="angle3" title="3-point angle">∡ 3-point angle</button>
+        <button data-tool="point" title="Point coordinates and normal (N)">⊕ Point / normal</button>
+        <button data-tool="bbox" title="Bounding box of visible or selected parts (B)">▭ Bounding box</button>
+      </div>
+      <div class="units-row">
+        <label>Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option></select></label>
+        <label>Colour <input type="color" id="m-color" value="#e8590c" /></label>
+      </div>
+    </details>
+
+    <details><summary>Section</summary>
+      <div class="row wrap">
+        <button class="btn small" data-sec="x">+ X plane</button>
+        <button class="btn small" data-sec="y">+ Y plane</button>
+        <button class="btn small" data-sec="z">+ Z plane</button>
+        <button class="btn small" data-sec="face" title="Plane through the selected planar face">+ From face</button>
+        <button class="btn small" data-sec="view" title="Plane facing the camera through the model centre">+ From view</button>
+      </div>
+      <div id="sec-list" class="sec-list"></div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="caps" checked /> Solid caps</label>
+        <input type="color" id="cap-color" value="#d4553f" title="Cap colour" />
+        <button class="btn small" id="sec-clear">Remove all</button>
+      </div>
+    </details>
+
+    <details><summary>Exploded view</summary>
+      <label class="slider">Explode <input type="range" id="explode" min="0" max="1" step="0.005" value="0" /> <span id="explode-val">0%</span></label>
+      <div class="row">
+        <button class="btn small" id="drag-part" title="Drag the selected part with a gizmo">Move selected part</button>
+        <button class="btn small" id="reset-drag">Reset positions</button>
+      </div>
+    </details>
+
+    <details><summary>Mass properties</summary>
+      <label class="row">Material <select id="material"></select></label>
+      <label class="row">Density <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" /> g/cm³</label>
+      <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
+      <div id="mass-out" class="kv"></div>
+    </details>
+
+    <details><summary>Analysis</summary>
+      <h4>Draft angle</h4>
+      <div class="row wrap">
+        <label>Pull <select id="pull"><option value="0,0,1">+Z</option><option value="0,0,-1">−Z</option><option value="1,0,0">+X</option><option value="-1,0,0">−X</option><option value="0,1,0">+Y</option><option value="0,-1,0">−Y</option><option value="face">Selected face normal</option><option value="view">View direction</option></select></label>
+        <label>Min <input type="number" id="draft-min" value="1" step="0.5" min="0" style="width:56px" />°</label>
+        <button class="btn small" id="draft-run">Show draft</button>
+      </div>
+      <div class="legend" id="draft-legend" hidden><span style="--c:#22a55a">≥ +min</span><span style="--c:#f0c419">needs draft</span><span style="--c:#d8423a">≤ −min</span></div>
+      <h4>Wall thickness</h4>
+      <div class="row wrap">
+        <label>Min <input type="number" id="thk-min" value="1" step="0.1" min="0" style="width:60px" /></label>
+        <label>Max <input type="number" id="thk-max" value="5" step="0.5" min="0" style="width:60px" /></label>
+        <button class="btn small" id="thk-run">Analyse</button>
+      </div>
+      <div class="legend gradient" id="thk-legend" hidden><span>thin</span><i></i><span>thick</span></div>
+      <div id="analysis-out" class="kv"></div>
+      <button class="btn small" id="analysis-clear">Clear analysis</button>
+    </details>
+
+    <details><summary>Export</summary>
+      <div class="row wrap">
+        <button class="btn small" id="png">PNG</button>
+        <button class="btn small" id="png-t">PNG (transparent)</button>
+        <select id="png-scale"><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select>
+      </div>
+      <div class="row wrap">
+        <button class="btn small" data-export="stl">STL</button>
+        <button class="btn small" data-export="obj">OBJ</button>
+        <button class="btn small" data-export="glb">glTF (GLB)</button>
+        <button class="btn small" id="report">PDF report</button>
+      </div>
+    </details>
+  </aside>
+
+  <footer class="status">
+    <div class="snaps" title="Snap filters">
+      Snap:
+      <label class="chk"><input type="checkbox" data-snap="vertex" checked />Vertex</label>
+      <label class="chk"><input type="checkbox" data-snap="midpoint" checked />Mid</label>
+      <label class="chk"><input type="checkbox" data-snap="center" checked />Centre</label>
+      <label class="chk"><input type="checkbox" data-snap="edge" checked />Edge</label>
+    </div>
+    <span id="st-snap" class="st-snap"></span>
+    <span id="st-coord" class="mono"></span>
+    <span class="spacer"></span>
+    <span id="st-stats" class="muted"></span>
+    <span id="st-fps" class="muted mono"></span>
+  </footer>
+</div>
+
+<dialog id="help">
+  <h3>Shortcuts</h3>
+  <table>
+    <tr><td>Left drag / Right drag / Wheel</td><td>Orbit / Pan / Zoom to cursor</td></tr>
+    <tr><td>F, 0</td><td>Fit, Isometric</td></tr>
+    <tr><td>1–5</td><td>Display modes</td></tr>
+    <tr><td>P / O</td><td>Perspective / Orthographic</td></tr>
+    <tr><td>D M R C L A N B</td><td>Distance, Min distance, Radius, Centre–centre, Length, Angle, Point, Bounding box</td></tr>
+    <tr><td>I / H / U</td><td>Isolate / Hide selected part / Show all</td></tr>
+    <tr><td>Del</td><td>Delete selected measurement</td></tr>
+    <tr><td>Esc</td><td>Cancel tool, clear selection</td></tr>
+  </table>
+  <p class="muted">Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; curved freeform distances are measured on the mesh.</p>
+  <form method="dialog"><button class="btn">Close</button></form>
+</dialog>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
