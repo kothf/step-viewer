@@ -9,13 +9,13 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
 - **Formats**: STEP AP203 / AP214 / AP242 (`.step`, `.stp`), IGES, BREP. Assembly tree, part names and colours are kept.
 - **Topology-aware**: faces and edges are rebuilt from the B-rep tessellation and classified (plane, cylinder, sphere; line, circle, arc). Radii, centres, axes and lengths come from the analytic fit, not from triangles.
 - **Display**: shaded + edges, shaded, wireframe, hidden line, X-ray; perspective / orthographic; NavCube (26 views) and view presets; ambient occlusion; light and dark themes.
-- **Measure** with snapping to vertices, midpoints, circle centres, face centres, edges and faces:
+- **Smart measure** (default): click one entity for its size, a second for what relates them: pitch between holes, distance between parallel faces, centre to face, angle, or shortest distance. Details appear in a corner card; Pin keeps the result.
+- **Measure tools** with snapping to vertices, midpoints, circle centres, face centres, edges and faces:
   - point to point (with ΔX/ΔY/ΔZ), shortest distance between any two points, edges or faces
   - radius, diameter, centre to centre, hole pitch (axis to axis), edge and arc length (with sweep)
   - angle between edges/faces/axes, 3-point angle
   - point coordinates and surface normal, bounding box
   - colour-coded, pinned per file in the browser, exported as CSV or a PDF inspection report
-- **Contextual toolbar**: click a hole edge and get Radius / Diameter / Centre to…; click a planar face and get Distance to… / Angle to… / Section here.
 - **Sections**: up to 3 planes: XY / YZ / XZ, on a face, through 3 points or facing the view. Solid caps (stencil buffer) with ANSI31 hatching or per-part colours; a gizmo to drag and tilt the plane; numeric offset, step, azimuth/elevation; flip.
 - **Measuring on the cut**: the cut profile is computed and drawn; snap to its curves, vertices, midpoints and circle centres (exact for cylinders cut square-on), or to the cap face. "Snap to cut only" keeps snapping in the section plane. Cut area per plane.
 - **Exploded view** following the assembly hierarchy, plus dragging single parts.

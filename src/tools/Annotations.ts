@@ -61,7 +61,9 @@ export class Annotations {
     label.className = "m-label" + (selected ? " selected" : "");
     label.style.setProperty("--c", m.color);
     label.dataset.id = m.id;
-    label.innerHTML = `<b>${f.value}</b>` + (selected ? f.details.map(t => `<small>${t}</small>`).join("") : "");
+    // One line only, so labels never cover the model; details go to the readout card.
+    label.innerHTML = `<b>${f.value}</b>`;
+    label.title = [f.title, ...f.details].join("\n");
     label.hidden = !m.visible;
     this.layer.appendChild(label);
     return { group, label };

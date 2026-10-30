@@ -10,7 +10,7 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span>STEP Viewer</span></div>
+    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span class="brand-txt">STEP Viewer<small id="app-version"></small></span></div>
     <label class="btn primary" title="Open STEP / IGES / BREP (Ctrl+O)">
       <input id="file-input" type="file" accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep" hidden />
       <span>Open file</span>
@@ -69,7 +69,7 @@
     <div id="snap-marker" class="snap-marker" hidden></div>
     <canvas id="navcube" class="navcube" width="110" height="110"></canvas>
     <div id="tool-hint" class="tool-hint" hidden></div>
-    <div id="float-bar" class="float-bar" hidden></div>
+    <div id="readout" class="readout" hidden></div>
     <div id="empty" class="empty">
       <div class="empty-card">
         <svg viewBox="0 0 32 32" width="56" height="56"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
@@ -87,7 +87,7 @@
 
     <details open><summary>Measure</summary>
       <div class="tools-grid" id="tools">
-        <button data-tool="select" class="on" title="Select (Esc)">⌖ Select</button>
+        <button data-tool="select" class="on" title="Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)">✦ Smart</button>
         <button data-tool="distance" title="Point to point (D)">↔ Point–point</button>
         <button data-tool="minDistance" title="Shortest distance between entities (M)">⇤ Min distance</button>
         <button data-tool="radius" title="Radius (R)">R Radius</button>

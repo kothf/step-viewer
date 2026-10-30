@@ -79,6 +79,28 @@ try {
   check(near(m.bbox, Math.sqrt(300), 1e-6), `bounding box diagonal √300 (${m.bbox})`);
   check(/Mass\s*7\.850 g/.test(cube.mass), "steel cube mass 7.850 g");
 
+  // --- smart measure (the default tool): one click gives a size, two give the relation ---
+  const smart = await page.evaluate(() => {
+    const { viewer, state, handlePick, setTool } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const faces = p.data.faces;
+    const snapF = f => ({ kind: "faceCenter", point: new V3(...f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    const top = faces.find(f => f.normal?.[2] > 0.99), bottom = faces.find(f => f.normal?.[2] < -0.99), side = faces.find(f => Math.abs(f.normal?.[0]) > 0.99);
+    setTool("select");
+    const read = () => [state.live?.data.title, state.live?.value];
+    handlePick(snapF(top)); const one = read();
+    handlePick(snapF(bottom)); const par = read();
+    handlePick(snapF(top)); handlePick(snapF(side)); const ang = read();
+    handlePick(null);
+    return { one, par, ang, cleared: state.live === null, version: document.querySelector("#app-version").textContent };
+  });
+  check(smart.one[0] === "Planar face" && near(smart.one[1], 100, 1e-6), `smart: one face gives its area (${smart.one})`);
+  check(smart.par[0] === "Parallel faces" && near(smart.par[1], 10, 1e-9), `smart: opposite faces 10 mm apart (${smart.par})`);
+  check(smart.ang[0] === "Angle" && near(smart.ang[1], Math.PI / 2, 1e-9), `smart: adjacent faces at 90° (${smart.ang})`);
+  check(smart.cleared, "smart: clicking empty space clears the result");
+  check(/^v\d+\.\d+\.\d+$/.test(smart.version), `version shown under the name (${smart.version})`);
+
   // --- section: caps, profile curves, cut area, snapping and measuring on the cut ---
   await page.$eval('[data-sec="z"]', el => el.click());
   await page.waitForTimeout(200);
@@ -141,6 +163,30 @@ try {
   check(as1.circles > 0 && as1.cylinders > 0, `as1 circles ${as1.circles}, cylinders ${as1.cylinders}`);
   check(as1.allClosed, "every as1 part is a closed solid");
   check(as1.protocol, "header shows AP214");
+
+  // Coplanar round faces of two different parts: pitch between their centres, never 0.
+  const pitch = await page.evaluate(() => {
+    const { viewer, state, handlePick, setTool } = window.__sv;
+    const V3 = viewer.camera.position.constructor;
+    setTool("select");
+    const rounds = [];
+    for (const p of viewer.parts) for (const f of p.data.faces) {
+      if (f.type !== "plane") continue;
+      handlePick({ kind: "faceCenter", point: viewer.toWorld(p, f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+      if (state.live?.data.title === "Circular face") rounds.push({ p, f, c: viewer.toWorld(p, f.center) });
+      handlePick(null);
+    }
+    for (const a of rounds) for (const b of rounds) {
+      if (a.p === b.p || Math.abs(new V3(...a.f.normal).dot(new V3(...b.f.normal))) < 0.999999) continue;
+      if (Math.abs(b.c.clone().sub(a.c).dot(new V3(...a.f.normal))) > 1e-6) continue;
+      const pick = r => ({ kind: "faceCenter", point: r.c, part: r.p, face: r.f, normal: new V3(...r.f.normal), px: 0 });
+      handlePick(pick(a)); handlePick(pick(b));
+      return { rounds: rounds.length, title: state.live.data.title, value: state.live.value, expect: a.c.distanceTo(b.c) };
+    }
+    return { rounds: rounds.length };
+  });
+  check(pitch.title === "Pitch (axis to axis)" && near(pitch.value, pitch.expect, 1e-3) && pitch.value > 0,
+    `smart: coplanar round faces give the pitch (${pitch.rounds} round faces, ${pitch.value} vs ${pitch.expect})`);
 
   // explode moves parts apart
   await page.$eval("#explode", el => { el.value = "1"; el.dispatchEvent(new Event("input")); });

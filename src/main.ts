@@ -10,7 +10,7 @@ import { SectionManager } from "./viewer/Section";
 import { Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
-  describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, TOOL_INFO,
+  describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartMeasure, TOOL_INFO,
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
 import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnalysis } from "./tools/analysis";
@@ -39,6 +39,7 @@ const snapper = new Snapper(viewer);
 const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
 applyThemeToViewer();
+$("#app-version").textContent = `v${__APP_VERSION__}`;
 
 // ---------- state ----------
 /** "plane3" picks three points for a section plane. */
@@ -55,8 +56,12 @@ const state = {
   measurements: [] as Measurement[],
   selectedMeasurement: null as string | null,
   lastSnap: null as Snap | null,
+  /** Smart measure result shown until the next click; Pin keeps it. */
+  live: null as Measurement | null,
+  /** The live result is between two entities, so the next click starts over. */
+  livePair: false,
 };
-annotations.lookup = id => state.measurements.find(m => m.id === id);
+annotations.lookup = id => (state.live?.id === id ? state.live : state.measurements.find(m => m.id === id));
 
 // ---------- highlight overlays ----------
 const hl = {
@@ -170,6 +175,7 @@ function resetForNewModel() {
   state.selectedNode = null;
   state.selectedParts = [];
   state.measurements = [];
+  state.live = null;
   annotations.clear();
   showEntity(hl.selFace, hl.selEdge, null);
   showEntity(hl.hoverFace, hl.hoverEdge, null);
@@ -289,7 +295,7 @@ function selectNode(n: TreeNode | null, fromViewport = false) {
   for (const p of viewer.parts) {
     p.material.emissive.setHex(state.selectedParts.includes(p) && n !== viewer.tree ? 0x0c1c3a : 0x000000);
   }
-  if (n && !fromViewport) { state.selection = null; showEntity(hl.selFace, hl.selEdge, null); hideFloatBar(); }
+  if (n && !fromViewport) { state.selection = null; showEntity(hl.selFace, hl.selEdge, null); }
   if (n) {
     // Reveal the node in the tree.
     let el = nodeEls.get(n)?.parentElement?.closest(".node");
@@ -474,15 +480,21 @@ function setTool(t: Tool) {
   state.tool = t;
   state.picks = [];
   hl.pickMarks.clear();
+  clearLive();
   $$("#tools button").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
   updateHint();
-  hideFloatBar();
   viewer.invalidate();
 }
 
 function updateHint() {
   const h = $("#tool-hint");
-  if (state.tool === "select") { h.hidden = true; return; }
+  if (state.tool === "select") {
+    h.hidden = !viewer.parts.length;
+    h.innerHTML = state.selection && !state.livePair
+      ? `<b>Smart measure</b> · click a second point, edge or face to measure between them · <span class="muted">Esc to clear</span>`
+      : `<b>Smart measure</b> · click a point, edge or face; a second click measures between them`;
+    return;
+  }
   const info = state.tool === "plane3" ? PLANE3_INFO : TOOL_INFO[state.tool];
   const n = state.picks.length;
   h.hidden = false;
@@ -521,21 +533,31 @@ function handlePick(snap: Snap | null) {
   if (state.tool === "select") {
     if (!snap) {
       state.selection = null;
+      clearLive();
       showEntity(hl.selFace, hl.selEdge, null);
-      hideFloatBar();
-      selectNode(null);
+          selectNode(null);
+      updateHint();
       return;
     }
     const ent = entityFromSnap(snap);
-    if (ent.kind === "point" && snap.edge) { ent.kind = "edge"; ent.edge = snap.edge; }
+    // Highlight the edge a vertex sits on, but measure from the vertex itself.
+    const shown = ent.kind === "point" && snap.edge ? { ...ent, kind: "edge" as const, edge: snap.edge } : ent;
+    const first = state.selection;
+    if (first && !state.livePair && !sameEntity(first, ent)) {
+      showLive([first, ent]);
+      showEntity(hl.selFace, hl.selEdge, shown);
+      pickMark(first.point);
+      return;
+    }
+    hl.pickMarks.clear();
     state.selection = ent;
-    showEntity(hl.selFace, hl.selEdge, ent);
+    showEntity(hl.selFace, hl.selEdge, shown);
     const node = nodeForPart(snap.part);
     state.selectedNode = node;
     state.selectedParts = [snap.part];
     selectNode(node ?? null, true);
     if (!node) { state.selectedParts = [snap.part]; renderProps(); }
-    showFloatBar(ent);
+    showLive([ent]);
     return;
   }
   if (!snap) return;
@@ -567,43 +589,75 @@ function handlePick(snap: Snap | null) {
   viewer.invalidate();
 }
 
-// Contextual floating toolbar for the selected entity.
-function showFloatBar(e: Entity) {
-  const bar = $("#float-bar");
-  const acts: [string, () => void][] = [];
-  const one = (t: MeasureType) => () => {
-    try { addMeasurement(measure(viewer, t, [e], nextColor())); } catch (err) { toast((err as Error).message, true); }
-  };
-  const start = (t: MeasureType) => () => { setTool(t); state.picks = [e]; pickMark(e.point); updateHint(); };
-  const ed = e.edge, f = e.face;
-  if (e.kind === "edge" && ed) {
-    if (ed.radius) acts.push(["R Radius", one("radius")], ["Ø Diameter", one("diameter")], ["⊙ Centre to…", start("centerDistance")]);
-    acts.push([ed.type === "arc" ? "⌒ Arc length" : "⌒ Length", one("arcLength")]);
-    acts.push(["⇤ Distance to…", start("minDistance")]);
-    if (ed.type === "line" || ed.axis) acts.push(["∠ Angle to…", start("angle")]);
-  } else if (e.kind === "face" && f) {
-    if (f.radius) acts.push(["R Radius", one("radius")], ["Ø Diameter", one("diameter")], ["⊙ Axis to…", start("centerDistance")]);
-    acts.push(["⇤ Distance to…", start("minDistance")]);
-    if (f.type === "plane" || f.type === "cylinder") acts.push(["∠ Angle to…", start("angle")]);
-    acts.push(["⊕ Point", one("point")]);
-    if (f.type === "plane") acts.push(["✂ Section here", () => addSectionFromFace(e)]);
-  }
-  if (!acts.length) { hideFloatBar(); return; }
-  bar.innerHTML = `<span class="ttl">${esc(describeEntity(e))}</span>`;
-  for (const [label, fn] of acts) {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.addEventListener("click", ev => { ev.stopPropagation(); fn(); hideFloatBar(); });
-    bar.appendChild(b);
-  }
-  bar.hidden = false;
-  const r = vpEl.getBoundingClientRect();
-  const x = Math.min(lastPointer.x - r.left + 16, r.width - bar.offsetWidth - 8);
-  const y = Math.min(lastPointer.y - r.top + 18, r.height - bar.offsetHeight - 8);
-  bar.style.left = `${Math.max(8, x)}px`;
-  bar.style.top = `${Math.max(8, y)}px`;
+function sameEntity(a: Entity, b: Entity) {
+  if (a.part !== b.part || a.kind !== b.kind) return false;
+  if (a.kind === "point") return a.point.distanceToSquared(b.point) < 1e-12;
+  return a.kind === "edge" ? a.edge === b.edge : a.face === b.face;
 }
-function hideFloatBar() { $("#float-bar").hidden = true; }
+
+/** Measures one entity (its size) or two (the relation between them) and shows it until the next click. */
+function showLive(picks: Entity[]) {
+  try {
+    state.live = smartMeasure(viewer, picks, $<HTMLInputElement>("#m-color").value);
+  } catch (err) {
+    state.live = null;
+    toast(`Measurement failed: ${(err as Error).message}`, true);
+  }
+  state.livePair = picks.length === 2;
+  if (state.livePair) state.selection = null;
+  refreshMeasurements();
+  updateHint();
+  viewer.invalidate();
+}
+
+function clearLive() {
+  if (!state.live && !state.livePair) return;
+  state.live = null;
+  state.livePair = false;
+  hl.pickMarks.clear();
+  refreshMeasurements();
+}
+
+function pinLive() {
+  const m = state.live;
+  if (!m) return;
+  state.live = null;
+  nextColor();
+  addMeasurement(m);
+}
+
+/**
+ * Details of the live result (or the selected pinned measurement) in a card in
+ * the viewport corner, away from the model; the label on the model stays one line.
+ */
+function renderReadout() {
+  const box = $("#readout");
+  const m = state.live ?? state.measurements.find(x => x.id === state.selectedMeasurement);
+  if (!m || !m.visible) { box.hidden = true; return; }
+  const f = formatMeasurement(m);
+  box.style.setProperty("--c", m.color);
+  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><button class="x" title="Close (Esc)">✕</button></div>
+    <div class="val">${esc(f.value)}</div><div class="det">${f.details.map(d => `<span>${esc(d)}</span>`).join("")}</div><div class="acts"></div>`;
+  box.querySelector(".x")!.addEventListener("click", () => {
+    if (m === state.live) handlePick(null);
+    else { state.selectedMeasurement = null; refreshMeasurements(); }
+  });
+  const acts = box.querySelector(".acts")!;
+  const add = (label: string, fn: () => void) => {
+    const b = document.createElement("button");
+    b.className = "btn small";
+    b.textContent = label;
+    b.addEventListener("click", fn);
+    acts.appendChild(b);
+  };
+  if (m === state.live) {
+    add("📌 Pin", pinLive);
+    const e = state.selection;
+    if (e && !state.livePair && e.kind === "face" && e.face?.type === "plane") add("✂ Section here", () => addSectionFromFace(e));
+  }
+  box.hidden = false;
+}
+
 
 // ---------- pointer handling ----------
 const lastPointer = { x: 0, y: 0 };
@@ -683,7 +737,8 @@ function refreshMeasurements() {
       host.appendChild(el);
     });
   }
-  annotations.sync(state.measurements, state.selectedMeasurement);
+  annotations.sync(state.live ? [...state.measurements, state.live] : state.measurements, state.live?.id ?? state.selectedMeasurement);
+  renderReadout();
 }
 
 function deleteMeasurement(id: string) {

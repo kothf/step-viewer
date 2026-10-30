@@ -6,7 +6,7 @@ import { jsPDF } from "jspdf";
 import type { TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
 import type { Annotations } from "./Annotations";
-import { formatMeasurement, TOOL_INFO, type Measurement } from "./measure";
+import { formatMeasurement, type Measurement } from "./measure";
 import { units } from "./units";
 
 export function download(blob: Blob, name: string) {
@@ -98,7 +98,7 @@ export function measurementsCsv(list: Measurement[], fileName: string) {
   const rows = [["#", "Type", "Value", "Unit", "Details", "Colour"].join(",")];
   list.forEach((m, i) => {
     const f = formatMeasurement(m);
-    rows.push([i + 1, esc(TOOL_INFO[m.type].title), esc(f.value), units.current, esc(f.details.join("; ")), m.color].join(","));
+    rows.push([i + 1, esc(f.title), esc(f.value), units.current, esc(f.details.join("; ")), m.color].join(","));
   });
   download(new Blob([`# ${fileName}\n` + rows.join("\n")], { type: "text/csv" }), `${fileName.replace(/\.[^.]+$/, "")}-measurements.csv`);
 }
@@ -149,7 +149,7 @@ export function inspectionReport(info: ReportInfo) {
   if (info.measurements.length) {
     table("Measurements", [["#", "Type", "Value", "Details"], ...info.measurements.map((m, i) => {
       const f = formatMeasurement(m);
-      return [String(i + 1), TOOL_INFO[m.type].title, f.value, f.details.join("; ")];
+      return [String(i + 1), f.title, f.value, f.details.join("; ")];
     })], [8, 40, 50, 84]);
   }
   doc.save(`${info.fileName.replace(/\.[^.]+$/, "")}-inspection.pdf`);
