@@ -162,6 +162,36 @@ try {
     && mx.body.rows.Box.every(x => near(x, 10, 1e-6)) && mx.body.rows["Centre of gravity"].every((x, i) => near(x, mx.mid[i], 1e-6)),
     `smart: whole part 10×10×10, V=${mx.body.value}, CG ${mx.body.rows["Centre of gravity"]}`);
 
+  // --- readout: ΔX/ΔY/ΔZ triad, units and decimals, click to copy, JSON export ---
+  const hud = await page.evaluate(() => {
+    const { viewer, state, annotations, handlePick, setUnits, setDecimals } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const e = p.data.edges[0];
+    handlePick(null);
+    handlePick({ kind: "vertex", point: new V3(...e.start), part: p, edge: e, px: 0 });
+    handlePick({ kind: "vertex", point: new V3(...e.end), part: p, edge: e, px: 0 });
+    const axes = [];
+    annotations.root.traverse(o => { if (o.userData.axis) axes.push(o.userData.axis); });
+    const val = () => document.querySelector("#readout .val").textContent.trim();
+    const mm = val();
+    setUnits("ft"); const ft = val();
+    setDecimals("2"); const ft2 = val();
+    setUnits("mm"); setDecimals("");
+    document.querySelector("#readout .val .cp").click();
+    const copied = state.lastCopied;
+    document.querySelector("#readout .acts button").click(); // Pin
+    return { title: state.measurements.at(-1)?.data.title, triad: state.measurements.at(-1)?.data.triad, axes, mm, ft, ft2, copied };
+  });
+  check(hud.title === "Distance" && hud.triad === 1 && hud.axes.length === 1, `smart: point to point draws the axis legs (${hud.axes.join(",")})`);
+  check(hud.mm === "10.000 mm" && hud.ft === "0.03281 ft" && hud.ft2 === "0.03 ft", `readout units and decimals: ${hud.mm} / ${hud.ft} / ${hud.ft2}`);
+  check(hud.copied === "10.000", `click copies the bare value (${hud.copied})`);
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#m-json", el => el.click())]);
+  const json = JSON.parse(await readFile(await dl.path(), "utf8"));
+  const last = json.measurements.at(-1);
+  check(json.units.length === "mm" && last.title === "Distance" && near(last.value, 10, 1e-9) && last.rows.some(r => r.label === "ΔX") && last.points.length === 2,
+    `JSON export: ${json.measurements.length} measurements, last ${last.title} ${last.value}`);
+
   // --- section: caps, profile curves, cut area, snapping and measuring on the cut ---
   await page.$eval('[data-sec="z"]', el => el.click());
   await page.waitForTimeout(200);

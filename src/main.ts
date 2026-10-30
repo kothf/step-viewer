@@ -15,8 +15,8 @@ import {
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
 import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnalysis } from "./tools/analysis";
-import { exportMesh, inspectionReport, measurementsCsv, snapshot, download } from "./tools/exporters";
-import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, units, type Unit } from "./tools/units";
+import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
+import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
 import type { EdgeInfo, PartData, TreeNode } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
@@ -43,6 +43,7 @@ applyThemeToViewer();
 $("#app-version").textContent = `v${__APP_VERSION__}`;
 
 // ---------- state ----------
+const UNIT_LIST: Unit[] = ["mm", "cm", "m", "in", "ft"];
 /** "plane3" picks three points for a section plane. */
 type Tool = MeasureType | "select" | "plane3";
 const state = {
@@ -65,6 +66,8 @@ const state = {
   livePicks: [] as Entity[],
   /** Two round features: centre to centre, nearest or farthest rims. Kept between picks. */
   circleMode: "center" as CircleMode,
+  /** Last value copied from the readout. */
+  lastCopied: "",
 };
 annotations.lookup = id => (state.live?.id === id ? state.live : state.measurements.find(m => m.id === id));
 
@@ -322,7 +325,7 @@ function nodeForPart(p: Part): TreeNode | null {
 $<HTMLInputElement>("#tree-search").addEventListener("input", e => {
   const q = (e.target as HTMLInputElement).value.trim().toLowerCase();
   const tokens = q.split(/\s+/).filter(Boolean);
-  const f = { mm: 1, cm: 10, m: 1000, in: 25.4 }[units.current];
+  const f = unitMm();
   const test = (n: TreeNode): boolean => {
     if (!tokens.length) return true;
     const ps = partsUnder(n);
@@ -656,14 +659,31 @@ function pinLive() {
  * Details of the live result (or the selected pinned measurement) in a card in
  * the viewport corner, away from the model; the label on the model stays one line.
  */
+/** Copies a displayed value; a single number with a unit is copied as the bare number. */
+function copyValue(text: string) {
+  const t = text.trim();
+  const bare = /^[RØ]?S?Ø?\s*(-?[\d.]+(?:e[-+]?\d+)?)\s*(mm|cm|m|in|ft|°)$/.exec(t);
+  const out = bare ? bare[1] : t;
+  state.lastCopied = out;
+  navigator.clipboard?.writeText(out).then(() => toast(`Copied ${out}`), () => toast(`Copy failed; value ${out}`, true));
+}
+
 function renderReadout() {
   const box = $("#readout");
   const m = state.live ?? state.measurements.find(x => x.id === state.selectedMeasurement);
   if (!m || !m.visible) { box.hidden = true; return; }
   const f = formatMeasurement(m);
   box.style.setProperty("--c", m.color);
-  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><button class="x" title="Close (Esc)">✕</button></div>
-    <div class="val">${esc(f.value)}</div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${x.label}</button>`).join("")}</div>` : ""}<div class="det">${f.details.map(d => `<span>${esc(d)}</span>`).join("")}</div><div class="acts"></div>`;
+  const det = f.pairs
+    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" title="Click to copy">${esc(x)}</b></span>`)
+    : f.details.map(d => `<span>${esc(d)}</span>`);
+  const unitOpts = UNIT_LIST.map(u => `<option${u === units.current ? " selected" : ""}>${u}</option>`).join("");
+  const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? "auto" : `${d} dp`}</option>`).join("");
+  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><select data-hud="units" title="Units">${unitOpts}</select><select data-hud="decimals" title="Decimal places">${decOpts}</select><button class="x" title="Close (Esc)">✕</button></span></div>
+    <div class="val"><b class="cp" title="Click to copy">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${x.label}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+  box.querySelectorAll<HTMLElement>(".cp").forEach(el => el.addEventListener("click", () => copyValue(el.textContent ?? "")));
+  box.querySelector<HTMLSelectElement>('[data-hud="units"]')!.addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
+  box.querySelector<HTMLSelectElement>('[data-hud="decimals"]')!.addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
   box.querySelector(".x")!.addEventListener("click", () => {
     if (m === state.live) handlePick(null);
     else { state.selectedMeasurement = null; refreshMeasurements(); }
@@ -797,6 +817,7 @@ $("#m-clear").addEventListener("click", () => {
   saveMeasurements();
   refreshMeasurements();
 });
+$("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast("No measurements yet"));
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast("No measurements yet"));
 
 $$(".tabs button").forEach(b => b.addEventListener("click", () => {
@@ -840,16 +861,29 @@ $("#theme").addEventListener("click", () => {
 });
 $("#help-btn").addEventListener("click", () => $<HTMLDialogElement>("#help").showModal());
 
-$<HTMLSelectElement>("#units").addEventListener("change", e => {
-  units.current = (e.target as HTMLSelectElement).value as Unit;
-  storage.set("sv:units", units.current);
+function setUnits(u: Unit) {
+  units.current = u;
+  $<HTMLSelectElement>("#units").value = u;
+  storage.set("sv:units", u);
   refreshMeasurements();
   renderProps();
   renderSections();
-});
+}
+function setDecimals(d: string) {
+  units.decimals = d === "" ? null : Number(d);
+  $<HTMLSelectElement>("#decimals").value = d;
+  storage.set("sv:decimals", d);
+  refreshMeasurements();
+  renderProps();
+  renderSections();
+}
+$<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
+$<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
 {
   const u = storage.get("sv:units") as Unit | null;
-  if (u) { units.current = u; $<HTMLSelectElement>("#units").value = u; }
+  if (u && UNIT_LIST.includes(u)) { units.current = u; $<HTMLSelectElement>("#units").value = u; }
+  const d = storage.get("sv:decimals");
+  if (d && /^[0-6]$/.test(d)) { units.decimals = Number(d); $<HTMLSelectElement>("#decimals").value = d; }
 }
 $$<HTMLInputElement>("[data-snap]").forEach(c => c.addEventListener("change", () => {
   (SNAP_FILTERS as Record<string, boolean>)[c.dataset.snap!] = c.checked;
@@ -902,7 +936,7 @@ onChk("#snap-plane", on => { SNAP_FILTERS.planeOnly = on; });
 $<HTMLInputElement>("#cap-color").addEventListener("input", e => section.setCapColor((e.target as HTMLInputElement).value));
 $<HTMLInputElement>("#profile-color").addEventListener("input", e => section.setProfileColor((e.target as HTMLInputElement).value));
 
-const unitFactor = () => ({ mm: 1, cm: 10, m: 1000, in: 25.4 })[units.current];
+const unitFactor = unitMm;
 
 function renderSections() {
   const host = $("#sec-list");
@@ -1101,7 +1135,7 @@ $("#thk-run").addEventListener("click", async () => {
   if (!viewer.parts.length) return;
   if (thkJob) { thkJob.cancelled = true; return; }
   clearAnalysis(viewer);
-  const f = { mm: 1, cm: 10, m: 1000, in: 25.4 }[units.current];
+  const f = unitMm();
   const tMin = (parseFloat($<HTMLInputElement>("#thk-min").value) || 0) * f;
   const tMax = (parseFloat($<HTMLInputElement>("#thk-max").value) || 1) * f;
   thkJob = { cancelled: false };
@@ -1218,4 +1252,4 @@ window.addEventListener("keydown", e => {
 renderProps();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, handlePick, setTool, showBody, setCircleMode } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals } });

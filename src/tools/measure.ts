@@ -377,7 +377,7 @@ export function measureBBox(v: Viewer, parts: Part[], color: string): Measuremen
 }
 
 /** Label text (title, main value, detail lines) in the current units. */
-export function formatMeasurement(m: Measurement): { title: string; value: string; details: string[] } {
+export function formatMeasurement(m: Measurement): { title: string; value: string; details: string[]; pairs?: [string, string][] } {
   const d = m.data;
   const L = (x: unknown) => fmtLen(x as number);
   switch (m.type) {
@@ -402,7 +402,8 @@ export function formatMeasurement(m: Measurement): { title: string; value: strin
     }
     case "smart": {
       const rows = JSON.parse(String(d.rows)) as Row[];
-      return { title: String(d.title), value: String(d.prefix ?? "") + fmtRow(d.kind as RowKind, m.value, m.points[0]), details: rows.map(([label, kind, x]) => `${label} ${fmtRow(kind, x)}`) };
+      const pairs = rows.map(([label, kind, x]) => [label, fmtRow(kind, x)] as [string, string]);
+      return { title: String(d.title), value: String(d.prefix ?? "") + fmtRow(d.kind as RowKind, m.value, m.points[0]), details: pairs.map(p => p.join(" ")), pairs };
     }
     case "bbox": return {
       title: "Bounding box", value: `${fmtLen(d.x as number, false)} × ${fmtLen(d.y as number, false)} × ${fmtLen(d.z as number)}`,
@@ -737,6 +738,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     }
   }
   rows.push(names);
-  const title = A.kind === "point" && B.kind === "point" ? "Distance" : "Shortest distance";
-  return smart(line(sd.a, sd.b), title, sd.d, "len", rows);
+  const both = A.kind === "point" && B.kind === "point";
+  // Two points: the ΔX/ΔY/ΔZ legs are drawn too, in axis colours.
+  return smart(line(sd.a, sd.b), both ? "Distance" : "Shortest distance", sd.d, "len", rows, "", both ? { triad: 1 } : {});
 }

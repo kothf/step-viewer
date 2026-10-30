@@ -47,6 +47,7 @@ export class Annotations {
       line.raycast = () => {};
       group.add(line);
     }
+    if (m.data.triad && m.points.length >= 2) group.add(this.triad(m.points[0], m.points[1]));
     const dotPts = boxy || m.type === "arcLength" ? [] : m.points;
     if (dotPts.length) {
       const g = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(dotPts.flat(), 3));
@@ -68,6 +69,25 @@ export class Annotations {
     label.hidden = !m.visible;
     this.layer.appendChild(label);
     return { group, label };
+  }
+
+  /** ΔX, ΔY, ΔZ legs from a to b along the world axes: red, green, blue. */
+  private triad(a: number[], b: number[]) {
+    const g = new THREE.Group();
+    const corners = [a, [b[0], a[1], a[2]], [b[0], b[1], a[2]], b];
+    [0xe03131, 0x2f9e44, 0x1c7ed6].forEach((color, i) => {
+      if (Math.abs(corners[i + 1][i] - corners[i][i]) < 1e-9) return;
+      const geo = new LineSegmentsGeometry().setPositions([...corners[i], ...corners[i + 1]]);
+      const mat = new LineMaterial({ color, linewidth: 1.6, depthTest: false, transparent: true, dashed: true, dashSize: 2, gapSize: 1.5 });
+      mat.resolution.copy(this.viewer.size);
+      const line = new LineSegments2(geo, mat);
+      line.computeLineDistances();
+      line.renderOrder = 1999;
+      line.raycast = () => {};
+      line.userData.axis = "xyz"[i];
+      g.add(line);
+    });
+    return g;
   }
 
   private dispose(d: Drawn) {

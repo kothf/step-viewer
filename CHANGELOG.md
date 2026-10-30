@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Point to straight edge or plane: perpendicular distance to the infinite line or plane, with the foot point and whether it lies on the edge or its extension.
   - Parallel edges: alignment offset. Non-parallel straight edges: intersection point, real or on the extension, or the skew distance between the lines. Non-parallel planes: direction of the intersection line and a point on it.
   - Two round features: minimum edge-to-edge and maximum outer span next to centre to centre, with a Centre to centre / Minimum / Maximum switch in the readout that redraws the dimension, and the axis relation (parallel, concentric, perpendicular, skewed).
+- Point-to-point distance draws its ΔX, ΔY and ΔZ legs along the axes in red, green and blue.
+- The readout card has its own units and decimals switches. Click any value in it to copy it (a single length or angle is copied as the bare number).
+- Feet as a display unit, and a Decimals setting (auto or 0 to 6 places).
+- JSON export of measurements: raw values in millimetres and radians, world points, every detail row, and the text as displayed.
 
 ## [1.2.0] - 2026-10-30
 

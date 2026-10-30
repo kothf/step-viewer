@@ -125,7 +125,7 @@ details > :last-child { margin-bottom: 12px; }
 .tools-grid button { text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 8px; cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tools-grid button:hover { border-color: var(--accent); }
 .tools-grid button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
-.units-row { display: flex; gap: 12px; margin-top: 8px; align-items: center; }
+.units-row { display: flex; gap: 6px 12px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
 .units-row label { display: flex; align-items: center; gap: 6px; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 6px 0; font-size: 12px; }
 .kv dt, .kv .k { color: var(--muted); }
@@ -250,3 +250,8 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
   .snaps { display: none; }
   .navcube { width: 84px; height: 84px; }
 }
+.readout .cp { cursor: copy; font-weight: inherit; border-radius: 3px; }
+.readout .cp:hover { background: var(--accent-soft); color: var(--accent); }
+.readout .det .cp { color: var(--text); font-weight: 600; }
+.readout .hud-units { display: inline-flex; gap: 3px; align-items: center; }
+.readout .hud-units select { font-size: 10px; padding: 0 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: inherit; }

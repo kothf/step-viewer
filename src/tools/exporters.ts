@@ -103,6 +103,27 @@ export function measurementsCsv(list: Measurement[], fileName: string) {
   download(new Blob([`# ${fileName}\n` + rows.join("\n")], { type: "text/csv" }), `${fileName.replace(/\.[^.]+$/, "")}-measurements.csv`);
 }
 
+/** Raw data: values in millimetres and radians, points in world millimetres, plus the text as displayed. */
+export function measurementsJson(list: Measurement[], fileName: string) {
+  const out = {
+    file: fileName,
+    exported: new Date().toISOString(),
+    units: { length: "mm", angle: "rad", display: units.current },
+    measurements: list.map((m, i) => {
+      const f = formatMeasurement(m);
+      const { rows, ...data } = m.data;
+      return {
+        n: i + 1, id: m.id, type: m.type, title: f.title, value: m.value, display: f.value,
+        points: m.points, data,
+        ...(rows ? { rows: (JSON.parse(String(rows)) as [string, string, unknown][]).map(([label, kind, value]) => ({ label, kind, value })) } : {}),
+        details: f.details,
+      };
+    }),
+  };
+  download(new Blob([JSON.stringify(out, null, 2)], { type: "application/json" }), `${fileName.replace(/\.[^.]+$/, "")}-measurements.json`);
+  return out;
+}
+
 export interface ReportInfo {
   fileName: string;
   meta: [string, string][];

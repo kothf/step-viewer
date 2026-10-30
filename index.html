@@ -58,6 +58,7 @@
       <div id="m-list" class="m-list"><p class="muted pad">Measurements you take appear here.</p></div>
       <div class="row pad">
         <button id="m-csv" class="btn small">CSV</button>
+        <button id="m-json" class="btn small">JSON</button>
         <button id="m-pdf" class="btn small">PDF report</button>
         <button id="m-clear" class="btn small danger">Clear all</button>
       </div>
@@ -100,7 +101,8 @@
         <button data-tool="bbox" title="Bounding box of visible or selected parts (B)">▭ Bounding box</button>
       </div>
       <div class="units-row">
-        <label>Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option></select></label>
+        <label>Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
+        <label>Decimals <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
         <label>Colour <input type="color" id="m-color" value="#e8590c" /></label>
       </div>
     </details>
