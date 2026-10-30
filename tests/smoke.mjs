@@ -172,7 +172,10 @@ try {
     handlePick({ kind: "vertex", point: new V3(...e.start), part: p, edge: e, px: 0 });
     handlePick({ kind: "vertex", point: new V3(...e.end), part: p, edge: e, px: 0 });
     const axes = [];
-    annotations.root.traverse(o => { if (o.userData.axis) axes.push(o.userData.axis); });
+    annotations.root.children.at(-1).traverse(o => { if (o.userData.axis) axes.push(o.userData.axis); });
+    const legLabels = [...document.querySelectorAll("#labels .m-leg")].filter(el => el.dataset.id === state.live.id).map(el => el.textContent);
+    const origin = window.__sv.originAxes;
+    const tags = [...document.querySelectorAll("#labels .axis-tag")].filter(el => !el.hidden).map(el => el.textContent).join("");
     const val = () => document.querySelector("#readout .val").textContent.trim();
     const mm = val();
     setUnits("ft"); const ft = val();
@@ -181,18 +184,22 @@ try {
     document.querySelector("#readout .val .cp").click();
     const copied = state.lastCopied;
     const box = document.querySelector("#readout");
-    const floating = box.classList.contains("floating") && box.style.left !== "";
-    box.querySelector(".dock").click();
     const docked = !box.classList.contains("floating") && box.style.left === "";
     box.querySelector(".dock").click();
+    const floating = box.classList.contains("floating") && box.style.left !== "";
+    box.querySelector(".dock").click();
+    const ortho = viewer.camera.isOrthographicCamera === true && document.querySelector('[data-proj="orthographic"]').classList.contains("on");
     const parts = state.live.data.parts;
     document.querySelector("#readout .acts button").click(); // Pin
-    return { title: state.measurements.at(-1)?.data.title, triad: state.measurements.at(-1)?.data.triad, axes, mm, ft, ft2, copied, floating, docked, parts };
+    return { title: state.measurements.at(-1)?.data.title, triad: state.measurements.at(-1)?.data.triad, axes, legLabels, origin: origin.visible && origin.children.length, tags, mm, ft, ft2, copied, floating, docked, parts, ortho };
   });
-  check(hud.title === "Distance" && hud.triad === 1 && hud.axes.length === 1, `smart: point to point draws the axis legs (${hud.axes.join(",")})`);
+  check(hud.title === "Distance" && Array.isArray(hud.triad) && hud.axes.length === 1 && hud.legLabels.join() === "ΔZ 10.000 mm",
+    `smart: point to point draws the axis legs with their dimensions (${hud.axes.join(",")}: ${hud.legLabels.join(", ")})`);
+  check(hud.origin === 3 && hud.tags === "XYZ", `origin axes shown with X, Y, Z tags (${hud.origin}, ${hud.tags})`);
   check(hud.mm === "10.000 mm" && hud.ft === "0.03281 ft" && hud.ft2 === "0.03 ft", `readout units and decimals: ${hud.mm} / ${hud.ft} / ${hud.ft2}`);
   check(hud.copied === "10.000", `click copies the bare value (${hud.copied})`);
-  check(hud.floating && hud.docked, `readout floats beside the measurement and docks back (${hud.floating}, ${hud.docked})`);
+  check(hud.docked && hud.floating, `readout docked in the corner by default, floats on request (${hud.docked}, ${hud.floating})`);
+  check(hud.ortho, "orthographic projection by default");
   check(/Cube 10x10 #1$/.test(hud.parts ?? ""), `measurement records its component (${hud.parts})`);
   const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#m-json", el => el.click())]);
   const json = JSON.parse(await readFile(await dl.path(), "utf8"));
@@ -323,6 +330,9 @@ try {
       setCircleMode("min"); res.min = [state.live.data.title, state.live.value, res.expect - (da + db) / 2];
       setCircleMode("max"); res.max = [state.live.data.title, state.live.value, res.expect + (da + db) / 2];
       setCircleMode("center"); res.back = state.live.value;
+      res.legs = [...document.querySelectorAll("#labels .m-leg")].filter(el => el.dataset.id === state.live.id).map(el => [el.dataset.axis, parseFloat(el.textContent.slice(3))]);
+      const d = b.c.clone().sub(a.c);
+      res.expectLegs = [["X", Math.abs(d.x)], ["Y", Math.abs(d.y)], ["Z", Math.abs(d.z)]].filter(([, x]) => x > 1e-6);
       res.toggle = document.querySelectorAll("#readout [data-cmode]").length;
       return res;
     }
@@ -330,6 +340,8 @@ try {
   });
   check(pitch.title === "Pitch (axis to axis)" && near(pitch.value, pitch.expect, 1e-3) && pitch.value > 0,
     `smart: coplanar round faces give the pitch (${pitch.rounds} round faces, ${pitch.value} vs ${pitch.expect})`);
+  check(pitch.legs?.length === pitch.expectLegs?.length && pitch.legs.every(([k, x], i) => k === pitch.expectLegs[i][0] && near(x, pitch.expectLegs[i][1], 2e-3)),
+    `smart: centre to centre draws ΔX/ΔY/ΔZ legs with dimensions (${JSON.stringify(pitch.legs)})`);
   check(pitch.toggle === 3 && near(pitch.min?.[1], pitch.min?.[2], 1e-3) && near(pitch.max?.[1], pitch.max?.[2], 1e-3) && near(pitch.back, pitch.value, 1e-9),
     `smart: round features toggle min ${pitch.min?.[1]} / max ${pitch.max?.[1]} edge distance`);
 

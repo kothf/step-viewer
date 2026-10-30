@@ -5,7 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-30
+
+### Added
+- Every two-point distance (point to point, centre to centre and pitch, edge to edge, point or centre to a line or plane, shortest distance) draws thin red, green and blue ΔX, ΔY and ΔZ legs, each with its own dimension label. The legs follow the active CSYS and appear in PNG and PDF snapshots.
+- X, Y, Z axes from the model origin (0, 0, 0), with letters at the tips. Toggle them with "Axes" in the toolbar (remembered).
+
 ### Changed
+- Orthographic projection is the default; the last choice is remembered.
+- The readout card is docked in the bottom-left corner by default; ⇱ floats it beside the measurement.
 - Releases can be started from GitHub's Actions tab (Release → Run workflow): it tags `main` itself after the tests pass, so no tag push is needed. The release reuses the CI result of the commit instead of testing again, and CI on `main` now runs every commit at once.
 
 ## [1.3.0] - 2026-10-30
@@ -72,7 +80,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/kothf/step-viewer/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kothf/step-viewer/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kothf/step-viewer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kothf/step-viewer/compare/v1.0.0...v1.1.0

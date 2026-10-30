@@ -67,8 +67,8 @@ const state = {
   livePicks: [] as Entity[],
   /** Two round features: centre to centre, nearest or farthest rims. Kept between picks. */
   circleMode: "center" as CircleMode,
-  /** Readout card beside the measurement (true) or docked in the corner. */
-  readoutFloat: storage.get("sv:readout") !== "dock",
+  /** Readout card beside the measurement (true) or docked in the bottom-left corner (default). */
+  readoutFloat: storage.get("sv:readout") === "float",
   /** Last value copied from the readout. */
   lastCopied: "",
 };
@@ -86,6 +86,51 @@ const hl = {
 hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
+// X, Y, Z axes from the model origin (0, 0, 0), always on top, with letters at the tips.
+const originAxes = (() => {
+  const group = new THREE.Group();
+  const tags: HTMLDivElement[] = [];
+  ["#e03131", "#2f9e44", "#1c7ed6"].forEach((color, i) => {
+    const tip = [0, 0, 0];
+    tip[i] = 1;
+    const geo = new LineSegmentsGeometry().setPositions([0, 0, 0, ...tip]);
+    const mat = new LineMaterial({ color: new THREE.Color(color).getHex(), linewidth: 1.6, depthTest: false, transparent: true });
+    mat.resolution.copy(viewer.size);
+    const line = new LineSegments2(geo, mat);
+    line.renderOrder = 1998;
+    line.raycast = () => {};
+    group.add(line);
+    const tag = document.createElement("div");
+    tag.className = "axis-tag";
+    tag.style.setProperty("--c", color);
+    tag.textContent = "XYZ"[i];
+    $("#labels").appendChild(tag);
+    tags.push(tag);
+  });
+  viewer.scene.add(group);
+  const tmp = new THREE.Vector3();
+  viewer.onRender(() => {
+    const on = group.visible && viewer.parts.length > 0;
+    group.scale.setScalar(viewer.modelSize * 0.3);
+    group.children.forEach(c => ((c as LineSegments2).material as LineMaterial).resolution.copy(viewer.size));
+    tags.forEach((tag, i) => {
+      tmp.set(0, 0, 0).setComponent(i, viewer.modelSize * 0.3 * 1.06).project(viewer.camera);
+      tag.hidden = !on || tmp.z > 1 || tmp.z < -1;
+      tag.style.transform = `translate(${((tmp.x + 1) / 2) * viewer.size.x}px, ${((1 - tmp.y) / 2) * viewer.size.y}px) translate(-50%, -50%)`;
+    });
+  });
+  return group;
+})();
+{
+  const box = $<HTMLInputElement>("#origin-axes");
+  box.checked = storage.get("sv:axes") !== "off";
+  originAxes.visible = box.checked;
+  box.addEventListener("change", () => {
+    originAxes.visible = box.checked;
+    storage.set("sv:axes", box.checked ? "on" : "off");
+    viewer.invalidate();
+  });
+}
 const csysMark = new THREE.AxesHelper(1);
 (csysMark.material as THREE.LineBasicMaterial).depthTest = false;
 csysMark.renderOrder = 2000;
@@ -932,6 +977,7 @@ function setMode(m: DisplayMode) {
 $$("#display-mode button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode as DisplayMode)));
 function setProjection(p: "perspective" | "orthographic") {
   viewer.setProjection(p);
+  storage.set("sv:proj", p);
   $$("#projection button").forEach(b => b.classList.toggle("on", b.dataset.proj === p));
   if (dragControls) dragControls.camera = viewer.camera;
   section.updateCamera();
@@ -1351,4 +1397,7 @@ window.addEventListener("keydown", e => {
 renderProps();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners } });
+// Orthographic by default (true dimensions on screen); the last choice is remembered.
+setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
+
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes } });
