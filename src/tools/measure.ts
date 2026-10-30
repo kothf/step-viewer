@@ -289,13 +289,13 @@ export function measure(v: Viewer, type: MeasureType, picks: Entity[], color: st
     case "distance": {
       const [a, b] = [picks[0].point, picks[1].point];
       const d = b.clone().sub(a);
-      return base(type, d.length(), color, [a, b], [[0, 1]], mid(a, b), { dx: Math.abs(d.x), dy: Math.abs(d.y), dz: Math.abs(d.z) });
+      return base(type, d.length(), color, [a, b], [[0, 1]], mid(a, b), { dx: Math.abs(d.x), dy: Math.abs(d.y), dz: Math.abs(d.z), triad: 1 });
     }
     case "minDistance": {
       const c = shortestDistance(v, picks[0], picks[1]);
       return base(type, c.d, color, [c.a, c.b], [[0, 1]], mid(c.a, c.b), {
         a: describeEntity(picks[0]), b: describeEntity(picks[1]), note: c.note ?? "", ...(c.planeGap !== undefined ? { planeGap: c.planeGap } : {}),
-        dx: Math.abs(c.b.x - c.a.x), dy: Math.abs(c.b.y - c.a.y), dz: Math.abs(c.b.z - c.a.z),
+        dx: Math.abs(c.b.x - c.a.x), dy: Math.abs(c.b.y - c.a.y), dz: Math.abs(c.b.z - c.a.z), triad: 1,
       });
     }
     case "angle3": {
@@ -442,6 +442,9 @@ function fmtRow(kind: RowKind, x: unknown, fallback?: V3): string {
     case "text": return String(x);
   }
 }
+
+/** Draw the ΔX/ΔY/ΔZ legs (with their own dimensions) between these two points. */
+const legs = (a: THREE.Vector3, b: THREE.Vector3): Measurement["data"] => ({ triad: [...v3(a), ...v3(b)] });
 
 function smart(geo: Measurement, title: string, value: number, kind: RowKind, rows: Row[], prefix = "", extra: Measurement["data"] = {}): Measurement {
   geo.type = "smart";
@@ -602,7 +605,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     const relRow: Row[] = relation ? [["Axes", "text", relation]] : [];
     if (coaxial) {
       const rows: Row[] = [["Centre distance", "len", w.length()], dias, ["Radial gap", "len", Math.abs(r1 - r2)], ...relRow, gapRow, names];
-      return smart(line(ca.center, cb.center), parallel ? "Coaxial, axial distance" : "Concentric", Math.abs(axial), "len", rows);
+      return smart(line(ca.center, cb.center), parallel ? "Coaxial, axial distance" : "Concentric", Math.abs(axial), "len", rows, "", legs(ca.center, cb.center));
     }
     const u = span.clone().divideScalar(L);
     const minD = L - r1 - r2, maxD = L + r1 + r2;
@@ -618,7 +621,10 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     const b = mode === "center" ? ca.center.clone().add(span) : ca.center.clone().add(span).addScaledVector(u, -s * r2);
     const pts = [a, b, b.clone().add(axialVec)];
     const geo = base("smart", 0, color, pts, Math.abs(axial) > tol ? [[0, 1], [1, 2]] : [[0, 1]], mid(a, b));
-    const extra: Measurement["data"] = r1 > 0 && r2 > 0 ? { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode } : {};
+    const extra: Measurement["data"] = {
+      ...(r1 > 0 && r2 > 0 ? { modes: CIRCLE_MODES.map(m => m.mode).join(","), mode } : {}),
+      ...(mode === "center" ? legs(ca.center, cb.center) : legs(a, pts[2])),
+    };
     if (mode === "min") return smart(geo, minD < 0 ? "Edge to edge (overlap)" : "Edge to edge (min)", minD, "len", rows, "", extra);
     if (mode === "max") return smart(geo, "Overall span (max)", maxD, "len", rows, "", extra);
     return smart(geo, parallel ? "Pitch (axis to axis)" : "Centre to centre", L, "len", rows, "", extra);
@@ -639,7 +645,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     rows.push(names);
     const geo = line(pt.point, foot);
     if (!onEdge) { geo.points.push(v3(t < 0 ? p0 : p1)); geo.segments.push([1, 2]); }
-    return smart(geo, "Point to line", d, "len", rows);
+    return smart(geo, "Point to line", d, "len", rows, "", legs(pt.point, foot));
   }
   if (pt && other.kind === "face" && other.face!.type === "plane") {
     const n = V(other.face!.normal!);
@@ -648,7 +654,7 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
     const rows: Row[] = [["Foot on plane", "pos", v3(foot)]];
     if (Math.abs(sd.d - Math.abs(d)) > tol) rows.push(["Shortest to the face", "len", sd.d]);
     rows.push(names);
-    return smart(line(pt.point, foot), "Point to plane", Math.abs(d), "len", rows);
+    return smart(line(pt.point, foot), "Point to plane", Math.abs(d), "len", rows, "", legs(pt.point, foot));
   }
 
   // A hole or boss against a face or a straight edge: from its centre.
@@ -664,14 +670,14 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
         const d = c.center.clone().sub(o.point).dot(n);
         const foot = c.center.clone().addScaledVector(n, -d);
         const rows: Row[] = [["Ø", "len", (c.radius ?? 0) * 2], gapRow, names];
-        return smart(line(c.center, foot), cos < 1e-6 ? "Centre to face" : "Circle to face", Math.abs(d), "len", rows);
+        return smart(line(c.center, foot), cos < 1e-6 ? "Centre to face" : "Circle to face", Math.abs(d), "len", rows, "", legs(c.center, foot));
       }
     } else if (o.kind === "edge" && o.edge!.type === "line") {
       const p0 = v.toWorld(o.part, o.edge!.start), dir = V(o.edge!.dir!);
       const w = c.center.clone().sub(p0);
       const foot = p0.clone().addScaledVector(dir, w.dot(dir));
       const rows: Row[] = [["Ø", "len", (c.radius ?? 0) * 2], gapRow, names];
-      return smart(line(c.center, foot), "Centre to line", c.center.distanceTo(foot), "len", rows);
+      return smart(line(c.center, foot), "Centre to line", c.center.distanceTo(foot), "len", rows, "", legs(c.center, foot));
     }
   }
 
@@ -746,6 +752,5 @@ function smartPair(v: Viewer, A: Entity, B: Entity, color: string, opts: SmartOp
   }
   rows.push(names);
   const both = A.kind === "point" && B.kind === "point";
-  // Two points: the ΔX/ΔY/ΔZ legs are drawn too, in axis colours.
-  return smart(line(sd.a, sd.b), both ? "Distance" : "Shortest distance", sd.d, "len", rows, "", both ? { triad: 1 } : {});
+  return smart(line(sd.a, sd.b), both ? "Distance" : "Shortest distance", sd.d, "len", rows, "", legs(sd.a, sd.b));
 }

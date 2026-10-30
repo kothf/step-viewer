@@ -178,6 +178,12 @@ details > :last-child { margin-bottom: 12px; }
   border-radius: 5px; padding: 1px 5px; font: 600 11px var(--mono); white-space: nowrap;
   box-shadow: 0 1px 4px rgba(0,0,0,.15);
 }
+.m-leg, .axis-tag {
+  position: absolute; left: 0; top: 0; pointer-events: none; white-space: nowrap;
+  font: 600 9.5px var(--mono); color: var(--c); background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--c); border-radius: 3px; padding: 0 3px;
+}
+.axis-tag { font-size: 11px; font-weight: 700; padding: 0 4px; }
 .m-label.selected { z-index: 2; border-width: 2px; background: rgba(255, 255, 255, 0.94); }
 .readout {
   position: absolute; left: 12px; bottom: 12px; z-index: 5; max-width: min(320px, calc(100% - 24px));
