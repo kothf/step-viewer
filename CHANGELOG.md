@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-31
+
+### Added
+- UI/UX standards, mainly for the PCB view. Header shows the open file with a status badge (loading, open, error) and stays above everything. The side panels collapse with the hamburger / panel buttons or Ctrl+[ and Ctrl+] (⌘ on macOS), and the state is remembered per screen size.
+- Responsive PCB layout: full panels from 1280 px; from 768 to 1279 px the layer panel floats over the board and the tool panel stays docked; below 768 px a bottom navigation bar (Board, Layers, Results, Tools) opens the panels as full-screen sheets.
+- Toasts stack in the bottom-right corner: information and success close after 4 s, warnings and errors stay until you dismiss them.
+- Dialogs have a blurred backdrop, keep keyboard focus inside, close with Esc and return focus. Help also closes on a backdrop click; "Clear all" measurements now asks in a dialog that a stray backdrop click can't dismiss (PCB and 3D).
+- Keyboard access: every PCB control is reachable with Tab and shows a 2 px focus ring; layers reorder with Alt+↑ / Alt+↓; measurement lists use real buttons; the 3D model tree works with the arrow keys, Enter and H; tabs switch with ←/→. Icon buttons, swatches and badges have text labels for screen readers, and form fields are linked to their labels.
+- Empty states with an illustration and a call to action for the layer list, the measurement lists and the model tree; skeleton placeholders in the panels when loading takes longer than 300 ms; a spinner on PNG/SVG export, PDF report and mass calculation.
+- Inline validation for the density field in Mass properties (red message under the field, announced to screen readers).
+
+### Changed
+- Colour tokens meet WCAG 2.1 AA contrast in light and dark themes (muted text, accent, error red #D32F2F). Font stack starts with Inter; PCB panels use 14 px body text. Hover, pressed, focus and disabled states on buttons and fields, with 180 ms ease-in-out transitions; export and clear buttons are disabled while there is nothing to export.
+
 ## [1.7.1] - 2026-10-31
 
 ### Changed
@@ -117,7 +131,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/kothf/step-viewer/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kothf/step-viewer/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kothf/step-viewer/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/kothf/step-viewer/compare/v1.6.0...v1.6.1

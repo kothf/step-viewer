@@ -24,16 +24,13 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
+import { bindModal, bindTabs, busy, confirmModal, emptyState, initModals, initPanels, storage, toast } from "./ui";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 // ---------- theme (before the viewer reads colours) ----------
-const storage = {
-  get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
-};
 const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
 document.documentElement.dataset.theme = storage.get("sv:theme") ?? (prefersDark ? "dark" : "light");
 
@@ -214,11 +211,28 @@ const gerber = new GerberView($("#gerber"), {
   status: (coord, snap) => { $("#st-coord").textContent = coord; $("#st-snap").textContent = snap; },
   download: (b, n) => download(b, n),
 });
+const panels = initPanels($("#app"));
+initModals();
+const openPicker = () => $<HTMLInputElement>("#file-input").click();
+$$("[data-open]").forEach(b => b.addEventListener("click", openPicker));
 bindGerberPanel(gerber, {
-  copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`), () => toast("Copy failed", true)); },
+  copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`, "success"), () => toast("Copy failed", true)); },
+  open: openPicker,
+  panels,
 });
+
+/** File name and status (idle / loading / ready / error) in the header. */
+function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
+  const label = { idle: "no file open", loading: "loading", ready: "open", error: "could not open" }[st];
+  $("#doc-name").textContent = name || "No file open";
+  $("#doc").title = name ? `${name} (${label})` : "No file open";
+  $("#doc").dataset.state = st;
+  $("#doc-status").dataset.state = st;
+  $("#doc-status").setAttribute("aria-label", `Status: ${label}`);
+}
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
+  panels.apply();
   if (on) { $("#empty").hidden = true; } else { $("#st-coord").textContent = ""; $("#st-snap").textContent = ""; }
 }
 const isPcbMode = () => $("#app").classList.contains("gerber");
@@ -227,10 +241,13 @@ async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], ap
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
   setPcbMode(true);
+  const label = list.length === 1 ? list[0].name : `${list.length} PCB files`;
+  setDoc(label, "loading");
   const ok = await gerber.load(list, append && gerber.loaded);
-  if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; return; }
+  if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; setDoc(label, "error"); return; }
   if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : list[0].name.replace(/[-_.][^-_.]*$/, "") || "pcb";
   document.title = `${gerber.name} · PCB · STEP Viewer`;
+  setDoc(gerber.name, "ready");
   const n = gerber.layers.length;
   $("#st-stats").textContent = `${n} layer${n === 1 ? "" : "s"} · ${gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString()} objects`;
 }
@@ -264,6 +281,7 @@ async function openFile(file: File) {
 async function openBuffer(buffer: ArrayBuffer, name: string) {
   if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
   const token = ++loadToken;
+  setDoc(name, "loading");
   setLoading(true, `Reading ${name}…`, 2);
   state.meta = readStepMeta(new Uint8Array(buffer));
   const quality = $<HTMLSelectElement>("#quality").value as "draft" | "normal" | "fine";
@@ -277,7 +295,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
       else reject(new Error(d.text));
     };
     worker.postMessage({ buffer, name, occtBase, quality }, [buffer]);
-  }).catch(err => { setLoading(false); toast(`Could not open ${name}: ${err.message}`, true); return null; });
+  }).catch(err => { setLoading(false); setDoc(name, "error"); toast(`Could not open ${name}: ${err.message}`, true); return null; });
   if (!result || token !== loadToken) return;
 
   setLoading(true, "Building scene…", 97);
@@ -288,6 +306,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   state.fileName = name;
   state.fileKey = `sv:m:${name}:${buffer.byteLength || ""}`;
   document.title = `${name} · STEP Viewer`;
+  setDoc(name, "ready");
   $("#empty").hidden = true;
   setLoading(false);
   buildTree();
@@ -320,28 +339,26 @@ function resetForNewModel() {
   $("#mass-out").innerHTML = "";
 }
 
+/** Skeleton loaders replace panel content when loading takes longer than this. */
+const SKELETON_MS = 300;
+let slowTimer = 0;
 function setLoading(on: boolean, text = "", pct = 0) {
+  const app = $("#app");
+  if (on && $("#loading").hidden) {
+    clearTimeout(slowTimer);
+    app.dataset.busy = "on";
+    slowTimer = window.setTimeout(() => { if (app.dataset.busy) app.dataset.busy = "slow"; }, SKELETON_MS);
+  }
+  if (!on) { clearTimeout(slowTimer); delete app.dataset.busy; }
   $("#loading").hidden = !on;
   if (on) { $("#loading-text").textContent = text; $("#loading-bar").style.width = `${pct}%`; }
 }
 
-let toastTimer = 0;
-function toast(msg: string, err = false) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "toast" + (err ? " err" : "");
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (t.hidden = true), err ? 6000 : 2600);
-}
-
-for (const id of ["#file-input", "#file-input-2"]) {
-  $<HTMLInputElement>(id).addEventListener("change", e => {
-    const fs = (e.target as HTMLInputElement).files;
-    if (fs?.length) openFiles([...fs]);
-    (e.target as HTMLInputElement).value = "";
-  });
-}
+$<HTMLInputElement>("#file-input").addEventListener("change", e => {
+  const fs = (e.target as HTMLInputElement).files;
+  if (fs?.length) openFiles([...fs]);
+  (e.target as HTMLInputElement).value = "";
+});
 vpEl.addEventListener("dragover", e => { e.preventDefault(); vpEl.classList.add("drag"); });
 vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
 vpEl.addEventListener("drop", e => {
@@ -364,7 +381,7 @@ function buildTree() {
   const host = $("#tree");
   host.innerHTML = "";
   nodeEls.clear();
-  if (!viewer.tree) return;
+  if (!viewer.tree) { emptyState(host, { icon: "model", title: "No model loaded", text: "Open a STEP, IGES or BREP file to see its assembly tree.", cta: "Open file", action: openPicker }); return; }
   const make = (n: TreeNode, depth: number): HTMLElement => {
     const el = document.createElement("div");
     el.className = "node";
@@ -374,8 +391,13 @@ function buildTree() {
     const row = document.createElement("div");
     row.className = "row-n";
     row.style.setProperty("--d", String(depth));
-    const sw = leafPart ? `<span class="swatch" style="background:#${leafPart.baseColor.getHexString()}"></span>` : "";
-    row.innerHTML = `<span class="caret">${hasKids ? "▾" : ""}</span><button class="eye" title="Show/hide">●</button>${sw}<span class="nm" title="${esc(n.name)}">${esc(n.name)}</span><span class="cnt">${count > 1 ? count : ""}</span>`;
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(depth + 1));
+    row.setAttribute("aria-selected", "false");
+    if (hasKids) row.setAttribute("aria-expanded", "true");
+    row.tabIndex = depth === 0 ? 0 : -1;
+    const sw = leafPart ? `<span class="swatch" aria-hidden="true" style="background:#${leafPart.baseColor.getHexString()}"></span>` : "";
+    row.innerHTML = `<span class="caret" aria-hidden="true">${hasKids ? "▾" : ""}</span><button class="eye" title="Show/hide" aria-label="Show or hide ${esc(n.name)}" tabindex="-1">●</button>${sw}<span class="nm" title="${esc(n.name)}">${esc(n.name)}</span><span class="cnt">${count > 1 ? count : ""}</span>`;
     el.appendChild(row);
     const kids = document.createElement("div");
     kids.className = "kids";
@@ -383,7 +405,26 @@ function buildTree() {
     // A node holding several meshes directly lists them as leaves.
     if (n.parts.length > 1) n.parts.forEach(i => kids.appendChild(make({ name: viewer.parts[i].data.name, parts: [i], children: [] }, depth + 1)));
     el.appendChild(kids);
-    row.querySelector(".caret")!.addEventListener("click", e => { e.stopPropagation(); el.classList.toggle("collapsed"); });
+    const setOpen = (open: boolean) => { el.classList.toggle("collapsed", !open); if (hasKids) row.setAttribute("aria-expanded", String(open)); };
+    row.querySelector(".caret")!.addEventListener("click", e => { e.stopPropagation(); setOpen(el.classList.contains("collapsed")); });
+    row.addEventListener("keydown", e => {
+      if (e.target !== row) return;
+      const rows = [...host.querySelectorAll<HTMLElement>(".row-n")].filter(r => r.offsetParent !== null);
+      const i = rows.indexOf(row);
+      const go = (r?: HTMLElement) => { if (!r) return; rows.forEach(x => (x.tabIndex = -1)); r.tabIndex = 0; r.focus(); };
+      const k = e.key;
+      if (k === "ArrowDown") go(rows[i + 1]);
+      else if (k === "ArrowUp") go(rows[i - 1]);
+      else if (k === "Home") go(rows[0]);
+      else if (k === "End") go(rows.at(-1));
+      else if (k === "ArrowRight" && hasKids) { if (el.classList.contains("collapsed")) setOpen(true); else go(rows[i + 1]); }
+      else if (k === "ArrowLeft") { if (hasKids && !el.classList.contains("collapsed")) setOpen(false); else go(el.parentElement?.closest(".node")?.querySelector<HTMLElement>(":scope > .row-n") ?? undefined); }
+      else if (k === "Enter" || k === " ") selectNode(n);
+      else if (k.toLowerCase() === "h" && !e.ctrlKey && !e.metaKey) { (row.querySelector(".eye") as HTMLElement).click(); }
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    });
     row.querySelector(".eye")!.addEventListener("click", e => {
       e.stopPropagation();
       const ps = partsUnder(n);
@@ -409,6 +450,7 @@ function refreshTreeVisibility() {
     const eye = el.querySelector(":scope > .row-n .eye") as HTMLElement;
     eye.textContent = vis === 0 ? "○" : vis < ps.length ? "◐" : "●";
     el.classList.toggle("sel", n === state.selectedNode);
+    el.querySelector(":scope > .row-n")!.setAttribute("aria-selected", String(n === state.selectedNode));
   }
 }
 
@@ -984,25 +1026,34 @@ function hover() {
 function refreshMeasurements() {
   const host = $("#m-list");
   $("#m-count").textContent = String(state.measurements.length);
-  if (!state.measurements.length) host.innerHTML = `<p class="muted pad">Measurements you take appear here.</p>`;
+  for (const id of ["#m-csv", "#m-json", "#m-pdf", "#m-clear"]) $<HTMLButtonElement>(id).disabled = !state.measurements.length && id !== "#m-pdf" || !viewer.parts.length;
+  if (!state.measurements.length) emptyState(host, {
+    icon: "ruler", title: "No measurements yet",
+    text: viewer.parts.length ? "Click a face or edge with Smart measure; pin a result to keep it here." : "Open a model, then click faces and edges to measure them.",
+    cta: viewer.parts.length ? "Start Smart measure" : "Open file",
+    action: () => { if (!viewer.parts.length) openPicker(); else { setTool("select"); vpEl.querySelector("canvas")?.focus(); } },
+  });
   else {
+    const focusedIdx = document.activeElement?.closest("#m-list .m-item") ? [...host.children].indexOf(document.activeElement.closest(".m-item")!) : -1;
     host.innerHTML = "";
     state.measurements.forEach((m, i) => {
       const f = formatMeasurement(m);
       const el = document.createElement("div");
       el.className = "m-item" + (m.id === state.selectedMeasurement ? " sel" : "");
+      el.setAttribute("role", "listitem");
       el.style.setProperty("--c", m.color);
-      el.innerHTML = `<span class="dot"></span><span class="t">${i + 1}. ${esc(f.title)}</span>
-        <span class="acts"><input type="color" value="${m.color}" title="Colour"><button title="Show/hide">${m.visible ? "👁" : "◌"}</button><button title="Delete">✕</button></span>
-        <span class="val">${esc(f.value)}</span>`;
-      el.addEventListener("click", () => { state.selectedMeasurement = m.id; refreshMeasurements(); });
-      const [color, vis, del] = el.querySelectorAll<HTMLElement>("input, button");
+      const title = `${i + 1}. ${f.title}`;
+      el.innerHTML = `<span class="dot" aria-hidden="true"></span><button class="m-main" aria-pressed="${m.id === state.selectedMeasurement}" title="${esc(`${title}: ${f.value}`)}"><span class="t">${esc(title)}</span><span class="val">${esc(f.value)}</span></button>
+        <span class="acts"><input type="color" value="${m.color}" title="Colour" aria-label="Colour of measurement ${i + 1}"><button title="Show/hide" aria-label="${m.visible ? "Hide" : "Show"} measurement ${i + 1}" aria-pressed="${m.visible}">${m.visible ? "👁" : "◌"}</button><button title="Delete" aria-label="Delete measurement ${i + 1}">✕</button></span>`;
+      el.querySelector(".m-main")!.addEventListener("click", () => { state.selectedMeasurement = m.id; refreshMeasurements(); });
+      const [color, vis, del] = el.querySelectorAll<HTMLElement>(".acts input, .acts button");
       color.addEventListener("click", e => e.stopPropagation());
       color.addEventListener("input", e => { m.color = (e.target as HTMLInputElement).value; saveMeasurements(); refreshMeasurements(); });
       vis.addEventListener("click", e => { e.stopPropagation(); m.visible = !m.visible; saveMeasurements(); refreshMeasurements(); });
       del.addEventListener("click", e => { e.stopPropagation(); deleteMeasurement(m.id); });
       host.appendChild(el);
     });
+    if (focusedIdx >= 0) (host.children[Math.min(focusedIdx, host.children.length - 1)] as HTMLElement | undefined)?.querySelector<HTMLElement>(".m-main")?.focus();
   }
   annotations.sync(state.live ? [...state.measurements, state.live] : state.measurements, state.live?.id ?? state.selectedMeasurement);
   renderReadout();
@@ -1030,8 +1081,8 @@ function loadMeasurements() {
   if (state.measurements.length) toast(`Restored ${state.measurements.length} saved measurement(s)`);
 }
 
-$("#m-clear").addEventListener("click", () => {
-  if (!state.measurements.length || !confirm("Delete all measurements for this model?")) return;
+$("#m-clear").addEventListener("click", async () => {
+  if (!state.measurements.length || !await confirmModal("Delete all measurements for this model?", "Delete all")) return;
   state.measurements = [];
   saveMeasurements();
   refreshMeasurements();
@@ -1039,10 +1090,7 @@ $("#m-clear").addEventListener("click", () => {
 $("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast("No measurements yet"));
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast("No measurements yet"));
 
-$$(".tabs button").forEach(b => b.addEventListener("click", () => {
-  $$(".tabs button").forEach(x => x.classList.toggle("on", x === b));
-  $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${b.dataset.tab}`));
-}));
+bindTabs($(".tabs"), tab => $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)));
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -1080,7 +1128,8 @@ $("#theme").addEventListener("click", () => {
   storage.set("sv:theme", next);
   applyThemeToViewer();
 });
-$("#help-btn").addEventListener("click", () => $<HTMLDialogElement>("#help").showModal());
+const help = bindModal($<HTMLDialogElement>("#help"));
+$("#help-btn").addEventListener("click", () => help.open());
 
 function setUnits(u: Unit) {
   units.current = u;
@@ -1303,12 +1352,24 @@ matSel.innerHTML = MATERIALS.map((m, i) => `<option value="${i}">${m.name} (${m.
 matSel.addEventListener("change", () => {
   if (matSel.value !== "custom") $<HTMLInputElement>("#density").value = String(MATERIALS[+matSel.value].density);
 });
-$<HTMLInputElement>("#density").addEventListener("input", () => (matSel.value = "custom"));
+$<HTMLInputElement>("#density").addEventListener("input", () => { matSel.value = "custom"; validateDensity(); });
+/** Inline validation of the density field; returns the density or null when it is not usable. */
+function validateDensity(): number | null {
+  const inp = $<HTMLInputElement>("#density"), err = $("#density-err");
+  const v = parseFloat(inp.value);
+  const msg = inp.value.trim() === "" ? "Enter a density in g/cm³, for example 7.85 for steel." : !(v > 0) || !isFinite(v) ? "Density must be a number greater than 0 g/cm³." : "";
+  err.textContent = msg;
+  err.hidden = !msg;
+  inp.setAttribute("aria-invalid", String(!!msg));
+  $<HTMLButtonElement>("#mass-run").disabled = !!msg;
+  return msg ? null : v;
+}
 let lastMass: [string, string][] = [];
 function runMass() {
   if (!viewer.parts.length) return;
   const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
-  const density = parseFloat($<HTMLInputElement>("#density").value) || 0;
+  const density = validateDensity();
+  if (density === null) return;
   const r = massProperties(viewer, parts, density);
   lastMass = [
     ["Scope", parts.length === viewer.parts.length ? "whole model" : `${parts.length} part(s)`],
@@ -1324,7 +1385,7 @@ function runMass() {
   hl.com.visible = $<HTMLInputElement>("#com-show").checked;
   viewer.invalidate();
 }
-$("#mass-run").addEventListener("click", runMass);
+$("#mass-run").addEventListener("click", e => busy(e.currentTarget as HTMLElement, runMass));
 $<HTMLInputElement>("#com-show").addEventListener("change", e => { hl.com.visible = (e.target as HTMLInputElement).checked && lastMass.length > 0; viewer.invalidate(); });
 
 // ---------- export ----------
@@ -1361,13 +1422,16 @@ function report() {
   const image = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" });
   inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image });
 }
-$("#report").addEventListener("click", report);
-$("#m-pdf").addEventListener("click", report);
+$("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
+$("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 
 // ---------- keyboard ----------
 window.addEventListener("keydown", e => {
   const t = e.target as HTMLElement;
   if (t.matches("input, select, textarea")) return;
+  // Keyboard users: let Enter / Space press the focused control, and keep keys inside dialogs and sheets.
+  if ((e.key === "Enter" || e.key === " ") && t.matches("button, summary, a, [role=treeitem], [role=tab]")) return;
+  if (t.closest("dialog") || ($("#app").dataset.sheet && t.closest(".sheet"))) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (isPcbMode()) { if (gerber.onKey(e)) e.preventDefault(); return; }
@@ -1414,9 +1478,11 @@ window.addEventListener("keydown", e => {
 }
 
 renderProps();
+buildTree();
+refreshMeasurements();
 
 // Debug/test handle: always in dev, and with ?debug in a build (used by tests/smoke.mjs).
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });

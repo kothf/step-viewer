@@ -14,6 +14,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { crc32, deflateRawSync } from "node:zlib";
 import { extname, join, resolve, sep } from "node:path";
 import { chromium } from "playwright";
+import { createRequire } from "node:module";
 
 const root = resolve(process.argv[2] || "dist/step-viewer");
 const fixtures = resolve("node_modules/occt-import-js/test/testfiles");
@@ -123,6 +124,9 @@ try {
   check(near(m.angle, Math.PI / 2, 1e-9), `face angle 90° (${(m.angle * 180) / Math.PI})`);
   check(near(m.arcLength, 10, 1e-9), `edge length 10 mm (${m.arcLength})`);
   check(near(m.bbox, Math.sqrt(300), 1e-6), `bounding box diagonal √300 (${m.bbox})`);
+  // Calculate shows a busy spinner for a frame first, so the result arrives asynchronously.
+  await page.waitForFunction(() => /Mass/.test(document.querySelector("#mass-out").textContent), null, { timeout: 5000 }).catch(() => {});
+  cube.mass = await page.$eval("#mass-out", el => el.textContent);
   check(/Mass\s*7\.850 g/.test(cube.mass), "steel cube mass 7.850 g");
   check(!cube.analysisUi, "draft angle and wall thickness controls are gone");
 
@@ -514,6 +518,29 @@ try {
   });
   check(typeof cone.min === "number" && cone.min > 1 && cone.min < 20 && /flat/.test(cone.max), `smart: cone face curvature radii ${cone.min} / ${cone.max}`);
 
+  // --- UI standards on the 3D side: inline field validation, keyboard tree ---
+  const ui3d = await page.evaluate(async () => {
+    const d = document.querySelector("#density"), err = document.querySelector("#density-err");
+    d.value = ""; d.dispatchEvent(new Event("input"));
+    const r = { shown: !err.hidden && /density/i.test(err.textContent), invalid: d.getAttribute("aria-invalid"), disabled: document.querySelector("#mass-run").disabled, role: err.getAttribute("role"), described: d.getAttribute("aria-describedby") };
+    d.value = "7.85"; d.dispatchEvent(new Event("input"));
+    r.cleared = err.hidden && d.getAttribute("aria-invalid") === "false" && !document.querySelector("#mass-run").disabled;
+    const rows = [...document.querySelectorAll("#tree .row-n")];
+    r.treeRole = rows[0]?.getAttribute("role");
+    r.firstTabbable = rows[0]?.tabIndex === 0;
+    return r;
+  });
+  await page.focus("#tree .row-n");
+  await page.keyboard.press("ArrowDown");
+  const treeKey = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll("#tree .row-n")];
+    return { moved: rows.length < 2 || document.activeElement === rows[1] };
+  });
+  await page.keyboard.press("Enter");
+  const treeSel = await page.evaluate(() => document.activeElement?.getAttribute("aria-selected"));
+  check(ui3d.shown && ui3d.invalid === "true" && ui3d.disabled && ui3d.role === "alert" && ui3d.described === "density-err" && ui3d.cleared, `ui: density field shows an inline error and clears it (${JSON.stringify(ui3d)})`);
+  check(ui3d.treeRole === "treeitem" && ui3d.firstTabbable && treeKey.moved && treeSel === "true", "ui: model tree is reachable and operable with the keyboard");
+
   // --- PCB view: a zipped Gerber + Excellon set, layers, snapping and measurements ---
   await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`);
   await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
@@ -618,9 +645,202 @@ try {
 
   check(pcb.panel.visible && pcb.panel.sliders === 0 && !pcb.panel.addBtn, `pcb: all layers shown, panel has only show/hide and colour (${JSON.stringify(pcb.panel)})`);
 
+  // --- UI/UX standards in the PCB view (FRS: layout, tokens, states, feedback, a11y QA) ---
+  {
+    const axeSrc = await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
+    const boardUrl = `${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`;
+    const openBoard = async (pg, theme = "light") => {
+      await pg.addInitScript(t => { try { localStorage.setItem("sv:theme", t); } catch {} }, theme);
+      await pg.goto(boardUrl);
+      await pg.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+      await pg.waitForTimeout(250);
+    };
+
+    // Responsive layout at the standard breakpoints: no horizontal scroll, header fits, right navigation per size.
+    for (const [w, h] of [[1920, 1080], [1440, 900], [1024, 768], [768, 1024], [375, 812]]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h } });
+      const pg = await ctx.newPage();
+      pg.on("pageerror", e => errors.push(e.message));
+      await openBoard(pg);
+      const r = await pg.evaluate(() => {
+        const vis = sel => { const e = document.querySelector(sel); if (!e) return false; const s = getComputedStyle(e); return s.display !== "none" && e.getBoundingClientRect().width > 0; };
+        const top = document.querySelector(".topbar"), ts = getComputedStyle(top);
+        // Text that does not fit must end in an ellipsis and keep the full text in a tooltip.
+        const clipped = [];
+        for (const e of document.querySelectorAll("#app *")) {
+          if (!e.childNodes.length || ![...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
+          const s = getComputedStyle(e);
+          if (s.display === "none" || e.getBoundingClientRect().width === 0 || e.scrollWidth <= e.clientWidth + 1) continue;
+          if (e.closest(".tool-hint, .readout, .g-tip, .labels")) continue;
+          const tip = e.closest("[title]");
+          if (s.textOverflow !== "ellipsis" || !tip) clipped.push(`${e.tagName}.${e.className}:${e.textContent.slice(0, 20)}`);
+        }
+        return {
+          scroll: document.documentElement.scrollWidth - innerWidth, bodyScroll: document.body.scrollWidth - innerWidth,
+          header: top.scrollWidth - top.clientWidth, z: ts.zIndex, pos: ts.position,
+          left: vis("#g-left"), leftPos: getComputedStyle(document.querySelector("#g-left")).position, right: vis("#g-right"), nav: vis("#g-bottomnav"), status: vis(".status"),
+          canvas: document.querySelector("#g-canvas").getBoundingClientRect().width, clipped,
+        };
+      });
+      const layout = w >= 1280 ? r.left && r.leftPos !== "fixed" && r.right && !r.nav
+        : w >= 768 ? !r.left && r.right && !r.nav
+        : !r.left && !r.right && r.nav && !r.status;
+      check(r.scroll <= 0 && r.bodyScroll <= 0 && r.header <= 1 && r.canvas > 0 && r.clipped.length === 0, `ui ${w}px: no horizontal scroll, header fits, clipped text has ellipsis + tooltip (${JSON.stringify({ s: r.scroll, h: r.header, clipped: r.clipped.slice(0, 3) })})`);
+      check(layout && r.z === "1000" && /sticky|fixed/.test(r.pos), `ui ${w}px: ${w >= 1280 ? "docked panels" : w >= 768 ? "floating layer panel, docked tools" : "bottom navigation"}; header z-index 1000 (${JSON.stringify({ left: r.left, leftPos: r.leftPos, right: r.right, nav: r.nav })})`);
+      if (w === 1024) {
+        await pg.keyboard.press("Control+BracketLeft");
+        await pg.waitForTimeout(250);
+        const fl = await pg.evaluate(() => { const e = document.querySelector("#g-left"); const s = getComputedStyle(e); return { pos: s.position, shown: s.display !== "none", z: +s.zIndex }; });
+        check(fl.shown && fl.pos === "fixed" && fl.z >= 900, `ui tablet: Ctrl+[ opens the layer panel floating over the board (${JSON.stringify(fl)})`);
+      }
+      if (w === 375) {
+        await pg.click("#g-bottomnav [data-sheet=layers]");
+        await pg.waitForTimeout(250);
+        const sh = await pg.evaluate(() => { const e = document.querySelector("#g-left"), b = e.getBoundingClientRect(); return { full: b.left <= 0 && b.width >= innerWidth - 1 && b.top <= 0, role: e.getAttribute("role"), modal: e.getAttribute("aria-modal"), focus: e.contains(document.activeElement) }; });
+        await pg.keyboard.press("Escape");
+        await pg.waitForTimeout(100);
+        const closed = await pg.evaluate(() => !document.querySelector("#app").dataset.sheet && getComputedStyle(document.querySelector("#g-left")).display === "none");
+        check(sh.full && sh.role === "dialog" && sh.modal === "true" && sh.focus && closed, `ui mobile: Layers opens a full-screen sheet with focus inside, Esc closes it (${JSON.stringify(sh)})`);
+      }
+      await ctx.close();
+    }
+
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const pg = await ctx.newPage();
+    pg.on("pageerror", e => errors.push(e.message));
+    await openBoard(pg, "light");
+
+    // Sidebar: Ctrl+[ collapses within 200 ms, the board widens, the state survives a reload.
+    const w0 = await pg.$eval("#g-canvas", c => c.getBoundingClientRect().width);
+    const dur = await pg.$eval("#app", a => parseFloat(getComputedStyle(a).transitionDuration) * 1000);
+    await pg.keyboard.press("Control+BracketLeft");
+    await pg.waitForTimeout(300);
+    const col = await pg.evaluate(() => ({ cls: document.querySelector("#app").classList.contains("no-left"), w: document.querySelector("#g-canvas").getBoundingClientRect().width, exp: document.querySelector("#nav-toggle").getAttribute("aria-expanded") }));
+    await openBoard(pg, "light");
+    const kept = await pg.evaluate(() => document.querySelector("#app").classList.contains("no-left"));
+    await pg.click("#nav-toggle");
+    await pg.waitForTimeout(300);
+    const back = await pg.evaluate(() => !document.querySelector("#app").classList.contains("no-left") && getComputedStyle(document.querySelector("#g-left")).display !== "none");
+    check(col.cls && col.w > w0 + 200 && col.exp === "false" && kept && back && dur > 0 && dur < 200, `ui: Ctrl+[ / hamburger collapse the layer panel (${dur} ms), state kept after reload`);
+
+    // Header: active file name and a status badge with a text alternative.
+    const hdr = await pg.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, st: document.querySelector("#doc-status").dataset.state, label: document.querySelector("#doc-status").getAttribute("aria-label") }));
+    check(/board/.test(hdr.name) && hdr.st === "ready" && /Status/.test(hdr.label), `ui: header shows the open file and its status (${JSON.stringify(hdr)})`);
+
+    // Pin a measurement so the list, the readout card and all controls are on screen for the audits.
+    await pg.evaluate(() => {
+      const g = window.__sv.gerber;
+      const cu = g.layers.find(l => l.L.label === "Top copper");
+      const fi = cu.L.objs.findIndex(o => o.t === "flash" && o.x === 10);
+      g.setTool("smart");
+      g.addMeasurement(g.shapeArea({ lid: cu.id, fi }));
+      document.querySelector("#gt-measures").click();
+    });
+
+    // axe-core: WCAG 2.1 A/AA, including colour contrast, in light and dark themes.
+    for (const theme of ["light", "dark"]) {
+      await pg.evaluate(t => { document.documentElement.dataset.theme = t; }, theme);
+      await pg.waitForTimeout(250);
+      await pg.addScriptTag({ content: axeSrc });
+      const res = await pg.evaluate(async () => {
+        const r = await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] });
+        return r.violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`);
+      });
+      check(res.length === 0, `ui axe (${theme}): 0 WCAG 2.1 AA violations, contrast included${res.length ? ": " + res.join(" | ") : ""}`);
+    }
+    await pg.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+
+    // Keyboard: every visible control is reachable with Tab and shows a 2 px focus ring.
+    await pg.evaluate(() => document.activeElement?.blur());
+    const reached = new Set();
+    let ring = null;
+    for (let i = 0; i < 160; i++) {
+      await pg.keyboard.press("Tab");
+      const f = await pg.evaluate(() => {
+        const a = document.activeElement;
+        if (!a || a === document.body) return null;
+        if (!a.dataset.uiId) a.dataset.uiId = String(Math.random());
+        const s = getComputedStyle(a);
+        return { id: a.dataset.uiId, outline: `${s.outlineStyle} ${s.outlineWidth}`, btn: a.matches(".btn") };
+      });
+      if (f) { reached.add(f.id); if (f.btn && !ring) ring = f.outline; }
+    }
+    const unreachable = await pg.evaluate(ids => {
+      const want = [...document.querySelectorAll("#app button, #app select, #app input:not([type=hidden]), #app summary, #app [tabindex='0']")]
+        .filter(e => !e.disabled && e.tabIndex >= 0 && !e.closest("[hidden]") && getComputedStyle(e).visibility !== "hidden" && e.getClientRects().length && !e.closest(".step-only"));
+      return want.filter(e => !ids.includes(e.dataset.uiId)).map(e => e.outerHTML.slice(0, 60));
+    }, [...reached]);
+    check(unreachable.length === 0, `ui keyboard: all PCB controls reachable with Tab${unreachable.length ? ": " + unreachable.slice(0, 4).join(" | ") : ""}`);
+    check(ring === "solid 2px", `ui keyboard: visible 2 px focus ring (${ring})`);
+
+    // Keyboard reorder of layers.
+    const order0 = await pg.evaluate(() => window.__sv.gerber.layers.map(l => l.id).join());
+    await pg.click("#gt-layers");
+    await pg.focus("#g-layers .g-layer .grip");
+    await pg.keyboard.press("Alt+ArrowDown");
+    const reorder = await pg.evaluate(() => ({ order: window.__sv.gerber.layers.map(l => l.id).join(), focus: document.activeElement === document.querySelectorAll("#g-layers .g-layer .grip")[1] }));
+    check(reorder.order !== order0 && reorder.focus, "ui keyboard: Alt+↓ moves a layer and keeps focus on it");
+
+    // States: transitions 150–250 ms, disabled state, busy spinner on a background action.
+    const st = await pg.evaluate(() => {
+      const t = getComputedStyle(document.querySelector("#g-png")), d = document.querySelector("#g-all-on");
+      return { dur: parseFloat(t.transitionDuration) * 1000, ease: t.transitionTimingFunction };
+    });
+    const busySeen = await pg.evaluate(() => { document.querySelector("#g-png").click(); return document.querySelector("#g-png").classList.contains("busy"); });
+    check(st.dur >= 150 && st.dur <= 250 && /ease-in-out/.test(st.ease) && busySeen, `ui states: ${st.dur} ms ${st.ease} transitions, spinner on export`);
+
+    // Toasts: bottom-right, info dismisses after 4 s, errors stay until dismissed.
+    await pg.evaluate(() => { window.__sv.toast("Info toast"); window.__sv.toast("Error toast", true); });
+    const tpos = await pg.evaluate(() => { const r = document.querySelector("#toasts").getBoundingClientRect(); return { right: innerWidth - r.right, bottom: innerHeight - r.bottom }; });
+    await pg.waitForTimeout(4300);
+    const tAfter = await pg.evaluate(() => [...document.querySelectorAll("#toasts .toast")].map(t => [t.dataset.kind, t.getAttribute("role")]));
+    await pg.click("#toasts .toast.error .x");
+    const tGone = await pg.evaluate(() => !document.querySelector("#toasts .toast.error"));
+    check(tpos.right <= 24 && tpos.bottom <= 60 && tAfter.length === 1 && tAfter[0][0] === "error" && tAfter[0][1] === "alert" && tGone, `ui toasts: bottom-right, info auto-dismissed at 4 s, error sticky until closed (${JSON.stringify(tAfter)})`);
+
+    // Modal: blurred backdrop, focus trapped, Esc and backdrop click close; destructive confirm ignores the backdrop.
+    await pg.click("#help-btn");
+    const blur = await pg.evaluate(() => getComputedStyle(document.querySelector("#help"), "::backdrop").backdropFilter);
+    let trapped = true;
+    for (let i = 0; i < 6; i++) { await pg.keyboard.press("Tab"); trapped &&= await pg.evaluate(() => !!document.activeElement.closest("#help")); }
+    await pg.mouse.click(8, 400);
+    const helpClosed = await pg.evaluate(() => !document.querySelector("#help").open);
+    await pg.click("#help-btn");
+    await pg.keyboard.press("Escape");
+    const escClosed = await pg.evaluate(() => !document.querySelector("#help").open && document.activeElement?.id === "help-btn");
+    check(blur === "blur(4px)" && trapped && helpClosed && escClosed, `ui modal: blur(4px) backdrop, focus trap, backdrop click and Esc close, focus returns (${blur})`);
+
+    await pg.click("#gt-measures");
+    await pg.$eval("#g-clear", b => b.click());
+    await pg.waitForTimeout(100);
+    const opened = await pg.evaluate(() => document.querySelector("#confirm").open);
+    await pg.mouse.click(8, 400);
+    const stillOpen = await pg.evaluate(() => document.querySelector("#confirm").open);
+    await pg.keyboard.press("Escape");
+    await pg.waitForFunction(() => !document.querySelector("#confirm").open, null, { timeout: 2000 }).catch(() => {});
+    const kept2 = await pg.evaluate(() => window.__sv.gerber.measurements.length);
+    await pg.$eval("#g-clear", b => b.click());
+    await pg.waitForFunction(() => document.querySelector("#confirm").open, null, { timeout: 2000 }).catch(() => {});
+    await pg.click("#confirm [data-a=ok]");
+    await pg.waitForFunction(() => window.__sv.gerber.measurements.length === 0, null, { timeout: 2000 }).catch(() => {});
+    // Empty state: illustration, description and a call to action that starts Smart measure.
+    const empty = await pg.evaluate(() => {
+      const e = document.querySelector("#g-m-list .empty-state");
+      window.__sv.gerber.setTool("distance");
+      e?.querySelector("button.primary")?.click();
+      return { n: window.__sv.gerber.measurements.length, svg: !!e?.querySelector("svg"), h: e?.querySelector("h3")?.textContent, cta: e?.querySelector("button.primary")?.textContent, tool: window.__sv.gerber.tool, disabled: document.querySelector("#g-clear").disabled && document.querySelector("#g-csv").disabled };
+    });
+    check(opened && stillOpen && kept2 === 1 && empty.n === 0, `ui modal: Clear all asks first, a backdrop click does not dismiss it (${JSON.stringify({ opened, stillOpen, kept2, n: empty.n })})`);
+    check(empty.svg && /No measurements/.test(empty.h) && /Smart/.test(empty.cta) && empty.tool === "smart" && empty.disabled, `ui empty state: illustration, text and CTA; export buttons disabled (${JSON.stringify(empty)})`);
+    await ctx.close();
+  }
+
   // --- PCB performance: ~270k objects ---
   const t0 = Date.now();
   await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/big-F_Cu.gbr")}`);
+  // Loading longer than 300 ms shows skeletons in the panels.
+  const skel = await page.waitForFunction(() => document.querySelector("#app")?.dataset.busy === "slow" && getComputedStyle(document.querySelector("#g-tab-layers .skel-group")).display === "flex", null, { timeout: 20000, polling: 50 }).then(() => true, () => false);
+  check(skel, "ui: skeleton loaders while a slow PCB load runs");
   await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
   const loadS = (Date.now() - t0) / 1000;
   const perf = await page.evaluate(() => {
