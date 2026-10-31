@@ -23,7 +23,7 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
 - **Model tree**: show/hide, isolate, colour and opacity per part or sub-assembly; filter by name, `size>50`, `vol<1000`.
 - **Metadata**: STEP header, protocol, product revisions, materials, AP242 PMI entity counts.
 - **Export**: PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report.
-- **PCB / Gerber view**: open Gerber RS-274X and X2 layers, Excellon drill files, or a `.zip` of a whole Gerber set (drop several files at once, or add layers later). Layers are recognised from X2 file functions or common names (KiCad, Altium/Protel, Eagle) and drawn on a dark 2D canvas, with per-layer visibility, colour, opacity and drag-to-reorder stacking; bottom (mirrored) view.
+- **PCB / Gerber view**: open Gerber RS-274X and X2 layers, Excellon drill files, or a `.zip` of a whole Gerber set (drop several files at once). Layers are recognised from X2 file functions or common names (KiCad, Altium/Protel, Eagle) and all drawn on a dark 2D canvas, with per-layer show/hide, colour and drag-to-reorder stacking; bottom (mirrored) view.
   - Smart: one click shows a pad's aperture and size, a track's width and length, a hole's diameter and plating, a region's area, plus X2 net, pin and pad function; a second click gives pitch and edge-to-edge clearance.
   - Point to point (with ΔX/ΔY), clearance, polyline length and polygon area; Shift+click a pad, region or closed outline (board edge) for its area.
   - Snapping to corners and track ends, pad and hole centres, track edges and the perpendicular onto a track edge; mm, inch or mil with 0–4 decimals.

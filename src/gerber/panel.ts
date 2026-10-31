@@ -1,4 +1,4 @@
-// Side panels for the PCB view: layer list (visibility, colour, opacity, order),
+// Side panels for the PCB view: layer list (visibility, colour, order),
 // measurement manager, tools, units and the readout card.
 
 import type { GerberView, GMeasure, GTool } from "./GerberView";
@@ -7,7 +7,7 @@ import type { GUnit } from "./model";
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export function bindGerberPanel(g: GerberView, opts: { addFiles: () => void; copy: (text: string) => void }) {
+export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void }) {
   // Tabs
   document.querySelectorAll<HTMLButtonElement>("#g-left .g-tabs button").forEach(b => b.addEventListener("click", () => {
     document.querySelectorAll("#g-left .g-tabs button").forEach(x => x.classList.toggle("on", x === b));
@@ -28,7 +28,6 @@ export function bindGerberPanel(g: GerberView, opts: { addFiles: () => void; cop
     else if (a === "out") g.zoomAt(vp.width / 2, vp.height / 2, 1 / 1.4);
     else if (a === "flip") g.setMirror(!g.view.mirror);
   }));
-  $("#g-add-btn").addEventListener("click", opts.addFiles);
   $("#g-all-on").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: true })));
   $("#g-all-off").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: false })));
   $("#g-png").addEventListener("click", () => g.png());
@@ -54,12 +53,9 @@ export function bindGerberPanel(g: GerberView, opts: { addFiles: () => void; cop
         <button class="eye" title="Show / hide">${l.visible ? "◉" : "○"}</button>
         <input type="color" value="${l.color}" title="Layer colour" />
         <span class="g-name"><b>${esc(l.L.label)}</b><small>${esc(l.L.name)}${l.L.warnings.length ? " ⚠" : ""}</small></span>
-        <input type="range" min="0.1" max="1" step="0.05" value="${l.opacity}" title="Opacity" />
-        <button class="x" title="Remove layer">✕</button>`;
+`;
       row.querySelector(".eye")!.addEventListener("click", () => g.setLayerStyle(i, { visible: !l.visible }));
       row.querySelector<HTMLInputElement>("input[type=color]")!.addEventListener("input", e => g.setLayerStyle(i, { color: (e.target as HTMLInputElement).value }));
-      row.querySelector<HTMLInputElement>("input[type=range]")!.addEventListener("input", e => g.setLayerStyle(i, { opacity: +(e.target as HTMLInputElement).value }));
-      row.querySelector(".x")!.addEventListener("click", () => g.removeLayer(i));
       row.addEventListener("dragstart", e => { dragFrom = i; e.dataTransfer!.effectAllowed = "move"; e.dataTransfer!.setData("text/plain", String(i)); row.classList.add("dragging"); });
       row.addEventListener("dragend", () => row.classList.remove("dragging"));
       row.addEventListener("dragover", e => { if (dragFrom < 0) return; e.preventDefault(); e.stopPropagation(); row.classList.add("drop"); });

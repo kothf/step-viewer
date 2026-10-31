@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-31
+
+### Changed
+- PCB layer panel is simpler: each layer has only show/hide, colour and drag-to-reorder. The opacity slider, the per-layer remove button and the "+ Add layers" toolbar button are gone; every layer of an opened set is shown.
+
 ## [1.7.0] - 2026-10-31
 
 ### Added
@@ -112,7 +117,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/kothf/step-viewer/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kothf/step-viewer/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/kothf/step-viewer/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/kothf/step-viewer/compare/v1.5.1...v1.6.0

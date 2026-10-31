@@ -1014,16 +1014,7 @@ export class GerberView {
     this.layers.splice(to, 0, l);
     this.render(); this.changed();
   }
-  removeLayer(i: number) {
-    const id = this.layers[i].id;
-    this.layers.splice(i, 1);
-    const keep = (m: GMeasure) => !m.feats?.some(r => r.lid === id);
-    this.measurements = this.measurements.filter(keep);
-    if (this.live && !keep(this.live)) this.live = null;
-    this.picks = this.picks.filter(p => !p.feat || p.feat.lid !== id);
-    this.hover = null;
-    this.render(); this.changed();
-  }
+
 
   setLayerStyle(i: number, s: Partial<Pick<LayerView, "visible" | "color" | "opacity">>) {
     Object.assign(this.layers[i], s);

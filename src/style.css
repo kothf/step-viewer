@@ -286,7 +286,7 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 .g-tab.on { display: flex; }
 .g-layers { overflow: auto; flex: 1; padding: 4px 0; }
 .g-layer {
-  display: grid; grid-template-columns: 12px 20px 26px 1fr 56px 18px; gap: 4px; align-items: center;
+  display: grid; grid-template-columns: 12px 20px 26px 1fr; gap: 4px; align-items: center;
   padding: 5px 8px; border-bottom: 1px solid var(--line); cursor: default;
 }
 .g-layer:hover { background: var(--panel-2); }
