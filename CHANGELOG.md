@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-31
+
+### Changed
+- Picking respects what you can see. In Shaded, Shaded+Edges and HLR, vertices, edges, centres and faces hidden behind a body (or behind a section cap) are no longer snapped or highlighted; Wire and X-ray still pick through the model.
+- Hover and selection edge highlights hide behind the model in opaque modes instead of drawing through it.
+- More accurate snapping in dense scenes: faces under a ring of probes around the cursor contribute their edges, so an edge right beside the cursor is found even when the face under the cursor belongs to another part, and an edge half hidden behind its own body snaps on the half that shows. In X-ray every face along the cursor ray contributes.
+
 ## [1.5.1] - 2026-10-31
 
 ### Fixed
@@ -91,7 +98,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/kothf/step-viewer/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/kothf/step-viewer/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kothf/step-viewer/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kothf/step-viewer/compare/v1.3.0...v1.4.0

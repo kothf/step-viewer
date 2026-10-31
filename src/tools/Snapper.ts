@@ -30,15 +30,20 @@ export const SNAP_FILTERS = {
 };
 
 /**
- * Two stages: a BVH raycast finds the face under the cursor, then the snap
- * features of that face's edges (and every visible circle centre, since a
- * hole's centre lies over empty space) are scored in screen space.
+ * Three stages: BVH raycasts at the cursor and on a small ring around it find
+ * the faces near the cursor, the snap features of those faces' edges (and every
+ * circle centre, since a hole's centre lies over empty space) are scored in
+ * screen space, and the best candidates are checked for occlusion in turn. In
+ * opaque display modes (Shaded, Shaded+Edges, HLR) only geometry the camera can
+ * see is pickable; in Wire and X-ray hidden geometry stays pickable.
  */
 export class Snapper {
   radiusPx = 15;
   private current: Snap | null = null;
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
+  /** Own raycaster for probes and occlusion tests, so the viewer's cursor ray stays intact. */
+  private probe = new THREE.Raycaster();
 
   sectionSource: SectionSource | null = null;
 
@@ -50,27 +55,96 @@ export class Snapper {
     return v.z <= 1;
   }
 
+  /** Hidden geometry is pickable only when the display shows it (Wire, X-ray). */
+  get seesThrough() {
+    const m = this.viewer.mode;
+    return m === "wireframe" || m === "xray";
+  }
+
+  private ndc(sx: number, sy: number) {
+    const v = this.viewer;
+    return new THREE.Vector2((sx / v.size.x) * 2 - 1, -(sy / v.size.y) * 2 + 1);
+  }
+
+  /** Surface hits along the ray through ndc, nearest first, with clipped-away hits dropped. */
+  private hitsAt(ndc: THREE.Vector2, all: boolean, occludersOnly = false): THREE.Intersection[] {
+    const v = this.viewer;
+    const rc = this.probe;
+    rc.setFromCamera(ndc, v.camera);
+    const meshes = v.parts.filter(p => p.visible && (!occludersOnly || !(p.material as THREE.Material).transparent)).map(p => p.mesh);
+    (rc as any).firstHitOnly = !all && v.clipPlanes.length === 0;
+    const hits = rc.intersectObjects(meshes, false);
+    const kept = v.clipPlanes.length ? hits.filter(h => v.clipPlanes.every(pl => pl.distanceToPoint(h.point) >= -1e-6)) : hits;
+    return all ? kept : kept.slice(0, 1);
+  }
+
+  /** World size of one screen pixel at a point (for depth tolerances). */
+  private pxWorld(p: THREE.Vector3) {
+    const v = this.viewer, cam = v.camera as THREE.Camera & { isOrthographicCamera?: boolean };
+    if (cam.isOrthographicCamera) {
+      const o = cam as unknown as THREE.OrthographicCamera;
+      return (o.top - o.bottom) / o.zoom / v.size.y;
+    }
+    const pc = cam as unknown as THREE.PerspectiveCamera;
+    const depth = this.tmpB.copy(p).applyMatrix4(pc.matrixWorldInverse).z;
+    return (2 * Math.tan(THREE.MathUtils.degToRad(pc.fov) / 2) * Math.abs(depth)) / v.size.y;
+  }
+
+  /**
+   * True when nothing opaque lies between the camera and a world point. Points
+   * on the surface itself (edges, vertices, centres on a face) count as visible
+   * within a couple of pixels of depth. With a section active, a point seen
+   * through a cap (the ray reaches it from inside the material) is hidden.
+   */
+  isVisible(world: THREE.Vector3, onCut = false): boolean {
+    if (this.seesThrough) return true;
+    const v = this.viewer;
+    const s = world.clone().project(v.camera);
+    if (s.z > 1) return false;
+    const hits = this.hitsAt(new THREE.Vector2(s.x, s.y), false, true);
+    const h = hits[0];
+    if (!h) return true;
+    const ray = this.probe.ray;
+    const t = world.clone().sub(ray.origin).dot(ray.direction);
+    const eps = 2.5 * this.pxWorld(world) + 1e-6 * v.modelSize;
+    if (h.distance < t - eps) return false;
+    // First thing the ray meets is the inside of a solid: it came in through a section cap.
+    if (!onCut && v.clipPlanes.length && h.face && h.face.normal.dot(ray.direction) > 0 && h.distance <= t + eps) {
+      for (const pl of v.clipPlanes) {
+        const tp = ray.distanceToPlane(pl);
+        if (tp !== null && tp < t - eps) return false;
+      }
+    }
+    return true;
+  }
+
   pick(sx: number, sy: number): Snap | null {
     const v = this.viewer;
-    const ndc = new THREE.Vector2((sx / v.size.x) * 2 - 1, -(sy / v.size.y) * 2 + 1);
+    const ndc = this.ndc(sx, sy);
     const hit = v.pickMeshes(ndc);
     const ray = v.raycaster.ray;
     const cursor = new THREE.Vector2(sx, sy);
     const scr = new THREE.Vector2();
     const R = this.radiusPx;
-    let best: Snap | null = null;
+    const see = this.seesThrough;
     const score = (s: Snap) => PRIORITY[s.kind] * R + s.px;
+    /** Candidates in snap radius; checked for occlusion only once ranked. */
+    const cands: Snap[] = [];
+    /** Already visible by construction (the surface under the cursor, a cap). */
+    const sure = new Set<Snap>();
 
     const consider = (kind: SnapKind, world: THREE.Vector3, part: Part, extra: Partial<Snap>) => {
       if (!this.toScreen(world, scr)) return;
       if (v.clipPlanes.some(pl => pl.distanceToPoint(world) < -1e-6 * v.modelSize)) return;
       const px = scr.distanceTo(cursor);
       if (px > R) return;
-      const s: Snap = { kind, point: world.clone(), part, px, ...extra };
-      if (!best || score(s) < score(best)) best = s;
+      cands.push({ kind, point: world.clone(), part, px, ...extra });
     };
 
+    const seenEdges = new Set<EdgeInfo>();
     const edgeCandidates = (part: Part, e: EdgeInfo, section = false) => {
+      if (!e || seenEdges.has(e)) return;
+      seenEdges.add(e);
       if (SNAP_FILTERS.vertex) {
         consider("vertex", v.toWorld(part, e.start), part, { edge: e, section });
         if (!e.closed) consider("vertex", v.toWorld(part, e.end), part, { edge: e, section });
@@ -81,17 +155,27 @@ export class Snapper {
         for (const q of quadrants(e)) consider("quadrant", v.toWorld(part, q), part, { edge: e, section });
       }
       if (SNAP_FILTERS.edge) {
-        let bestD = Infinity;
-        const out = new THREE.Vector3();
+        // Closest point of each visible stretch of the edge to the cursor ray: a part-hidden
+        // edge (a circle half behind its cylinder) snaps on the half that shows.
         const off = part.group.position;
+        const segs: { d: number; p: THREE.Vector3 }[] = [];
         for (let i = 3; i < e.pts.length; i += 3) {
           this.tmpA.set(e.pts[i - 3], e.pts[i - 2], e.pts[i - 1]).add(off);
           this.tmpB.set(e.pts[i], e.pts[i + 1], e.pts[i + 2]).add(off);
           const seg = new THREE.Vector3();
           const d = ray.distanceSqToSegment(this.tmpA, this.tmpB, undefined, seg);
-          if (d < bestD) { bestD = d; out.copy(seg); }
+          segs.push({ d, p: seg });
         }
-        if (bestD < Infinity) consider("onEdge", out, part, { edge: e, section });
+        segs.sort((a, b) => a.d - b.d);
+        // Up to three distinct nearest points (they may be on different sides of a closed curve).
+        const picked: THREE.Vector3[] = [];
+        const tol = 2 * this.pxWorld(segs[0]?.p ?? ray.origin);
+        for (const s of segs) {
+          if (picked.length >= 3) break;
+          if (picked.some(q => q.distanceTo(s.p) < tol)) continue;
+          picked.push(s.p);
+          consider("onEdge", s.p, part, { edge: e, section });
+        }
       }
     };
 
@@ -101,30 +185,49 @@ export class Snapper {
     const cap = this.capPoint(ray, hit);
     if (cap) {
       const s: Snap = { kind: "onCap", point: cap.point, part: cap.part, normal: cap.normal, section: true, px: 0 };
-      if (!best || score(s) < score(best)) best = s;
+      cands.push(s); sure.add(s);
     }
 
-    if (restricted) {
-      // Cut features only.
-    } else if (hit) {
-      const part = v.partOf(hit.object);
-      const face = part.data.faces[part.triFace[hit.faceIndex!]];
-      for (const eid of face.edges) edgeCandidates(part, part.data.edges[eid]);
-      if (SNAP_FILTERS.vertex) {
-        // This face's virtual corners and its neighbours' (a fillet under the cursor rounds off the corner of the faces beside it).
-        const near = new Set([face.id, ...face.edges.flatMap(i => part.data.edges[i]?.faces ?? [])]);
-        for (const fi of near) {
-          const nf = part.data.faces[fi];
-          if (nf) for (const x of virtualCorners(part, nf)) consider("intersection", v.toWorld(part, x), part, { face: nf });
-        }
+    if (!restricted) {
+      // Faces near the cursor: the one under it plus those under a ring of probes at the snap
+      // radius, so an edge just beside the cursor is found even when the face under the
+      // cursor belongs to something else. See-through modes take every face along each probe.
+      const faces = new Map<string, { part: Part; face: FaceInfo }>();
+      const addHit = (h: THREE.Intersection) => {
+        const part = v.partOf(h.object);
+        const face = part.data.faces[part.triFace[h.faceIndex!]];
+        if (face) faces.set(`${part.idx}:${face.id}`, { part, face });
+      };
+      if (hit) addHit(hit);
+      const probes = [[0, 0]];
+      for (let k = 0; k < 8; k++) probes.push([Math.cos((k * Math.PI) / 4) * R * 0.8, Math.sin((k * Math.PI) / 4) * R * 0.8]);
+      for (const [dx, dy] of probes) {
+        const hs = this.hitsAt(this.ndc(sx + dx, sy + dy), see);
+        for (const h of hs.slice(0, see ? 6 : 1)) addHit(h);
       }
-      if (SNAP_FILTERS.center) consider("faceCenter", v.toWorld(part, face.center), part, { face, normal: this.faceNormal(part, face, hit) });
-      const n = this.faceNormal(part, face, hit);
-      const onFace: Snap = { kind: "onFace", point: hit.point.clone(), part, face, normal: n, px: 0 };
-      if (!cap && (!best || score(onFace) < score(best))) best = onFace;
-    } else if (v.mode === "wireframe" || v.mode === "hlr") {
-      // No face under the cursor: test edges of every visible part.
-      for (const part of v.parts) if (part.visible) for (const e of part.data.edges) edgeCandidates(part, e);
+      for (const { part, face } of faces.values()) for (const eid of face.edges) edgeCandidates(part, part.data.edges[eid]);
+
+      if (hit) {
+        const part = v.partOf(hit.object);
+        const face = part.data.faces[part.triFace[hit.faceIndex!]];
+        if (SNAP_FILTERS.vertex) {
+          // This face's virtual corners and its neighbours' (a fillet under the cursor rounds off the corner of the faces beside it).
+          const near = new Set([face.id, ...face.edges.flatMap(i => part.data.edges[i]?.faces ?? [])]);
+          for (const fi of near) {
+            const nf = part.data.faces[fi];
+            if (nf) for (const x of virtualCorners(part, nf)) consider("intersection", v.toWorld(part, x), part, { face: nf });
+          }
+        }
+        if (SNAP_FILTERS.center) consider("faceCenter", v.toWorld(part, face.center), part, { face, normal: this.faceNormal(part, face, hit) });
+        const n = this.faceNormal(part, face, hit);
+        if (!cap) {
+          const onFace: Snap = { kind: "onFace", point: hit.point.clone(), part, face, normal: n, px: 0 };
+          cands.push(onFace); sure.add(onFace);
+        }
+      } else if (v.mode === "wireframe" || v.mode === "hlr") {
+        // No face under the cursor: test edges of every visible part.
+        for (const part of v.parts) if (part.visible) for (const e of part.data.edges) edgeCandidates(part, e);
+      }
     }
 
     // Circle centres anywhere on screen (holes): cheap projection of all of them.
@@ -137,6 +240,16 @@ export class Snapper {
           consider("circleCenter", v.toWorld(part, e.center), part, { edge: e });
         }
       }
+    }
+
+    // Best first; the first one the camera can actually see wins.
+    cands.sort((a, b) => score(a) - score(b));
+    let best: Snap | null = null;
+    let tests = 0;
+    for (const c of cands) {
+      if (sure.has(c) || see) { best = c; break; }
+      if (tests++ > 40) continue;
+      if (this.isVisible(c.point, !!c.section)) { best = c; break; }
     }
 
     return (this.current = this.hysteresis(best, cursor));
@@ -177,7 +290,7 @@ export class Snapper {
     const scr = new THREE.Vector2();
     if (!this.toScreen(cur.point, scr)) return next;
     const px = scr.distanceTo(cursor);
-    return px <= this.radiusPx && px < next.px + 3 ? { ...cur, px } : next;
+    return px <= this.radiusPx && px < next.px + 3 && this.isVisible(cur.point, !!cur.section) ? { ...cur, px } : next;
   }
 
   reset() { this.current = null; }

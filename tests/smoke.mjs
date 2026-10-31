@@ -81,6 +81,36 @@ try {
   check(/Mass\s*7\.850 g/.test(cube.mass), "steel cube mass 7.850 g");
   check(!cube.analysisUi, "draft angle and wall thickness controls are gone");
 
+  // Occlusion-aware snapping: in opaque modes an edge behind the body is not pickable, in X-ray it is.
+  const occl = await page.evaluate(async () => {
+    const { viewer, snapper, setMode } = window.__sv;
+    const V3 = viewer.camera.position.constructor;
+    viewer.viewFrom(new V3(1, -1, 0.8), false);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    viewer.camera.updateMatrixWorld(true);
+    const p = viewer.parts[0];
+    const fwd = viewer.camera.getWorldDirection(new V3());
+    const back = e => e.faces.every(fi => new V3(...p.data.faces[fi].normal).dot(fwd) > 0);
+    const front = e => e.faces.every(fi => new V3(...p.data.faces[fi].normal).dot(fwd) < 0);
+    const scr = w => { const s = w.clone().project(viewer.camera); return [(s.x + 1) / 2 * viewer.size.x, (1 - s.y) / 2 * viewer.size.y]; };
+    const at = (e, mode) => { setMode(mode); snapper.reset(); const [x, y] = scr(viewer.toWorld(p, e.mid)); return snapper.pick(x, y); };
+    const hidden = p.data.edges.filter(back), shown = p.data.edges.filter(front);
+    const res = { hidden: hidden.length, shown: shown.length, opaque: [], xray: [], hlr: [], visible: [] };
+    for (const e of hidden) {
+      for (const mode of ["shadedEdges", "hlr", "xray"]) {
+        const s = at(e, mode);
+        res[mode === "shadedEdges" ? "opaque" : mode].push(s ? [s.kind, s.edge === e, snapper.isVisible(s.point)] : null);
+      }
+    }
+    for (const e of shown) { const s = at(e, "shaded"); res.visible.push(s && s.edge === e ? s.kind : null); }
+    setMode("shadedEdges");
+    return res;
+  });
+  check(occl.hidden === 3 && occl.opaque.every(s => s && !s[1] && s[2]) && occl.hlr.every(s => s && !s[1]),
+    `opaque modes ignore the ${occl.hidden} cube edges behind the body (${JSON.stringify(occl.opaque)})`);
+  check(occl.xray.every(s => s && s[1] && s[0] === "midpoint"), `X-ray still snaps to hidden edges (${JSON.stringify(occl.xray)})`);
+  check(occl.shown === 3 && occl.visible.every(k => k === "midpoint"), `visible edges still snap (${JSON.stringify(occl.visible)})`);
+
   // --- smart measure (the default tool): one click gives a size, two give the relation ---
   const smart = await page.evaluate(() => {
     const { viewer, state, handlePick, setTool } = window.__sv;

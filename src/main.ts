@@ -171,7 +171,14 @@ function showEdge(o: LineSegments2, part: Part | null, edge?: EdgeInfo) {
   o.geometry = new LineSegmentsGeometry().setPositions(seg);
   o.position.copy(part.group.position);
   (o.material as LineMaterial).resolution.copy(viewer.size);
+  edgeDepth(o);
   o.visible = true;
+}
+/** Highlighted edges hide behind the model in opaque modes, like the model's own edges; Wire and X-ray show them through. */
+function edgeDepth(o: LineSegments2) {
+  const m = o.material as LineMaterial;
+  const through = viewer.mode === "wireframe" || viewer.mode === "xray";
+  if (m.depthTest === through) { m.depthTest = !through; m.needsUpdate = true; }
 }
 function showEntity(face: THREE.Mesh, edge: LineSegments2, e: { part: Part; face?: { id: number }; edge?: EdgeInfo; kind?: string } | null) {
   const isEdge = !!e && (e.kind === "edge" || (!e.kind && !!e.edge && !e.face));
@@ -969,6 +976,7 @@ $$(".tabs button").forEach(b => b.addEventListener("click", () => {
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
   viewer.setMode(m);
+  edgeDepth(hl.hoverEdge); edgeDepth(hl.selEdge);
   section.rebuild();
   $$("#display-mode button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
 }
@@ -1340,4 +1348,4 @@ renderProps();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes } });
