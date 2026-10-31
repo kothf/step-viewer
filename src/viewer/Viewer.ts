@@ -281,8 +281,6 @@ export class Viewer {
     p.edgeMaterial.transparent = xray;
     m.needsUpdate = true;
     p.edgeMaterial.needsUpdate = true;
-    const analysis = p.mesh.material !== m ? (p.mesh.material as THREE.Material) : null;
-    if (analysis) { analysis.clippingPlanes = this.clipPlanes; analysis.needsUpdate = true; }
   }
 
   setEdgeColor(c: THREE.ColorRepresentation) {

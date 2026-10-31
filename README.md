@@ -20,7 +20,6 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
 - **Measuring on the cut**: the cut profile is computed and drawn; snap to its curves, vertices, midpoints and circle centres (exact for cylinders cut square-on), or to the cap face. "Snap to cut only" keeps snapping in the section plane. Cut area per plane.
 - **Exploded view** following the assembly hierarchy, plus dragging single parts.
 - **Mass properties**: volume, mass (material presets or custom density), surface area, centre of mass, bounding box.
-- **Analysis**: draft angle against a pull direction; wall thickness by ray casting.
 - **Model tree**: show/hide, isolate, colour and opacity per part or sub-assembly; filter by name, `size>50`, `vol<1000`.
 - **Metadata**: STEP header, protocol, product revisions, materials, AP242 PMI entity counts.
 - **Export**: PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report.

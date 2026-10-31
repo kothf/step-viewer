@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-31
+
+### Removed
+- Draft angle and wall thickness analysis, along with the Analysis panel. Mass properties are unchanged.
+
 ## [1.4.0] - 2026-10-30
 
 ### Added
@@ -80,7 +85,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/kothf/step-viewer/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kothf/step-viewer/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kothf/step-viewer/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kothf/step-viewer/compare/v1.1.0...v1.2.0

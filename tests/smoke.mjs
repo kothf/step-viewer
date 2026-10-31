@@ -67,6 +67,7 @@ try {
       lines: edges.filter(x => x.type === "line").length, closed: p.data.closed, volume: p.data.volume, area: p.data.area,
       ms: state.measurements.map(m => [m.type, m.value]),
       mass: document.querySelector("#mass-out").textContent,
+      analysisUi: !!document.querySelector("#draft-run, #thk-run, #analysis-out"),
     };
   });
   check(cube.faces === 6 && cube.planes === 6, `cube has 6 planar faces (${cube.planes}/${cube.faces})`);
@@ -78,6 +79,7 @@ try {
   check(near(m.arcLength, 10, 1e-9), `edge length 10 mm (${m.arcLength})`);
   check(near(m.bbox, Math.sqrt(300), 1e-6), `bounding box diagonal √300 (${m.bbox})`);
   check(/Mass\s*7\.850 g/.test(cube.mass), "steel cube mass 7.850 g");
+  check(!cube.analysisUi, "draft angle and wall thickness controls are gone");
 
   // --- smart measure (the default tool): one click gives a size, two give the relation ---
   const smart = await page.evaluate(() => {
