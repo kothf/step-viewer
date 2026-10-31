@@ -246,7 +246,7 @@ async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], ap
   const ok = await gerber.load(list, append && gerber.loaded);
   if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; setDoc(label, "error"); return; }
   if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : list[0].name.replace(/[-_.][^-_.]*$/, "") || "pcb";
-  document.title = `${gerber.name} · PCB · STEP Viewer`;
+  document.title = `${gerber.name} · PCB · MöbiusCAD`;
   setDoc(gerber.name, "ready");
   const n = gerber.layers.length;
   $("#st-stats").textContent = `${n} layer${n === 1 ? "" : "s"} · ${gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString()} objects`;
@@ -305,7 +305,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   viewer.load(result.parts, result.tree);
   state.fileName = name;
   state.fileKey = `sv:m:${name}:${buffer.byteLength || ""}`;
-  document.title = `${name} · STEP Viewer`;
+  document.title = `${name} · MöbiusCAD`;
   setDoc(name, "ready");
   $("#empty").hidden = true;
   setLoading(false);

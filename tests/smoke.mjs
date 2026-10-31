@@ -94,7 +94,21 @@ async function open(file) {
 try {
   // --- a 10 mm cube: exact topology and every basic measurement ---
   await open("cube-10x10mm/Cube 10x10.stp");
-  const cube = await page.evaluate(() => {
+  // --- branding: name, header logo, favicon and web manifest ---
+  const brand = await page.evaluate(async () => {
+    const logo = document.querySelector(".brand-logo");
+    const ok = async href => { const r = await fetch(href); return r.ok && (await r.blob()).size > 0; };
+    const man = await (await fetch(document.querySelector('link[rel="manifest"]').href)).json();
+    return {
+      title: document.title, txt: document.querySelector(".brand-txt").firstChild.textContent,
+      logo: logo?.complete && logo.naturalWidth > 0,
+      icons: (await Promise.all([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')].map(l => ok(l.href)))).every(Boolean),
+      man: man.name, manIcons: (await Promise.all(man.icons.map(i => ok(new URL(i.src, document.querySelector('link[rel="manifest"]').href).href)))).every(Boolean),
+    };
+  });
+  check(brand.title === "Cube 10x10.stp · MöbiusCAD" && brand.txt === "MöbiusCAD", `app is named MöbiusCAD (${brand.title} / ${brand.txt})`);
+  check(brand.logo && brand.icons && brand.man === "MöbiusCAD" && brand.manIcons, "header logo, favicons and manifest icons load");
+  const cube =await page.evaluate(() => {
     const { viewer, state, handlePick, setTool } = window.__sv;
     const p = viewer.parts[0];
     const V3 = p.group.position.constructor;

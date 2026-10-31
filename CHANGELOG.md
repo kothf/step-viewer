@@ -1,9 +1,17 @@
 # Changelog
 
-All notable changes to STEP Viewer are documented here.
+All notable changes to MöbiusCAD (formerly STEP Viewer) are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [1.9.0] - 2026-10-31
+
+### Changed
+- The app is now called **MöbiusCAD** (formerly STEP Viewer): new name in the header, page title, help dialog, PDF inspection report and release titles. The repository, archive name and URL path (`/tools/step-viewer/`) stay the same.
+
+### Added
+- MöbiusCAD logo in the header, as the favicon (16/32/48 px), Apple touch icon and in a web app manifest (192/512 px icons), so the app can be installed with its own name and icon.
 
 ## [1.8.0] - 2026-10-31
 
@@ -131,7 +139,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/kothf/step-viewer/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/kothf/step-viewer/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kothf/step-viewer/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/kothf/step-viewer/compare/v1.6.1...v1.7.0

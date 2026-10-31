@@ -1,6 +1,8 @@
-# STEP Viewer
+# MöbiusCAD
 
-A STEP viewer for mechanical engineers, technicians and inspectors that runs entirely in the browser. OpenCASCADE parses the file in a Web Worker (WebAssembly), so **the model never leaves your computer**.
+![MöbiusCAD](public/icons/icon-192.png)
+
+MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical engineers, technicians and inspectors that runs entirely in the browser. OpenCASCADE parses the file in a Web Worker (WebAssembly), so **the model never leaves your computer**.
 
 **Live:** [aerocat.tech/tools/step-viewer](https://aerocat.tech/tools/step-viewer/) · [GitHub Pages](https://kothf.github.io/step-viewer/)
 
