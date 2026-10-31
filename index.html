@@ -4,49 +4,57 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>STEP Viewer</title>
-  <meta name="description" content="Browser STEP/IGES viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, reports and mesh export. Files never leave your computer." />
+  <meta name="description" content="Browser STEP/IGES and Gerber PCB viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, reports and mesh export. Files never leave your computer." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 10v12L16 29 4 22V10z' fill='%233d8bfd'/%3E%3Cpath d='M16 3v26M4 10l12 7 12-7' stroke='%23fff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E" />
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span class="brand-txt">STEP Viewer<small id="app-version"></small></span></div>
-    <label class="btn primary" title="Open STEP / IGES / BREP (Ctrl+O)">
-      <input id="file-input" type="file" accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep" hidden />
+    <label class="btn primary" title="Open STEP / IGES / BREP, or Gerber / Excellon layers and .zip sets (Ctrl+O)">
+      <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden />
       <span>Open file</span>
     </label>
-    <select id="quality" title="Tessellation quality (applies on next open)">
+    <select id="quality" class="step-only" title="Tessellation quality (applies on next open)">
       <option value="draft">Draft mesh</option>
       <option value="normal" selected>Normal mesh</option>
       <option value="fine">Fine mesh</option>
     </select>
-    <div class="sep"></div>
-    <div class="seg" id="display-mode" role="radiogroup" aria-label="Display mode">
+    <div class="sep step-only"></div>
+    <div class="seg step-only" id="display-mode" role="radiogroup" aria-label="Display mode">
       <button data-mode="shadedEdges" class="on" title="Shaded with edges (1)">Shaded+Edges</button>
       <button data-mode="shaded" title="Shaded (2)">Shaded</button>
       <button data-mode="wireframe" title="Wireframe (3)">Wire</button>
       <button data-mode="hlr" title="Hidden line removal (4)">HLR</button>
       <button data-mode="xray" title="X-ray (5)">X-ray</button>
     </div>
-    <div class="seg" id="projection">
+    <div class="seg step-only" id="projection">
       <button data-proj="perspective" title="Perspective (P)">Persp</button>
       <button data-proj="orthographic" class="on" title="Orthographic (O)">Ortho</button>
     </div>
-    <div class="seg" id="views">
+    <div class="seg step-only" id="views">
       <button data-view="fit" title="Fit all (F)">Fit</button>
       <button data-view="iso" title="Isometric (0)">Iso</button>
       <button data-view="front" title="Front">Front</button>
       <button data-view="top" title="Top">Top</button>
       <button data-view="right" title="Right">Right</button>
     </div>
+    <div class="sep gerber-only"></div>
+    <div class="seg gerber-only" id="g-view">
+      <button data-gview="fit" title="Fit board (F)">Fit</button>
+      <button data-gview="in" title="Zoom in (+)">+</button>
+      <button data-gview="out" title="Zoom out (−)">−</button>
+      <button data-gview="flip" title="View from the bottom, mirrored (B)">Bottom view</button>
+    </div>
+    <button class="btn gerber-only" id="g-add-btn" title="Add more Gerber / drill files to this board">+ Add layers</button>
     <div class="spacer"></div>
-    <label class="chk" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Axes</label>
-    <label class="chk" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> AO</label>
+    <label class="chk step-only" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Axes</label>
+    <label class="chk step-only" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> AO</label>
     <button class="icon" id="theme" title="Toggle light/dark theme">◐</button>
     <button class="icon" id="help-btn" title="Shortcuts">?</button>
   </header>
 
-  <aside class="left panel">
+  <aside class="left panel step-only">
     <div class="tabs">
       <button data-tab="tree" class="on">Model tree</button>
       <button data-tab="measures">Measurements <span id="m-count" class="pill">0</span></button>
@@ -66,25 +74,77 @@
     </section>
   </aside>
 
+  <aside class="left panel gerber-only" id="g-left">
+    <div class="g-tabs">
+      <button data-tab="layers" class="on">Layers</button>
+      <button data-tab="measures">Measurements <span id="g-m-count" class="pill">0</span></button>
+    </div>
+    <section id="g-tab-layers" class="g-tab on">
+      <div id="g-layers" class="g-layers"></div>
+      <div class="row pad wrap">
+        <button id="g-all-on" class="btn small">Show all</button>
+        <button id="g-all-off" class="btn small">Hide all</button>
+      </div>
+      <p class="muted pad g-note">Drag layers to restack them; the top of the list draws on top.</p>
+    </section>
+    <section id="g-tab-measures" class="g-tab">
+      <div id="g-m-list" class="m-list"></div>
+      <div class="row pad">
+        <button id="g-csv" class="btn small">CSV</button>
+        <button id="g-clear" class="btn small danger">Clear all</button>
+      </div>
+    </section>
+  </aside>
+
   <main class="viewport" id="viewport">
-    <div id="labels" class="labels"></div>
-    <div id="snap-marker" class="snap-marker" hidden></div>
-    <canvas id="navcube" class="navcube" width="110" height="110"></canvas>
-    <div id="tool-hint" class="tool-hint" hidden></div>
-    <div id="readout" class="readout" hidden></div>
+    <div id="labels" class="labels step-only"></div>
+    <div id="snap-marker" class="snap-marker step-only" hidden></div>
+    <canvas id="navcube" class="navcube step-only" width="110" height="110"></canvas>
+    <div id="tool-hint" class="tool-hint step-only" hidden></div>
+    <div id="readout" class="readout step-only" hidden></div>
+    <div id="gerber" class="gerber-vp gerber-only">
+      <canvas id="g-canvas"></canvas>
+      <canvas id="g-overlay"></canvas>
+      <div id="g-hint" class="tool-hint"></div>
+      <div id="g-tip" class="g-tip" hidden></div>
+      <div id="g-readout" class="readout" hidden></div>
+    </div>
     <div id="empty" class="empty">
       <div class="empty-card">
         <svg viewBox="0 0 32 32" width="56" height="56"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
-        <h2>Drop a STEP file here</h2>
-        <p>AP203 · AP214 · AP242, plus IGES and BREP. Parsed by OpenCASCADE in your browser: the file never leaves your computer.</p>
-        <label class="btn primary"><input id="file-input-2" type="file" accept=".step,.stp,.iges,.igs,.brep" hidden />Choose file…</label>
+        <h2>Drop a STEP file or Gerber set here</h2>
+        <p>AP203 · AP214 · AP242, plus IGES and BREP, parsed by OpenCASCADE. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
+        <label class="btn primary"><input id="file-input-2" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden />Choose files…</label>
       </div>
     </div>
     <div id="loading" class="loading" hidden><div class="spinner"></div><div id="loading-text">Loading…</div><div class="bar"><i id="loading-bar"></i></div></div>
     <div id="toast" class="toast" hidden></div>
   </main>
 
-  <aside class="right panel" id="right">
+  <aside class="right panel gerber-only" id="g-right">
+    <details open><summary>Measure</summary>
+      <div class="tools-grid" id="g-tools">
+        <button data-gtool="smart" class="on" title="Click a feature for its size and metadata, a second for pitch and clearance (Q)">✦ Smart</button>
+        <button data-gtool="distance" title="Point to point with ΔX / ΔY (M)">↔ Point–point</button>
+        <button data-gtool="clearance" title="Edge-to-edge gap between two features (C)">⇤ Clearance</button>
+        <button data-gtool="polyline" title="Multi-segment path length (L)">⌇ Polyline</button>
+        <button data-gtool="area" title="Area of a clicked polygon (A)">▱ Area</button>
+      </div>
+      <div class="units-row">
+        <label>Units <select id="g-units"><option value="mm">mm</option><option value="in">in</option><option value="mil">mil</option></select></label>
+        <label>Decimals <select id="g-decimals"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label>
+      </div>
+    </details>
+    <details open><summary>Board</summary><div id="g-stats" class="kv"></div></details>
+    <details open><summary>Export</summary>
+      <div class="row wrap">
+        <button class="btn small" id="g-png" title="Current view with measurements">PNG</button>
+        <button class="btn small" id="g-svg" title="Current view as vector SVG with measurements">SVG</button>
+      </div>
+    </details>
+  </aside>
+
+  <aside class="right panel step-only" id="right">
     <details open id="sec-selection"><summary>Properties</summary><div id="props" class="props"><p class="muted">Open a model to begin.</p></div></details>
 
     <details open><summary>Measure</summary>
@@ -164,7 +224,13 @@
   </aside>
 
   <footer class="status">
-    <div class="snaps" title="Snap filters">
+    <div class="snaps gerber-only" title="PCB snapping">
+      <label class="chk"><input type="checkbox" id="g-snap" checked /><b>Snap</b></label>
+      <label class="chk"><input type="checkbox" data-gsnap="vertex" checked />Corner / end</label>
+      <label class="chk"><input type="checkbox" data-gsnap="center" checked />Pad centre</label>
+      <label class="chk"><input type="checkbox" data-gsnap="edge" checked />Trace edge</label>
+    </div>
+    <div class="snaps step-only" title="Snap filters">
       Snap:
       <label class="chk"><input type="checkbox" data-snap="vertex" checked />Vertex</label>
       <label class="chk"><input type="checkbox" data-snap="midpoint" checked />Mid</label>
@@ -190,6 +256,15 @@
     <tr><td>I / H / U</td><td>Isolate / Hide selected part / Show all</td></tr>
     <tr><td>Del</td><td>Delete selected measurement</td></tr>
     <tr><td>Esc</td><td>Cancel tool, clear selection</td></tr>
+  </table>
+  <h3>PCB (Gerber) view</h3>
+  <table>
+    <tr><td>Wheel / Drag, Space+drag, middle drag</td><td>Zoom to cursor / Pan</td></tr>
+    <tr><td>Q, M, C, L, A</td><td>Smart, Point–point, Clearance, Polyline, Area</td></tr>
+    <tr><td>Enter, Backspace</td><td>Finish polyline or area, remove last point</td></tr>
+    <tr><td>Shift+click</td><td>Area of a pad, region or closed outline</td></tr>
+    <tr><td>P / Del</td><td>Pin the smart result / delete selected measurement</td></tr>
+    <tr><td>F, B, + / −</td><td>Fit, bottom view, zoom</td></tr>
   </table>
   <p class="muted">Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; curved freeform distances are measured on the mesh.</p>
   <form method="dialog"><button class="btn">Close</button></form>

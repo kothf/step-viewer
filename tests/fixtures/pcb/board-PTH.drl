@@ -1,0 +1,18 @@
+M48
+; DRILL file {KiCad 8} date 2026-10-31
+; FORMAT={-:-/ absolute / metric / decimal}
+; #@! TF.FileFunction,Plated,1,2,PTH
+FMAT,2
+METRIC
+T1C0.800
+T2C1.000
+%
+G90
+G05
+T1
+X10.0Y10.0
+X12.54Y10.0
+T2
+X20.0Y10.0
+X5.0Y10.0G85X7.0Y10.0
+M30
