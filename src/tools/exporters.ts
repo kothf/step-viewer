@@ -134,12 +134,13 @@ export interface ReportInfo {
 
 export function inspectionReport(info: ReportInfo) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
+  doc.setProperties({ title: `Inspection report: ${info.fileName}`, creator: "MöbiusCAD" });
   const W = 210, M = 14;
   let y = M;
   doc.setFont("helvetica", "bold"); doc.setFontSize(16);
   doc.text("Inspection report", M, y + 4);
   doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100);
-  doc.text(`${info.fileName}  ·  ${new Date().toLocaleString()}  ·  units: ${units.current}`, M, y + 10);
+  doc.text(`MöbiusCAD  ·  ${info.fileName}  ·  ${new Date().toLocaleString()}  ·  units: ${units.current}`, M, y + 10);
   doc.setTextColor(0);
   y += 16;
   const img = info.image;
