@@ -133,6 +133,32 @@ try {
   check(smart.cleared, "smart: clicking empty space clears the result");
   check(/^v\d+\.\d+\.\d+$/.test(smart.version), `version shown under the name (${smart.version})`);
 
+  // --- pick marker keeps its screen size when zooming, so it never covers the model ---
+  const mark = await page.evaluate(() => {
+    const { viewer, state, handlePick, setTool, hl } = window.__sv;
+    const p = viewer.parts[0];
+    const V3 = p.group.position.constructor;
+    const faces = p.data.faces;
+    const snapF = f => ({ kind: "faceCenter", point: new V3(...f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    setTool("select");
+    handlePick(snapF(faces.find(f => f.normal?.[2] > 0.99)));
+    handlePick(snapF(faces.find(f => f.normal?.[2] < -0.99)));
+    const m = hl.pickMarks.children[0];
+    const px = () => { viewer.render(); return m.scale.x / viewer.pxWorld(m.getWorldPosition(new V3())); };
+    const far = px(), worldFar = m.scale.x;
+    // Zoom in 20x: ortho cameras zoom, perspective ones move closer.
+    const cam = viewer.camera, pos0 = cam.position.clone(), zoom0 = cam.zoom;
+    if (cam.isOrthographicCamera) { cam.zoom *= 20; cam.updateProjectionMatrix(); }
+    else { cam.position.lerp(m.position, 0.95); cam.updateMatrixWorld(); }
+    const zoomed = px(), worldNear = m.scale.x;
+    cam.position.copy(pos0); cam.zoom = zoom0; cam.updateProjectionMatrix(); cam.updateMatrixWorld(); px();
+    const out = { n: hl.pickMarks.children.length, far, zoomed, shrank: worldNear < worldFar / 5, hollow: m.geometry.type };
+    handlePick(null);
+    return out;
+  });
+  check(mark.n === 1 && near(mark.far, 6, 1e-6) && near(mark.zoomed, 6, 1e-6) && mark.shrank && mark.hollow === "RingGeometry",
+    `pick marker stays a 6 px ring when zooming in (${JSON.stringify(mark)})`);
+
   // --- smart metric matrix: edges, vertices, planes and the whole part ---
   const mx = await page.evaluate(() => {
     const { viewer, state, handlePick, setTool, showBody } = window.__sv;
