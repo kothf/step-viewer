@@ -19,7 +19,7 @@ import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapsh
 import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
-import type { EdgeInfo, PartData, TreeNode } from "./topology";
+import { analyzeMesh, type EdgeInfo, type PartData, type TreeNode } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
@@ -218,6 +218,7 @@ $$("[data-open]").forEach(b => b.addEventListener("click", openPicker));
 bindGerberPanel(gerber, {
   copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`, "success"), () => toast("Copy failed", true)); },
   open: openPicker,
+  openBody: openBoardModel,
   panels,
 });
 
@@ -232,10 +233,28 @@ function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
 }
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
+  if (on) $("#back-pcb").hidden = true;
   panels.apply();
   if (on) { $("#empty").hidden = true; } else { $("#st-coord").textContent = ""; $("#st-snap").textContent = ""; }
 }
 const isPcbMode = () => $("#app").classList.contains("gerber");
+
+/** Opens the PCB's board body in the 3D model view, where the model tools (thickness, hole Ø, angles, sections, mass, STL) work on it. */
+function openBoardModel() {
+  const t0 = performance.now();
+  const mesh = gerber.boardBody();
+  if (!mesh) { toast("Open a board with an outline or layers first.", true); return; }
+  const part = analyzeMesh(mesh);
+  showModel([part], { name: mesh.name, parts: [0], children: [] }, mesh.name, `sv:pcb:${mesh.name}:${gerber.thickness}`, t0);
+  toast("Board body opened with the 3D model tools. Back to PCB returns to the layers.");
+}
+
+$("#back-pcb").addEventListener("click", () => {
+  setPcbMode(true);
+  document.title = `${gerber.name} · PCB · MöbiusCAD`;
+  setDoc(gerber.name, "ready");
+  gerber.render();
+});
 
 async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
@@ -300,11 +319,18 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
 
   setLoading(true, "Building scene…", 97);
   await new Promise(r => setTimeout(r, 0));
+  showModel(result.parts, result.tree, name, `sv:m:${name}:${buffer.byteLength || ""}`, t0);
+}
+
+/** Shows parsed parts in the 3D model view (a STEP file, or a PCB's board body). */
+function showModel(parts: PartData[], tree: TreeNode, name: string, key: string, t0: number) {
+  const result = { parts, tree };
   resetForNewModel();
   setPcbMode(false);
+  $("#back-pcb").hidden = !key.startsWith("sv:pcb:");
   viewer.load(result.parts, result.tree);
   state.fileName = name;
-  state.fileKey = `sv:m:${name}:${buffer.byteLength || ""}`;
+  state.fileKey = key;
   document.title = `${name} · MöbiusCAD`;
   setDoc(name, "ready");
   $("#empty").hidden = true;

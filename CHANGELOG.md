@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-31
+
+### Added
+- 3D board view for Gerber sets: a 2D / 3D switch in the PCB header (keys `2` and `3`). The board outline is extruded to the board thickness (1.6 mm by default, set under Board) with its cut-outs and drilled holes, plated holes get copper barrels, and copper, solder mask and silkscreen are drawn on both sides in their physical colours (or the colour picked in the layer list). Drag orbits, right or middle drag pans and the wheel zooms, as in the model view; Fit, zoom and Bottom view work in 3D too, and the layer list still shows and hides layers.
+- Measuring on the 3D board: Smart, Point–point, Clearance, Polyline and Area work with snapping on the side you look at (only that side's layers, drills and outline are picked), share the measurement list with the flat view, and PNG export captures the 3D view.
+- **Measure as 3D model** (Board panel) opens the board body in the model view, so its tools work on the PCB: thickness, hole diameters and pitch, angles, sections, mass properties, STL / OBJ / glTF export. **Back to PCB** returns to the layers.
+
+### Fixed
+- README and package homepage link to the app's new address, aerocat.tech/tools/mobiuscad/.
+
 ## [1.9.0] - 2026-10-31
 
 ### Changed
@@ -139,7 +149,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/kothf/step-viewer/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/kothf/step-viewer/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/kothf/step-viewer/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/kothf/step-viewer/compare/v1.7.0...v1.7.1
