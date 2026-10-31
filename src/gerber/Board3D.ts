@@ -1,6 +1,9 @@
 // 3D board built from the loaded Gerber / Excellon set: the outline extruded to the
 // board thickness with its cut-outs and drilled holes, copper, solder mask and
 // silkscreen as textured skins on both sides, and plated barrels in the holes.
+// Each side is ONE textured surface: the copper, mask and silkscreen layers are
+// composited into a colour map and a roughness/metalness map, so there are no
+// stacked coplanar skins to z-fight or alpha-tested thin traces to shimmer.
 // The GerberView keeps doing the picking, snapping and measuring in board
 // millimetres; this class only maps board points to the screen and back
 // through the 3D camera (on the face the camera looks at).
@@ -16,10 +19,10 @@ import { defaultStyle } from "./load";
 const BG = 0x0b0e13;
 /** Physical colours used in 3D unless the user picked a colour for the layer. */
 const PRESET = { copper: "#b87333", mask: "#0c4f2b", silk: "#f0f0ea", core: "#9c8a55", barrel: "#b87333" };
-/** Height of each skin above the bare core surface (mm). */
-const LIFT = { copper: 0.035, mask: 0.05, silk: 0.062 };
-/** The plane the measurements are picked and drawn on, above the top skin. */
-const FACE = 0.07;
+/** Roughness (G) and metalness (B) per surface, for the combined roughness/metalness map. */
+const ORM = { core: "rgb(0,179,0)", copper: "rgb(0,92,204)", mask: "rgb(0,100,0)", silk: "rgb(0,217,0)" };
+/** Opacity of the solder mask over copper and core. */
+const MASK_ALPHA = 0.86;
 /** Holes cut into the geometry; beyond this they are only cut out of the skins. */
 const MAX_CUT_HOLES = 4000;
 
@@ -47,9 +50,13 @@ export class Board3D {
   /** Bounds the textures cover: [x0, y0, x1, y1]. */
   private bb: [number, number, number, number] = [0, 0, 1, 1];
   private board = new THREE.Group();
-  private skins = new Map<number, THREE.Mesh>();
   private barrels = new Map<number, THREE.InstancedMesh>();
-  private textures = new Map<number, { key: string; tex: THREE.CanvasTexture }>();
+  /** Per-layer alpha masks in board space (holes cut), reused when composing. */
+  private masks = new Map<number, { key: string; canvas: HTMLCanvasElement }>();
+  /** Top and bottom faces with their composited maps. */
+  private faces: { mat: THREE.MeshStandardMaterial; sig: string; map?: THREE.CanvasTexture; orm?: THREE.CanvasTexture }[] = [];
+  private scratch = document.createElement("canvas");
+  private scratch2 = document.createElement("canvas");
   private holes: Hole[] = [];
   private dirty = true;
   /** The board body as built: outline, cut-outs and the holes cut into it. */
@@ -118,29 +125,97 @@ export class Board3D {
   /** Rebuilds geometry when the layer set or thickness changed, then syncs colours and visibility. */
   sync(g: GerberView) {
     if (this.dirty) this.build(g);
-    const t = this.thickness;
-    const order: Record<string, number> = {};
-    for (const lv of g.layers) {
-      const mesh = this.skins.get(lv.id);
-      if (mesh) {
-        const kind = lv.L.kind as "copper" | "mask" | "silk";
-        const side = lv.L.side === "bottom" ? -1 : 1;
-        const k = `${kind}:${side}`;
-        const n = (order[k] = (order[k] ?? -1) + 1);
-        mesh.position.z = side * (t / 2 + LIFT[kind] + n * 0.002);
-        mesh.visible = lv.visible;
-        const m = mesh.material as THREE.MeshStandardMaterial;
-        m.color.set(this.colorOf(lv));
-        if (lv.visible) {
-          const tex = this.texture(g, lv);
-          if (m.alphaMap !== tex) { m.alphaMap = tex; m.needsUpdate = true; }
-        }
-      }
-      const b = this.barrels.get(lv.id);
-      if (b) b.visible = lv.visible;
-    }
+    for (const lv of g.layers) { const b = this.barrels.get(lv.id); if (b) b.visible = lv.visible; }
+    if (this.info) for (const si of [0, 1]) this.compose(g, si);
     this.syncBottom();
     this.invalidate();
+  }
+
+  /** Layers drawn on one side, in physical order: copper, mask, silkscreen. */
+  private sideLayers(g: GerberView, bottom: boolean) {
+    const rank = { copper: 0, mask: 1, silk: 2 } as Record<string, number>;
+    return g.layers
+      .filter(l => l.L.kind in rank && (l.L.side === "bottom") === bottom && l.L.side !== "inner")
+      .sort((a, b) => rank[a.L.kind] - rank[b.L.kind]);
+  }
+
+  private texSize() {
+    const [x0, y0, x1, y1] = this.bb, W = x1 - x0 || 1, H = y1 - y0 || 1;
+    const coarse = matchMedia?.("(pointer: coarse)").matches;
+    const maxSide = Math.min(this.renderer.capabilities.maxTextureSize, coarse ? 2048 : 4096);
+    const ppm = Math.min(maxSide / Math.max(W, H), 40);
+    return { W, H, ppm, cw: Math.max(2, Math.round(W * ppm)), ch: Math.max(2, Math.round(H * ppm)) };
+  }
+
+  /** The layer mask filled with one colour (in the shared scratch canvas). */
+  private tint(mask: HTMLCanvasElement, color: string) {
+    const c = this.scratch, x = c.getContext("2d")!;
+    if (c.width !== mask.width || c.height !== mask.height) { c.width = mask.width; c.height = mask.height; }
+    x.globalCompositeOperation = "copy"; x.globalAlpha = 1;
+    x.drawImage(mask, 0, 0);
+    x.globalCompositeOperation = "source-in";
+    x.fillStyle = color; x.fillRect(0, 0, c.width, c.height);
+    return c;
+  }
+
+  /** Redraws one face's colour and roughness/metalness maps when its layers, colours or visibility changed. */
+  private compose(g: GerberView, si: number) {
+    const face = this.faces[si];
+    if (!face) return;
+    const layers = this.sideLayers(g, si === 1).filter(l => l.visible);
+    const sig = `${this.bb.join()}:${this.holes.length}|` + layers.map(l => `${l.id}:${this.colorOf(l)}`).join("|");
+    if (sig === face.sig) return;
+    face.sig = sig;
+    const { cw, ch } = this.texSize();
+    const ow = Math.max(2, Math.round(cw / 2)), oh = Math.max(2, Math.round(ch / 2));
+    const col = face.map?.image as HTMLCanvasElement | undefined ?? document.createElement("canvas");
+    const orm = face.orm?.image as HTMLCanvasElement | undefined ?? document.createElement("canvas");
+    col.width = cw; col.height = ch; orm.width = ow; orm.height = oh;
+    const c = col.getContext("2d")!, o = orm.getContext("2d")!;
+    c.fillStyle = PRESET.core; c.fillRect(0, 0, cw, ch);
+    o.fillStyle = ORM.core; o.fillRect(0, 0, ow, oh);
+    for (const lv of layers) {
+      const mask = this.layerMask(g, lv);
+      const kind = lv.L.kind as "copper" | "mask" | "silk";
+      c.globalAlpha = kind === "mask" ? MASK_ALPHA : 1;
+      c.drawImage(this.tint(mask, this.colorOf(lv)), 0, 0);
+      c.globalAlpha = 1;
+      o.drawImage(this.tint(mask, ORM[kind]), 0, 0, ow, oh);
+      if (kind === "mask") {
+        // Copper under the mask shows as lighter green ridges, as on a real board.
+        for (const cu of layers) {
+          if (cu.L.kind !== "copper") continue;
+          const s2 = this.scratch2, x2 = s2.getContext("2d")!;
+          if (s2.width !== cw || s2.height !== ch) { s2.width = cw; s2.height = ch; }
+          x2.globalCompositeOperation = "copy";
+          x2.drawImage(this.tint(this.layerMask(g, cu), "#a6e39a"), 0, 0);
+          x2.globalCompositeOperation = "destination-in";
+          x2.drawImage(mask, 0, 0);
+          c.globalAlpha = 0.3;
+          c.drawImage(s2, 0, 0);
+          c.globalAlpha = 1;
+        }
+      }
+    }
+    // Holes that are not cut out of the geometry (very many) still read as holes.
+    const [x0, , , y1] = this.bb, k = cw / (this.bb[2] - x0 || 1);
+    c.setTransform(k, 0, 0, -k, -x0 * k, y1 * k);
+    c.fillStyle = "#0b0e13";
+    for (const h of this.holes) { c.beginPath(); const p = holePts(h); c.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) c.lineTo(p[i], p[i + 1]); c.closePath(); c.fill(); }
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    const mk = (cv: HTMLCanvasElement, srgb: boolean) => {
+      const t = new THREE.CanvasTexture(cv);
+      t.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      return t;
+    };
+    // New textures when the size changed; otherwise just re-upload.
+    const sized = (t: THREE.CanvasTexture | undefined, cv: HTMLCanvasElement) => !!t && (t.image as HTMLCanvasElement) === cv && t.userData.w === cv.width && t.userData.h === cv.height;
+    if (sized(face.map, col)) face.map!.needsUpdate = true; else { face.map?.dispose(); face.map = mk(col, true); face.map.userData = { w: cw, h: ch }; }
+    if (sized(face.orm, orm)) face.orm!.needsUpdate = true; else { face.orm?.dispose(); face.orm = mk(orm, false); face.orm.userData = { w: ow, h: oh }; }
+    const m = face.mat;
+    if (m.map !== face.map || m.roughnessMap !== face.orm) { m.map = face.map!; m.roughnessMap = face.orm!; m.metalnessMap = face.orm!; m.needsUpdate = true; }
   }
 
   private colorOf(lv: LayerView) {
@@ -155,7 +230,9 @@ export class Board3D {
       this.board.remove(o);
       o.traverse(c => { const m = c as THREE.Mesh; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose?.(); });
     }
-    this.skins.clear(); this.barrels.clear();
+    this.barrels.clear();
+    for (const f of this.faces) { f.map?.dispose(); f.orm?.dispose(); }
+    this.faces = [];
     this.body = null;
     this.info = null;
     if (!g.layers.length) return;
@@ -210,28 +287,19 @@ export class Board3D {
     for (let i = 0; i < pos.count; i++) { uv[2 * i] = (pos.getX(i) - x0) / W; uv[2 * i + 1] = (pos.getY(i) - y0) / H; }
     geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
 
-    // Core: both faces and the walls of every contour.
-    const coreMat = new THREE.MeshStandardMaterial({ color: PRESET.core, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    for (const s of [1, -1]) { const cap = new THREE.Mesh(geo, coreMat); cap.position.z = (s * t) / 2; this.board.add(cap); }
+    // Faces: one surface per side, textured with that side's copper, mask and silkscreen; then the walls.
+    for (const s of [1, -1]) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 1, side: THREE.DoubleSide });
+      const cap = new THREE.Mesh(geo, mat);
+      cap.position.z = (s * t) / 2;
+      cap.name = s > 0 ? "top" : "bottom";
+      this.board.add(cap);
+      this.faces.push({ mat, sig: "" });
+    }
     const walls = wallGeo([outer!, ...cutouts, ...cut.map(holePts)], t);
     this.board.add(new THREE.Mesh(walls, new THREE.MeshStandardMaterial({ color: PRESET.core, roughness: 0.75, metalness: 0, side: THREE.DoubleSide })));
 
-    // Skins: one textured copy of the board face per copper / mask / silk layer on the outside.
-    let skins = 0;
-    for (const lv of g.layers) {
-      const k = lv.L.kind;
-      if ((k !== "copper" && k !== "mask" && k !== "silk") || lv.L.side === "inner") continue;
-      const common = { side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1 - skins, polygonOffsetUnits: -1 - skins };
-      const mat = k === "copper" ? new THREE.MeshStandardMaterial({ ...common, metalness: 0.55, roughness: 0.4, alphaTest: 0.5 })
-        : k === "mask" ? new THREE.MeshStandardMaterial({ ...common, metalness: 0, roughness: 0.4, transparent: true, opacity: 0.9, depthWrite: false })
-        : new THREE.MeshStandardMaterial({ ...common, metalness: 0, roughness: 0.85, alphaTest: 0.5 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.renderOrder = k === "mask" ? 2 : 1;
-      mesh.name = `${k}:${lv.L.side}`;
-      this.skins.set(lv.id, mesh);
-      this.board.add(mesh);
-      skins++;
-    }
+    const skins = this.sideLayers(g, false).length + this.sideLayers(g, true).length;
 
     // Plated barrels (plating not stated counts as plated, the usual case for a PTH file).
     const cyl = new THREE.CylinderGeometry(1, 1, 1, 28, 1, true).rotateX(Math.PI / 2);
@@ -242,7 +310,7 @@ export class Board3D {
     const m4 = new THREE.Matrix4();
     for (const [lid, hs] of byLayer) {
       const im = new THREE.InstancedMesh(cyl, barrelMat, hs.length);
-      hs.forEach((h, i) => im.setMatrixAt(i, m4.makeScale(h.r, h.r, t + 2 * LIFT.copper).setPosition(h.x1, h.y1, 0)));
+      hs.forEach((h, i) => im.setMatrixAt(i, m4.makeScale(h.r, h.r, t + 0.01).setPosition(h.x1, h.y1, 0)));
       im.instanceMatrix.needsUpdate = true;
       this.barrels.set(lid, im);
       this.board.add(im);
@@ -253,8 +321,8 @@ export class Board3D {
     for (const c of cutouts) area -= Math.abs(areaOf(c));
     for (const h of cut) area -= Math.abs(areaOf(holePts(h)));
     this.info = { area, thickness: t, holes: this.holes.length, cutHoles: cut.length, cutouts: cutouts.length, outline: hasOutline, skins, barrels };
-    // Drop textures of layers that are gone, and redraw the rest (the hole set may have changed).
-    for (const [id, e] of this.textures) { e.tex.dispose(); this.textures.delete(id); }
+    // Layer masks carry the holes: redraw them all (the layers or hole set may have changed).
+    this.masks.clear();
     if (!this.fitted) { this.fitted = true; this.fit(); }
   }
 
@@ -278,16 +346,12 @@ export class Board3D {
   }
 
   /** A white alpha mask of the layer in board space, with the drilled holes cut out. */
-  private texture(g: GerberView, lv: LayerView): THREE.CanvasTexture {
+  private layerMask(g: GerberView, lv: LayerView): HTMLCanvasElement {
     const key = `${this.bb.join()}:${this.holes.length}`;
-    const hit = this.textures.get(lv.id);
-    if (hit && hit.key === key) return hit.tex;
-    hit?.tex.dispose();
-    const [x0, y0, x1, y1] = this.bb, W = x1 - x0 || 1, H = y1 - y0 || 1;
-    const coarse = matchMedia?.("(pointer: coarse)").matches;
-    const maxSide = Math.min(this.renderer.capabilities.maxTextureSize, coarse ? 2048 : 4096);
-    const ppm = Math.min(maxSide / Math.max(W, H), 40);
-    const cw = Math.max(2, Math.round(W * ppm)), ch = Math.max(2, Math.round(H * ppm));
+    const hit = this.masks.get(lv.id);
+    if (hit && hit.key === key) return hit.canvas;
+    const [x0, , , y1] = this.bb;
+    const { W, H, ppm, cw, ch } = this.texSize();
     const draw = document.createElement("canvas");
     draw.width = cw; draw.height = ch;
     const c = draw.getContext("2d")!;
@@ -321,11 +385,8 @@ export class Board3D {
       else { const p = holePts(h); hc.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) hc.lineTo(p[i], p[i + 1]); hc.closePath(); }
       hc.fill();
     }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-    tex.colorSpace = THREE.NoColorSpace;
-    this.textures.set(lv.id, { key, tex });
-    return tex;
+    this.masks.set(lv.id, { key, canvas });
+    return canvas;
   }
 
   /** Builds the geometry now if the layer set or thickness changed. */
@@ -428,7 +489,7 @@ export class Board3D {
   }
 
   /** Z of the face the camera looks at: picks and measurements live there. */
-  faceZ() { return (this.bottom ? -1 : 1) * (this.thickness / 2 + FACE); }
+  faceZ() { return (this.bottom ? -1 : 1) * (this.thickness / 2); }
 
   toScreen(x: number, y: number): P2 {
     const v = new THREE.Vector3(x, y, this.faceZ()).project(this.camera);
