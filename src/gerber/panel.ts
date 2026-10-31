@@ -3,16 +3,20 @@
 
 import type { GerberView, GMeasure, GTool } from "./GerberView";
 import type { GUnit } from "./model";
+import { bindTabs, busy, confirmModal, emptyState, type Panels } from "../ui";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void }) {
+export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void; open: () => void; panels: Panels }) {
   // Tabs
-  document.querySelectorAll<HTMLButtonElement>("#g-left .g-tabs button").forEach(b => b.addEventListener("click", () => {
-    document.querySelectorAll("#g-left .g-tabs button").forEach(x => x.classList.toggle("on", x === b));
-    document.querySelectorAll("#g-left .g-tab").forEach(t => t.classList.toggle("on", t.id === `g-tab-${b.dataset.tab}`));
-  }));
+  const selectTab = bindTabs($("#g-left .g-tabs"), tab => {
+    document.querySelectorAll("#g-left .g-tab").forEach(t => t.classList.toggle("on", t.id === `g-tab-${tab}`));
+    $("#g-left-title").textContent = tab === "layers" ? "Layers" : "Measurements";
+  });
+  opts.panels.setGerberTabSelector(selectTab);
+  /** Empty-state action: start Smart measure and show the board. */
+  const startSmart = () => { g.setTool("smart"); opts.panels.revealBoard(); $("#g-overlay").focus(); };
   // Tools, units, snaps
   document.querySelectorAll<HTMLButtonElement>("#g-tools button").forEach(b => b.addEventListener("click", () => g.setTool(b.dataset.gtool as GTool)));
   $<HTMLSelectElement>("#g-units").addEventListener("change", e => g.setUnits((e.target as HTMLSelectElement).value as GUnit));
@@ -30,15 +34,18 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
   }));
   $("#g-all-on").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: true })));
   $("#g-all-off").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: false })));
-  $("#g-png").addEventListener("click", () => g.png());
-  $("#g-svg").addEventListener("click", () => g.exportSvg());
+  $("#g-png").addEventListener("click", e => busy(e.currentTarget as HTMLElement, () => g.png()));
+  $("#g-svg").addEventListener("click", e => busy(e.currentTarget as HTMLElement, () => g.exportSvg()));
   $("#g-csv").addEventListener("click", () => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([g.csv()], { type: "text/csv" }));
     a.download = `${(g.name || "pcb").replace(/\.[^.]+$/, "")}-measurements.csv`;
     a.click();
   });
-  $("#g-clear").addEventListener("click", () => g.clearMeasurements());
+  $("#g-clear").addEventListener("click", async () => {
+    const n = g.measurements.length;
+    if (n && await confirmModal(n === 1 ? "Delete the measurement on this board?" : `Delete all ${n} measurements on this board?`, "Delete all")) g.clearMeasurements();
+  });
 
   let dragFrom = -1;
   const renderLayers = () => {
@@ -48,13 +55,25 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
       const row = document.createElement("div");
       row.className = "g-layer" + (l.visible ? "" : " off");
       row.draggable = true;
+      row.setAttribute("role", "listitem");
       row.title = `${l.L.name}\n${l.L.objs.length.toLocaleString()} objects · ${l.L.format === "excellon" ? "Excellon" : "Gerber"}, ${l.L.units}${l.L.warnings.length ? "\n" + l.L.warnings.join("\n") : ""}`;
-      row.innerHTML = `<span class="grip" title="Drag to reorder">⋮⋮</span>
-        <button class="eye" title="Show / hide">${l.visible ? "◉" : "○"}</button>
-        <input type="color" value="${l.color}" title="Layer colour" />
-        <span class="g-name"><b>${esc(l.L.label)}</b><small>${esc(l.L.name)}${l.L.warnings.length ? " ⚠" : ""}</small></span>
+      const name = esc(l.L.label);
+      row.innerHTML = `<button class="grip" title="Drag, or Alt+↑ / Alt+↓, to reorder" aria-label="Reorder ${name}: Alt+Up or Alt+Down">⋮⋮</button>
+        <button class="eye" title="Show / hide" aria-label="${l.visible ? "Hide" : "Show"} ${name}" aria-pressed="${l.visible}">${l.visible ? "◉" : "○"}</button>
+        <input type="color" value="${l.color}" title="Layer colour" aria-label="Colour of ${name}" />
+        <span class="g-name"><b>${name}</b><small>${esc(l.L.name)}${l.L.warnings.length ? ` <span role="img" aria-label="has warnings">⚠</span>` : ""}</small></span>
 `;
-      row.querySelector(".eye")!.addEventListener("click", () => g.setLayerStyle(i, { visible: !l.visible }));
+      row.querySelector(".eye")!.addEventListener("click", () => { g.setLayerStyle(i, { visible: !l.visible }); refocus(i, ".eye"); });
+      row.addEventListener("keydown", e => {
+        const grip = (e.target as HTMLElement).classList.contains("grip");
+        const d = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
+        if (!d || !(e.altKey || grip)) return;
+        e.preventDefault();
+        const j = i + d;
+        if (j < 0 || j >= g.layers.length) return;
+        g.moveLayer(i, j);
+        refocus(j, ".grip");
+      });
       row.querySelector<HTMLInputElement>("input[type=color]")!.addEventListener("input", e => g.setLayerStyle(i, { color: (e.target as HTMLInputElement).value }));
       row.addEventListener("dragstart", e => { dragFrom = i; e.dataTransfer!.effectAllowed = "move"; e.dataTransfer!.setData("text/plain", String(i)); row.classList.add("dragging"); });
       row.addEventListener("dragend", () => row.classList.remove("dragging"));
@@ -63,25 +82,38 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
       row.addEventListener("drop", e => { e.preventDefault(); e.stopPropagation(); row.classList.remove("drop"); if (dragFrom >= 0 && dragFrom !== i) g.moveLayer(dragFrom, i); dragFrom = -1; });
       host.appendChild(row);
     });
-    if (!g.layers.length) host.innerHTML = `<p class="muted pad">No layers.</p>`;
+    if (!g.layers.length) emptyState(host, { icon: "layers", title: "No layers yet", text: "Open Gerber, Excellon drill files or a zipped set to see the board.", cta: "Open files", action: opts.open });
+    for (const id of ["#g-all-on", "#g-all-off"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
+  };
+  /** After a re-render, puts keyboard focus back on the same control of a layer row. */
+  const refocus = (i: number, sel: string) => {
+    if (layersSig !== g.layers.map(l => `${l.id}:${l.visible}`).join("|")) { layersSig = g.layers.map(l => `${l.id}:${l.visible}`).join("|"); renderLayers(); }
+    document.querySelectorAll<HTMLElement>("#g-layers .g-layer")[i]?.querySelector<HTMLElement>(sel)?.focus();
   };
 
   const renderMeasures = () => {
     $("#g-m-count").textContent = String(g.measurements.length);
     const host = $("#g-m-list");
     host.innerHTML = "";
-    if (!g.measurements.length) { host.innerHTML = `<p class="muted pad">Measurements you take appear here.</p>`; return; }
+    const none = !g.measurements.length;
+    for (const id of ["#g-csv", "#g-clear"]) $<HTMLButtonElement>(id).disabled = none;
+    if (none) { emptyState(host, { icon: "ruler", title: "No measurements yet", text: "Click a pad, track or hole with Smart measure; pin a result to keep it here.", cta: "Start Smart measure", action: startSmart }); return; }
+    const focused = document.activeElement?.closest("#g-m-list .m-item") ? [...host.children].indexOf(document.activeElement.closest(".m-item")!) : -1;
+    const focusSel = document.activeElement?.classList.contains("vis") ? ".vis" : ".m-main";
     g.measurements.forEach((m, i) => {
       const el = document.createElement("div");
       el.className = "m-item" + (m.id === g.selected ? " sel" : "") + (m.visible ? "" : " off");
+      el.setAttribute("role", "listitem");
       el.style.setProperty("--c", "#22d3ee");
-      el.innerHTML = `<span class="dot"></span><span class="t">${i + 1}. ${esc(m.title)}</span><span class="val">${esc(m.text())}</span>
-        <span class="acts"><button class="vis" title="Show / hide">${m.visible ? "◉" : "○"}</button><button class="del" title="Delete">✕</button></span>`;
-      el.addEventListener("click", () => { g.selected = m.id; g.drawOverlay(); renderAll(); });
+      const title = `${i + 1}. ${m.title}`, val = m.text();
+      el.innerHTML = `<span class="dot" aria-hidden="true"></span><button class="m-main" aria-pressed="${m.id === g.selected}" title="${esc(`${title}: ${val}`)}"><span class="t">${esc(title)}</span><span class="val">${esc(val)}</span></button>
+        <span class="acts"><button class="vis" title="Show / hide" aria-label="${m.visible ? "Hide" : "Show"} measurement ${i + 1}" aria-pressed="${m.visible}">${m.visible ? "◉" : "○"}</button><button class="del" title="Delete" aria-label="Delete measurement ${i + 1}">✕</button></span>`;
+      el.querySelector(".m-main")!.addEventListener("click", () => { g.selected = m.id; g.drawOverlay(); renderAll(); });
       el.querySelector(".vis")!.addEventListener("click", e => { e.stopPropagation(); m.visible = !m.visible; g.drawOverlay(); renderAll(); });
       el.querySelector(".del")!.addEventListener("click", e => { e.stopPropagation(); g.deleteMeasurement(m.id); });
       host.appendChild(el);
     });
+    if (focused >= 0) (host.children[Math.min(focused, host.children.length - 1)] as HTMLElement | undefined)?.querySelector<HTMLElement>(focusSel)?.focus();
   };
 
   const renderReadout = () => {
@@ -90,7 +122,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     if (!m) { box.hidden = true; return; }
     box.hidden = false;
     const isLive = m === g.live;
-    box.innerHTML = `<div class="ttl"><span>${esc(m.title)}</span><button class="x" title="Close (Esc)">✕</button></div>
+    box.innerHTML = `<div class="ttl"><span>${esc(m.title)}</span><button class="x" title="Close (Esc)" aria-label="Close result">✕</button></div>
       <div class="val"><span class="cp" title="Click to copy">${esc(m.text())}</span></div>
       <div class="det">${m.rows().map(([k, v]) => `<div>${esc(k)}: <span class="cp" title="Click to copy">${esc(v)}</span></div>`).join("")}</div>
       <div class="acts">${isLive ? `<button class="btn small" data-a="pin" title="Keep this result (P)">Pin</button>` : ""}
@@ -119,6 +151,9 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     $<HTMLSelectElement>("#g-units").value = g.unit;
     $<HTMLSelectElement>("#g-decimals").value = String(g.decimals);
     $("[data-gview=flip]").classList.toggle("on", g.view.mirror);
+    $("[data-gview=flip]").setAttribute("aria-pressed", String(g.view.mirror));
+    document.querySelectorAll<HTMLButtonElement>("#g-tools button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gtool === g.tool)));
+    for (const id of ["#g-png", "#g-svg"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
     const hint = $("#g-hint");
     hint.innerHTML = TOOL_HINTS[g.tool];
     renderMeasures();

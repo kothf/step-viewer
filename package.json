@@ -1,6 +1,6 @@
 {
   "name": "step-viewer",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Browser STEP/IGES viewer and Gerber PCB viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties.",
   "scripts": {
     "predev": "node scripts/copy-occt.mjs",
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/three": "^0.170.0",
+    "axe-core": "^4.14.0",
     "playwright": "^1.63.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"

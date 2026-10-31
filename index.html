@@ -10,11 +10,11 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span class="brand-txt">STEP Viewer<small id="app-version"></small></span></div>
-    <label class="btn primary" title="Open STEP / IGES / BREP, or Gerber / Excellon layers and .zip sets (Ctrl+O)">
-      <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden />
-      <span>Open file</span>
-    </label>
+    <button class="icon nav-toggle" id="nav-toggle" aria-label="Toggle side panel (Ctrl+[)" title="Toggle side panel (Ctrl+[)" aria-expanded="true" aria-controls="g-left tree-panel"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span class="brand-txt">STEP Viewer<small id="app-version"></small></span></div>
+    <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
+    <button class="btn primary" data-open title="Open STEP / IGES / BREP, or Gerber / Excellon layers and .zip sets (Ctrl+O)"><span class="open-long">Open file</span><span class="open-short">Open</span></button>
+    <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name">No file open</span></div>
     <select id="quality" class="step-only" title="Tessellation quality (applies on next open)">
       <option value="draft">Draft mesh</option>
       <option value="normal" selected>Normal mesh</option>
@@ -28,11 +28,11 @@
       <button data-mode="hlr" title="Hidden line removal (4)">HLR</button>
       <button data-mode="xray" title="X-ray (5)">X-ray</button>
     </div>
-    <div class="seg step-only" id="projection">
+    <div class="seg step-only" id="projection" role="group" aria-label="Projection">
       <button data-proj="perspective" title="Perspective (P)">Persp</button>
       <button data-proj="orthographic" class="on" title="Orthographic (O)">Ortho</button>
     </div>
-    <div class="seg step-only" id="views">
+    <div class="seg step-only" id="views" role="group" aria-label="Standard views">
       <button data-view="fit" title="Fit all (F)">Fit</button>
       <button data-view="iso" title="Isometric (0)">Iso</button>
       <button data-view="front" title="Front">Front</button>
@@ -40,30 +40,32 @@
       <button data-view="right" title="Right">Right</button>
     </div>
     <div class="sep gerber-only"></div>
-    <div class="seg gerber-only" id="g-view">
+    <div class="seg gerber-only" id="g-view" role="group" aria-label="PCB view">
       <button data-gview="fit" title="Fit board (F)">Fit</button>
-      <button data-gview="in" title="Zoom in (+)">+</button>
-      <button data-gview="out" title="Zoom out (−)">−</button>
-      <button data-gview="flip" title="View from the bottom, mirrored (B)">Bottom view</button>
+      <button data-gview="in" class="g-zoom" title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button data-gview="out" class="g-zoom" title="Zoom out (−)" aria-label="Zoom out">−</button>
+      <button data-gview="flip" title="View from the bottom, mirrored (B)" aria-pressed="false" aria-label="Bottom view"><span class="flip-long">Bottom view</span><span class="flip-short" aria-hidden="true">⇅</span></button>
     </div>
     <div class="spacer"></div>
     <label class="chk step-only" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Axes</label>
     <label class="chk step-only" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> AO</label>
-    <button class="icon" id="theme" title="Toggle light/dark theme">◐</button>
-    <button class="icon" id="help-btn" title="Shortcuts">?</button>
+    <button class="icon" id="theme" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">◐</button>
+    <button class="icon" id="help-btn" title="Help and shortcuts" aria-label="Help and shortcuts" aria-haspopup="dialog">?</button>
+    <button class="icon panel-toggle" id="panel-toggle" title="Toggle right panel (Ctrl+])" aria-label="Toggle right panel (Ctrl+])" aria-expanded="true" aria-controls="g-right right"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 2.5v11" stroke="currentColor" stroke-width="1.3"/></svg></button>
   </header>
 
-  <aside class="left panel step-only">
-    <div class="tabs">
-      <button data-tab="tree" class="on">Model tree</button>
-      <button data-tab="measures">Measurements <span id="m-count" class="pill">0</span></button>
+  <aside class="left panel step-only" id="tree-panel" aria-label="Model tree and measurements">
+    <div class="tabs" role="tablist" aria-label="Left panel">
+      <button data-tab="tree" class="on" role="tab" id="t-tree" aria-selected="true" aria-controls="tab-tree">Model tree</button>
+      <button data-tab="measures" role="tab" id="t-measures" aria-selected="false" aria-controls="tab-measures" tabindex="-1">Measurements <span id="m-count" class="pill">0</span></button>
     </div>
-    <section id="tab-tree" class="tab on">
-      <input id="tree-search" type="search" placeholder="Filter: name, size>50, vol<1000" />
-      <div id="tree" class="tree"><p class="muted pad">No model loaded.</p></div>
+    <section id="tab-tree" class="tab on" role="tabpanel" aria-labelledby="t-tree">
+      <input id="tree-search" type="search" placeholder="Filter: name, size>50, vol<1000" aria-label="Filter the model tree" />
+      <div class="skel-group" aria-hidden="true"><i class="skel"></i><i class="skel"></i><i class="skel s2"></i><i class="skel s2"></i><i class="skel"></i></div>
+      <div id="tree" class="tree" role="tree" aria-label="Model tree"></div>
     </section>
-    <section id="tab-measures" class="tab">
-      <div id="m-list" class="m-list"><p class="muted pad">Measurements you take appear here.</p></div>
+    <section id="tab-measures" class="tab" role="tabpanel" aria-labelledby="t-measures">
+      <div id="m-list" class="m-list" role="list" aria-label="Measurements"></div>
       <div class="row pad">
         <button id="m-csv" class="btn small">CSV</button>
         <button id="m-json" class="btn small">JSON</button>
@@ -73,21 +75,23 @@
     </section>
   </aside>
 
-  <aside class="left panel gerber-only" id="g-left">
-    <div class="g-tabs">
-      <button data-tab="layers" class="on">Layers</button>
-      <button data-tab="measures">Measurements <span id="g-m-count" class="pill">0</span></button>
+  <aside class="left panel gerber-only sheet" id="g-left" aria-label="Layers and measurements">
+    <div class="sheet-head"><h2 id="g-left-title">Layers</h2><button class="icon sheet-close" aria-label="Close panel" title="Close (Esc)">✕</button></div>
+    <div class="g-tabs" role="tablist" aria-label="Left panel">
+      <button data-tab="layers" class="on" role="tab" id="gt-layers" aria-selected="true" aria-controls="g-tab-layers">Layers</button>
+      <button data-tab="measures" role="tab" id="gt-measures" aria-selected="false" aria-controls="g-tab-measures" tabindex="-1">Measurements <span id="g-m-count" class="pill">0</span></button>
     </div>
-    <section id="g-tab-layers" class="g-tab on">
-      <div id="g-layers" class="g-layers"></div>
+    <section id="g-tab-layers" class="g-tab on" role="tabpanel" aria-labelledby="gt-layers">
+      <div class="skel-group" aria-hidden="true"><i class="skel row"></i><i class="skel row"></i><i class="skel row"></i><i class="skel row"></i></div>
+      <div id="g-layers" class="g-layers" role="list" aria-label="Layers"></div>
       <div class="row pad wrap">
         <button id="g-all-on" class="btn small">Show all</button>
         <button id="g-all-off" class="btn small">Hide all</button>
       </div>
-      <p class="muted pad g-note">Drag layers to restack them; the top of the list draws on top.</p>
+      <p class="muted pad g-note">Drag layers, or press Alt+↑ / Alt+↓ on a layer, to restack them; the top of the list draws on top.</p>
     </section>
-    <section id="g-tab-measures" class="g-tab">
-      <div id="g-m-list" class="m-list"></div>
+    <section id="g-tab-measures" class="g-tab" role="tabpanel" aria-labelledby="gt-measures">
+      <div id="g-m-list" class="m-list" role="list" aria-label="PCB measurements"></div>
       <div class="row pad">
         <button id="g-csv" class="btn small">CSV</button>
         <button id="g-clear" class="btn small danger">Clear all</button>
@@ -102,27 +106,27 @@
     <div id="tool-hint" class="tool-hint step-only" hidden></div>
     <div id="readout" class="readout step-only" hidden></div>
     <div id="gerber" class="gerber-vp gerber-only">
-      <canvas id="g-canvas"></canvas>
-      <canvas id="g-overlay"></canvas>
+      <canvas id="g-canvas" aria-hidden="true"></canvas>
+      <canvas id="g-overlay" tabindex="0" role="img" aria-label="PCB view. Keys: Q smart, M point to point, C clearance, L polyline, A area, F fit, plus and minus zoom, B bottom view, Esc cancel"></canvas>
       <div id="g-hint" class="tool-hint"></div>
       <div id="g-tip" class="g-tip" hidden></div>
       <div id="g-readout" class="readout" hidden></div>
     </div>
     <div id="empty" class="empty">
       <div class="empty-card">
-        <svg viewBox="0 0 32 32" width="56" height="56"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
+        <svg viewBox="0 0 32 32" width="56" height="56" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
         <h2>Drop a STEP file or Gerber set here</h2>
         <p>AP203 · AP214 · AP242, plus IGES and BREP, parsed by OpenCASCADE. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
-        <label class="btn primary"><input id="file-input-2" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden />Choose files…</label>
+        <button class="btn primary" data-open>Choose files…</button>
       </div>
     </div>
-    <div id="loading" class="loading" hidden><div class="spinner"></div><div id="loading-text">Loading…</div><div class="bar"><i id="loading-bar"></i></div></div>
-    <div id="toast" class="toast" hidden></div>
+    <div id="loading" class="loading" hidden role="status" aria-live="polite"><div class="spinner" aria-hidden="true"></div><div id="loading-text">Loading…</div><div class="bar" aria-hidden="true"><i id="loading-bar"></i></div></div>
   </main>
 
-  <aside class="right panel gerber-only" id="g-right">
+  <aside class="right panel gerber-only sheet" id="g-right" aria-label="Measure, board and export">
+    <div class="sheet-head"><h2>Tools</h2><button class="icon sheet-close" aria-label="Close panel" title="Close (Esc)">✕</button></div>
     <details open><summary>Measure</summary>
-      <div class="tools-grid" id="g-tools">
+      <div class="tools-grid" id="g-tools" role="group" aria-label="Measuring tools">
         <button data-gtool="smart" class="on" title="Click a feature for its size and metadata, a second for pitch and clearance (Q)">✦ Smart</button>
         <button data-gtool="distance" title="Point to point with ΔX / ΔY (M)">↔ Point–point</button>
         <button data-gtool="clearance" title="Edge-to-edge gap between two features (C)">⇤ Clearance</button>
@@ -130,11 +134,11 @@
         <button data-gtool="area" title="Area of a clicked polygon (A)">▱ Area</button>
       </div>
       <div class="units-row">
-        <label>Units <select id="g-units"><option value="mm">mm</option><option value="in">in</option><option value="mil">mil</option></select></label>
-        <label>Decimals <select id="g-decimals"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label>
+        <span class="fld"><label for="g-units">Units</label> <select id="g-units"><option value="mm">mm</option><option value="in">in</option><option value="mil">mil</option></select></span>
+        <span class="fld"><label for="g-decimals">Decimals</label> <select id="g-decimals"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option></select></span>
       </div>
     </details>
-    <details open><summary>Board</summary><div id="g-stats" class="kv"></div></details>
+    <details open><summary>Board</summary><div class="skel-group" aria-hidden="true"><i class="skel"></i><i class="skel s2"></i><i class="skel"></i></div><div id="g-stats" class="kv"></div></details>
     <details open><summary>Export</summary>
       <div class="row wrap">
         <button class="btn small" id="g-png" title="Current view with measurements">PNG</button>
@@ -143,7 +147,7 @@
     </details>
   </aside>
 
-  <aside class="right panel step-only" id="right">
+  <aside class="right panel step-only" id="right" aria-label="Properties and tools">
     <details open id="sec-selection"><summary>Properties</summary><div id="props" class="props"><p class="muted">Open a model to begin.</p></div></details>
 
     <details open><summary>Measure</summary>
@@ -201,8 +205,9 @@
     </details>
 
     <details><summary>Mass properties</summary>
-      <label class="row">Material <select id="material"></select></label>
-      <label class="row">Density <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" /> g/cm³</label>
+      <div class="row"><label for="material">Material</label> <select id="material"></select></div>
+      <div class="row"><label for="density">Density</label> <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" aria-describedby="density-err" /> g/cm³</div>
+      <p class="field-err" id="density-err" role="alert" hidden></p>
       <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
       <div id="mass-out" class="kv"></div>
     </details>
@@ -222,6 +227,13 @@
     </details>
   </aside>
 
+  <nav class="bottom-nav gerber-only" id="g-bottomnav" aria-label="PCB panels">
+    <button data-sheet="" class="on" aria-pressed="true"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10" r="1.6" fill="currentColor"/><path d="M10 10h4" stroke="currentColor" stroke-width="1.5"/></svg><span>Board</span></button>
+    <button data-sheet="layers" aria-pressed="false"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M10 3 18 7l-8 4-8-4zM2 11l8 4 8-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>Layers</span></button>
+    <button data-sheet="measures" aria-pressed="false" title="Measurements"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 14 14 3l3 3L6 17zM7 10l2 2M10 7l2 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>Results</span></button>
+    <button data-sheet="tools" aria-pressed="false"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="6" r="1.6" fill="currentColor"/><circle cx="13" cy="10" r="1.6" fill="currentColor"/><circle cx="7" cy="14" r="1.6" fill="currentColor"/></svg><span>Tools</span></button>
+  </nav>
+
   <footer class="status">
     <div class="snaps gerber-only" title="PCB snapping">
       <label class="chk"><input type="checkbox" id="g-snap" checked /><b>Snap</b></label>
@@ -236,7 +248,7 @@
       <label class="chk"><input type="checkbox" data-snap="center" checked />Centre</label>
       <label class="chk"><input type="checkbox" data-snap="edge" checked />Edge</label>
     </div>
-    <span id="st-snap" class="st-snap"></span>
+    <span id="st-snap" class="st-snap" aria-live="off"></span>
     <span id="st-coord" class="mono"></span>
     <span class="spacer"></span>
     <span id="st-stats" class="muted"></span>
@@ -244,8 +256,16 @@
   </footer>
 </div>
 
-<dialog id="help">
-  <h3>Shortcuts</h3>
+<div id="toasts" class="toasts" role="region" aria-label="Notifications"></div>
+
+<dialog id="confirm" class="modal" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+  <h3 id="confirm-title">Are you sure?</h3>
+  <p id="confirm-text"></p>
+  <div class="row end"><button class="btn" data-a="cancel">Cancel</button><button class="btn danger-fill" data-a="ok">Delete</button></div>
+</dialog>
+
+<dialog id="help" class="modal" aria-labelledby="help-title" data-backdrop-close>
+  <div class="modal-head"><h3 id="help-title">Shortcuts</h3><button class="icon" data-close aria-label="Close" title="Close (Esc)">✕</button></div>
   <table>
     <tr><td>Left drag / Right drag / Wheel</td><td>Orbit / Pan / Zoom to cursor</td></tr>
     <tr><td>F, 0</td><td>Fit, Isometric</td></tr>
@@ -264,9 +284,15 @@
     <tr><td>Shift+click</td><td>Area of a pad, region or closed outline</td></tr>
     <tr><td>P / Del</td><td>Pin the smart result / delete selected measurement</td></tr>
     <tr><td>F, B, + / −</td><td>Fit, bottom view, zoom</td></tr>
+    <tr><td>Alt+↑ / Alt+↓</td><td>Move the focused layer up / down</td></tr>
+  </table>
+  <h3>Panels</h3>
+  <table>
+    <tr><td>Ctrl+[ / Ctrl+]</td><td>Collapse or expand the left / right panel (⌘ on macOS)</td></tr>
+    <tr><td>Tab, Shift+Tab, Enter, Space</td><td>Move between and press buttons and fields</td></tr>
   </table>
   <p class="muted">Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; curved freeform distances are measured on the mesh.</p>
-  <form method="dialog"><button class="btn">Close</button></form>
+  <div class="row end"><button class="btn" data-close>Close</button></div>
 </dialog>
 
 <script type="module" src="/src/main.ts"></script>
