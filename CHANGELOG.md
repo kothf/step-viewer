@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-31
+
+### Fixed
+- 3D board no longer flickers or shows streaky traces while rotating. Each side is now one surface with the copper, solder mask and silkscreen composited into its texture (with mipmaps), instead of stacked layers that fought over depth and thin alpha-tested traces that shimmered. Copper under the mask shows as lighter green, exposed copper stays metallic.
+
 ## [1.10.0] - 2026-10-31
 
 ### Added
@@ -149,7 +154,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/kothf/step-viewer/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/kothf/step-viewer/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/kothf/step-viewer/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/kothf/step-viewer/compare/v1.7.1...v1.8.0

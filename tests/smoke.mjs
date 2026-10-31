@@ -671,6 +671,9 @@ try {
       g.setUnits("mm"); g.setDecimals(3);
       const r = { is3d: g.is3d, pressed: document.querySelector('[data-gdim="3d"]').getAttribute("aria-pressed"), canvas: getComputedStyle(document.querySelector("#g-3d")).display, flat: getComputedStyle(document.querySelector("#g-canvas")).display, info: { ...g.b3.info } };
       g.b3.renderNow();
+      const meshes = []; g.b3.scene.traverse(o => o.isMesh && meshes.push(o));
+      r.faces = meshes.filter(m => (m.name === "top" || m.name === "bottom") && m.material.map).length;
+      r.stacked = meshes.filter(m => m.material.alphaMap || m.material.alphaTest > 0 || (m.material.transparent && m.material.opacity < 1)).length;
       const c = document.querySelector("#g-3d"), s = g.toScreen(15, 4);
       const gl = c.getContext("webgl2") || c.getContext("webgl");
       const px = new Uint8Array(4);
@@ -701,6 +704,7 @@ try {
     });
     check(b3.is3d && b3.pressed === "true" && b3.canvas === "block" && b3.flat === "none", `pcb 3d: switch shows the 3D canvas (${JSON.stringify([b3.pressed, b3.canvas, b3.flat])})`);
     check(b3.info.outline && b3.info.holes === 5 && b3.info.cutHoles === 5 && b3.info.barrels === 3 && b3.info.skins === 1 && b3.info.area > 580 && b3.info.area < 599.142, `pcb 3d: outline extruded with 5 holes cut, 3 plated barrels, copper skin (${JSON.stringify(b3.info)})`);
+    check(b3.faces === 2 && b3.stacked === 0, `pcb 3d: one textured surface per side, no stacked see-through skins to flicker (${b3.faces}, ${b3.stacked})`);
     check(b3.pixel[0] > 60 && b3.pixel.some(v => v > 40), `pcb 3d: board rendered (${b3.pixel})`);
     check(b3.round < 1e-6, `pcb 3d: screen ↔ board mapping round trip (${b3.round})`);
     check(b3.macro?.[0] === "Pad" && b3.macro?.[1] === "0.500 × 1.000 mm" && b3.pair?.[0].startsWith("Pitch"), `pcb 3d: smart measure picks pads and holes on the board (${JSON.stringify([b3.macro, b3.pair])})`);
