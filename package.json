@@ -1,6 +1,6 @@
 {
   "name": "step-viewer",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Browser STEP/IGES viewer and Gerber PCB viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties.",
   "scripts": {
     "predev": "node scripts/copy-occt.mjs",
@@ -32,7 +32,7 @@
     "type": "git",
     "url": "git+https://github.com/kothf/step-viewer.git"
   },
-  "homepage": "https://aerocat.tech/tools/step-viewer/",
+  "homepage": "https://aerocat.tech/tools/mobiuscad/",
   "engines": {
     "node": ">=20"
   }

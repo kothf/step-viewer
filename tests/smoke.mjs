@@ -659,6 +659,65 @@ try {
 
   check(pcb.panel.visible && pcb.panel.sliders === 0 && !pcb.panel.addBtn, `pcb: all layers shown, panel has only show/hide and colour (${JSON.stringify(pcb.panel)})`);
 
+  // --- 3D board from the Gerber set: geometry, picking and measuring in 3D, board body in the model view ---
+  {
+    await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`);
+    await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+    await page.click('[data-gdim="3d"]');
+    await page.waitForTimeout(400);
+    const b3 = await page.evaluate(async () => {
+      const g = window.__sv.gerber;
+      const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      g.setUnits("mm"); g.setDecimals(3);
+      const r = { is3d: g.is3d, pressed: document.querySelector('[data-gdim="3d"]').getAttribute("aria-pressed"), canvas: getComputedStyle(document.querySelector("#g-3d")).display, flat: getComputedStyle(document.querySelector("#g-canvas")).display, info: { ...g.b3.info } };
+      g.b3.renderNow();
+      const c = document.querySelector("#g-3d"), s = g.toScreen(15, 4);
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      const px = new Uint8Array(4);
+      gl.readPixels(Math.round(s[0] * c.width / c.clientWidth), Math.round(c.height - s[1] * c.height / c.clientHeight), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      r.pixel = [...px.slice(0, 3)];
+      const q = g.toBoard(...g.toScreen(12.54, 10)); r.round = Math.hypot(q[0] - 12.54, q[1] - 10);
+      // Smart measure through real screen-space picking on the top face.
+      g.setTool("smart");
+      const at = (x, y, dx = 0, dy = 0) => { const p = g.toScreen(x, y); return [p[0] + dx, p[1] + dy]; };
+      g.click(...at(5, 15)); r.macro = g.live && [g.live.title, g.live.text()];
+      g.click(...at(25.4, 12.7)); r.pair = g.live && [g.live.title, g.live.value];
+      g.cancel();
+      // Point to point with snapping to hole centres.
+      g.setTool("distance");
+      g.moveTo(...at(10, 10, 2, 1)); g.click(...at(10, 10, 2, 1)); g.moveTo(...at(12.54, 10, -1, 2)); g.click(...at(12.54, 10, -1, 2));
+      r.dist = g.measurements.at(-1)?.value;
+      // Bottom view: top-side layers are no longer picked, drills still are.
+      g.setMirror(true); await frame();
+      r.bottom = g.b3.bottom; r.topHidden = g.hitTest(5, 15) === null; r.holeSeen = !!g.hitTest(25.4, 12.7);
+      r.flipPressed = document.querySelector("[data-gview=flip]").getAttribute("aria-pressed");
+      g.setMirror(false); await frame();
+      // Thickness rebuilds the board.
+      const t = document.querySelector("#g-thick"); t.value = "2.4"; t.dispatchEvent(new Event("change"));
+      await frame();
+      r.thick = g.b3.info.thickness;
+      g.set3d(false); r.back2d = !g.is3d && getComputedStyle(document.querySelector("#g-canvas")).display !== "none";
+      return r;
+    });
+    check(b3.is3d && b3.pressed === "true" && b3.canvas === "block" && b3.flat === "none", `pcb 3d: switch shows the 3D canvas (${JSON.stringify([b3.pressed, b3.canvas, b3.flat])})`);
+    check(b3.info.outline && b3.info.holes === 5 && b3.info.cutHoles === 5 && b3.info.barrels === 3 && b3.info.skins === 1 && b3.info.area > 580 && b3.info.area < 599.142, `pcb 3d: outline extruded with 5 holes cut, 3 plated barrels, copper skin (${JSON.stringify(b3.info)})`);
+    check(b3.pixel[0] > 60 && b3.pixel.some(v => v > 40), `pcb 3d: board rendered (${b3.pixel})`);
+    check(b3.round < 1e-6, `pcb 3d: screen ↔ board mapping round trip (${b3.round})`);
+    check(b3.macro?.[0] === "Pad" && b3.macro?.[1] === "0.500 × 1.000 mm" && b3.pair?.[0].startsWith("Pitch"), `pcb 3d: smart measure picks pads and holes on the board (${JSON.stringify([b3.macro, b3.pair])})`);
+    check(near(b3.dist, 2.54, 1e-6), `pcb 3d: point to point snaps to hole centres, 2.54 (${b3.dist})`);
+    check(b3.bottom && b3.topHidden && b3.holeSeen && b3.flipPressed === "true", "pcb 3d: bottom view picks only bottom-side layers and drills");
+    check(b3.thick === 2.4 && b3.back2d, `pcb 3d: thickness 2.4 rebuilds the board, 2D comes back (${b3.thick})`);
+    await page.click("#g-body");
+    await page.waitForFunction(() => !document.querySelector("#app").classList.contains("gerber") && window.__sv.viewer.parts.length === 1, null, { timeout: 10000 });
+    const body = await page.evaluate(() => {
+      const d = window.__sv.viewer.parts[0].data, g = window.__sv.gerber;
+      return { closed: d.closed, vol: d.volume, expect: g.b3.info.area * 2.4, z: [d.bboxMin[2], d.bboxMax[2]], cyl: d.faces.filter(f => f.type === "cylinder").length, planes: d.faces.filter(f => f.type === "plane").length, back: !document.querySelector("#back-pcb").hidden };
+    });
+    check(body.closed && near(body.vol, body.expect, 1e-3) && near(body.z[0], -1.2) && near(body.z[1], 1.2) && body.cyl >= 6 && body.planes >= 6 && body.back, `pcb 3d: board body opens as a closed solid in the model view (${JSON.stringify(body)})`);
+    await page.click("#back-pcb");
+    check(await page.evaluate(() => document.querySelector("#app").classList.contains("gerber")), "pcb 3d: Back to PCB returns to the layers");
+  }
+
   // --- UI/UX standards in the PCB view (FRS: layout, tokens, states, feedback, a11y QA) ---
   {
     const axeSrc = await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");

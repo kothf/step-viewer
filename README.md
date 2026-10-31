@@ -4,7 +4,7 @@
 
 MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical engineers, technicians and inspectors that runs entirely in the browser. OpenCASCADE parses the file in a Web Worker (WebAssembly), so **the model never leaves your computer**.
 
-**Live:** [aerocat.tech/tools/step-viewer](https://aerocat.tech/tools/step-viewer/) · [GitHub Pages](https://kothf.github.io/step-viewer/)
+**Live:** [aerocat.tech/tools/mobiuscad](https://aerocat.tech/tools/mobiuscad/) · [GitHub Pages](https://kothf.github.io/step-viewer/)
 
 ## Features
 
@@ -26,6 +26,7 @@ MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical eng
 - **Metadata**: STEP header, protocol, product revisions, materials, AP242 PMI entity counts.
 - **Export**: PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report.
 - **PCB / Gerber view**: open Gerber RS-274X and X2 layers, Excellon drill files, or a `.zip` of a whole Gerber set (drop several files at once). Layers are recognised from X2 file functions or common names (KiCad, Altium/Protel, Eagle) and all drawn on a dark 2D canvas, with per-layer show/hide, colour and drag-to-reorder stacking; bottom (mirrored) view.
+- **3D board**: switch the PCB view to 3D (`3`, back with `2`) to see the board outline extruded to its thickness with cut-outs, drilled and plated holes, copper, solder mask and silkscreen on both sides. It orbits like the model view, and the PCB measuring tools (smart, point to point, clearance, polyline, area, with snapping) work on the face you look at. **Measure as 3D model** opens the board body in the model view for its tools: thickness, hole diameters, angles, sections, mass properties and STL/glTF export.
   - Smart: one click shows a pad's aperture and size, a track's width and length, a hole's diameter and plating, a region's area, plus X2 net, pin and pad function; a second click gives pitch and edge-to-edge clearance.
   - Point to point (with ΔX/ΔY), clearance, polyline length and polygon area; Shift+click a pad, region or closed outline (board edge) for its area.
   - Snapping to corners and track ends, pad and hole centres, track edges and the perpendicular onto a track edge; mm, inch or mil with 0–4 decimals.
@@ -44,7 +45,7 @@ MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical eng
 | `Del` | Delete the selected measurement |
 | `Esc` | Cancel the tool, clear the selection |
 
-In the PCB view: wheel zooms, drag (or Space+drag, middle drag) pans; `Q` smart, `M` point to point, `C` clearance, `L` polyline, `A` area, `Enter` finishes, `Backspace` removes the last point, `P` pins, `F` fits, `B` flips to the bottom view, `Esc` cancels.
+In the PCB view: wheel zooms, drag (or Space+drag, middle drag) pans; `Q` smart, `M` point to point, `C` clearance, `L` polyline, `A` area, `Enter` finishes, `Backspace` removes the last point, `P` pins, `F` fits, `B` flips to the bottom view, `2` / `3` switch between the flat and the 3D board, `Esc` cancels.
 
 You can also open a model by URL: `index.html?url=path/to/model.step` (same origin or CORS-enabled).
 

@@ -20,6 +20,7 @@
     <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
     <button class="btn primary" data-open title="Open STEP / IGES / BREP, or Gerber / Excellon layers and .zip sets (Ctrl+O)"><span class="open-long">Open file</span><span class="open-short">Open</span></button>
     <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name">No file open</span></div>
+    <button class="btn small step-only" id="back-pcb" hidden title="Back to the PCB layers and the 3D board">◂ Back to PCB</button>
     <select id="quality" class="step-only" title="Tessellation quality (applies on next open)">
       <option value="draft">Draft mesh</option>
       <option value="normal" selected>Normal mesh</option>
@@ -45,6 +46,10 @@
       <button data-view="right" title="Right">Right</button>
     </div>
     <div class="sep gerber-only"></div>
+    <div class="seg gerber-only" id="g-dim" role="group" aria-label="2D or 3D board">
+      <button data-gdim="2d" class="on" aria-pressed="true" title="Flat layer view (2)">2D</button>
+      <button data-gdim="3d" aria-pressed="false" title="3D board: outline, copper, mask, silkscreen and holes; drag to orbit (3)">3D</button>
+    </div>
     <div class="seg gerber-only" id="g-view" role="group" aria-label="PCB view">
       <button data-gview="fit" title="Fit board (F)">Fit</button>
       <button data-gview="in" class="g-zoom" title="Zoom in (+)" aria-label="Zoom in">+</button>
@@ -112,7 +117,8 @@
     <div id="readout" class="readout step-only" hidden></div>
     <div id="gerber" class="gerber-vp gerber-only">
       <canvas id="g-canvas" aria-hidden="true"></canvas>
-      <canvas id="g-overlay" tabindex="0" role="img" aria-label="PCB view. Keys: Q smart, M point to point, C clearance, L polyline, A area, F fit, plus and minus zoom, B bottom view, Esc cancel"></canvas>
+      <canvas id="g-3d" aria-hidden="true"></canvas>
+      <canvas id="g-overlay" tabindex="0" role="img" aria-label="PCB view. Keys: Q smart, M point to point, C clearance, L polyline, A area, F fit, plus and minus zoom, B bottom view, 2 flat view, 3 3D board, Esc cancel"></canvas>
       <div id="g-hint" class="tool-hint"></div>
       <div id="g-tip" class="g-tip" hidden></div>
       <div id="g-readout" class="readout" hidden></div>
@@ -143,7 +149,9 @@
         <span class="fld"><label for="g-decimals">Decimals</label> <select id="g-decimals"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option></select></span>
       </div>
     </details>
-    <details open><summary>Board</summary><div class="skel-group" aria-hidden="true"><i class="skel"></i><i class="skel s2"></i><i class="skel"></i></div><div id="g-stats" class="kv"></div></details>
+    <details open><summary>Board</summary><div class="skel-group" aria-hidden="true"><i class="skel"></i><i class="skel s2"></i><i class="skel"></i></div><div id="g-stats" class="kv"></div>
+      <div class="units-row"><span class="fld"><label for="g-thick">Thickness (3D)</label> <input type="number" id="g-thick" min="0.2" max="10" step="0.1" value="1.6" style="width:70px" /> mm</span></div>
+      <div class="row wrap"><button class="btn small" id="g-body" title="Open the board body (outline, holes, thickness) in the 3D model view: thickness, hole Ø, angles, sections, mass properties and STL / glTF export">Measure as 3D model</button></div></details>
     <details open><summary>Export</summary>
       <div class="row wrap">
         <button class="btn small" id="g-png" title="Current view with measurements">PNG</button>
@@ -290,6 +298,7 @@
     <tr><td>P / Del</td><td>Pin the smart result / delete selected measurement</td></tr>
     <tr><td>F, B, + / −</td><td>Fit, bottom view, zoom</td></tr>
     <tr><td>Alt+↑ / Alt+↓</td><td>Move the focused layer up / down</td></tr>
+    <tr><td>2 / 3</td><td>Flat layer view / 3D board (drag orbits, right-drag pans, wheel zooms)</td></tr>
   </table>
   <h3>Panels</h3>
   <table>

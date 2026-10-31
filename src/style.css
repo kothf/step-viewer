@@ -341,6 +341,9 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 #app:not(.gerber) .gerber-only, #app.gerber .step-only { display: none !important; }
 .gerber-vp { position: absolute; inset: 0; z-index: 4; background: #0b0e13; overflow: hidden; touch-action: none; }
 .gerber-vp canvas { position: absolute; left: 0; top: 0; display: block; }
+#g-3d, .gerber-vp.is3d #g-canvas { display: none; }
+.gerber-vp.is3d #g-3d { display: block; }
+.gerber-vp.is3d #g-overlay { cursor: default; touch-action: none; }
 #g-overlay { cursor: crosshair; }
 .gerber-vp.grab #g-overlay { cursor: grab; }
 .gerber-vp.panning #g-overlay { cursor: grabbing; }

@@ -7,6 +7,7 @@ import { featureGap, Grid, nearestOnBoundary, primContains, type P2 } from "./ge
 import { defaultStyle } from "./load";
 import { G_UNITS, type GObj, type GUnit } from "./model";
 import GerberWorker from "./gerber.worker?worker";
+import { Board3D } from "./Board3D";
 
 export type GTool = "smart" | "distance" | "clearance" | "polyline" | "area";
 export type SnapKind = "vertex" | "center" | "mid" | "edge" | "perp" | "free";
@@ -156,6 +157,9 @@ export class GerberView {
   snap: SnapPick | null = null;
   cursor: P2 | null = null;
   lastRenderMs = 0;
+  /** 3D board view: picking and measuring stay in board mm, on the face the camera looks at. */
+  is3d = false;
+  b3: Board3D | null = null;
 
   private main: HTMLCanvasElement;
   private over: HTMLCanvasElement;
@@ -221,7 +225,9 @@ export class GerberView {
     });
     // Top of the list draws last: sort by rank, highest first.
     this.layers = [...this.layers, ...add].sort((a, b) => b.L.rank - a.L.rank);
+    this.b3?.markDirty();
     this.fit(false);
+    if (this.is3d) this.render();
     this.changed();
   }
 
@@ -236,11 +242,69 @@ export class GerberView {
     for (const c of [this.main, this.over, this.comp, this.scratch]) { c.width = Math.round(this.w * this.dpr); c.height = Math.round(this.h * this.dpr); }
     for (const c of [this.main, this.over]) { c.style.width = `${this.w}px`; c.style.height = `${this.h}px`; }
     this.compView = null;
+    this.b3?.resize(this.w, this.h);
     this.render(true);
   }
 
-  toScreen(x: number, y: number): P2 { const v = this.view; return [v.ox + v.s * (v.mirror ? -x : x), v.oy - v.s * y]; }
-  toBoard(sx: number, sy: number): P2 { const v = this.view; const x = (sx - v.ox) / v.s; return [v.mirror ? -x : x, (v.oy - sy) / v.s]; }
+  toScreen(x: number, y: number): P2 { if (this.is3d) return this.b3!.toScreen(x, y); const v = this.view; return [v.ox + v.s * (v.mirror ? -x : x), v.oy - v.s * y]; }
+  toBoard(sx: number, sy: number): P2 { if (this.is3d) return this.b3!.toBoard(sx, sy); const v = this.view; const x = (sx - v.ox) / v.s; return [v.mirror ? -x : x, (v.oy - sy) / v.s]; }
+
+  /** Screen pixels per board millimetre (in 3D: around a board point). */
+  pxPerMm(q?: P2) { return this.is3d && q ? this.b3!.scaleAt(q) : this.view.s; }
+
+  /** Layers that can be picked: visible, and in 3D on the side the camera looks at. */
+  pickable(lv: LayerView) {
+    if (!lv.visible) return false;
+    if (!this.is3d) return true;
+    const s = lv.L.side;
+    return s === null || s === (this.b3!.bottom ? "bottom" : "top");
+  }
+
+  /** Switches between the 2D layer view and the 3D board. */
+  set3d(on: boolean) {
+    if (on === this.is3d) return;
+    if (on) {
+      if (!this.b3) { this.b3 = new Board3D(this.root.querySelector<HTMLCanvasElement>("#g-3d")!, this.over, () => this.view3dChanged()); this.b3.thickness = this.thickness0; }
+      this.b3.resize(this.w, this.h);
+      if (this.view.mirror !== this.b3.bottom) this.b3.fit(this.view.mirror);
+    }
+    this.is3d = on;
+    if (this.b3) this.b3.enabled = on;
+    this.root.classList.toggle("is3d", on);
+    this.hover = null; this.snap = null; this.tip(null);
+    if (!on && this.mirrorAt3d !== this.view.mirror) { this.compView = null; this.fit(false); }
+    this.mirrorAt3d = this.view.mirror;
+    this.render();
+    this.changed();
+  }
+  private mirrorAt3d = false;
+
+  /** 3D board thickness in mm (0.2 to 10). */
+  setThickness(mm: number) {
+    const t = Math.max(0.2, Math.min(10, mm));
+    this.thickness0 = t;
+    if (!this.b3) { this.changed(); return t; }
+    this.b3.thickness = t; this.b3.markDirty();
+    if (this.is3d) this.render();
+    this.changed();
+    return t;
+  }
+  private thickness0 = 1.6;
+  get thickness() { return this.thickness0; }
+
+  /** The board body (outline, cut-outs, holes, thickness) as a mesh for the 3D model view, or null without layers. */
+  boardBody() {
+    if (!this.layers.length) return null;
+    if (!this.b3) { this.b3 = new Board3D(this.root.querySelector<HTMLCanvasElement>("#g-3d")!, this.over, () => this.view3dChanged()); this.b3.thickness = this.thickness0; this.b3.resize(this.w, this.h); }
+    if (!this.b3.ensureBuilt(this)) return null;
+    const mask = this.layers.some(l => l.L.kind === "mask");
+    return this.b3.bodyMesh(`${this.baseName()} board`, mask ? [0.08, 0.36, 0.2] : [0.61, 0.54, 0.33]);
+  }
+
+  private view3dChanged() {
+    if (this.b3!.sideChanged()) { this.view.mirror = this.b3!.bottom; this.hover = null; this.changed(); }
+    this.drawOverlay();
+  }
 
   boardBox(visibleOnly = true): [number, number, number, number] | null {
     const ls = this.layers.filter(l => !visibleOnly || l.visible);
@@ -253,6 +317,7 @@ export class GerberView {
 
   fit(animate = true) {
     void animate;
+    if (this.is3d) { this.b3!.fit(); return; }
     const bb = this.boardBox(true) ?? this.boardBox(false);
     if (!bb) return;
     const w = Math.max(bb[2] - bb[0], 1e-3), h = Math.max(bb[3] - bb[1], 1e-3);
@@ -265,6 +330,7 @@ export class GerberView {
   }
 
   zoomAt(sx: number, sy: number, k: number) {
+    if (this.is3d) { this.b3!.dolly(k); return; }
     const [bx, by] = this.toBoard(sx, sy);
     this.view.s = Math.min(Math.max(this.view.s * k, 1e-3), 1e6);
     const [nx, ny] = this.toScreen(bx, by);
@@ -273,6 +339,7 @@ export class GerberView {
   }
 
   setMirror(on: boolean) {
+    if (this.is3d) { this.b3!.setBottom(on); this.view.mirror = on; this.changed(); return; }
     const c = this.toBoard(this.w / 2, this.h / 2);
     this.view.mirror = on;
     const [sx] = this.toScreen(c[0], c[1]);
@@ -309,6 +376,9 @@ export class GerberView {
     this.drawOverlay();
   }
 
+  /** A layer's drawing as Path2D batches in board mm (cached). */
+  layerPaths(lv: LayerView) { return this.paths(lv); }
+
   private paths(lv: LayerView) {
     lv.paths ??= lv.L.batches.map(b => ({
       dark: b.dark,
@@ -326,6 +396,11 @@ export class GerberView {
 
   render(full = true) {
     void full;
+    if (this.is3d) {
+      this.b3!.sync(this);
+      this.drawOverlay();
+      return;
+    }
     const t0 = performance.now();
     const c = this.main.getContext("2d")!;
     c.setTransform(1, 0, 0, 1, 0, 0);
@@ -381,7 +456,7 @@ export class GerberView {
   hitTest(x: number, y: number, tolMm = 0): FeatRef | null {
     for (let li = 0; li < this.layers.length; li++) {
       const lv = this.layers[li];
-      if (!lv.visible) continue;
+      if (!this.pickable(lv)) continue;
       let best: FeatRef | null = null, bestA = Infinity;
       for (const fi of lv.grid.query(x - tolMm, y - tolMm, x + tolMm, y + tolMm)) {
         const f = lv.feats.get(fi);
@@ -401,8 +476,10 @@ export class GerberView {
   /** Snap at a screen position. */
   snapAt(sx: number, sy: number): SnapPick {
     const q = this.toBoard(sx, sy);
-    const R = 10 / this.view.s;
-    const tol = 3 / this.view.s;
+    if (!isFinite(q[0]) || !isFinite(q[1])) return { p: [0, 0], kind: "free", feat: null };
+    const s = this.pxPerMm(q);
+    const R = 10 / s;
+    const tol = 3 / s;
     const feat = this.hitTest(q[0], q[1], tol);
     if (!this.snapOn) return { p: q, kind: "free", feat };
     let best: SnapPick | null = null, bd = R;
@@ -411,19 +488,19 @@ export class GerberView {
     let perp: SnapPick | null = null, pd = R * 1.2;
     for (let li = 0; li < this.layers.length; li++) {
       const lv = this.layers[li];
-      if (!lv.visible) continue;
+      if (!this.pickable(lv)) continue;
       for (const fi of lv.grid.query(q[0] - R, q[1] - R, q[0] + R, q[1] + R)) {
         const f = lv.feats.get(fi);
         if (q[0] < f.bb[0] - R || q[0] > f.bb[2] + R || q[1] < f.bb[1] - R || q[1] > f.bb[3] + R) continue;
         const o = lv.L.objs[f.o];
         if ("dark" in o && !o.dark) continue;
-        const s = f.snaps;
-        for (let i = 0; i < s.length; i += 3) {
-          const k = s[i + 2];
+        const sn = f.snaps;
+        for (let i = 0; i < sn.length; i += 3) {
+          const k = sn[i + 2];
           if (k === SNAP_CENTER ? !this.snapKinds.center : !this.snapKinds.vertex) continue;
-          const d = Math.hypot(s[i] - q[0], s[i + 1] - q[1]);
+          const d = Math.hypot(sn[i] - q[0], sn[i + 1] - q[1]);
           // Centres win ties against corners within a pixel.
-          if (d < bd - (k === SNAP_CENTER ? 1 / this.view.s : 0)) { bd = d; best = { p: [s[i], s[i + 1]], kind: k === SNAP_CENTER ? "center" : k === SNAP_MID ? "mid" : "vertex", feat: { lid: lv.id, fi } }; }
+          if (d < bd - (k === SNAP_CENTER ? 1 / s : 0)) { bd = d; best = { p: [sn[i], sn[i + 1]], kind: k === SNAP_CENTER ? "center" : k === SNAP_MID ? "mid" : "vertex", feat: { lid: lv.id, fi } }; }
         }
         if (!this.snapKinds.edge) continue;
         for (const p of f.prims) {
@@ -793,6 +870,19 @@ export class GerberView {
     const outline = (r: FeatRef, color: string, fill?: string) => {
       const f = this.feature(r);
       if (!f) return;
+      if (this.is3d) {
+        c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        for (const p of f.prims) {
+          const pts = primOutline(p);
+          c.beginPath();
+          for (let i = 0; i < pts.length; i += 2) { const sp = this.toScreen(pts[i], pts[i + 1]); if (i) c.lineTo(sp[0], sp[1]); else c.moveTo(sp[0], sp[1]); }
+          if (pts.length > 4) c.closePath();
+          if (fill) { c.fillStyle = fill; c.fill(); }
+          c.strokeStyle = color; c.lineWidth = 2; c.stroke();
+        }
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        return;
+      }
       this.applyView(c);
       for (const p of f.prims) {
         const path = new Path2D(primD(p.k === "c" && p.r <= 0 ? { ...p, r: 1.5 / this.view.s } : p));
@@ -924,13 +1014,19 @@ export class GerberView {
         down = null;
         return;
       }
-      down = { x: p[0], y: p[1], btn: e.button, pan: e.button === 1 || e.button === 2 || this.spaceDown, moved: false };
+      down = { x: p[0], y: p[1], btn: e.button, pan: !this.is3d && (e.button === 1 || e.button === 2 || this.spaceDown), moved: false };
       if (down.pan) this.root.classList.add("panning");
     });
     el.addEventListener("pointermove", e => {
       const p = local(e);
       const prev = pts.get(e.pointerId);
       if (prev) pts.set(e.pointerId, p);
+      if (this.is3d && (pts.size >= 2 || (down && prev))) {
+        // The orbit controls own drags in 3D; a press that barely moves is still a click.
+        if (down && !down.moved && Math.hypot(p[0] - down.x, p[1] - down.y) > 4) { down.moved = true; this.hover = null; this.snap = null; this.tip(null); this.drawOverlay(); }
+        if (pts.size >= 2) down = null;
+        if (!down || down.moved) return;
+      }
       if (pinch && pts.size === 2) {
         const [a, b] = [...pts.values()];
         const d = Math.hypot(a[0] - b[0], a[1] - b[1]), mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -961,6 +1057,7 @@ export class GerberView {
     el.addEventListener("pointerleave", () => { if (!down) { this.hover = null; this.snap = null; this.tip(null); this.drawOverlay(); } });
     el.addEventListener("dblclick", e => { e.preventDefault(); if (this.tool === "polyline" || this.tool === "area") { this.picks.pop(); this.finish(); this.changed(); } });
     el.addEventListener("wheel", e => {
+      if (this.is3d) return;
       e.preventDefault();
       const p = local(e);
       const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
@@ -1000,6 +1097,7 @@ export class GerberView {
     const tools: Record<string, GTool> = { m: "distance", d: "distance", q: "smart", s: "smart", c: "clearance", l: "polyline", a: "area" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "f") { this.fit(); return true; }
+    if (k === "2" || k === "3") { this.set3d(k === "3"); return true; }
     if (k === "b") { this.setMirror(!this.view.mirror); return true; }
     if (k === "p" && this.live) { this.pinLive(); return true; }
     if (k === "+" || k === "=") { this.zoomAt(this.w / 2, this.h / 2, 1.25); return true; }
@@ -1057,13 +1155,21 @@ export class GerberView {
     out.width = this.main.width; out.height = this.main.height;
     const c = out.getContext("2d")!;
     this.render();
+    if (this.is3d) this.b3!.renderNow();
     this.paintOverlay();
-    c.drawImage(this.main, 0, 0);
+    c.drawImage(this.is3d ? this.b3!.canvas : this.main, 0, 0, out.width, out.height);
     c.drawImage(this.over, 0, 0);
     out.toBlob(b => b && this.host.download(b, `${this.baseName()}.png`), "image/png");
   }
 
+  /** The 2D view as SVG (also from the 3D view). */
   svg(): string {
+    const was3d = this.is3d;
+    this.is3d = false;
+    try { return this.svg2d(); } finally { this.is3d = was3d; }
+  }
+
+  private svg2d(): string {
     const v = this.view, m = v.mirror ? -1 : 1;
     const parts: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" width="${this.w}" height="${this.h}" viewBox="0 0 ${this.w} ${this.h}">`, `<rect width="100%" height="100%" fill="${BG}"/>`, "<defs>"];
     const body: string[] = [];
@@ -1105,4 +1211,14 @@ export class GerberView {
   }
 
   private baseName() { return (this.name || "pcb").replace(/\.[^.]+$/, ""); }
+}
+
+/** Outline of a primitive as a flat point list (capsules as round-ended polygons). */
+function primOutline(p: Feature["prims"][number]): number[] {
+  if (p.k === "p") return p.pts;
+  const { ax, ay, bx, by, r } = p;
+  if (r <= 0) return [ax, ay, bx, by];
+  const a = Math.atan2(by - ay, bx - ax);
+  const out = tessArc(bx, by, r, a - Math.PI / 2, Math.PI);
+  return tessArc(ax, ay, r, a + Math.PI / 2, Math.PI, out);
 }
