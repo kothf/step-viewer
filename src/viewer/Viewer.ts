@@ -108,6 +108,15 @@ export class Viewer {
   }
 
   onRender(fn: () => void) { this.listeners.push(fn); }
+
+  /** World size of one screen pixel at a point, for the current camera. */
+  pxWorld(p: THREE.Vector3) {
+    const cam = this.camera;
+    if (cam instanceof THREE.OrthographicCamera) return (cam.top - cam.bottom) / cam.zoom / this.size.y;
+    const depth = this.pxTmp.copy(p).applyMatrix4(cam.matrixWorldInverse).z;
+    return (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2) * Math.abs(depth)) / this.size.y;
+  }
+  private pxTmp = new THREE.Vector3();
   invalidate() { this.dirty = true; }
 
   private resize() {

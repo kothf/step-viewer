@@ -83,6 +83,7 @@ const hl = {
   pickMarks: new THREE.Group(),
   com: new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshBasicMaterial({ color: 0xe03131, depthTest: false })),
 };
+screenSized(hl.com, 5);
 hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
@@ -136,6 +137,22 @@ const csysMark = new THREE.AxesHelper(1);
 csysMark.renderOrder = 2000;
 csysMark.visible = false;
 viewer.scene.add(csysMark);
+
+/**
+ * Keeps a marker the same size on screen (radius `px` pixels) however far the
+ * camera zooms, so it never grows over the geometry around it. `billboard` turns
+ * it to face the camera (for flat rings).
+ */
+function screenSized(o: THREE.Object3D, px: number, billboard = false) {
+  const at = new THREE.Vector3();
+  o.frustumCulled = false;
+  o.onBeforeRender = (_r, _s, cam) => {
+    o.scale.setScalar(px * viewer.pxWorld(o.getWorldPosition(at)));
+    if (billboard) o.quaternion.copy(cam.quaternion);
+    o.updateMatrixWorld();
+  };
+  return o;
+}
 
 function overlayFace(color: number, opacity: number) {
   const m = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
@@ -593,11 +610,15 @@ function addMeasurement(m: Measurement) {
   toast(`${f.title}: ${f.value}`);
 }
 
+/** A hollow ring, constant on screen, so the picked point and what is around it stay visible. */
+const pickRing = new THREE.RingGeometry(0.6, 1, 24);
+const pickRingMat = new THREE.MeshBasicMaterial({ color: 0xf59f00, depthTest: false, transparent: true, side: THREE.DoubleSide });
 function pickMark(p: THREE.Vector3) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(viewer.modelSize * 0.004, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf59f00, depthTest: false }));
+  const m = new THREE.Mesh(pickRing, pickRingMat);
   m.position.copy(p);
   m.renderOrder = 2000;
-  hl.pickMarks.add(m);
+  m.raycast = () => {};
+  hl.pickMarks.add(screenSized(m, 6, true));
 }
 
 function handlePick(snap: Snap | null) {
@@ -1250,7 +1271,6 @@ function runMass() {
   if (r.openParts.length) lastMass.push(["Warning", `${r.openParts.length} open shell(s): volume not reliable`]);
   $("#mass-out").innerHTML = kv(lastMass.map(([k, v]) => [k, esc(v)]));
   hl.com.position.copy(r.com);
-  hl.com.scale.setScalar(viewer.modelSize * 0.006);
   hl.com.visible = $<HTMLInputElement>("#com-show").checked;
   viewer.invalidate();
 }
@@ -1348,4 +1368,4 @@ renderProps();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });

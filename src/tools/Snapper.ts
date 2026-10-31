@@ -79,16 +79,8 @@ export class Snapper {
   }
 
   /** World size of one screen pixel at a point (for depth tolerances). */
-  private pxWorld(p: THREE.Vector3) {
-    const v = this.viewer, cam = v.camera as THREE.Camera & { isOrthographicCamera?: boolean };
-    if (cam.isOrthographicCamera) {
-      const o = cam as unknown as THREE.OrthographicCamera;
-      return (o.top - o.bottom) / o.zoom / v.size.y;
-    }
-    const pc = cam as unknown as THREE.PerspectiveCamera;
-    const depth = this.tmpB.copy(p).applyMatrix4(pc.matrixWorldInverse).z;
-    return (2 * Math.tan(THREE.MathUtils.degToRad(pc.fov) / 2) * Math.abs(depth)) / v.size.y;
-  }
+  private pxWorld(p: THREE.Vector3) { return this.viewer.pxWorld(p); }
+
 
   /**
    * True when nothing opaque lies between the camera and a world point. Points
