@@ -1,6 +1,6 @@
 # STEP Viewer: notes for Claude
 
-Browser STEP/IGES/BREP viewer for engineers. TypeScript + Vite + Three.js; OpenCASCADE (occt-import-js, WASM) parses files in a Web Worker. Everything runs client-side.
+Browser STEP/IGES/BREP viewer for engineers, plus a 2D Gerber/Excellon PCB view. TypeScript + Vite + Three.js; OpenCASCADE (occt-import-js, WASM) parses files in a Web Worker. Everything runs client-side.
 
 ## Authorship
 
@@ -33,6 +33,7 @@ The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright 
 - `src/topology.ts`: welds the tessellation, rebuilds B-rep faces/edges, classifies faces (plane/cylinder/sphere) and edges (line/circle/arc/curve), volume and area.
 - `src/viewer/`: `Viewer.ts` (scene, cameras, display modes, explode), `Section.ts` (up to 3 planes, stencil caps, hatching, gizmo), `SectionProfile.ts` (cut curves and area), `NavCube.ts`.
 - `src/tools/`: `Snapper.ts` (snapping), `measure.ts` (all measurements, including `smartMeasure`), `Annotations.ts` (labels on the model), `analysis.ts` (materials, mass properties), `exporters.ts`, `units.ts`, `csys.ts` (active user coordinate system: positions, directions and axis deltas are re-expressed only when formatted; stored values stay world mm).
+- `src/gerber/`: PCB view (Canvas 2D, no Three.js). `gerber.ts` (RS-274X/X2 parser, apertures and macros), `excellon.ts`, `load.ts` (zip, sniffing, layer classification, default colours), `build.ts` (path batches for drawing/SVG, packed features for picking), `geom.ts` (hit tests, clearance, grid), `GerberView.ts` (view, snapping, tools, measurements, export), `panel.ts` (side panels). Fixtures in `tests/fixtures/pcb/`; `#app.gerber` switches the UI (`.gerber-only` / `.step-only`).
 - `src/main.ts`: UI controller. The default tool `"select"` is **Smart measure**: one click shows an entity's size, a second click the relation between two entities. The result is "live" until the next click and can be pinned. Labels on the model stay one line; details go in the `#readout` card.
 
 ## Conventions

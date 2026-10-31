@@ -21,6 +21,9 @@ import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } fr
 import { readStepMeta, type StepMeta } from "./stepMeta";
 import type { EdgeInfo, PartData, TreeNode } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
+import { GerberView } from "./gerber/GerberView";
+import { bindGerberPanel } from "./gerber/panel";
+import { isPcbName, sniff } from "./gerber/load";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -204,6 +207,56 @@ function showEntity(face: THREE.Mesh, edge: LineSegments2, e: { part: Part; face
   viewer.invalidate();
 }
 
+// ---------- PCB (Gerber / Excellon) mode ----------
+const gerber = new GerberView($("#gerber"), {
+  setLoading: (on, text = "", pct = 0) => setLoading(on, text, pct),
+  toast: (m, err) => toast(m, err),
+  status: (coord, snap) => { $("#st-coord").textContent = coord; $("#st-snap").textContent = snap; },
+  download: (b, n) => download(b, n),
+});
+const gAddInput = document.createElement("input");
+gAddInput.type = "file";
+gAddInput.multiple = true;
+gAddInput.addEventListener("change", () => { if (gAddInput.files?.length) openPcb([...gAddInput.files], true); gAddInput.value = ""; });
+bindGerberPanel(gerber, {
+  addFiles: () => gAddInput.click(),
+  copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`), () => toast("Copy failed", true)); },
+});
+function setPcbMode(on: boolean) {
+  $("#app").classList.toggle("gerber", on);
+  if (on) { $("#empty").hidden = true; } else { $("#st-coord").textContent = ""; $("#st-snap").textContent = ""; }
+}
+const isPcbMode = () => $("#app").classList.contains("gerber");
+
+async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
+  const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
+  ++loadToken;
+  setPcbMode(true);
+  const ok = await gerber.load(list, append && gerber.loaded);
+  if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; return; }
+  if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : list[0].name.replace(/[-_.][^-_.]*$/, "") || "pcb";
+  document.title = `${gerber.name} · PCB · STEP Viewer`;
+  const n = gerber.layers.length;
+  $("#st-stats").textContent = `${n} layer${n === 1 ? "" : "s"} · ${gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString()} objects`;
+}
+
+const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep)$/i.test(n);
+
+/** Opens dropped or chosen files: one 3D model, or any number of PCB layers / zips. */
+async function openFiles(files: File[]) {
+  if (!files.length) return;
+  const model = files.find(f => is3dName(f.name));
+  if (model && files.length === 1) return openFile(model);
+  const pcb: File[] = [];
+  for (const f of files) {
+    if (is3dName(f.name)) continue;
+    if (isPcbName(f.name) || sniff(new Uint8Array(await f.slice(0, 8192).arrayBuffer()))) pcb.push(f);
+  }
+  if (pcb.length) return openPcb(pcb);
+  if (model) return openFile(model);
+  return openFile(files[0]);
+}
+
 // ---------- loading ----------
 const worker = new ImportWorker();
 let loadToken = 0;
@@ -214,6 +267,7 @@ async function openFile(file: File) {
 }
 
 async function openBuffer(buffer: ArrayBuffer, name: string) {
+  if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
   const token = ++loadToken;
   setLoading(true, `Reading ${name}…`, 2);
   state.meta = readStepMeta(new Uint8Array(buffer));
@@ -234,6 +288,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   setLoading(true, "Building scene…", 97);
   await new Promise(r => setTimeout(r, 0));
   resetForNewModel();
+  setPcbMode(false);
   viewer.load(result.parts, result.tree);
   state.fileName = name;
   state.fileKey = `sv:m:${name}:${buffer.byteLength || ""}`;
@@ -287,8 +342,8 @@ function toast(msg: string, err = false) {
 
 for (const id of ["#file-input", "#file-input-2"]) {
   $<HTMLInputElement>(id).addEventListener("change", e => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (f) openFile(f);
+    const fs = (e.target as HTMLInputElement).files;
+    if (fs?.length) openFiles([...fs]);
     (e.target as HTMLInputElement).value = "";
   });
 }
@@ -297,8 +352,8 @@ vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
 vpEl.addEventListener("drop", e => {
   e.preventDefault();
   vpEl.classList.remove("drag");
-  const f = e.dataTransfer?.files?.[0];
-  if (f) openFile(f);
+  const fs = e.dataTransfer?.files;
+  if (fs?.length) openFiles([...fs]);
 });
 
 // ---------- model tree ----------
@@ -1320,6 +1375,7 @@ window.addEventListener("keydown", e => {
   if (t.matches("input, select, textarea")) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (isPcbMode()) { if (gerber.onKey(e)) e.preventDefault(); return; }
   const k = e.key.toLowerCase();
   if (k === "escape") {
     if (state.tool !== "select") setTool("select");
@@ -1368,4 +1424,4 @@ renderProps();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });

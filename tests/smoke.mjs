@@ -10,15 +10,60 @@
  * Set CHROMIUM_PATH to use a specific browser binary.
  */
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { crc32, deflateRawSync } from "node:zlib";
 import { extname, join, resolve, sep } from "node:path";
 import { chromium } from "playwright";
 
 const root = resolve(process.argv[2] || "dist/step-viewer");
 const fixtures = resolve("node_modules/occt-import-js/test/testfiles");
+const pcbDir = resolve("tests/fixtures/pcb");
+
+/** A zip (deflate) of the given files, to test .zip Gerber sets. */
+function zip(files) {
+  const locals = [], central = [];
+  let off = 0;
+  for (const [name, data] of files) {
+    const nm = Buffer.from(name), comp = deflateRawSync(data), crc = crc32(data);
+    const h = Buffer.alloc(30);
+    h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(8, 8);
+    h.writeUInt32LE(crc, 14); h.writeUInt32LE(comp.length, 18); h.writeUInt32LE(data.length, 22); h.writeUInt16LE(nm.length, 26);
+    locals.push(h, nm, comp);
+    const c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(8, 10);
+    c.writeUInt32LE(crc, 16); c.writeUInt32LE(comp.length, 20); c.writeUInt32LE(data.length, 24); c.writeUInt16LE(nm.length, 28); c.writeUInt32LE(off, 42);
+    central.push(c, nm);
+    off += 30 + nm.length + comp.length;
+  }
+  const cd = Buffer.concat(central), e = Buffer.alloc(22);
+  e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(files.length, 8); e.writeUInt16LE(files.length, 10);
+  e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(off, 16);
+  return Buffer.concat([...locals, cd, e]);
+}
+
+/** A large synthetic copper layer: a grid of pads joined by tracks. */
+function bigGerber(n) {
+  const L = ["%FSLAX46Y46*%", "%MOMM*%", "%ADD10C,0.200000*%", "%ADD11R,1.000000X0.600000*%", "G01*"];
+  const c = v => Math.round(v * 1e6);
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const x = i * 2, y = j * 1.5;
+    L.push("D11*", `X${c(x)}Y${c(y)}D03*`, "D10*", `X${c(x)}Y${c(y)}D02*`, `X${c(x + 2)}Y${c(y)}D01*`, `X${c(x + 2)}Y${c(y + 1.5)}D01*`);
+  }
+  L.push("M02*");
+  return Buffer.from(L.join("\n"));
+}
+const pcbFiles = {};
+for (const f of await readdir(pcbDir)) pcbFiles[f] = await readFile(join(pcbDir, f));
+pcbFiles["board.zip"] = zip(Object.entries(pcbFiles).map(([n, d]) => [`gerbers/${n}`, d]));
+pcbFiles["big-F_Cu.gbr"] = bigGerber(300);
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".png": "image/png" };
 const server = createServer(async (req, res) => {
   const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
+  if (rel.startsWith("/pcb/")) {
+    const b = pcbFiles[rel.slice(5)];
+    res.writeHead(b ? 200 : 404, { "content-type": "application/octet-stream" });
+    return res.end(b);
+  }
   const [base, sub] = rel.startsWith("/fixtures/") ? [fixtures, rel.slice("/fixtures".length)] : [root, rel.replace(/\/$/, "/index.html")];
   const path = join(base, sub);
   if (path !== base && !path.startsWith(base + sep)) { res.writeHead(403); return res.end(); }
@@ -468,6 +513,124 @@ try {
     return { min: rows["Min radius of curvature ≈"], max: rows["Max radius of curvature ≈"] };
   });
   check(typeof cone.min === "number" && cone.min > 1 && cone.min < 20 && /flat/.test(cone.max), `smart: cone face curvature radii ${cone.min} / ${cone.max}`);
+
+  // --- PCB view: a zipped Gerber + Excellon set, layers, snapping and measurements ---
+  await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`);
+  await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+  const pcb = await page.evaluate(() => {
+    const g = window.__sv.gerber;
+    g.setUnits("mm"); g.setDecimals(3);
+    const L = label => g.layers.find(l => l.L.label === label);
+    const find = (label, pred) => { const l = L(label); const fi = l.L.objs.findIndex(pred); return fi < 0 ? null : { lid: l.id, fi }; };
+    const cu = "Top copper";
+    const pad1 = find(cu, o => o.t === "flash" && o.x === 10), pad2 = find(cu, o => o.t === "flash" && o.x === 12.54);
+    const rectPad = find(cu, o => o.t === "flash" && o.x === 20), track = find(cu, o => o.t === "track");
+    const arc = find(cu, o => o.t === "arc"), macro = find(cu, o => o.t === "flash" && o.x === 5 && o.y === 15);
+    const holed = find(cu, o => o.t === "flash" && o.x === 5 && o.y === 5), region = find(cu, o => o.t === "region" && o.dark);
+    const edge = find("Board outline", o => o.t === "track");
+    const npth = find("Drill (NPTH)", o => o.t === "hole"), slot = find("Drill (PTH)", o => o.t === "slot");
+    const rows = m => Object.fromEntries(m.rows());
+    const r = { mode: document.querySelector("#app").classList.contains("gerber"), labels: g.layers.map(l => l.L.label).sort(), name: g.name };
+    // Smart: one pad, then a second one -> pitch and clearance.
+    g.setTool("smart");
+    g.clickPick({ p: [10, 10], kind: "center", feat: pad1 });
+    r.one = [g.live.title, g.live.text(), rows(g.live).Net, rows(g.live).Pin];
+    g.clickPick({ p: [12.54, 10], kind: "center", feat: pad2 });
+    r.pair = [g.live.title, g.live.value, rows(g.live).Clearance];
+    g.clickPick({ p: [0, 0], kind: "free", feat: null });
+    r.cleared = g.live === null;
+    const info = f => { g.clickPick({ p: [0, 0], kind: "free", feat: null }); g.clickPick({ p: [0, 0], kind: "free", feat: f }); const m = g.live; return [m.title, m.text(), rows(m)]; };
+    r.macro = info(macro)[1];
+    const a = info(arc); r.arc = [a[1], a[2].Radius, a[2].Sweep];
+    r.track = info(track)[2].Length;
+    r.region = info(region)[1];
+    r.npth = info(npth); r.slot = info(slot)[2].Length;
+    r.outline = info(edge)[2]["Closed outline"];
+    g.clickPick({ p: [0, 0], kind: "free", feat: null });
+    // Shift+click areas: closed outline (with an arc corner) and a pad with a hole.
+    r.loop = g.shapeArea(edge).value;
+    r.holed = g.shapeArea(holed).value;
+    // Clearance between the rectangular pad and the track above it.
+    g.setTool("clearance");
+    g.clickPick({ p: [20, 10], kind: "center", feat: rectPad }); g.clickPick({ p: [20, 15], kind: "edge", feat: track });
+    r.clear = g.measurements.at(-1).value;
+    // Point to point through real screen-space snapping.
+    g.setTool("distance");
+    g.render(); g.setMirror(false); g.fit();
+    const snapAt = (x, y, dx = 0, dy = 0) => { const s = g.toScreen(x, y); g.moveTo(s[0] + dx, s[1] + dy); return { kind: g.snap.kind, p: g.snap.p }; };
+    r.snapCenter = snapAt(10, 10, 3, -2);
+    r.snapEdge = snapAt(20.6, 15.125, 0, -2);
+    const s1 = g.toScreen(10, 10), s2 = g.toScreen(12.54, 10);
+    g.picks = [{ p: [22, 10], kind: "free", feat: null }];
+    r.snapPerp = snapAt(22.05, 14.875, 0, 3);
+    g.picks = [];
+    g.click(s1[0] + 2, s1[1] + 2); g.click(s2[0] - 2, s2[1] + 1);
+    const d = g.measurements.at(-1);
+    r.dist = [d.value, rows(d)["ΔX"], rows(d)["ΔY"]];
+    g.setUnits("mil"); r.mil = d.text(); g.setUnits("in"); r.inch = d.text(); g.setUnits("mm");
+    // Polyline and polygon area from free points.
+    g.setTool("polyline");
+    for (const p of [[0, 0], [30, 0], [30, 18]]) g.clickPick({ p, kind: "free", feat: null });
+    g.finish(); r.poly = g.measurements.at(-1).value;
+    g.setTool("area");
+    for (const p of [[0, 0], [10, 0], [10, 10], [0, 10]]) g.clickPick({ p, kind: "free", feat: null });
+    g.finish(); r.area = g.measurements.at(-1).value;
+    r.count = g.measurements.length;
+    // Hiding a layer removes it from picking; reordering keeps measurements.
+    const ci = g.layers.findIndex(l => l.L.label === cu);
+    g.setLayerStyle(ci, { visible: false }); r.hiddenHit = g.hitTest(5, 15); g.setLayerStyle(ci, { visible: true }); r.shownHit = !!g.hitTest(12.54, 10);
+    g.moveLayer(ci, g.layers.length - 1); r.afterMove = g.relation(pad1, pad2).value;
+    // Hide / delete measurements, exports.
+    g.measurements[0].visible = false;
+    g.deleteMeasurement(g.measurements.at(-1).id); r.afterDelete = g.measurements.length;
+    const svg = g.svg(); r.svg = [svg.startsWith("<svg"), svg.includes("<mask"), svg.includes("2.540 mm")];
+    r.csv = g.csv().split("\n").length;
+    g.render(); g.paintOverlay();
+    const s = g.toScreen(12.54 + 0.6, 10);
+    const px = document.querySelector("#g-canvas").getContext("2d").getImageData(Math.round(s[0] * devicePixelRatio), Math.round(s[1] * devicePixelRatio), 1, 1).data;
+    r.pixel = [...px.slice(0, 3)];
+    r.ui = { layersListed: document.querySelectorAll("#g-layers .g-layer").length, list: document.querySelectorAll("#g-m-list .m-item").length, stats: document.querySelector("#g-stats").textContent };
+    return r;
+  });
+  const near3 = (a, b) => near(a, b, 1e-6);
+  check(pcb.mode && JSON.stringify(pcb.labels) === JSON.stringify(["Board outline", "Drill (NPTH)", "Drill (PTH)", "Top copper"]), `pcb: zip opens four classified layers (${pcb.labels})`);
+  check(pcb.one[0] === "Pad" && pcb.one[1] === "Ø1.600 mm" && pcb.one[2] === "GND" && pcb.one[3] === "J1 1", `pcb smart: pad size and X2 net/pin (${pcb.one})`);
+  check(pcb.pair[0].startsWith("Pitch") && near3(pcb.pair[1], 2.54) && pcb.pair[2] === "0.940 mm" && pcb.cleared, `pcb smart: pitch 2.54 and clearance 0.94 (${pcb.pair})`);
+  check(pcb.macro === "0.500 × 1.000 mm", `pcb: rotated macro pad 0.5 × 1.0 (${pcb.macro})`);
+  check(pcb.arc[0] === "w 0.250 mm" && pcb.arc[1] === "2.000 mm" && pcb.arc[2] === "90.00°", `pcb: arc track width, radius, sweep (${pcb.arc})`);
+  check(pcb.track === "10.000 mm" && pcb.region === "4.000 mm²", `pcb: track length and region area (${pcb.track}, ${pcb.region})`);
+  check(pcb.npth[0] === "Drill hole" && pcb.npth[1] === "Ø3.175 mm" && pcb.npth[2].Centre === "X 25.400  Y 12.700" && /NPTH/.test(pcb.npth[2].Plating), `pcb: inch Excellon (TZ) hole Ø3.175 at 25.4, 12.7 (${JSON.stringify(pcb.npth)})`);
+  check(pcb.slot === "3.000 mm", `pcb: G85 slot length 3 mm (${pcb.slot})`);
+  check(near(pcb.loop, 600 - (4 - Math.PI), 1e-6) && /599\.142 mm², perimeter 99\.142 mm/.test(pcb.outline), `pcb: board outline area with an arc corner (${pcb.loop}, ${pcb.outline})`);
+  check(near(pcb.holed, Math.PI * (0.16 - 0.04), 1e-9), `pcb: pad area minus its hole (${pcb.holed})`);
+  check(near3(pcb.clear, 15 - 0.125 - 10.6), `pcb: rect pad to track clearance 4.275 (${pcb.clear})`);
+  check(pcb.snapCenter.kind === "center" && near3(pcb.snapCenter.p[0], 10), `pcb snap: pad centre (${JSON.stringify(pcb.snapCenter)})`);
+  check(pcb.snapEdge.kind === "edge" && near3(pcb.snapEdge.p[1], 15.125), `pcb snap: track edge (${JSON.stringify(pcb.snapEdge)})`);
+  check(pcb.snapPerp.kind === "perp" && near3(pcb.snapPerp.p[0], 22) && near3(pcb.snapPerp.p[1], 14.875), `pcb snap: perpendicular foot on a track edge (${JSON.stringify(pcb.snapPerp)})`);
+  check(near3(pcb.dist[0], 2.54) && pcb.dist[1] === "2.540 mm" && pcb.dist[2] === "0.000 mm", `pcb point–point: 2.54 with ΔX/ΔY (${pcb.dist})`);
+  check(pcb.mil === "100.000 mil" && pcb.inch === "0.100 in", `pcb units: mil and inch (${pcb.mil}, ${pcb.inch})`);
+  check(near3(pcb.poly, 48) && near3(pcb.area, 100) && pcb.count === 4, `pcb: polyline 48 and area 100 (${pcb.poly}, ${pcb.area})`);
+  check(pcb.hiddenHit === null && pcb.shownHit && near3(pcb.afterMove, 2.54) && pcb.afterDelete === 3, "pcb: hidden layers are not picked; reorder and delete keep the list consistent");
+  check(pcb.svg.every(Boolean) && pcb.csv === 5, `pcb: SVG (with clear-polarity mask and labels) and CSV export (${pcb.svg}, ${pcb.csv} lines)`);
+  check(pcb.pixel[0] > 150 && pcb.pixel[1] > 100 && pcb.pixel[2] < 120, `pcb: copper pad drawn in copper colour (${pcb.pixel})`);
+  check(pcb.ui.layersListed === 4 && pcb.ui.list === 3 && /Board30\.000 × 20\.000 mm/.test(pcb.ui.stats), `pcb: layer panel, measurement list and board size (${pcb.ui.stats})`);
+
+  // --- PCB performance: ~270k objects ---
+  const t0 = Date.now();
+  await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/big-F_Cu.gbr")}`);
+  await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+  const loadS = (Date.now() - t0) / 1000;
+  const perf = await page.evaluate(() => {
+    const g = window.__sv.gerber;
+    g.render();
+    const objs = g.layers[0].L.objs.length, render = g.lastRenderMs;
+    g.zoomAt(700, 450, 20);
+    const t = performance.now();
+    for (let i = 0; i < 200; i++) { g.moveTo(300 + i * 2, 300 + (i % 7) * 3); g.paintOverlay(); }
+    return { objs, render, move: (performance.now() - t) / 200 };
+  });
+  check(perf.objs === 270000 && loadS < 30, `pcb perf: ${perf.objs} objects load in ${loadS.toFixed(1)} s`);
+  check(perf.move < 16, `pcb perf: snap + overlay per mouse move ${perf.move.toFixed(2)} ms (full redraw ${perf.render.toFixed(0)} ms)`);
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {

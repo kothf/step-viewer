@@ -23,6 +23,11 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
 - **Model tree**: show/hide, isolate, colour and opacity per part or sub-assembly; filter by name, `size>50`, `vol<1000`.
 - **Metadata**: STEP header, protocol, product revisions, materials, AP242 PMI entity counts.
 - **Export**: PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report.
+- **PCB / Gerber view**: open Gerber RS-274X and X2 layers, Excellon drill files, or a `.zip` of a whole Gerber set (drop several files at once, or add layers later). Layers are recognised from X2 file functions or common names (KiCad, Altium/Protel, Eagle) and drawn on a dark 2D canvas, with per-layer visibility, colour, opacity and drag-to-reorder stacking; bottom (mirrored) view.
+  - Smart: one click shows a pad's aperture and size, a track's width and length, a hole's diameter and plating, a region's area, plus X2 net, pin and pad function; a second click gives pitch and edge-to-edge clearance.
+  - Point to point (with ΔX/ΔY), clearance, polyline length and polygon area; Shift+click a pad, region or closed outline (board edge) for its area.
+  - Snapping to corners and track ends, pad and hole centres, track edges and the perpendicular onto a track edge; mm, inch or mil with 0–4 decimals.
+  - Measurement list with show/hide and delete, CSV, and PNG or SVG export of the view with the measurements.
 
 ## Keyboard
 
@@ -37,6 +42,8 @@ A STEP viewer for mechanical engineers, technicians and inspectors that runs ent
 | `Del` | Delete the selected measurement |
 | `Esc` | Cancel the tool, clear the selection |
 
+In the PCB view: wheel zooms, drag (or Space+drag, middle drag) pans; `Q` smart, `M` point to point, `C` clearance, `L` polyline, `A` area, `Enter` finishes, `Backspace` removes the last point, `P` pins, `F` fits, `B` flips to the bottom view, `Esc` cancels.
+
 You can also open a model by URL: `index.html?url=path/to/model.step` (same origin or CORS-enabled).
 
 ## Limits
@@ -44,6 +51,7 @@ You can also open a model by URL: `index.html?url=path/to/model.step` (same orig
 - Distances between curved freeform faces are measured on the tessellation (choose *Fine mesh* for tighter results). Planes, cylinders, circles and lines are exact.
 - AP242 PMI/GD&T and material entities are listed but not drawn.
 - Volume and mass assume closed solids; open shells are flagged.
+- Gerber: layer mirror/rotate/scale (LM, LR, LS) and block apertures (AB) are not applied, the gaps of thermal macro primitives are not cut, and routed Excellon arcs are drawn straight. The viewer says so when a file uses them.
 
 ## Development
 

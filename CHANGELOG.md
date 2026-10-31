@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-31
+
+### Added
+- PCB / Gerber view. Open Gerber RS-274X and Gerber X2 layers, Excellon drill files (`.drl`, `.txt`, `.xln`) or a `.zip` of a whole set; several files can be dropped at once and more added later. Layer types come from X2 file functions or common file names (KiCad, Altium/Protel, Eagle). Standard and macro apertures, arcs, regions, clear polarity, step and repeat, G85 and routed slots and inch or metric drill formats are read in a worker, so large sets don't freeze the page (a 10 MB, 270,000-object layer opens in a few seconds).
+- Layer panel: visibility, colour, opacity, drag-to-reorder stacking, remove; show or hide all. Dark 2D canvas with zoom to cursor, pan (drag, Space+drag, middle drag, pinch), fit, zoom buttons and a mirrored bottom view.
+- Measuring on PCB geometry: Smart (one click: pad aperture and size, track width and length, arc radius and sweep, hole diameter and plating, region area, X2 net, pin and pad function; two clicks: pitch and edge-to-edge clearance), point to point with ΔX/ΔY legs, clearance, polyline length and polygon area. Shift+click a pad, region or closed outline such as the board edge for its exact area, arcs included.
+- PCB snapping to corners and track ends, midpoints, pad and hole centres, track edges and the perpendicular foot on a track edge, each switchable; a live tooltip at the cursor; units mm, inch or mil with 0 to 4 decimals.
+- PCB measurement list (show/hide, delete, clear, CSV), board summary (size, track and pad counts, holes, smallest hole, narrowest track) and PNG or SVG export of the view with the measurements.
+
 ## [1.6.1] - 2026-10-31
 
 ### Fixed
@@ -103,7 +112,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/kothf/step-viewer/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/kothf/step-viewer/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/kothf/step-viewer/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/kothf/step-viewer/compare/v1.5.0...v1.5.1

@@ -263,3 +263,44 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 .readout .det .cp { color: var(--text); font-weight: 600; }
 .readout .hud-units { display: inline-flex; gap: 3px; align-items: center; }
 .readout .hud-units select { font-size: 10px; padding: 0 2px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: inherit; }
+
+/* ---------- PCB (Gerber) view ---------- */
+#app:not(.gerber) .gerber-only, #app.gerber .step-only { display: none !important; }
+.gerber-vp { position: absolute; inset: 0; z-index: 4; background: #0b0e13; overflow: hidden; touch-action: none; }
+.gerber-vp canvas { position: absolute; left: 0; top: 0; display: block; }
+#g-overlay { cursor: crosshair; }
+.gerber-vp.grab #g-overlay { cursor: grab; }
+.gerber-vp.panning #g-overlay { cursor: grabbing; }
+.gerber-vp .tool-hint { background: rgba(16, 20, 27, 0.9); color: #d8dee9; border-color: #2a313d; pointer-events: none; max-width: calc(100% - 24px); text-align: center; }
+.gerber-vp .tool-hint b { color: #22d3ee; }
+.g-tip {
+  position: absolute; left: 0; top: 0; z-index: 6; pointer-events: none; white-space: pre;
+  background: rgba(8, 10, 14, 0.92); color: #fff; border: 1px solid #22d3ee; border-radius: 6px;
+  padding: 3px 7px; font: 600 11.5px var(--mono); box-shadow: 0 2px 10px rgba(0,0,0,.5);
+}
+#g-readout { --c: #22d3ee; }
+.g-tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.g-tabs button { flex: 1; border: 0; background: none; padding: 9px 4px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; }
+.g-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.g-tab { display: none; flex-direction: column; min-height: 0; flex: 1; }
+.g-tab.on { display: flex; }
+.g-layers { overflow: auto; flex: 1; padding: 4px 0; }
+.g-layer {
+  display: grid; grid-template-columns: 12px 20px 26px 1fr 56px 18px; gap: 4px; align-items: center;
+  padding: 5px 8px; border-bottom: 1px solid var(--line); cursor: default;
+}
+.g-layer:hover { background: var(--panel-2); }
+.g-layer.off .g-name { opacity: 0.45; }
+.g-layer.dragging { opacity: 0.5; }
+.g-layer.drop { box-shadow: inset 0 2px 0 var(--accent); }
+.g-layer .grip { cursor: grab; color: var(--muted); font-size: 10px; letter-spacing: -2px; user-select: none; }
+.g-layer .eye { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0; font-size: 14px; }
+.g-layer input[type="color"] { width: 24px; height: 20px; }
+.g-layer input[type="range"] { width: 56px; min-width: 0; }
+.g-layer .x { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0; }
+.g-layer .x:hover { color: var(--danger); }
+.g-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.g-name b { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-name small { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-note { font-size: 11px; margin: 0; padding-top: 0; }
+.m-item.off .val { opacity: 0.45; }
