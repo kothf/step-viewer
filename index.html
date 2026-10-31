@@ -3,15 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>STEP Viewer</title>
-  <meta name="description" content="Browser STEP/IGES and Gerber PCB viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, reports and mesh export. Files never leave your computer." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 10v12L16 29 4 22V10z' fill='%233d8bfd'/%3E%3Cpath d='M16 3v26M4 10l12 7 12-7' stroke='%23fff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E" />
+  <title>MöbiusCAD</title>
+  <meta name="description" content="MöbiusCAD: browser STEP/IGES and Gerber PCB viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, reports and mesh export. Files never leave your computer." />
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <button class="icon nav-toggle" id="nav-toggle" aria-label="Toggle side panel (Ctrl+[)" title="Toggle side panel (Ctrl+[)" aria-expanded="true" aria-controls="g-left tree-panel"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
-    <div class="brand"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="var(--accent)"/><path d="M16 3v26M4 10l12 7 12-7" stroke="#fff" stroke-width="1.6" fill="none"/></svg><span class="brand-txt">STEP Viewer<small id="app-version"></small></span></div>
+    <div class="brand"><img class="brand-logo" src="./icons/logo-64.png" width="24" height="24" alt="" /><span class="brand-txt">MöbiusCAD<small id="app-version"></small></span></div>
     <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
     <button class="btn primary" data-open title="Open STEP / IGES / BREP, or Gerber / Excellon layers and .zip sets (Ctrl+O)"><span class="open-long">Open file</span><span class="open-short">Open</span></button>
     <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name">No file open</span></div>

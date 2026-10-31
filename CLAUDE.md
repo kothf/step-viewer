@@ -1,4 +1,4 @@
-# STEP Viewer: notes for Claude
+# MöbiusCAD (formerly STEP Viewer): notes for Claude
 
 Browser STEP/IGES/BREP viewer for engineers, plus a 2D Gerber/Excellon PCB view. TypeScript + Vite + Three.js; OpenCASCADE (occt-import-js, WASM) parses files in a Web Worker. Everything runs client-side.
 

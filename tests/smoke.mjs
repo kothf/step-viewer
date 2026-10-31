@@ -57,7 +57,7 @@ const pcbFiles = {};
 for (const f of await readdir(pcbDir)) pcbFiles[f] = await readFile(join(pcbDir, f));
 pcbFiles["board.zip"] = zip(Object.entries(pcbFiles).map(([n, d]) => [`gerbers/${n}`, d]));
 pcbFiles["big-F_Cu.gbr"] = bigGerber(300);
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".png": "image/png" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".png": "image/png", ".webp": "image/webp" };
 const server = createServer(async (req, res) => {
   const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
   if (rel.startsWith("/pcb/")) {
@@ -73,7 +73,7 @@ const server = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": MIME[extname(path)] || "application/octet-stream" });
   res.end(body);
 }).listen(0);
-// Served from a sub-path, like aerocat.tech/tools/step-viewer/.
+// Served from a sub-path, like aerocat.tech/tools/mobiuscad/.
 const origin = `http://localhost:${server.address().port}`;
 
 let failures = 0;
@@ -116,6 +116,14 @@ try {
       analysisUi: !!document.querySelector("#draft-run, #thk-run, #analysis-out"),
     };
   });
+  const brand = await page.evaluate(async () => {
+    const logo = document.querySelector(".brand-logo");
+    if (logo && !logo.complete) await new Promise(r => { logo.onload = logo.onerror = r; });
+    const icons = await Promise.all([...document.querySelectorAll("link[rel~=icon], link[rel=apple-touch-icon]")].map(l => fetch(l.href).then(r => r.ok && r.headers.get("content-type") === "image/png")));
+    return { title: document.title, name: document.querySelector(".brand-txt")?.firstChild?.textContent, logo: logo?.naturalWidth ?? 0, icons };
+  });
+  check(brand.name === "MöbiusCAD" && /MöbiusCAD$/.test(brand.title), `branded MöbiusCAD (${brand.name} / ${brand.title})`);
+  check(brand.logo === 64 && brand.icons.length === 3 && brand.icons.every(Boolean), `logo and favicons load (${brand.logo}px, ${brand.icons})`);
   check(cube.faces === 6 && cube.planes === 6, `cube has 6 planar faces (${cube.planes}/${cube.faces})`);
   check(cube.edges === 12 && cube.lines === 12, `cube has 12 straight edges (${cube.lines}/${cube.edges})`);
   check(cube.closed && near(cube.volume, 1000, 1e-6) && near(cube.area, 600, 1e-6), `closed solid, V=${cube.volume}, A=${cube.area}`);
