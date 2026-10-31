@@ -14,7 +14,7 @@ import {
   type CircleMode,
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
-import { clearAnalysis, draftAnalysis, MATERIALS, massProperties, thicknessAnalysis } from "./tools/analysis";
+import { MATERIALS, massProperties } from "./tools/analysis";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
@@ -229,7 +229,6 @@ function resetForNewModel() {
   setTool("select");
   section.clear();
   renderSections();
-  clearAnalysis(viewer);
   stopDrag();
   hl.com.visible = false;
   setCsys(null, false);
@@ -245,7 +244,6 @@ function resetForNewModel() {
   $("#explode-val").textContent = "0%";
   viewer.explodeFactor = 0;
   $("#mass-out").innerHTML = "";
-  $("#analysis-out").innerHTML = "";
 }
 
 function setLoading(on: boolean, text = "", pct = 0) {
@@ -1250,64 +1248,6 @@ function runMass() {
 }
 $("#mass-run").addEventListener("click", runMass);
 $<HTMLInputElement>("#com-show").addEventListener("change", e => { hl.com.visible = (e.target as HTMLInputElement).checked && lastMass.length > 0; viewer.invalidate(); });
-
-// ---------- analysis ----------
-let thkJob: { cancelled: boolean } | null = null;
-$("#draft-run").addEventListener("click", () => {
-  if (!viewer.parts.length) return;
-  clearAnalysis(viewer);
-  const sel = $<HTMLSelectElement>("#pull").value;
-  let pull: THREE.Vector3;
-  if (sel === "face") {
-    const e = state.selection;
-    if (!e || e.kind !== "face" || !e.face?.normal) { toast("Select a planar face for the pull direction", true); return; }
-    pull = new THREE.Vector3(...e.face.normal);
-  } else if (sel === "view") pull = viewer.camera.getWorldDirection(new THREE.Vector3()).negate();
-  else pull = new THREE.Vector3(...sel.split(",").map(Number));
-  const min = parseFloat($<HTMLInputElement>("#draft-min").value) || 0;
-  const s = draftAnalysis(viewer, pull, min);
-  const tot = s.positive + s.negative + s.insufficient || 1;
-  $("#draft-legend").hidden = false;
-  $("#thk-legend").hidden = true;
-  $("#analysis-out").innerHTML = kv([
-    ["Pull", fmtVec(pull.normalize(), false)],
-    ["Positive", `${((s.positive / tot) * 100).toFixed(1)} % of vertices`],
-    ["Negative", `${((s.negative / tot) * 100).toFixed(1)} %`],
-    ["Needs draft", `${((s.insufficient / tot) * 100).toFixed(1)} %`],
-  ]);
-});
-$("#thk-run").addEventListener("click", async () => {
-  if (!viewer.parts.length) return;
-  if (thkJob) { thkJob.cancelled = true; return; }
-  clearAnalysis(viewer);
-  const f = unitMm();
-  const tMin = (parseFloat($<HTMLInputElement>("#thk-min").value) || 0) * f;
-  const tMax = (parseFloat($<HTMLInputElement>("#thk-max").value) || 1) * f;
-  thkJob = { cancelled: false };
-  const btn = $("#thk-run");
-  btn.textContent = "Cancel";
-  const r = await thicknessAnalysis(viewer, tMin, tMax, k => ($("#analysis-out").innerHTML = `<span class="muted">Ray casting… ${(k * 100).toFixed(0)} %</span>`), thkJob);
-  btn.textContent = "Analyse";
-  const cancelled = thkJob.cancelled;
-  thkJob = null;
-  if (cancelled) { clearAnalysis(viewer); $("#analysis-out").innerHTML = ""; return; }
-  $("#thk-legend").hidden = false;
-  $("#draft-legend").hidden = true;
-  $("#analysis-out").innerHTML = kv([
-    ["Thinnest wall", isFinite(r.min) ? fmtLen(r.min) : "-"],
-    ["At", r.at ? fmtVec(r.at) : "-"],
-    ["Below min", `${r.thin} of ${r.samples} samples`],
-  ]);
-  if (r.at) { hl.com.position.copy(r.at); hl.com.scale.setScalar(viewer.modelSize * 0.006); hl.com.visible = true; }
-  viewer.invalidate();
-});
-$("#analysis-clear").addEventListener("click", () => {
-  clearAnalysis(viewer);
-  $("#analysis-out").innerHTML = "";
-  $("#draft-legend").hidden = $("#thk-legend").hidden = true;
-  hl.com.visible = false;
-  viewer.invalidate();
-});
 
 // ---------- export ----------
 const baseName = () => state.fileName.replace(/\.[^.]+$/, "") || "model";

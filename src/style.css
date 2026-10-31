@@ -145,11 +145,6 @@ details > :last-child { margin-bottom: 12px; }
 .sp .stat { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
 .sp.active { border-color: var(--accent); }
 .btn.tiny { padding: 1px 6px; font-size: 11px; }
-.legend { display: flex; gap: 10px; font-size: 11px; margin: 4px 0; }
-.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: -1px; }
-.legend.gradient { align-items: center; }
-.legend.gradient span::before { display: none; }
-.legend.gradient i { flex: 1; height: 10px; border-radius: 3px; background: linear-gradient(90deg, hsl(0 85% 50%), hsl(60 85% 50%), hsl(120 85% 50%), hsl(237 85% 50%)); }
 
 .m-list { overflow: auto; flex: 1; }
 .m-item { display: grid; grid-template-columns: 12px 1fr auto; gap: 2px 8px; padding: 7px 10px; border-bottom: 1px solid var(--line); cursor: pointer; align-items: center; }

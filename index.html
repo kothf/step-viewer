@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>STEP Viewer</title>
-  <meta name="description" content="Browser STEP/IGES viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, draft and wall-thickness analysis, reports and mesh export. Files never leave your computer." />
+  <meta name="description" content="Browser STEP/IGES viewer for engineers: B-rep aware measurements with snapping, section caps, exploded view, mass properties, reports and mesh export. Files never leave your computer." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 10v12L16 29 4 22V10z' fill='%233d8bfd'/%3E%3Cpath d='M16 3v26M4 10l12 7 12-7' stroke='%23fff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -146,25 +146,6 @@
       <label class="row">Density <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" /> g/cm³</label>
       <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
       <div id="mass-out" class="kv"></div>
-    </details>
-
-    <details><summary>Analysis</summary>
-      <h4>Draft angle</h4>
-      <div class="row wrap">
-        <label>Pull <select id="pull"><option value="0,0,1">+Z</option><option value="0,0,-1">−Z</option><option value="1,0,0">+X</option><option value="-1,0,0">−X</option><option value="0,1,0">+Y</option><option value="0,-1,0">−Y</option><option value="face">Selected face normal</option><option value="view">View direction</option></select></label>
-        <label>Min <input type="number" id="draft-min" value="1" step="0.5" min="0" style="width:56px" />°</label>
-        <button class="btn small" id="draft-run">Show draft</button>
-      </div>
-      <div class="legend" id="draft-legend" hidden><span style="--c:#22a55a">≥ +min</span><span style="--c:#f0c419">needs draft</span><span style="--c:#d8423a">≤ −min</span></div>
-      <h4>Wall thickness</h4>
-      <div class="row wrap">
-        <label>Min <input type="number" id="thk-min" value="1" step="0.1" min="0" style="width:60px" /></label>
-        <label>Max <input type="number" id="thk-max" value="5" step="0.5" min="0" style="width:60px" /></label>
-        <button class="btn small" id="thk-run">Analyse</button>
-      </div>
-      <div class="legend gradient" id="thk-legend" hidden><span>thin</span><i></i><span>thick</span></div>
-      <div id="analysis-out" class="kv"></div>
-      <button class="btn small" id="analysis-clear">Clear analysis</button>
     </details>
 
     <details><summary>Export</summary>
