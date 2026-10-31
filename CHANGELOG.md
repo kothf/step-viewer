@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-31
+
+### Fixed
+- Smart measure no longer freezes on two big faces, such as the two sides of a PCB with many holes: face-to-face distance now walks both faces' BVHs and stops as soon as it finds the plane gap. Board thickness on a 4,000-triangle face takes milliseconds instead of about 30 seconds.
+- Edge-to-face distance uses the face's BVH too, so a long edge against a big face no longer stalls.
+
 ## [1.5.0] - 2026-10-31
 
 ### Removed
@@ -85,7 +91,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/kothf/step-viewer/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kothf/step-viewer/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kothf/step-viewer/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kothf/step-viewer/compare/v1.2.0...v1.3.0

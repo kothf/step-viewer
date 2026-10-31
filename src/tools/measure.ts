@@ -90,21 +90,12 @@ function faceBvh(part: Part, f: FaceInfo) {
     g.setAttribute("position", part.mesh.geometry.getAttribute("position"));
     g.setIndex(new THREE.BufferAttribute(part.data.index.slice(f.triStart * 3, (f.triStart + f.triCount) * 3), 1));
     b = new MeshBVH(g);
+    // closestPointToGeometry only uses the other face's BVH when it is attached to its geometry;
+    // without it every leaf is tested against every triangle (big faces froze the app).
+    (g as THREE.BufferGeometry & { boundsTree?: MeshBVH }).boundsTree = b;
     m.set(f.id, b);
   }
   return b;
-}
-
-function faceTriangles(part: Part, f: FaceInfo, off: THREE.Vector3) {
-  const P = part.data.positions, I = part.data.index, tris: ExtendedTriangle[] = [];
-  for (let t = f.triStart; t < f.triStart + f.triCount; t++) {
-    const tri = new ExtendedTriangle();
-    const g = (k: number) => new THREE.Vector3(P[3 * I[3 * t + k]], P[3 * I[3 * t + k] + 1], P[3 * I[3 * t + k] + 2]).add(off);
-    tri.set(g(0), g(1), g(2));
-    tri.needsUpdate = true;
-    tris.push(tri);
-  }
-  return tris;
 }
 
 /** Closest points between segments p1-q1 and p2-q2 (Ericson, Real-Time Collision Detection 5.1.9). */
@@ -149,6 +140,13 @@ function closestPointEntity(v: Viewer, p: THREE.Vector3, e: Entity): Closest {
   return { d: hit!.distance, a: p.clone(), b: hit!.point.clone().add(off) };
 }
 
+function boxGap(a: THREE.Box3, b: THREE.Box3) {
+  const dx = Math.max(0, a.min.x - b.max.x, b.min.x - a.max.x);
+  const dy = Math.max(0, a.min.y - b.max.y, b.min.y - a.max.y);
+  const dz = Math.max(0, a.min.z - b.max.z, b.min.z - a.max.z);
+  return Math.hypot(dx, dy, dz);
+}
+
 function swap(c: Closest): Closest { return { ...c, a: c.b, b: c.a }; }
 
 export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
@@ -162,20 +160,21 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
     const m = new THREE.Matrix4().makeTranslation(offB.x - offA.x, offB.y - offA.y, offB.z - offA.z);
     const t1 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 } as HitPointInfo;
     const t2 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 } as HitPointInfo;
-    bvhA.closestPointToGeometry(bvhB.geometry, m, t1, t2);
+    // Parallel planes: the plane gap is exact, but it is the distance between the
+    // faces only where they overlap seen along the normal; otherwise the faces are further apart.
+    const na = fa.type === "plane" && fb.type === "plane" ? V(fa.normal!) : null;
+    const parallel = !!na && Math.abs(na.dot(V(fb.normal!))) > 1 - 1e-9;
+    const gap = parallel ? Math.abs(v.toWorld(B.part, fb.centroid).sub(v.toWorld(A.part, fa.centroid)).dot(na!)) : 0;
+    const gapTol = 1e-6 * (1 + gap);
+    // Stop at the first triangle pair at the plane gap: nothing can be closer.
+    bvhA.closestPointToGeometry(bvhB.geometry, m, t1, t2, parallel ? gap + gapTol : 0);
     const mesh: Closest = { d: t1.distance, a: t1.point.clone().add(offA), b: t2.point.clone().applyMatrix4(m).add(offA) };
-    if (fa.type === "plane" && fb.type === "plane") {
-      // Parallel planes: the plane gap is exact, but it is the distance between the
-      // faces only where they overlap seen along the normal; otherwise the faces are further apart.
-      const na = V(fa.normal!);
-      if (Math.abs(na.dot(V(fb.normal!))) > 1 - 1e-9) {
-        const gap = Math.abs(v.toWorld(B.part, fb.centroid).sub(v.toWorld(A.part, fa.centroid)).dot(na));
-        if (mesh.d <= gap + 1e-6 * (1 + gap)) {
-          const d = mesh.b.clone().sub(mesh.a).dot(na);
-          return { d: gap, a: mesh.a, b: mesh.a.clone().addScaledVector(na, d), note: "parallel planes", planeGap: gap };
-        }
-        return { ...mesh, note: "parallel planes, offset sideways", planeGap: gap };
+    if (na && parallel) {
+      if (mesh.d <= gap + gapTol) {
+        const d = mesh.b.clone().sub(mesh.a).dot(na);
+        return { d: gap, a: mesh.a, b: mesh.a.clone().addScaledVector(na, d), note: "parallel planes", planeGap: gap };
       }
+      return { ...mesh, note: "parallel planes, offset sideways", planeGap: gap };
     }
     return mesh;
   }
@@ -193,15 +192,23 @@ export function shortestDistance(v: Viewer, A: Entity, B: Entity): Closest {
 
   // edge - face
   const [E, F, flip] = A.kind === "edge" ? [A, B, false] : [B, A, true];
-  const tris = faceTriangles(F.part, F.face!, F.part.group.position);
+  // Walk the face's BVH per edge segment, nearest boxes first, so big faces stay fast.
+  const off = F.part.group.position, bvh = faceBvh(F.part, F.face!);
   let best: Closest = { d: Infinity, a: new THREE.Vector3(), b: new THREE.Vector3() };
-  const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), seg = new THREE.Line3();
+  const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), seg = new THREE.Line3(), segBox = new THREE.Box3();
   for (const [p, q] of edgeSegments(v, E)) {
-    seg.set(p, q);
-    for (const tri of tris) {
-      const d = tri.closestPointToSegment(seg, t1, t2);
-      if (d < best.d) best = { d, a: t2.clone(), b: t1.clone() };
-    }
+    seg.set(p.clone().sub(off), q.clone().sub(off));
+    segBox.makeEmpty().expandByPoint(seg.start).expandByPoint(seg.end);
+    bvh.shapecast({
+      // Box-to-box distance never exceeds box-to-segment distance, so it is a safe lower bound.
+      boundsTraverseOrder: box => boxGap(box, segBox),
+      intersectsBounds: (_box, _leaf, score) => score! < best.d,
+      intersectsTriangle: (tri: ExtendedTriangle) => {
+        const d = tri.closestPointToSegment(seg, t1, t2);
+        if (d < best.d) best = { d, a: t2.clone().add(off), b: t1.clone().add(off) };
+        return false;
+      },
+    });
   }
   return flip ? swap(best) : best;
 }

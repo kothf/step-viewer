@@ -293,6 +293,42 @@ try {
   check(as1.allClosed, "every as1 part is a closed solid");
   check(as1.protocol, "header shows AP214");
 
+  // Plate thickness with smart measure: the biggest planar face (holes make it many triangles) against
+  // its opposite face. A brute-force triangle search froze the app for ~30 s on a 4,000-triangle PCB face.
+  const thk = await page.evaluate(() => {
+    const { viewer, state, handlePick, setTool } = window.__sv;
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let best = null;
+    for (const p of viewer.parts) for (const A of p.data.faces) {
+      if (A.type !== "plane" || (best && A.triCount <= best.A.triCount)) continue;
+      const B = p.data.faces.filter(f => f.type === "plane" && dot(f.normal, A.normal) < -1 + 1e-9 && f.triCount > 1)
+        .sort((x, y) => Math.abs(dot([x.centroid[0] - A.centroid[0], x.centroid[1] - A.centroid[1], x.centroid[2] - A.centroid[2]], A.normal))
+          - Math.abs(dot([y.centroid[0] - A.centroid[0], y.centroid[1] - A.centroid[1], y.centroid[2] - A.centroid[2]], A.normal)))
+        .find(f => f.area > 0.5 * A.area);
+      if (B) best = { p, A, B };
+    }
+    const { p, A, B } = best;
+    const V3 = p.group.position.constructor;
+    const snapF = f => ({ kind: "onFace", point: new V3(...f.centroid), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    const gap = Math.abs(dot([B.centroid[0] - A.centroid[0], B.centroid[1] - A.centroid[1], B.centroid[2] - A.centroid[2]], A.normal));
+    setTool("select"); handlePick(null);
+    const t0 = performance.now();
+    handlePick(snapF(A)); handlePick(snapF(B));
+    const ms = performance.now() - t0;
+    const r = [state.live?.data.title, state.live?.value];
+    // A straight edge of the opposite face against the big face: the same gap, through the face's BVH.
+    const e = p.data.edges.find(x => x.type === "line" && Math.abs(dot(x.dir, A.normal)) < 1e-9
+      && Math.abs(Math.abs(dot([x.mid[0] - A.centroid[0], x.mid[1] - A.centroid[1], x.mid[2] - A.centroid[2]], A.normal)) - gap) < 1e-6);
+    setTool("minDistance");
+    handlePick({ kind: "onEdge", point: new V3(...e.mid), part: p, edge: e, px: 0 }); handlePick(snapF(A));
+    const ef = state.measurements.at(-1)?.value;
+    setTool("select"); handlePick(null);
+    return { tris: A.triCount + B.triCount, gap, r, ms, ef };
+  });
+  check(thk.r[0] === "Parallel faces" && near(thk.r[1], thk.gap, 1e-6), `smart: plate thickness ${thk.r} = plane gap ${thk.gap}`);
+  check(thk.ms < 1000, `smart: plate thickness over ${thk.tris} triangles in ${thk.ms.toFixed(0)} ms`);
+  check(near(thk.ef, thk.gap, 1e-4), `edge to big face ${thk.ef} = gap ${thk.gap}`);
+
   // Quadrant snaps: at the radius, in the plane, and only where an arc actually runs (STEP halves get 2-3 each).
   const quad = await page.evaluate(() => {
     const { viewer, quadrants } = window.__sv;
