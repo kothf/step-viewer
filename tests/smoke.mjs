@@ -589,6 +589,7 @@ try {
     const s = g.toScreen(12.54 + 0.6, 10);
     const px = document.querySelector("#g-canvas").getContext("2d").getImageData(Math.round(s[0] * devicePixelRatio), Math.round(s[1] * devicePixelRatio), 1, 1).data;
     r.pixel = [...px.slice(0, 3)];
+    r.panel = { visible: g.layers.every(l => l.visible), sliders: document.querySelectorAll("#g-layers input[type=range], #g-layers .x").length, addBtn: !!document.querySelector("#g-add-btn") };
     r.ui = { layersListed: document.querySelectorAll("#g-layers .g-layer").length, list: document.querySelectorAll("#g-m-list .m-item").length, stats: document.querySelector("#g-stats").textContent };
     return r;
   });
@@ -614,6 +615,8 @@ try {
   check(pcb.svg.every(Boolean) && pcb.csv === 5, `pcb: SVG (with clear-polarity mask and labels) and CSV export (${pcb.svg}, ${pcb.csv} lines)`);
   check(pcb.pixel[0] > 150 && pcb.pixel[1] > 100 && pcb.pixel[2] < 120, `pcb: copper pad drawn in copper colour (${pcb.pixel})`);
   check(pcb.ui.layersListed === 4 && pcb.ui.list === 3 && /Board30\.000 × 20\.000 mm/.test(pcb.ui.stats), `pcb: layer panel, measurement list and board size (${pcb.ui.stats})`);
+
+  check(pcb.panel.visible && pcb.panel.sliders === 0 && !pcb.panel.addBtn, `pcb: all layers shown, panel has only show/hide and colour (${JSON.stringify(pcb.panel)})`);
 
   // --- PCB performance: ~270k objects ---
   const t0 = Date.now();

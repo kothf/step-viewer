@@ -214,12 +214,7 @@ const gerber = new GerberView($("#gerber"), {
   status: (coord, snap) => { $("#st-coord").textContent = coord; $("#st-snap").textContent = snap; },
   download: (b, n) => download(b, n),
 });
-const gAddInput = document.createElement("input");
-gAddInput.type = "file";
-gAddInput.multiple = true;
-gAddInput.addEventListener("change", () => { if (gAddInput.files?.length) openPcb([...gAddInput.files], true); gAddInput.value = ""; });
 bindGerberPanel(gerber, {
-  addFiles: () => gAddInput.click(),
   copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`), () => toast("Copy failed", true)); },
 });
 function setPcbMode(on: boolean) {
