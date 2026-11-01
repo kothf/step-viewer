@@ -9,6 +9,84 @@ type Tab = { id: string; title: string; html: string };
 const kbd = (s: string) => s.split(" ").map(k => (/^[+/,·–]$/.test(k) || k === "/" ? ` ${k} ` : `<kbd>${k}</kbd>`)).join("");
 const table = (rows: [string, string][]) => `<table class="keys">${rows.map(([k, v]) => `<tr><td>${kbd(k)}</td><td>${v}</td></tr>`).join("")}</table>`;
 
+// ---------- About / Credits ----------
+// The open-source list comes from credits.json, which the build writes from the packages that
+// actually end up in the bundle (scripts/credits-plugin.mjs), so it can't go out of date.
+
+type Credit = { name: string; version: string; license: string; author: string; url: string; note?: string };
+const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+const REPO = "https://github.com/kothf/step-viewer";
+const ext = (href: string, text: string) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+// the libraries MöbiusCAD is built on, named up front; the full list is below them
+const MAIN = ["three", "occt-import-js", "Open CASCADE Technology", "three-mesh-bvh", "jspdf", "fflate"];
+const SHOWN: Record<string, string> = { three: "three.js", jspdf: "jsPDF" };
+const MAIN_WHAT: Record<string, [string, string]> = {
+  "three": ["3D rendering", "3D-графика"],
+  "occt-import-js": ["STEP / IGES / BREP import (WebAssembly)", "импорт STEP / IGES / BREP (WebAssembly)"],
+  "Open CASCADE Technology": ["CAD geometry kernel inside occt-import-js", "геометрическое ядро САПР внутри occt-import-js"],
+  "three-mesh-bvh": ["fast picking and snapping", "быстрый выбор и привязки"],
+  "jspdf": ["PDF reports", "PDF-отчёты"],
+  "fflate": ["reading .zip PCB sets", "чтение .zip с платами"],
+};
+
+function about(l: Lang) {
+  const ru = l === "ru";
+  const blog = ru ? "https://aerocat.tech/ru/posts/mobiuscad/" : "https://aerocat.tech/posts/mobiuscad/";
+  return `
+<div class="about-head">
+  <img src="icons/logo-mark.png" width="56" height="56" alt="" />
+  <div><div class="about-name" translate="no">MöbiusCAD <span>v${__APP_VERSION__}</span></div>
+  <div class="about-by">${ru ? "Автор" : "Made by"} <span translate="no">Andrey Dumchin</span> · ${ext("https://aerocat.tech/", "<span translate=\"no\">aerocat.tech</span>")}</div>
+  <div class="about-links">${ext(blog, ru ? "Статья в блоге" : "Blog post")} · ${ext(REPO, ru ? "Исходный код на <span translate=\"no\">GitHub</span>" : "Source on GitHub")} · ${ext(`${REPO}/blob/main/CHANGELOG.md`, ru ? "Что нового" : "What's new")}</div></div>
+</div>
+${ru
+    ? `<p>Модели STEP, IGES и BREP и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
+<p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; расстояния на поверхностях свободной формы измеряются по сетке. Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`
+    : `<p>STEP, IGES and BREP models and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
+<p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; distances on freeform surfaces are measured on the mesh. Internal units are millimetres; units and decimals only change how values are shown.</p>`}
+<h4>${ru ? "Создано с помощью" : "Built with"}</h4>
+<ul class="credits-main" data-credits-main><li>${ru ? "Загрузка…" : "Loading…"}</li></ul>
+<details class="credits-all">
+  <summary>${ru ? "Все открытые библиотеки и лицензии" : "All open-source libraries and licences"}&nbsp;<span data-credits-count></span></summary>
+  <table class="credits-table" data-credits-table translate="no"></table>
+  <p>${ru ? "Полные тексты лицензий" : "Full licence texts"}: ${ext("THIRD-PARTY-LICENSES.txt", "<span translate=\"no\">THIRD-PARTY-LICENSES.txt</span>")}. ${ru
+    ? "<span translate=\"no\">OpenCASCADE</span> распространяется по <span translate=\"no\">LGPL-2.1</span> без изменений, в папке <code translate=\"no\">occt/</code>, его можно заменить своей сборкой."
+    : "OpenCASCADE is shipped unmodified under the LGPL-2.1 in the <code translate=\"no\">occt/</code> folder and can be replaced with your own build."}</p>
+</details>
+<h4>${ru ? "Шрифты и значки" : "Fonts and icons"}</h4>
+<p>${ru
+    ? "Используются системные шрифты устройства; значки на кнопках — символы Юникода. Логотип MöbiusCAD нарисовал автор."
+    : "The interface uses your device's system fonts, and the button icons are Unicode symbols. The MöbiusCAD logo was drawn by the author."}</p>
+<h4>${ru ? "Лицензия и отказ от гарантий" : "Licence and disclaimer"}</h4>
+<p>${ru
+    ? `MöbiusCAD распространяется по лицензии ${ext(`${REPO}/blob/main/LICENSE`, "<span translate=\"no\">MIT</span>")} «как есть», без каких-либо гарантий. Размеры считаются по триангулированной модели, поэтому критичные размеры проверяйте по исходной модели или чертежу, прежде чем заказывать детали или платы.`
+    : `MöbiusCAD is released under the ${ext(`${REPO}/blob/main/LICENSE`, "MIT licence")}, "as is", without warranty of any kind. Measurements are taken from the tessellated model, so check critical dimensions against the original CAD model or drawing before you order parts or boards.`}</p>`;
+}
+
+let credits: Promise<Credit[]> | null = null;
+const loadCredits = (): Promise<Credit[]> => (credits ??= fetch("credits.json")
+  .then(r => (r.ok ? (r.json() as Promise<Credit[]>) : Promise.reject(new Error(String(r.status)))))
+  .catch((e: unknown) => { credits = null; throw e; }));
+
+function fillCredits(host: HTMLElement) {
+  const ru = lang() === "ru";
+  const main = host.querySelector<HTMLElement>("[data-credits-main]");
+  const table = host.querySelector<HTMLElement>("[data-credits-table]");
+  if (!main || !table) return;
+  loadCredits().then(list => {
+    const by = new Map(list.map(c => [c.name, c]));
+    main.innerHTML = MAIN.filter(n => by.has(n)).map(n => {
+      const c = by.get(n)!;
+      return `<li><a href="${esc(c.url)}" target="_blank" rel="noopener" translate="no">${esc(SHOWN[n] ?? c.name)}</a> <span translate="no">(${esc(c.license)}, ${esc(c.author)})</span>: ${MAIN_WHAT[n][ru ? 1 : 0]}</li>`;
+    }).join("");
+    host.querySelector<HTMLElement>("[data-credits-count]")!.textContent = `(${list.length})`;
+    table.innerHTML = `<tr><th>${ru ? "Библиотека" : "Library"}</th><th>${ru ? "Версия" : "Version"}</th><th>${ru ? "Лицензия" : "Licence"}</th><th>${ru ? "Авторы" : "Authors"}</th></tr>` +
+      list.map(c => `<tr><td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td>${esc(c.version)}</td><td>${esc(c.license)}</td><td>${esc(c.author)}</td></tr>`).join("");
+  }).catch(() => {
+    main.innerHTML = `<li>${ru ? "Список библиотек не загрузился; он есть в файле" : "The library list didn't load; it is in"} <a href="THIRD-PARTY-LICENSES.txt" target="_blank" rel="noopener" translate="no">THIRD-PARTY-LICENSES.txt</a>.</li>`;
+  });
+}
+
 const EN: Tab[] = [
   {
     id: "start", title: "Start",
@@ -137,13 +215,7 @@ ${table([
   ["Tab , Shift+Tab , Enter , Space", "Move between controls and press them"],
 ])}`,
   },
-  {
-    id: "about", title: "About",
-    html: `
-<p><strong>MöbiusCAD</strong> v${__APP_VERSION__}: STEP, IGES and BREP models and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
-<p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; distances on freeform surfaces are measured on the mesh.</p>
-<p>Internal units are millimetres; units and decimals only change how values are shown.</p>`,
-  },
+  { id: "about", title: "About", html: about("en") },
 ];
 
 const RU: Tab[] = [
@@ -274,13 +346,7 @@ ${table([
   ["Tab , Shift+Tab , Enter , Пробел", "Переход между элементами и нажатие"],
 ])}`,
   },
-  {
-    id: "about", title: "О программе",
-    html: `
-<p><strong>MöbiusCAD</strong> v${__APP_VERSION__}: модели STEP, IGES и BREP и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
-<p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; расстояния на поверхностях свободной формы измеряются по сетке.</p>
-<p>Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`,
-  },
+  { id: "about", title: "О программе", html: about("ru") },
 ];
 
 const HELP: Record<Lang, Tab[]> = { en: EN, ru: RU };
@@ -297,4 +363,5 @@ export function renderHelp(host: HTMLElement) {
     host.querySelectorAll<HTMLElement>(".help-page").forEach(p => (p.hidden = p.id !== `hp-${id}`));
   });
   select(selected);
+  fillCredits(host);
 }
