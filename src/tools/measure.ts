@@ -5,6 +5,7 @@ import type { EdgeInfo, FaceInfo, V3 } from "../topology";
 import type { Snap } from "./Snapper";
 import { fmtAngle, fmtArea, fmtLen, fmtVec, fmtVol } from "./units";
 import { dirToLocal } from "./csys";
+import { t } from "../i18n";
 
 export interface Entity {
   kind: "point" | "edge" | "face";
@@ -57,6 +58,23 @@ export function entityFromSnap(s: Snap): Entity {
   if (s.kind === "onCap") return { kind: "point", point: s.point, part: s.part, normal: s.normal };
   if (s.kind === "onFace" || s.kind === "faceCenter") return { kind: "face", point: s.point, part: s.part, face: s.face, normal: s.normal };
   return { kind: "edge", point: s.point, part: s.part, edge: s.edge };
+}
+
+/**
+ * Puts a stored English phrase (entity descriptions, relations, notes; they are saved
+ * with the measurement) into the current language: "Circle R5.000 mm → Planar face".
+ */
+export function tx(s: string): string {
+  if (s.includes(" → ")) return s.split(" → ").map(tx).join(" → ");
+  const exact = t(s);
+  if (exact !== s) return exact;
+  let m = /^Section (.+)$/.exec(s);
+  if (m) { const w = tx(m[1][0].toUpperCase() + m[1].slice(1)); return t("Section {what}", { what: w[0].toLowerCase() + w.slice(1) }); }
+  m = /^(Circle|Arc|Cylinder|Sphere|circle|arc) (R.+)$/.exec(s);
+  if (m) return `${t(m[1])} ${m[2]}`;
+  m = /^Skewed (.+)$/.exec(s);
+  if (m) return t("Skewed {a}", { a: m[1] });
+  return s;
 }
 
 export function describeEntity(e: Entity) {
@@ -391,33 +409,33 @@ export function formatMeasurement(m: Measurement): { title: string; value: strin
   // Axis components of the drawn segment, in the active CSYS.
   const dl = (k: "x" | "y" | "z") => L(Math.abs(dirToLocal(V(m.points[1]).sub(V(m.points[0])))[k]));
   switch (m.type) {
-    case "distance": return { title: "Distance", value: L(m.value), details: [`ΔX ${dl("x")}`, `ΔY ${dl("y")}`, `ΔZ ${dl("z")}`] };
-    case "minDistance": return { title: "Min distance", value: L(m.value), details: [`${d.a} → ${d.b}`, d.note ? String(d.note) : "", d.planeGap !== undefined && Math.abs((d.planeGap as number) - m.value) > 1e-9 ? `Plane gap ${L(d.planeGap)}` : "", `ΔX ${dl("x")}  ΔY ${dl("y")}  ΔZ ${dl("z")}`].filter(Boolean) };
-    case "angle3": return { title: "Angle", value: fmtAngle(m.value), details: [`Supplement ${fmtAngle(d.supplement as number)}`] };
-    case "angle": return { title: "Angle", value: fmtAngle(m.value), details: [String(d.mode), `Supplement ${fmtAngle(d.supplement as number)}`] };
-    case "radius": return { title: "Radius", value: "R " + L(m.value), details: [`Ø ${L(m.value * 2)}`, `Centre ${fmtVec(new THREE.Vector3(...(d.center as V3)))}`] };
-    case "diameter": return { title: "Diameter", value: "Ø " + L(m.value), details: [`R ${L(m.value / 2)}`, `Centre ${fmtVec(new THREE.Vector3(...(d.center as V3)))}`] };
+    case "distance": return { title: t("Distance"), value: L(m.value), details: [`ΔX ${dl("x")}`, `ΔY ${dl("y")}`, `ΔZ ${dl("z")}`] };
+    case "minDistance": return { title: t("Min distance"), value: L(m.value), details: [`${tx(String(d.a))} → ${tx(String(d.b))}`, d.note ? t(String(d.note)) : "", d.planeGap !== undefined && Math.abs((d.planeGap as number) - m.value) > 1e-9 ? `${t("Plane gap")} ${L(d.planeGap)}` : "", `ΔX ${dl("x")}  ΔY ${dl("y")}  ΔZ ${dl("z")}`].filter(Boolean) };
+    case "angle3": return { title: t("Angle"), value: fmtAngle(m.value), details: [`${t("Supplement")} ${fmtAngle(d.supplement as number)}`] };
+    case "angle": return { title: t("Angle"), value: fmtAngle(m.value), details: [t(String(d.mode)), `${t("Supplement")} ${fmtAngle(d.supplement as number)}`] };
+    case "radius": return { title: t("Radius"), value: "R " + L(m.value), details: [`Ø ${L(m.value * 2)}`, `${t("Centre")} ${fmtVec(new THREE.Vector3(...(d.center as V3)))}`] };
+    case "diameter": return { title: t("Diameter"), value: "Ø " + L(m.value), details: [`R ${L(m.value / 2)}`, `${t("Centre")} ${fmtVec(new THREE.Vector3(...(d.center as V3)))}`] };
     case "centerDistance": return {
-      title: d.pitch !== undefined ? "Pitch (axis to axis)" : "Centre to centre", value: L(m.value),
-      details: [d.pitch !== undefined ? `3D centre distance ${L(d.centerDistance)}` : "", d.axial !== undefined ? `Axial offset ${L(d.axial)}` : ""].filter(Boolean),
+      title: t(d.pitch !== undefined ? "Pitch (axis to axis)" : "Centre to centre"), value: L(m.value),
+      details: [d.pitch !== undefined ? `${t("3D centre distance")} ${L(d.centerDistance)}` : "", d.axial !== undefined ? `${t("Axial offset")} ${L(d.axial)}` : ""].filter(Boolean),
     };
     case "arcLength": return {
-      title: d.edgeType === "line" ? "Edge length" : d.edgeType === "curve" ? "Curve length" : "Arc length", value: L(m.value),
-      details: d.radius ? [`R ${L(d.radius)}`, `Sweep ${fmtAngle(d.sweep as number)}`] : [],
+      title: t(d.edgeType === "line" ? "Edge length" : d.edgeType === "curve" ? "Curve length" : "Arc length"), value: L(m.value),
+      details: d.radius ? [`R ${L(d.radius)}`, `${t("Sweep")} ${fmtAngle(d.sweep as number)}`] : [],
     };
     case "point": {
       const p = new THREE.Vector3(...m.points[0]);
       const n = d.normal as number[];
-      return { title: "Point", value: fmtVec(p), details: [`Normal (${n.map(x => x.toFixed(4)).join(", ")})`, String(d.entity)] };
+      return { title: t("Point"), value: fmtVec(p), details: [`${t("Normal")} (${n.map(x => x.toFixed(4)).join(", ")})`, tx(String(d.entity))] };
     }
     case "smart": {
       const rows = JSON.parse(String(d.rows)) as Row[];
-      const pairs = rows.map(([label, kind, x]) => [label, fmtRow(kind, x)] as [string, string]);
-      return { title: String(d.title), value: String(d.prefix ?? "") + fmtRow(d.kind as RowKind, m.value, m.points[0]), details: pairs.map(p => p.join(" ")), pairs };
+      const pairs = rows.map(([label, kind, x]) => [t(label), kind === "text" ? tx(String(x)) : fmtRow(kind, x)] as [string, string]);
+      return { title: t(String(d.title)), value: String(d.prefix ?? "") + fmtRow(d.kind as RowKind, m.value, m.points[0]), details: pairs.map(p => p.join(" ")), pairs };
     }
     case "bbox": return {
-      title: "Bounding box", value: `${fmtLen(d.x as number, false)} × ${fmtLen(d.y as number, false)} × ${fmtLen(d.z as number)}`,
-      details: [`Diagonal ${L(m.value)}`, `Parts ${d.parts}`],
+      title: t("Bounding box"), value: `${fmtLen(d.x as number, false)} × ${fmtLen(d.y as number, false)} × ${fmtLen(d.z as number)}`,
+      details: [`${t("Diagonal")} ${L(m.value)}`, `${t("Parts")} ${d.parts}`],
     };
   }
 }

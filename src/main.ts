@@ -10,7 +10,7 @@ import { SectionManager } from "./viewer/Section";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
-  CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO,
+  CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
@@ -25,6 +25,9 @@ import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { bindModal, bindTabs, busy, confirmModal, emptyState, initModals, initPanels, storage, toast } from "./ui";
+import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
+import { renderHelp } from "./help";
+import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -33,6 +36,8 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 // ---------- theme (before the viewer reads colours) ----------
 const prefersDark = matchMedia("(prefers-color-scheme: dark)").matches;
 document.documentElement.dataset.theme = storage.get("sv:theme") ?? (prefersDark ? "dark" : "light");
+// Interface language: translate the static page now and whatever code adds later.
+startI18n();
 
 const vpEl = $("#viewport");
 const viewer = new Viewer(vpEl);
@@ -216,20 +221,22 @@ initModals();
 const openPicker = () => $<HTMLInputElement>("#file-input").click();
 $$("[data-open]").forEach(b => b.addEventListener("click", openPicker));
 bindGerberPanel(gerber, {
-  copy: text => { navigator.clipboard?.writeText(text).then(() => toast(`Copied ${text}`, "success"), () => toast("Copy failed", true)); },
+  copy: text => { navigator.clipboard?.writeText(text).then(() => toast(t("Copied {v}", { v: text }), "success"), () => toast(t("Copy failed"), true)); },
   open: openPicker,
   openBody: openBoardModel,
   panels,
 });
 
 /** File name and status (idle / loading / ready / error) in the header. */
+let docState: [string, "idle" | "loading" | "ready" | "error"] = ["", "idle"];
 function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
-  const label = { idle: "no file open", loading: "loading", ready: "open", error: "could not open" }[st];
-  $("#doc-name").textContent = name || "No file open";
-  $("#doc").title = name ? `${name} (${label})` : "No file open";
+  docState = [name, st];
+  const label = t({ idle: "no file open", loading: "loading", ready: "open", error: "could not open" }[st]);
+  $("#doc-name").textContent = name || t("No file open");
+  $("#doc").title = name ? `${name} (${label})` : t("No file open");
   $("#doc").dataset.state = st;
   $("#doc-status").dataset.state = st;
-  $("#doc-status").setAttribute("aria-label", `Status: ${label}`);
+  $("#doc-status").setAttribute("aria-label", t("Status: {s}", { s: label }));
 }
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
@@ -243,10 +250,10 @@ const isPcbMode = () => $("#app").classList.contains("gerber");
 function openBoardModel() {
   const t0 = performance.now();
   const mesh = gerber.boardBody();
-  if (!mesh) { toast("Open a board with an outline or layers first.", true); return; }
+  if (!mesh) { toast(t("Open a board with an outline or layers first."), true); return; }
   const part = analyzeMesh(mesh);
   showModel([part], { name: mesh.name, parts: [0], children: [] }, mesh.name, `sv:pcb:${mesh.name}:${gerber.thickness}`, t0);
-  toast("Board body opened with the 3D model tools. Back to PCB returns to the layers.");
+  toast(t("Board body opened with the 3D model tools. Back to PCB returns to the layers."));
 }
 
 $("#back-pcb").addEventListener("click", () => {
@@ -260,15 +267,21 @@ async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], ap
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
   setPcbMode(true);
-  const label = list.length === 1 ? list[0].name : `${list.length} PCB files`;
+  const label = list.length === 1 ? list[0].name : t("{n} PCB files", { n: list.length });
   setDoc(label, "loading");
   const ok = await gerber.load(list, append && gerber.loaded);
   if (!ok && !gerber.loaded) { setPcbMode(false); if (!viewer.parts.length) $("#empty").hidden = false; setDoc(label, "error"); return; }
   if (!append || !gerber.name) gerber.name = list.length === 1 ? list[0].name : list[0].name.replace(/[-_.][^-_.]*$/, "") || "pcb";
   document.title = `${gerber.name} · PCB · MöbiusCAD`;
   setDoc(gerber.name, "ready");
+  pcbStats();
+  hint("pcb");
+}
+gerber.onChange(() => { if (gerber.is3d) hint("pcb3d"); });
+$("#tree-search").addEventListener("focus", () => hint("tree"));
+function pcbStats() {
   const n = gerber.layers.length;
-  $("#st-stats").textContent = `${n} layer${n === 1 ? "" : "s"} · ${gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString()} objects`;
+  $("#st-stats").textContent = `${t("{n} layer|{n} layers", { n })} · ${t("{n} objects", { n: gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString() })}`;
 }
 
 const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep)$/i.test(n);
@@ -301,7 +314,7 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
   const token = ++loadToken;
   setDoc(name, "loading");
-  setLoading(true, `Reading ${name}…`, 2);
+  setLoading(true, t("Reading {name}…", { name }), 2);
   state.meta = readStepMeta(new Uint8Array(buffer));
   const quality = $<HTMLSelectElement>("#quality").value as "draft" | "normal" | "fine";
   const occtBase = new URL("occt/", document.baseURI).href;
@@ -309,15 +322,15 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   const result = await new Promise<{ parts: PartData[]; tree: TreeNode }>((resolve, reject) => {
     worker.onmessage = (e: MessageEvent) => {
       const d = e.data;
-      if (d.type === "progress") setLoading(true, d.text, d.pct);
+      if (d.type === "progress") setLoading(true, t(d.text, d.params), d.pct);
       else if (d.type === "done") resolve(d);
       else reject(new Error(d.text));
     };
     worker.postMessage({ buffer, name, occtBase, quality }, [buffer]);
-  }).catch(err => { setLoading(false); setDoc(name, "error"); toast(`Could not open ${name}: ${err.message}`, true); return null; });
+  }).catch(err => { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t(err.message) }), true); return null; });
   if (!result || token !== loadToken) return;
 
-  setLoading(true, "Building scene…", 97);
+  setLoading(true, t("Building scene…"), 97);
   await new Promise(r => setTimeout(r, 0));
   showModel(result.parts, result.tree, name, `sv:m:${name}:${buffer.byteLength || ""}`, t0);
 }
@@ -340,8 +353,16 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   renderProps();
   const tris = result.parts.reduce((s, p) => s + p.index.length / 3, 0);
   const faces = result.parts.reduce((s, p) => s + p.faces.length, 0);
-  $("#st-stats").textContent = `${result.parts.length} parts · ${faces.toLocaleString()} faces · ${tris.toLocaleString()} triangles · ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  modelStats = { parts: result.parts.length, faces, tris, s: (performance.now() - t0) / 1000 };
+  showModelStats();
   viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+  hint("model");
+}
+
+let modelStats = { parts: 0, faces: 0, tris: 0, s: 0 };
+function showModelStats() {
+  const m = modelStats;
+  $("#st-stats").textContent = [t("{n} parts", { n: m.parts }), t("{n} faces", { n: m.faces.toLocaleString() }), t("{n} triangles", { n: m.tris.toLocaleString() }), `${m.s.toFixed(1)} ${t("s")}`].join(" · ");
 }
 
 function resetForNewModel() {
@@ -363,6 +384,8 @@ function resetForNewModel() {
   $("#explode-val").textContent = "0%";
   viewer.explodeFactor = 0;
   $("#mass-out").innerHTML = "";
+  lastMassRun = null;
+  lastMass = [];
 }
 
 /** Skeleton loaders replace panel content when loading takes longer than this. */
@@ -407,7 +430,7 @@ function buildTree() {
   const host = $("#tree");
   host.innerHTML = "";
   nodeEls.clear();
-  if (!viewer.tree) { emptyState(host, { icon: "model", title: "No model loaded", text: "Open a STEP, IGES or BREP file to see its assembly tree.", cta: "Open file", action: openPicker }); return; }
+  if (!viewer.tree) { emptyState(host, { icon: "model", title: t("No model loaded"), text: t("Open a STEP, IGES or BREP file to see its assembly tree."), cta: t("Open file"), action: openPicker }); return; }
   const make = (n: TreeNode, depth: number): HTMLElement => {
     const el = document.createElement("div");
     el.className = "node";
@@ -423,7 +446,7 @@ function buildTree() {
     if (hasKids) row.setAttribute("aria-expanded", "true");
     row.tabIndex = depth === 0 ? 0 : -1;
     const sw = leafPart ? `<span class="swatch" aria-hidden="true" style="background:#${leafPart.baseColor.getHexString()}"></span>` : "";
-    row.innerHTML = `<span class="caret" aria-hidden="true">${hasKids ? "▾" : ""}</span><button class="eye" title="Show/hide" aria-label="Show or hide ${esc(n.name)}" tabindex="-1">●</button>${sw}<span class="nm" title="${esc(n.name)}">${esc(n.name)}</span><span class="cnt">${count > 1 ? count : ""}</span>`;
+    row.innerHTML = `<span class="caret" aria-hidden="true">${hasKids ? "▾" : ""}</span><button class="eye" title="${esc(t("Show/hide"))}" aria-label="${esc(t("Show or hide {name}", { name: n.name }))}" tabindex="-1">●</button>${sw}<span class="nm" translate="no" title="${esc(n.name)}">${esc(n.name)}</span><span class="cnt">${count > 1 ? count : ""}</span>`;
     el.appendChild(row);
     const kids = document.createElement("div");
     kids.className = "kids";
@@ -550,21 +573,21 @@ $<HTMLInputElement>("#tree-search").addEventListener("input", e => {
 
 // ---------- properties panel ----------
 function kv(rows: [string, string][]) {
-  return `<div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${v}</span>`).join("")}</div>`;
+  return `<div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(t(k))}</span><span class="v" translate="no">${v}</span>`).join("")}</div>`;
 }
 
 function renderProps() {
   const el = $("#props");
-  if (!viewer.parts.length) { el.innerHTML = `<p class="muted">Open a model to begin.</p>`; return; }
+  if (!viewer.parts.length) { el.innerHTML = `<p class="muted">${t("Open a model to begin.")}</p>`; return; }
   const e = state.selection;
   let html = "";
   if (e) {
     const p = e.part;
-    html += `<span class="badge">${esc(describeEntity(e))}</span><h3>${esc(p.data.name)}</h3>`;
+    html += `<span class="badge">${esc(tx(describeEntity(e)))}</span><h3 translate="no">${esc(p.data.name)}</h3>`;
     const rows: [string, string][] = [];
     if (e.kind === "face" && e.face) {
       const f = e.face;
-      rows.push(["Surface", f.type], ["Area", fmtArea(f.area)]);
+      rows.push(["Surface", t(f.type)], ["Area", fmtArea(f.area)]);
       if (f.normal) rows.push(["Normal", fmtVec(new THREE.Vector3(...f.normal), false)]);
       if (f.axis) rows.push(["Axis", fmtVec(new THREE.Vector3(...f.axis), false)]);
       if (f.radius) rows.push(["Radius", fmtLen(f.radius)], ["Diameter", fmtLen(f.radius * 2)]);
@@ -572,7 +595,7 @@ function renderProps() {
       rows.push(["Boundary edges", String(f.edges.length)], ["Face #", String(f.id)]);
     } else if (e.edge) {
       const ed = e.edge;
-      rows.push(["Curve", ed.type], ["Length", fmtLen(ed.length)]);
+      rows.push(["Curve", t(ed.type)], ["Length", fmtLen(ed.length)]);
       if (ed.radius) rows.push(["Radius", fmtLen(ed.radius)], ["Diameter", fmtLen(ed.radius * 2)], ["Centre", fmtVec(viewer.toWorld(p, ed.center!))]);
       if (ed.sweep && ed.type === "arc") rows.push(["Sweep", `${((ed.sweep * 180) / Math.PI).toFixed(3)}°`]);
       if (ed.dir) rows.push(["Direction", fmtVec(new THREE.Vector3(...ed.dir), false)]);
@@ -590,7 +613,7 @@ function renderProps() {
     const s = b.getSize(new THREE.Vector3());
     const vol = ps.reduce((a, p) => a + p.data.volume, 0), area = ps.reduce((a, p) => a + p.data.area, 0);
     const prod = state.meta?.products.find(x => x.name === n.name || x.id === n.name);
-    if (!e) html += `<h3>${esc(n.name)}</h3>`;
+    if (!e) html += `<h3 translate="no">${esc(n.name)}</h3>`;
     const rows: [string, string][] = [
       ["Path", esc(ps.length === 1 ? ps[0].path : n.name)],
       ["Parts", String(ps.length)],
@@ -599,16 +622,16 @@ function renderProps() {
       ["Faces / edges", `${ps.reduce((a, p) => a + p.data.faces.length, 0)} / ${ps.reduce((a, p) => a + p.data.edges.length, 0)}`],
       ["Triangles", ps.reduce((a, p) => a + p.data.index.length / 3, 0).toLocaleString()],
     ];
-    if (ps.some(p => !p.data.closed)) rows.push(["Note", "open shell: volume approximate"]);
+    if (ps.some(p => !p.data.closed)) rows.push(["Note", t("open shell: volume approximate")]);
     if (prod?.revision) rows.push(["Revision", esc(prod.revision)]);
     if (prod && prod.id !== prod.name) rows.push(["Part number", esc(prod.id)]);
     html += kv(rows);
     const first = ps[0];
-    html += `<div class="row"><label>Colour <input type="color" id="p-color" value="#${first.baseColor.getHexString()}"></label>
-      <label class="slider" style="flex:1">Opacity <input type="range" id="p-opacity" min="0.05" max="1" step="0.05" value="${first.opacity}"></label></div>
-      <div class="row wrap"><button class="btn small" id="p-isolate">Isolate (I)</button><button class="btn small" id="p-hide">Hide (H)</button><button class="btn small" id="p-showall">Show all (U)</button><button class="btn small" id="p-fit">Zoom to</button><button class="btn small" id="p-reset">Reset look</button></div>`;
+    html += `<div class="row"><label>${t("Colour")} <input type="color" id="p-color" value="#${first.baseColor.getHexString()}"></label>
+      <label class="slider" style="flex:1">${t("Opacity")} <input type="range" id="p-opacity" min="0.05" max="1" step="0.05" value="${first.opacity}"></label></div>
+      <div class="row wrap"><button class="btn small" id="p-isolate">${t("Isolate (I)")}</button><button class="btn small" id="p-hide">${t("Hide (H)")}</button><button class="btn small" id="p-showall">${t("Show all (U)")}</button><button class="btn small" id="p-fit">${t("Zoom to")}</button><button class="btn small" id="p-reset">${t("Reset look")}</button></div>`;
   } else if (!e) {
-    html += `<h3>${esc(state.fileName)}</h3>`;
+    html += `<h3 translate="no">${esc(state.fileName)}</h3>`;
     const rows: [string, string][] = [];
     const m = state.meta;
     const b = viewer.computeBounds(), s = b.getSize(new THREE.Vector3());
@@ -623,9 +646,9 @@ function renderProps() {
       rows.push(["STEP entities", m.entityCount.toLocaleString()], ["Products", String(m.products.length)]);
       if (m.materials.length) rows.push(["Materials", esc(m.materials.join(", "))]);
       const pmi = Object.entries(m.pmi);
-      rows.push(["PMI / GD&T", pmi.length ? esc(pmi.map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")) + " (listed; not drawn)" : "none"]);
+      rows.push(["PMI / GD&T", pmi.length ? esc(pmi.map(([k, v]) => `${k.toLowerCase().replace(/_/g, " ")} ${v}`).join(", ")) + " " + t("(listed; not drawn)") : t("none")]);
     }
-    html += kv(rows) + `<p class="muted">Click a face or edge to inspect it, or a part in the tree.</p>`;
+    html += kv(rows) + `<p class="muted">${t("Click a face or edge to inspect it, or a part in the tree.")}</p>`;
   }
   el.innerHTML = html;
   bindPropControls();
@@ -697,14 +720,14 @@ function updateHint() {
   if (state.tool === "select") {
     h.hidden = !viewer.parts.length;
     h.innerHTML = state.selection && !state.livePair
-      ? `<b>Smart measure</b> · click a second point, edge or face to measure between them · <span class="muted">Esc to clear</span>`
-      : `<b>Smart measure</b> · click a point, edge or face; a second click measures between them`;
+      ? `<b>${t("Smart measure")}</b> · ${t("click a second point, edge or face to measure between them")} · <span class="muted">${t("Esc to clear")}</span>`
+      : `<b>${t("Smart measure")}</b> · ${t("click a point, edge or face; a second click measures between them")}`;
     return;
   }
   const info = state.tool === "plane3" ? PLANE3_INFO : TOOL_INFO[state.tool];
   const n = state.picks.length;
   h.hidden = false;
-  h.innerHTML = `<b>${info.title}</b> · ${info.hint} · pick ${n + 1}/${info.picks} · <span class="muted">Esc to cancel</span>`;
+  h.innerHTML = `<b>${t(info.title)}</b> · ${t(info.hint)} · ${t("pick {i}/{n}", { i: n + 1, n: info.picks })} · <span class="muted">${t("Esc to cancel")}</span>`;
 }
 
 $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool as Tool)));
@@ -776,7 +799,7 @@ function handlePick(snap: Snap | null) {
     pickMark(snap.point);
     if (state.picks.length < 3) { updateHint(); viewer.invalidate(); return; }
     const sp = section.addFromPoints(state.picks.map(p => p.point));
-    if (!sp) toast("The three points are in line; pick points that span a plane", true);
+    if (!sp) toast(t("The three points are in line; pick points that span a plane"), true);
     setTool("select");
     renderSections();
     return;
@@ -791,7 +814,7 @@ function handlePick(snap: Snap | null) {
   try {
     addMeasurement(tagParts(measure(viewer, state.tool as MeasureType, state.picks, nextColor()), state.picks.map(p => p.part)));
   } catch (err) {
-    toast(err instanceof MeasureError ? err.message : `Measurement failed: ${(err as Error).message}`, true);
+    toast(err instanceof MeasureError ? t(err.message) : t("Measurement failed: {err}", { err: (err as Error).message }), true);
   }
   state.picks = [];
   hl.pickMarks.clear();
@@ -820,13 +843,14 @@ function showLive(picks: Entity[]) {
   } catch (err) {
     state.live = null;
     state.livePicks = [];
-    toast(`Measurement failed: ${(err as Error).message}`, true);
+    toast(t("Measurement failed: {err}", { err: (err as Error).message }), true);
   }
   state.livePair = picks.length === 2;
   if (state.livePair) state.selection = null;
   refreshMeasurements();
   updateHint();
   viewer.invalidate();
+  if (state.live) hint(state.live.data.modes ? "pair" : "live");
 }
 
 function clearLive() {
@@ -857,7 +881,7 @@ function setCsys(c: Csys | null, refresh = true) {
   csysMark.visible = !!c;
   const reset = $("#csys-reset");
   reset.hidden = !c;
-  if (c) reset.textContent = `⌖ CSYS: ${c.name} · back to global`;
+  if (c) reset.textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(c.name) })}`;
   if (c) {
     csysMark.position.set(...c.origin);
     csysMark.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.x), new THREE.Vector3(...c.y), new THREE.Vector3(...c.z)));
@@ -866,7 +890,7 @@ function setCsys(c: Csys | null, refresh = true) {
   if (!refresh) return;
   refreshMeasurements();
   renderProps();
-  if (c) toast(`Coordinates relative to ${c.name}`);
+  if (c) toast(t("Coordinates relative to {name}", { name: t(c.name) }));
   viewer.invalidate();
 }
 
@@ -917,11 +941,11 @@ function pinLive() {
  */
 /** Copies a displayed value; a single number with a unit is copied as the bare number. */
 function copyValue(text: string) {
-  const t = text.trim();
-  const bare = /^[RØ]?S?Ø?\s*(-?[\d.]+(?:e[-+]?\d+)?)\s*(mm|cm|m|in|ft|°)$/.exec(t);
-  const out = bare ? bare[1] : t;
+  const txt = text.trim();
+  const bare = /^[RØ]?S?Ø?\s*(-?[\d.]+(?:e[-+]?\d+)?)\s*(mm|cm|m|in|ft|°)$/.exec(txt);
+  const out = bare ? bare[1] : txt;
   state.lastCopied = out;
-  navigator.clipboard?.writeText(out).then(() => toast(`Copied ${out}`), () => toast(`Copy failed; value ${out}`, true));
+  navigator.clipboard?.writeText(out).then(() => toast(t("Copied {v}", { v: out })), () => toast(t("Copy failed; value {v}", { v: out }), true));
 }
 
 function renderReadout() {
@@ -931,13 +955,13 @@ function renderReadout() {
   const f = formatMeasurement(m);
   box.style.setProperty("--c", m.color);
   const det = f.pairs
-    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" title="Click to copy">${esc(x)}</b></span>`)
+    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" translate="no" title="${esc(t("Click to copy"))}">${esc(x)}</b></span>`)
     : f.details.map(d => `<span>${esc(d)}</span>`);
   const unitOpts = UNIT_LIST.map(u => `<option${u === units.current ? " selected" : ""}>${u}</option>`).join("");
-  const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? "auto" : `${d} dp`}</option>`).join("");
+  const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? t("auto") : t("{n} dp", { n: d })}</option>`).join("");
   box.classList.toggle("floating", state.readoutFloat);
-  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${state.readoutFloat ? "Dock in the corner" : "Float next to the measurement"}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="Units">${unitOpts}</select><select data-hud="decimals" title="Decimal places">${decOpts}</select><button class="x close" title="Close (Esc)">✕</button></span></div>
-    <div class="val"><b class="cp" title="Click to copy">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${x.label}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+  box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${t(state.readoutFloat ? "Dock in the corner" : "Float next to the measurement")}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="${t("Units")}">${unitOpts}</select><select data-hud="decimals" title="${t("Decimal places")}">${decOpts}</select><button class="x close" title="${t("Close (Esc)")}">✕</button></span></div>
+    <div class="val"><b class="cp" translate="no" title="${t("Click to copy")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
   box.querySelector(".dock")!.addEventListener("click", () => {
     state.readoutFloat = !state.readoutFloat;
     storage.set("sv:readout", state.readoutFloat ? "float" : "dock");
@@ -955,7 +979,7 @@ function renderReadout() {
   const add = (label: string, fn: () => void) => {
     const b = document.createElement("button");
     b.className = "btn small";
-    b.textContent = label;
+    b.textContent = t(label);
     b.addEventListener("click", fn);
     acts.appendChild(b);
   };
@@ -1040,7 +1064,7 @@ function hover() {
   marker.dataset.kind = snap.kind;
   marker.style.transform = `translate(${((scr.x + 1) / 2) * viewer.size.x}px, ${((1 - scr.y) / 2) * viewer.size.y}px)`;
   const labels: Record<string, string> = { onCap: "Section", vertex: "Vertex", midpoint: "Midpoint", quadrant: "Quadrant", intersection: "Intersection", circleCenter: "Centre", faceCenter: "Face centre", onEdge: "Edge", onFace: "Face" };
-  const tag = (snap.section && snap.kind !== "onCap" ? "Cut " : "") + labels[snap.kind];
+  const tag = snap.section && snap.kind !== "onCap" ? t("Cut {what}", { what: t(labels[snap.kind]).toLowerCase() }) : t(labels[snap.kind]);
   marker.innerHTML = `<i class="glyph"></i>` + (snap.kind === "onFace" ? "" : `<span class="snap-tag">${tag}</span>`);
   $("#st-snap").textContent = tag;
   $("#st-coord").textContent = fmtVec(snap.point) + (snap.normal ? `   n ${fmtVec(snap.normal, false)}` : "");
@@ -1054,9 +1078,9 @@ function refreshMeasurements() {
   $("#m-count").textContent = String(state.measurements.length);
   for (const id of ["#m-csv", "#m-json", "#m-pdf", "#m-clear"]) $<HTMLButtonElement>(id).disabled = !state.measurements.length && id !== "#m-pdf" || !viewer.parts.length;
   if (!state.measurements.length) emptyState(host, {
-    icon: "ruler", title: "No measurements yet",
-    text: viewer.parts.length ? "Click a face or edge with Smart measure; pin a result to keep it here." : "Open a model, then click faces and edges to measure them.",
-    cta: viewer.parts.length ? "Start Smart measure" : "Open file",
+    icon: "ruler", title: t("No measurements yet"),
+    text: t(viewer.parts.length ? "Click a face or edge with Smart measure; pin a result to keep it here." : "Open a model, then click faces and edges to measure them."),
+    cta: t(viewer.parts.length ? "Start Smart measure" : "Open file"),
     action: () => { if (!viewer.parts.length) openPicker(); else { setTool("select"); vpEl.querySelector("canvas")?.focus(); } },
   });
   else {
@@ -1070,7 +1094,7 @@ function refreshMeasurements() {
       el.style.setProperty("--c", m.color);
       const title = `${i + 1}. ${f.title}`;
       el.innerHTML = `<span class="dot" aria-hidden="true"></span><button class="m-main" aria-pressed="${m.id === state.selectedMeasurement}" title="${esc(`${title}: ${f.value}`)}"><span class="t">${esc(title)}</span><span class="val">${esc(f.value)}</span></button>
-        <span class="acts"><input type="color" value="${m.color}" title="Colour" aria-label="Colour of measurement ${i + 1}"><button title="Show/hide" aria-label="${m.visible ? "Hide" : "Show"} measurement ${i + 1}" aria-pressed="${m.visible}">${m.visible ? "👁" : "◌"}</button><button title="Delete" aria-label="Delete measurement ${i + 1}">✕</button></span>`;
+        <span class="acts"><input type="color" value="${m.color}" title="${t("Colour")}" aria-label="${t("Colour of measurement {n}", { n: i + 1 })}"><button title="${t("Show/hide")}" aria-label="${t(m.visible ? "Hide measurement {n}" : "Show measurement {n}", { n: i + 1 })}" aria-pressed="${m.visible}">${m.visible ? "👁" : "◌"}</button><button title="${t("Delete")}" aria-label="${t("Delete measurement {n}", { n: i + 1 })}">✕</button></span>`;
       el.querySelector(".m-main")!.addEventListener("click", () => { state.selectedMeasurement = m.id; refreshMeasurements(); });
       const [color, vis, del] = el.querySelectorAll<HTMLElement>(".acts input, .acts button");
       color.addEventListener("click", e => e.stopPropagation());
@@ -1104,17 +1128,17 @@ function loadMeasurements() {
   try { state.measurements = JSON.parse(storage.get(state.fileKey) ?? "[]"); } catch { state.measurements = []; }
   state.selectedMeasurement = null;
   refreshMeasurements();
-  if (state.measurements.length) toast(`Restored ${state.measurements.length} saved measurement(s)`);
+  if (state.measurements.length) toast(t("Restored {n} saved measurement|Restored {n} saved measurements", { n: state.measurements.length }));
 }
 
 $("#m-clear").addEventListener("click", async () => {
-  if (!state.measurements.length || !await confirmModal("Delete all measurements for this model?", "Delete all")) return;
+  if (!state.measurements.length || !await confirmModal(t("Delete all measurements for this model?"), t("Delete all"))) return;
   state.measurements = [];
   saveMeasurements();
   refreshMeasurements();
 });
-$("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast("No measurements yet"));
-$("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast("No measurements yet"));
+$("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast(t("No measurements yet")));
+$("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast(t("No measurements yet")));
 
 bindTabs($(".tabs"), tab => $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)));
 
@@ -1156,6 +1180,43 @@ $("#theme").addEventListener("click", () => {
 });
 const help = bindModal($<HTMLDialogElement>("#help"));
 $("#help-btn").addEventListener("click", () => help.open());
+renderHelp($("#help-body"));
+const tipsBox = $<HTMLInputElement>("#tips-on");
+tipsBox.checked = tipsOn();
+tipsBox.addEventListener("change", () => setTips(tipsBox.checked));
+$("#help").addEventListener("close", () => { tipsBox.checked = tipsOn(); });
+$("#help-btn").addEventListener("click", () => { tipsBox.checked = tipsOn(); });
+
+// ---------- interface language ----------
+function showLang() {
+  const b = $("#lang-btn");
+  b.textContent = lang().toUpperCase();
+  // The accessible name starts with the visible code (WCAG 2.5.3, label in name).
+  b.setAttribute("aria-label", `${lang().toUpperCase()}: ${t("Interface language: English. Switch to Russian")}`);
+  b.title = t("Interface language: English. Switch to Russian");
+}
+$("#lang-btn").addEventListener("click", () => setLang(lang() === "ru" ? "en" : "ru"));
+showLang();
+setDoc("", "idle");
+onLangChange(() => {
+  showLang();
+  renderHelp($("#help-body"));
+  relocalizeHint();
+  setDoc(...docState);
+  if (isPcbMode()) pcbStats(); else if (viewer.parts.length) showModelStats();
+  if (viewer.parts.length) document.title = isPcbMode() ? `${gerber.name} · PCB · MöbiusCAD` : `${state.fileName} · MöbiusCAD`;
+  if (!viewer.tree) buildTree();
+  else for (const [n, el] of nodeEls) el.querySelector(":scope > .row-n .eye")?.setAttribute("aria-label", t("Show or hide {name}", { name: n.name }));
+  renderProps();
+  refreshMeasurements();
+  updateHint();
+  renderSections();
+  renderMaterials();
+  renderMass();
+  validateDensity();
+  if (csys.active) $("#csys-reset").textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(csys.active.name) })}`;
+  gerber.relocalize();
+});
 
 function setUnits(u: Unit) {
   units.current = u;
@@ -1193,7 +1254,7 @@ section.onChange = () => updateSectionReadouts();
 
 function addSection(kind: string) {
   if (!viewer.parts.length) return;
-  if (!section.canAdd) { toast("Up to 3 section planes", true); return; }
+  if (!section.canAdd) { toast(t("Up to 3 section planes"), true); return; }
   const c = viewer.computeBounds().getCenter(new THREE.Vector3());
   let axis: THREE.Vector3, label: string;
   if (kind === "x" || kind === "y" || kind === "z") {
@@ -1207,15 +1268,16 @@ function addSection(kind: string) {
     return;
   } else {
     const e = state.selection;
-    if (!e || e.kind !== "face" || e.face?.type !== "plane") { toast("Select a planar face first", true); return; }
+    if (!e || e.kind !== "face" || e.face?.type !== "plane") { toast(t("Select a planar face first"), true); return; }
     addSectionFromFace(e);
     return;
   }
   section.add(label, axis, c.dot(axis));
   renderSections();
+  hint("section");
 }
 function addSectionFromFace(e: Entity) {
-  if (!section.canAdd) { toast("Up to 3 section planes", true); return null; }
+  if (!section.canAdd) { toast(t("Up to 3 section planes"), true); return null; }
   const n = new THREE.Vector3(...e.face!.normal!);
   const p = viewer.toWorld(e.part, e.face!.centroid);
   const sp = section.add("Face", n, p.dot(n) - viewer.modelSize * 1e-4);
@@ -1254,8 +1316,8 @@ function renderSections() {
       <button class="btn tiny" data-a="flip" title="Flip the kept side">⇅</button>
       <button class="btn tiny" data-a="del" title="Remove">✕</button></div>
       <div class="ctl"><input type="range" data-k="range" min="${lo}" max="${hi}" step="${(hi - lo) / 1000 || 0.001}" value="${sp.offset}">
-      <input type="number" data-k="off" step="any" value="${(sp.offset / f).toFixed(4)}" title="Offset along the normal (${units.current})"></div>
-      <div class="ctl"><span class="lbl">Step</span><input type="number" data-k="step" step="any" min="0" value="${(Math.max((hi - lo) / 100, 1e-6) / f).toPrecision(3)}" title="Step (${units.current})">
+      <input type="number" data-k="off" step="any" value="${(sp.offset / f).toFixed(4)}" title="${t("Offset along the normal ({u})", { u: units.current })}"></div>
+      <div class="ctl"><span class="lbl">Step</span><input type="number" data-k="step" step="any" min="0" value="${(Math.max((hi - lo) / 100, 1e-6) / f).toPrecision(3)}" title="${t("Step ({u})", { u: units.current })}">
       <button class="btn tiny" data-a="minus">−</button><button class="btn tiny" data-a="plus">+</button></div>
       <div class="ctl angles"><span class="lbl">Az</span><input type="number" data-k="az" step="1" value="${ang.az.toFixed(2)}" title="Normal azimuth from +X about Z (°)">
       <span class="lbl">El</span><input type="number" data-k="el" step="1" value="${ang.el.toFixed(2)}" title="Normal elevation from the XY plane (°)"></div>
@@ -1311,7 +1373,7 @@ function updateSectionReadouts() {
     if (!sp.enabled || !res) { stat.textContent = ""; continue; }
     const curves = res.profiles.reduce((a, p) => a + p.edges.length, 0);
     const circles = res.profiles.reduce((a, p) => a + p.edges.filter(e => e.type === "circle").length, 0);
-    stat.textContent = `Cut area ${fmtArea(res.area)} · ${res.profiles.length} part(s) · ${curves} curves${circles ? ` · ${circles} circles` : ""}`;
+    stat.textContent = [t("Cut area {a}", { a: fmtArea(res.area) }), t("{n} parts", { n: res.profiles.length }), t("{n} curves", { n: curves }), ...(circles ? [t("{n} circles", { n: circles })] : [])].join(" · ");
   }
 }
 function updateSectionDeps() {
@@ -1342,7 +1404,7 @@ function stopDrag() {
 $("#drag-part").addEventListener("click", () => {
   if (dragControls) { stopDrag(); return; }
   const p = state.selectedParts.length === 1 ? state.selectedParts[0] : state.selection?.part;
-  if (!p) { toast("Select a single part first", true); return; }
+  if (!p) { toast(t("Select a single part first"), true); return; }
   dragControls = new TransformControls(viewer.camera, canvas);
   dragControls.setMode("translate");
   dragControls.setSize(0.8);
@@ -1374,7 +1436,12 @@ function refreshSelectionOverlays() {
 
 // ---------- mass properties ----------
 const matSel = $<HTMLSelectElement>("#material");
-matSel.innerHTML = MATERIALS.map((m, i) => `<option value="${i}">${m.name} (${m.density})</option>`).join("") + `<option value="custom">Custom…</option>`;
+function renderMaterials() {
+  const v = matSel.value;
+  matSel.innerHTML = MATERIALS.map((m, i) => `<option value="${i}">${esc(t(m.name))} (${m.density})</option>`).join("") + `<option value="custom">${t("Custom…")}</option>`;
+  if (v) matSel.value = v;
+}
+renderMaterials();
 matSel.addEventListener("change", () => {
   if (matSel.value !== "custom") $<HTMLInputElement>("#density").value = String(MATERIALS[+matSel.value].density);
 });
@@ -1383,7 +1450,7 @@ $<HTMLInputElement>("#density").addEventListener("input", () => { matSel.value =
 function validateDensity(): number | null {
   const inp = $<HTMLInputElement>("#density"), err = $("#density-err");
   const v = parseFloat(inp.value);
-  const msg = inp.value.trim() === "" ? "Enter a density in g/cm³, for example 7.85 for steel." : !(v > 0) || !isFinite(v) ? "Density must be a number greater than 0 g/cm³." : "";
+  const msg = t(inp.value.trim() === "" ? "Enter a density in g/cm³, for example 7.85 for steel." : !(v > 0) || !isFinite(v) ? "Density must be a number greater than 0 g/cm³." : "");
   err.textContent = msg;
   err.hidden = !msg;
   inp.setAttribute("aria-invalid", String(!!msg));
@@ -1391,22 +1458,32 @@ function validateDensity(): number | null {
   return msg ? null : v;
 }
 let lastMass: [string, string][] = [];
-function runMass() {
-  if (!viewer.parts.length) return;
-  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
-  const density = validateDensity();
-  if (density === null) return;
-  const r = massProperties(viewer, parts, density);
-  lastMass = [
-    ["Scope", parts.length === viewer.parts.length ? "whole model" : `${parts.length} part(s)`],
+/** Inputs of the last mass calculation, so the table can be rebuilt in another language (the PDF is English). */
+let lastMassRun: { r: ReturnType<typeof massProperties>; n: number; whole: boolean; density: number } | null = null;
+function massRows(): [string, string][] {
+  if (!lastMassRun) return [];
+  const { r, n, whole, density } = lastMassRun;
+  const rows: [string, string][] = [
+    ["Scope", whole ? t("whole model") : t("{n} parts", { n })],
     ["Density", `${density} g/cm³`],
     ["Volume", fmtVol(r.volume)], ["Mass", fmtMass(r.mass)], ["Surface area", fmtArea(r.area)],
     ["Centre of mass", fmtVec(r.com)],
     ["Bounding box", `${fmtLen(r.bbox.x, false)} × ${fmtLen(r.bbox.y, false)} × ${fmtLen(r.bbox.z)}`],
     ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((r.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
   ];
-  if (r.openParts.length) lastMass.push(["Warning", `${r.openParts.length} open shell(s): volume not reliable`]);
-  $("#mass-out").innerHTML = kv(lastMass.map(([k, v]) => [k, esc(v)]));
+  if (r.openParts.length) rows.push(["Warning", t("{n} open shells: volume not reliable", { n: r.openParts.length })]);
+  return rows;
+}
+function renderMass() { $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : ""; }
+function runMass() {
+  if (!viewer.parts.length) return;
+  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
+  const density = validateDensity();
+  if (density === null) return;
+  const r = massProperties(viewer, parts, density);
+  lastMassRun = { r, n: parts.length, whole: parts.length === viewer.parts.length, density };
+  lastMass = withLang("en", massRows);
+  renderMass();
   hl.com.position.copy(r.com);
   hl.com.visible = $<HTMLInputElement>("#com-show").checked;
   viewer.invalidate();
@@ -1428,7 +1505,7 @@ for (const [id, transparent] of [["#png", false], ["#png-t", true]] as const) {
 $$("[data-export]").forEach(b => b.addEventListener("click", async () => {
   if (!viewer.parts.length) return;
   try { await exportMesh(viewer, b.dataset.export as "stl", baseName()); }
-  catch (err) { toast(`Export failed: ${(err as Error).message}`, true); }
+  catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
 }));
 function report() {
   if (!viewer.parts.length) return;
@@ -1446,7 +1523,7 @@ function report() {
     if (m.materials.length) meta.push(["Materials", m.materials.join(", ")]);
   }
   const image = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" });
-  inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image });
+  withLang("en", () => inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
 }
 $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 $("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
@@ -1460,6 +1537,7 @@ window.addEventListener("keydown", e => {
   if (t.closest("dialog") || ($("#app").dataset.sheet && t.closest(".sheet"))) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "F1" || e.key === "?") { e.preventDefault(); help.open(); return; }
   if (isPcbMode()) { if (gerber.onKey(e)) e.preventDefault(); return; }
   const k = e.key.toLowerCase();
   if (k === "escape") {
@@ -1488,7 +1566,7 @@ window.addEventListener("keydown", e => {
   viewer.onRender(() => frames++);
   setInterval(() => {
     const now = performance.now();
-    $("#st-fps").textContent = frames ? `${Math.round((frames * 1000) / (now - last))} fps` : "idle";
+    $("#st-fps").textContent = frames ? `${Math.round((frames * 1000) / (now - last))} fps` : t("idle");
     frames = 0; last = now;
   }, 1000);
 }
@@ -1499,7 +1577,7 @@ window.addEventListener("keydown", e => {
   if (url) {
     fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
       .then(buf => openBuffer(buf, decodeURIComponent(url.split("/").pop() || "model.step")))
-      .catch(err => toast(`Could not load ${url}: ${err.message}`, true));
+      .catch(err => toast(t("Could not load {url}: {err}", { url, err: err.message }), true));
   }
 }
 

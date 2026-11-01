@@ -912,6 +912,120 @@ try {
     await ctx.close();
   }
 
+  // --- Interface language (EN / RU), Help and first-use tips ---
+  {
+    const boardUrl = `${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`;
+    const modelUrl = `${origin}/index.html?debug&url=${encodeURIComponent("/fixtures/cax-if/as1-oc-214.stp")}`;
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    const pg = await ctx.newPage();
+    pg.on("pageerror", e => errors.push(e.message));
+    const waitBoard = () => pg.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+    const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
+    const untranslated = () => pg.evaluate(() => {
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
+      const bad = new Set();
+      const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
+      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) if (!skip(n.parentElement)) test(n.data, "text");
+      for (const e of document.querySelectorAll("[title], [aria-label], [placeholder]")) {
+        if (skip(e) || e.closest("#tree")) continue; // tree rows carry the model's own part names
+        for (const a of ["title", "aria-label", "placeholder"]) { const v = e.getAttribute(a); if (v && !/\.(gbr|drl|zip|stp)\b/.test(v)) test(v, a); }
+      }
+      return [...bad];
+    });
+
+    await pg.goto(boardUrl);
+    await waitBoard();
+    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("[data-open] .open-long").textContent }));
+    // First-use tip on the first board, with Got it / Turn off.
+    const tip1 = await pg.evaluate(() => { const h = document.querySelector("#hint"); return { shown: !h.hidden, text: h.textContent, btns: h.querySelectorAll("button").length }; });
+    await pg.click("#hint [data-h=ok]");
+    await pg.click("#lang-btn");
+    await pg.waitForTimeout(100);
+    const ru = await pg.evaluate(() => ({
+      lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, label: document.querySelector("#lang-btn").getAttribute("aria-label"),
+      open: document.querySelector("[data-open] .open-long").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
+      layer: document.querySelector("#g-layers .g-name b")?.textContent, stats: document.querySelector("#g-stats .k")?.textContent, doc: document.querySelector("#doc-status").getAttribute("aria-label"),
+    }));
+    check(en.lang === "en" && en.btn === "EN" && en.open === "Open file" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
+    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Открыть файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
+      `i18n: RU switches header, panels, layer names and stats at once (${JSON.stringify(ru)})`);
+    // Results and the empty measurement list in Russian, then a scan for anything left in English.
+    await pg.evaluate(() => {
+      const g = window.__sv.gerber;
+      const cu = g.layers.find(l => l.L.label === "Top copper");
+      const pads = cu.L.objs.map((o, fi) => [o, fi]).filter(([o]) => o.t === "flash").map(([, fi]) => fi);
+      g.setTool("smart");
+      g.live = g.describe({ lid: cu.id, fi: pads[0] });
+      g.addMeasurement(g.relation({ lid: cu.id, fi: pads[0] }, { lid: cu.id, fi: pads[1] }));
+      document.querySelector("#gt-measures").click();
+    });
+    await pg.waitForTimeout(150);
+    const card = await pg.evaluate(() => [document.querySelector("#g-readout .ttl span")?.textContent, document.querySelector("#g-m-list .m-item .t")?.textContent]);
+    const leftPcb = await untranslated();
+    check(/Шаг|Зазор/.test(card[1]) && card[0] && !/[A-Za-z]{3}/.test(card[0]), `i18n: PCB result card and list in Russian (${JSON.stringify(card)})`);
+    check(leftPcb.length === 0, `i18n: no English left in the PCB view${leftPcb.length ? ": " + leftPcb.slice(0, 6).join(" | ") : ""}`);
+    // Help: tabs in Russian, with the shortcuts table.
+    await pg.click("#help-btn");
+    const help = await pg.evaluate(() => ({ title: document.querySelector("#help-title").textContent, tabs: [...document.querySelectorAll("#help .help-tabs [role=tab]")].map(b => b.textContent), kbd: document.querySelectorAll("#help kbd").length, tips: document.querySelector("#tips-on").checked }));
+    await pg.click("#help [data-tab=keys]");
+    const keysShown = await pg.evaluate(() => !document.querySelector("#hp-keys").hidden && document.querySelector("#hp-keys").textContent.includes("Ctrl+["));
+    const leftHelp = await untranslated();
+    await pg.keyboard.press("Escape");
+    check(help.title === "Справка" && help.tabs.length === 6 && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown && help.tips, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
+    check(leftHelp.length === 0, `i18n: no English left in Help${leftHelp.length ? ": " + leftHelp.slice(0, 6).join(" | ") : ""}`);
+    // axe in Russian too.
+    await pg.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const axeRu = await pg.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => v.id));
+    check(axeRu.length === 0, `i18n: 0 WCAG 2.1 AA violations in Russian${axeRu.length ? ": " + axeRu.join(", ") : ""}`);
+
+    // The choice survives a reload; the model view is Russian too and its header fits from 1024 px.
+    await pg.goto(modelUrl);
+    await waitModel();
+    await pg.evaluate(() => {
+      const { viewer, handlePick } = window.__sv;
+      const p = viewer.parts.find(p => p.data.faces.filter(f => f.type === "cylinder").length >= 2) ?? viewer.parts[0];
+      const V3 = p.group.position.constructor;
+      const cyl = p.data.faces.filter(f => f.type === "cylinder");
+      const pick = f => ({ kind: "onFace", point: new V3(...f.centroid), part: p, face: f, normal: new V3(...(f.normal ?? [0, 0, 1])), px: 0 });
+      handlePick(pick(cyl[0] ?? p.data.faces[0]));
+      document.querySelector("#readout .acts button")?.click();
+      handlePick(pick(p.data.faces[0]));
+      document.querySelectorAll("details").forEach(d => (d.open = true));
+    });
+    await pg.waitForTimeout(200);
+    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));
+    const leftModel = await untranslated();
+    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint), `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
+    for (const lang of ["ru", "en"]) {
+      for (const w of [1024, 1280, 1440]) {
+        await pg.setViewportSize({ width: w, height: 800 });
+        await pg.waitForTimeout(100);
+        const over = await pg.evaluate(() => { const t = document.querySelector(".topbar"); return t.scrollWidth - t.clientWidth; });
+        check(over <= 1, `i18n: model header fits at ${w}px in ${lang.toUpperCase()} (${over})`);
+      }
+      if (lang === "ru") await pg.click("#lang-btn");
+    }
+    await pg.setViewportSize({ width: 1440, height: 900 });
+    const back = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, stored: localStorage.getItem("sv:lang") }));
+    check(back.lang === "en" && back.tree === "Model tree" && back.stored === "en" && /^[A-Za-z]/.test(back.card ?? "A"), `i18n: back to English restores the static and rendered text (${JSON.stringify(back)})`);
+    // Tips: each shows once; "Turn off tips" stops them and Help turns them back on.
+    const tipsSeen = await pg.evaluate(() => localStorage.getItem("sv:tips-seen"));
+    await pg.evaluate(() => { localStorage.setItem("sv:tips-seen", ""); });
+    await pg.goto(boardUrl);
+    await waitBoard();
+    await pg.click("#hint [data-h=off]");
+    const off = await pg.evaluate(() => ({ hidden: document.querySelector("#hint").hidden, v: localStorage.getItem("sv:tips") }));
+    await pg.goto(modelUrl);
+    await waitModel();
+    const quiet = await pg.evaluate(() => document.querySelector("#hint").hidden);
+    check(/pcb/.test(tipsSeen) && /model/.test(tipsSeen) && off.hidden && off.v === "off" && quiet, `hints: each tip once, Turn off tips stops them (${JSON.stringify({ tipsSeen, off, quiet })})`);
+    await ctx.close();
+  }
+
   // --- PCB performance: ~270k objects ---
   const t0 = Date.now();
   await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/big-F_Cu.gbr")}`);

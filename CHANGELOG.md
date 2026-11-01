@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-01
+
+### Added
+- English / Russian interface. The **EN / RU** button in the header switches every label, tooltip, screen-reader name, hint, result card, measurement list and dialog at once, without reloading or losing the open model or board, and the choice is remembered (the first visit follows the browser language; `?lang=ru` or `?lang=en` in the URL also works). Stored measurements switch too. PDF reports and CSV / JSON exports stay in English.
+- Help (the **?** button, `F1` or `?`): sections on getting started, the 3D model view, measuring, the PCB view and all keyboard shortcuts, plus an About page, in both languages.
+- First-use tips: a short hint the first time you open a model or board, get a Smart result, measure two holes, add a section, use the 3D board or the tree filter. Each shows once; **Turn off tips** stops them and **Show tips** in Help turns them back on.
+
+### Fixed
+- The model view header no longer runs off the right edge between 1024 and 1600 px wide (the theme, help and panel buttons were cut off at 1280 px): below 1600 px it shows the logo without the name, a short **Open** and only **Fit** of the standard views (the others stay on the view cube and keys), with tighter buttons below 1280 px.
+
 ## [1.10.1] - 2026-10-31
 
 ### Fixed
@@ -154,7 +164,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/kothf/step-viewer/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/kothf/step-viewer/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/kothf/step-viewer/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/kothf/step-viewer/compare/v1.8.0...v1.9.0
