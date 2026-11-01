@@ -483,6 +483,17 @@ dialog table.keys { border-collapse: collapse; width: 100%; }
 dialog table.keys td { padding: 4px 12px 4px 0; border-top: 1px solid var(--line); }
 dialog table.keys td:first-child { font-family: inherit; font-size: inherit; white-space: normal; width: 40%; }
 .help-foot { align-items: center; margin-top: 10px; }
+.help-page a { color: var(--accent); }
+.about-head { display: flex; gap: 14px; align-items: center; margin: 2px 0 12px; }
+.about-head img { flex: none; border-radius: 12px; }
+.about-name { font-size: var(--fs-subtitle); font-weight: 700; }
+.about-name span { font: 500 12px var(--mono); color: var(--muted); }
+.about-by, .about-links { margin-top: 2px; }
+.credits-main { list-style: none; padding-left: 0 !important; }
+.help-page .credits-all { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0 4px; }
+.credits-table { width: 100%; border-collapse: collapse; margin: 0 0 8px; font-size: 12px; }
+.credits-table th { text-align: left; font-weight: 650; color: var(--muted); padding: 3px 12px 3px 0; }
+.credits-table td:first-child { font-family: inherit; white-space: normal; }
 .help-foot .spacer { flex: 1; }
 .hint {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 20;

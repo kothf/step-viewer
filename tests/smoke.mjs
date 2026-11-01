@@ -973,6 +973,25 @@ try {
     await pg.click("#help [data-tab=keys]");
     const keysShown = await pg.evaluate(() => !document.querySelector("#hp-keys").hidden && document.querySelector("#hp-keys").textContent.includes("Ctrl+["));
     const leftHelp = await untranslated();
+    // About / Credits: the open-source list comes from the build's credits.json, licence texts ship alongside.
+    await pg.click("#help [data-tab=about]");
+    await pg.waitForFunction(() => document.querySelectorAll("#hp-about [data-credits-table] tr").length > 1, null, { timeout: 5000 }).catch(() => {});
+    await pg.click("#hp-about .credits-all summary");
+    const about = await pg.evaluate(async () => {
+      const list = await (await fetch("credits.json")).json();
+      const lic = await (await fetch("THIRD-PARTY-LICENSES.txt")).text();
+      const img = document.querySelector("#hp-about .about-head img");
+      return {
+        n: list.length, rows: document.querySelectorAll("#hp-about [data-credits-table] tr").length - 1,
+        main: [...document.querySelectorAll("#hp-about [data-credits-main] li a")].map(a => a.textContent),
+        names: list.map(c => c.name), licOk: list.every(c => c.license && c.url && lic.includes(`${c.name} ${c.version}`)),
+        logo: img?.complete && img.naturalWidth > 0, version: document.querySelector("#hp-about .about-name")?.textContent,
+      };
+    });
+    const leftAbout = await untranslated();
+    check(about.n > 5 && about.rows === about.n && about.main.includes("three.js") && about.main.includes("occt-import-js") && about.names.includes("Open CASCADE Technology") && about.licOk && about.logo && /v\d+\.\d+\.\d+/.test(about.version),
+      `about: credits list from the build (${about.n} packages, ${about.rows} rows), main libraries, licence texts, logo and version (${JSON.stringify({ main: about.main, version: about.version })})`);
+    check(leftAbout.length === 0, `i18n: no English left in About${leftAbout.length ? ": " + leftAbout.slice(0, 6).join(" | ") : ""}`);
     await pg.keyboard.press("Escape");
     check(help.title === "Справка" && help.tabs.length === 6 && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown && help.tips, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
     check(leftHelp.length === 0, `i18n: no English left in Help${leftHelp.length ? ": " + leftHelp.slice(0, 6).join(" | ") : ""}`);
