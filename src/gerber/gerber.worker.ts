@@ -9,7 +9,7 @@ self.onmessage = async (e: MessageEvent<{ files: { name: string; data: ArrayBuff
     post({ type: "progress", text: "Reading layers…", pct: 10 });
     const { layers, skipped } = await loadPcbFiles(e.data.files);
     const built = layers.map((l, i) => {
-      post({ type: "progress", text: `Building ${l.name} (${i + 1}/${layers.length})…`, pct: 30 + (65 * i) / Math.max(1, layers.length) });
+      post({ type: "progress", text: "Building {name} ({i}/{n})…", params: { name: l.name, i: i + 1, n: layers.length }, pct: 30 + (65 * i) / Math.max(1, layers.length) });
       return buildLayer(l);
     });
     const transfer: Transferable[] = built.flatMap(l => [l.packed.bb.buffer, l.packed.pOff.buffer, l.packed.pData.buffer, l.packed.sOff.buffer, l.packed.sData.buffer]);

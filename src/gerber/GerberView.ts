@@ -8,6 +8,7 @@ import { defaultStyle } from "./load";
 import { G_UNITS, type GObj, type GUnit } from "./model";
 import GerberWorker from "./gerber.worker?worker";
 import { Board3D } from "./Board3D";
+import { lang, layerLabel, t, withLang } from "../i18n";
 
 export type GTool = "smart" | "distance" | "clearance" | "polyline" | "area";
 export type SnapKind = "vertex" | "center" | "mid" | "edge" | "perp" | "free";
@@ -197,18 +198,18 @@ export class GerberView {
   load(files: { name: string; data: ArrayBuffer }[], append = false): Promise<boolean> {
     this.worker ??= new GerberWorker();
     const w = this.worker;
-    this.host.setLoading(true, "Reading PCB layers…", 3);
+    this.host.setLoading(true, t("Reading PCB layers…"), 3);
     return new Promise<boolean>(resolve => {
       w.onmessage = (e: MessageEvent) => {
         const d = e.data;
-        if (d.type === "progress") { this.host.setLoading(true, d.text, d.pct); return; }
+        if (d.type === "progress") { this.host.setLoading(true, t(d.text, d.params), d.pct); return; }
         this.host.setLoading(false);
-        if (d.type === "error") { this.host.toast(`Could not read the PCB files: ${d.text}`, true); resolve(false); return; }
+        if (d.type === "error") { this.host.toast(t("Could not read the PCB files: {err}", { err: t(d.text) }), true); resolve(false); return; }
         const layers = d.layers as BuiltLayer[];
-        if (!layers.length) { this.host.toast(`No Gerber or Excellon layers found${d.skipped.length ? ` (skipped ${d.skipped.join(", ")})` : ""}.`, true); resolve(false); return; }
+        if (!layers.length) { this.host.toast(d.skipped.length ? t("No Gerber or Excellon layers found (skipped {files}).", { files: d.skipped.join(", ") }) : t("No Gerber or Excellon layers found."), true); resolve(false); return; }
         this.setLayers(layers, append);
-        const warn = layers.flatMap(l => l.warnings.map(x => `${l.name}: ${x}`));
-        if (d.skipped.length) this.host.toast(`Skipped files that are not PCB layers: ${d.skipped.join(", ")}`);
+        const warn = layers.flatMap(l => l.warnings.map(x => `${l.name}: ${t(x)}`));
+        if (d.skipped.length) this.host.toast(t("Skipped files that are not PCB layers: {files}", { files: d.skipped.join(", ") }));
         else if (warn.length) this.host.toast(warn.slice(0, 2).join(" · "));
         resolve(true);
       };
@@ -535,21 +536,21 @@ export class GerberView {
     if (a?.[".N"]) rows.push(["Net", a[".N"]]);
     if (a?.[".P"]) { const [ref, pin, fn] = a[".P"].split(","); rows.push(["Pin", `${ref} ${pin}${fn ? ` (${fn})` : ""}`]); }
     else if (a?.[".C"]) rows.push(["Component", a[".C"]]);
-    rows.push(["Layer", `${this.lay(r).L.label} · ${L.name}`]);
+    rows.push(["Layer", `${layerLabel(this.lay(r).L.label)} · ${L.name}`]);
   }
 
   private apText(r: FeatRef): string {
     const o = this.obj(r);
     if (!("ap" in o)) return "";
     const ap = this.lay(r).L.apertures[o.ap];
-    if (!ap) return `D${o.ap} (undefined)`;
+    if (!ap) return `D${o.ap} (${t("undefined")})`;
     const P = ap.params;
     const sz = ap.shape === "C" ? `Ø${this.fmtLen(P[0])}`
-      : ap.shape === "R" ? `rect ${this.fmtLen(P[0], false)} × ${this.fmtLen(P[1])}`
-      : ap.shape === "O" ? `oval ${this.fmtLen(P[0], false)} × ${this.fmtLen(P[1])}`
-      : ap.shape === "P" ? `${P[1]}-gon Ø${this.fmtLen(P[0])}`
-      : `macro ${ap.shape}`;
-    return `D${ap.code} ${sz}${ap.clear.length && ap.shape.length === 1 ? `, hole Ø${this.fmtLen(ap.clear[0].k === "c" ? ap.clear[0].r * 2 : 0)}` : ""}`;
+      : ap.shape === "R" ? `${t("rect")} ${this.fmtLen(P[0], false)} × ${this.fmtLen(P[1])}`
+      : ap.shape === "O" ? `${t("oval")} ${this.fmtLen(P[0], false)} × ${this.fmtLen(P[1])}`
+      : ap.shape === "P" ? `${t("{n}-gon", { n: P[1] })} Ø${this.fmtLen(P[0])}`
+      : `${t("macro")} ${ap.shape}`;
+    return `D${ap.code} ${sz}${ap.clear.length && ap.shape.length === 1 ? `, ${t("hole")} Ø${this.fmtLen(ap.clear[0].k === "c" ? ap.clear[0].r * 2 : 0)}` : ""}`;
   }
 
   /** Centre of a feature, when it has a natural one (pad, hole, arc, slot). */
@@ -639,14 +640,15 @@ export class GerberView {
         for (const c of o.contours) { const p = contourPts(c); for (let i = 2; i < p.length; i += 2) per += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]); }
         out.push(["Perimeter", this.fmtLen(per)], ["Size", `${this.fmtLen(f.bb[2] - f.bb[0], false)} × ${this.fmtLen(f.bb[3] - f.bb[1])}`], ["Vertices", String(o.contours.reduce((s, c) => s + c.length - 1, 0))]);
       } else if (o.t === "hole") {
-        out.push(["Centre", this.fmtPt([o.x, o.y])], ["Tool", `T${o.tool}`], ["Plating", o.plated === false ? "Non-plated (NPTH)" : o.plated ? "Plated (PTH)" : "Not stated"]);
+        out.push(["Centre", this.fmtPt([o.x, o.y])], ["Tool", `T${o.tool}`], ["Plating", t(o.plated === false ? "Non-plated (NPTH)" : o.plated ? "Plated (PTH)" : "Not stated")]);
       } else if (o.t === "slot") {
-        out.push(["Length", this.fmtLen(Math.hypot(o.x2 - o.x1, o.y2 - o.y1) + o.d)], ["From", this.fmtPt([o.x1, o.y1])], ["To", this.fmtPt([o.x2, o.y2])], ["Tool", `T${o.tool}`], ["Plating", o.plated === false ? "Non-plated (NPTH)" : o.plated ? "Plated (PTH)" : "Not stated"]);
+        out.push(["Length", this.fmtLen(Math.hypot(o.x2 - o.x1, o.y2 - o.y1) + o.d)], ["From", this.fmtPt([o.x1, o.y1])], ["To", this.fmtPt([o.x2, o.y2])], ["Tool", `T${o.tool}`], ["Plating", t(o.plated === false ? "Non-plated (NPTH)" : o.plated ? "Plated (PTH)" : "Not stated")]);
       }
       const loop = (o.t === "track" || o.t === "arc") ? this.loopOf(r) : null;
-      if (loop) out.push(["Closed outline", `${this.fmtArea(loop.area)}, perimeter ${this.fmtLen(loop.length)}`]);
+      if (loop) out.push(["Closed outline", t("{a}, perimeter {p}", { a: this.fmtArea(loop.area), p: this.fmtLen(loop.length) })]);
       this.attrRows(r, out);
-      return out;
+      // "Pin" here is a component pin, not the Pin button.
+      return out.map(([k, v]) => [k === "Pin" ? (lang() === "en" ? k : t("Component pin")) : t(k), v]);
     };
     let title = "", value = 0, isArea = false, text: () => string;
     const ap = "ap" in o ? L.apertures[o.ap] : undefined;
@@ -683,10 +685,10 @@ export class GerberView {
       rows: () => {
         const out: [string, string][] = [];
         if (pitch !== null) out.push(["Centre to centre", this.fmtLen(pitch)]);
-        out.push(["Clearance", g.d > 0 ? this.fmtLen(g.d) : "0 (touching or overlapping)"]);
+        out.push(["Clearance", g.d > 0 ? this.fmtLen(g.d) : t("0 (touching or overlapping)")]);
         out.push(["ΔX", this.fmtLen(Math.abs(pts[1][0] - pts[0][0]))], ["ΔY", this.fmtLen(Math.abs(pts[1][1] - pts[0][1]))]);
-        out.push(["First", `${da.title} ${da.text()}`], ["Second", `${db.title} ${db.text()}`]);
-        return out;
+        out.push(["First", `${t(da.title)} ${da.text()}`], ["Second", `${t(db.title)} ${db.text()}`]);
+        return out.map(([k, v]) => [t(k), v]);
       },
     };
     return m;
@@ -699,8 +701,8 @@ export class GerberView {
     return {
       id: `g${this.nextId++}`, type: "distance", title, value: d, pts: [p, q], legs: true, visible: true,
       text: () => this.fmtLen(d),
-      rows: () => [["Distance", this.fmtLen(d)], ["ΔX", this.fmtLen(Math.abs(q[0] - p[0]))], ["ΔY", this.fmtLen(Math.abs(q[1] - p[1]))],
-        ["Angle", `${((Math.atan2(q[1] - p[1], q[0] - p[0]) * 180) / Math.PI).toFixed(2)}°`], ["From", this.fmtPt(p)], ["To", this.fmtPt(q)]],
+      rows: () => tr([["Distance", this.fmtLen(d)], ["ΔX", this.fmtLen(Math.abs(q[0] - p[0]))], ["ΔY", this.fmtLen(Math.abs(q[1] - p[1]))],
+        ["Angle", `${((Math.atan2(q[1] - p[1], q[0] - p[0]) * 180) / Math.PI).toFixed(2)}°`], ["From", this.fmtPt(p)], ["To", this.fmtPt(q)]]),
     };
   }
 
@@ -710,8 +712,8 @@ export class GerberView {
     return {
       id: `g${this.nextId++}`, type: "clearance", title: "Clearance", value: g.d, pts: [g.p, g.q], feats: [a, b], visible: true,
       text: () => this.fmtLen(g.d),
-      rows: () => [["Clearance", g.d > 0 ? this.fmtLen(g.d) : "0 (touching or overlapping)"], ["ΔX", this.fmtLen(Math.abs(g.q[0] - g.p[0]))], ["ΔY", this.fmtLen(Math.abs(g.q[1] - g.p[1]))],
-        ["First", `${da.title} ${da.text()}`], ["Second", `${db.title} ${db.text()}`]],
+      rows: () => tr([["Clearance", g.d > 0 ? this.fmtLen(g.d) : t("0 (touching or overlapping)")], ["ΔX", this.fmtLen(Math.abs(g.q[0] - g.p[0]))], ["ΔY", this.fmtLen(Math.abs(g.q[1] - g.p[1]))],
+        ["First", `${t(da.title)} ${da.text()}`], ["Second", `${t(db.title)} ${db.text()}`]]),
     };
   }
 
@@ -722,7 +724,7 @@ export class GerberView {
     return {
       id: `g${this.nextId++}`, type: "polyline", title: "Polyline length", value: len, pts, visible: true,
       text: () => this.fmtLen(len),
-      rows: () => [["Total length", this.fmtLen(len)], ["Segments", String(segs.length)], ...segs.slice(0, 12).map((l, i) => [`Segment ${i + 1}`, this.fmtLen(l)] as [string, string])],
+      rows: () => [...tr([["Total length", this.fmtLen(len)], ["Segments", String(segs.length)]]), ...segs.slice(0, 12).map((l, i) => [t("Segment {n}", { n: i + 1 }), this.fmtLen(l)] as [string, string])],
     };
   }
 
@@ -737,7 +739,7 @@ export class GerberView {
     return {
       id: `g${this.nextId++}`, type: title === "Area" ? "area" : "shapeArea", title, value: area, isArea: true, pts, closed: true, visible: true,
       text: () => this.fmtArea(area),
-      rows: () => [["Area", this.fmtArea(area)], ["Perimeter", this.fmtLen(perim)], ["Vertices", String(pts.length)]],
+      rows: () => tr([["Area", this.fmtArea(area)], ["Perimeter", this.fmtLen(perim)], ["Vertices", String(pts.length)]]),
     };
   }
 
@@ -745,7 +747,7 @@ export class GerberView {
   shapeArea(r: FeatRef): GMeasure | null {
     const o = this.obj(r);
     const loop = this.loopOf(r);
-    if (loop) { const m = this.mkArea(loop.pts, "Enclosed area", loop.length); m.value = loop.area; m.text = () => this.fmtArea(loop.area); m.rows = () => [["Area", this.fmtArea(loop.area)], ["Perimeter", this.fmtLen(loop.length)], ["Layer", this.lay(r).L.label]]; return m; }
+    if (loop) { const m = this.mkArea(loop.pts, "Enclosed area", loop.length); m.value = loop.area; m.text = () => this.fmtArea(loop.area); m.rows = () => tr([["Area", this.fmtArea(loop.area)], ["Perimeter", this.fmtLen(loop.length)], ["Layer", layerLabel(this.lay(r).L.label)]]); return m; }
     if (o.t === "region" || o.t === "flash" || o.t === "hole" || o.t === "slot") {
       const d = this.describe(r);
       const f = this.feature(r);
@@ -763,7 +765,7 @@ export class GerberView {
       m.value = area;
       m.feats = [r];
       m.text = () => this.fmtArea(area);
-      m.rows = () => [["Area", this.fmtArea(area)], ["Shape", `${d.title} ${d.text()}`], ["Layer", this.lay(r).L.label]];
+      m.rows = () => tr([["Area", this.fmtArea(area)], ["Shape", `${t(d.title)} ${d.text()}`], ["Layer", layerLabel(this.lay(r).L.label)]]);
       return m;
     }
     return null;
@@ -833,7 +835,7 @@ export class GerberView {
         if (this.picks.length === 2) { this.addMeasurement(this.mkDistance(this.picks[0].p, this.picks[1].p)); this.picks = []; }
         break;
       case "clearance":
-        if (!pk.feat) { this.host.toast("Click a pad, track, hole or region."); break; }
+        if (!pk.feat) { this.host.toast(t("Click a pad, track, hole or region.")); break; }
         this.picks.push(pk);
         if (this.picks.length === 2) { this.addMeasurement(this.mkClearance(this.picks[0].feat!, this.picks[1].feat!)); this.picks = []; }
         break;
@@ -981,16 +983,16 @@ export class GerberView {
     if (last && (this.tool === "distance" || this.tool === "polyline" || this.tool === "area")) {
       const d = Math.hypot(s.p[0] - last[0], s.p[1] - last[1]);
       const dx = Math.abs(s.p[0] - last[0]), dy = Math.abs(s.p[1] - last[1]);
-      let t = `d ${this.fmtLen(d)}\nΔX ${this.fmtLen(dx)}  ΔY ${this.fmtLen(dy)}`;
-      if (this.tool === "polyline") { let L = d; for (let i = 1; i < this.picks.length; i++) L += Math.hypot(this.picks[i].p[0] - this.picks[i - 1].p[0], this.picks[i].p[1] - this.picks[i - 1].p[1]); t += `\nTotal ${this.fmtLen(L)}`; }
-      if (this.tool === "area" && this.picks.length >= 2) { const m = this.mkArea([...this.picks.map(p => p.p), s.p]); t += `\nArea ${m.text()}`; this.nextId--; }
-      return t;
+      let txt = `d ${this.fmtLen(d)}\nΔX ${this.fmtLen(dx)}  ΔY ${this.fmtLen(dy)}`;
+      if (this.tool === "polyline") { let L = d; for (let i = 1; i < this.picks.length; i++) L += Math.hypot(this.picks[i].p[0] - this.picks[i - 1].p[0], this.picks[i].p[1] - this.picks[i - 1].p[1]); txt += `\n${t("Total")} ${this.fmtLen(L)}`; }
+      if (this.tool === "area" && this.picks.length >= 2) { const m = this.mkArea([...this.picks.map(p => p.p), s.p]); txt += `\n${t("Area")} ${m.text()}`; this.nextId--; }
+      return txt;
     }
     if (this.hover) {
       const d = this.describe(this.hover);
       this.nextId--;
-      const net = d.rows().find(r => r[0] === "Net")?.[1];
-      return `${d.title} ${d.text()}${net ? ` · ${net}` : ""}`;
+      const net = d.rows().find(r => r[0] === t("Net"))?.[1];
+      return `${t(d.title)} ${d.text()}${net ? ` · ${net}` : ""}`;
     }
     return "";
   }
@@ -1074,7 +1076,7 @@ export class GerberView {
     const tip = this.tipText();
     this.tip(tip ? { x: sx, y: sy, text: tip } : null);
     const kindTxt: Record<SnapKind, string> = { vertex: "Corner / end", center: "Centre", mid: "Midpoint", edge: "Edge", perp: "Perpendicular", free: "" };
-    this.host.status(`${this.fmtPt(this.snap.p)} ${this.unit}`, kindTxt[this.snap.kind]);
+    this.host.status(`${this.fmtPt(this.snap.p)} ${this.unit}`, t(kindTxt[this.snap.kind]));
     this.drawOverlay();
   }
 
@@ -1200,7 +1202,12 @@ export class GerberView {
 
   exportSvg() { this.host.download(new Blob([this.svg()], { type: "image/svg+xml" }), `${this.baseName()}.svg`); }
 
-  csv(): string {
+  /** The interface language changed: redraw what has text in it. */
+  relocalize() { this.drawOverlay(); this.changed(); }
+
+  /** Measurement table; always English, like the 3D view's exports. */
+  csv(): string { return withLang("en", () => this.csvRows()); }
+  private csvRows(): string {
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
     const lines = [["#", "Type", "Value", "Unit", "Details"].join(",")];
     this.measurements.forEach((m, i) => {
@@ -1212,6 +1219,9 @@ export class GerberView {
 
   private baseName() { return (this.name || "pcb").replace(/\.[^.]+$/, ""); }
 }
+
+/** Row labels into the current language. */
+const tr = (rows: [string, string][]): [string, string][] => rows.map(([k, v]) => [t(k), v]);
 
 /** Outline of a primitive as a flat point list (capsules as round-ended polygons). */
 function primOutline(p: Feature["prims"][number]): number[] {

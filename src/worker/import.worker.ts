@@ -48,7 +48,7 @@ self.onmessage = async (e: MessageEvent<ImportRequest>) => {
     const parts: PartData[] = [];
     const n = res.meshes.length;
     for (let i = 0; i < n; i++) {
-      if (i % 4 === 0) post({ type: "progress", text: `Rebuilding topology ${i + 1}/${n}…`, pct: 40 + (55 * i) / n });
+      if (i % 4 === 0) post({ type: "progress", text: "Rebuilding topology {i}/{n}…", params: { i: i + 1, n }, pct: 40 + (55 * i) / n });
       parts.push(analyzeMesh(res.meshes[i]));
     }
     const tree = convertTree(res.root);

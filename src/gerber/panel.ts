@@ -4,6 +4,7 @@
 import type { GerberView, GMeasure, GTool } from "./GerberView";
 import type { GUnit } from "./model";
 import { bindTabs, busy, confirmModal, emptyState, type Panels } from "../ui";
+import { layerLabel, onLangChange, t } from "../i18n";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -48,7 +49,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
   });
   $("#g-clear").addEventListener("click", async () => {
     const n = g.measurements.length;
-    if (n && await confirmModal(n === 1 ? "Delete the measurement on this board?" : `Delete all ${n} measurements on this board?`, "Delete all")) g.clearMeasurements();
+    if (n && await confirmModal(n === 1 ? t("Delete the measurement on this board?") : t("Delete all {n} measurements on this board?", { n }), t("Delete all"))) g.clearMeasurements();
   });
 
   let dragFrom = -1;
@@ -60,12 +61,12 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
       row.className = "g-layer" + (l.visible ? "" : " off");
       row.draggable = true;
       row.setAttribute("role", "listitem");
-      row.title = `${l.L.name}\n${l.L.objs.length.toLocaleString()} objects · ${l.L.format === "excellon" ? "Excellon" : "Gerber"}, ${l.L.units}${l.L.warnings.length ? "\n" + l.L.warnings.join("\n") : ""}`;
-      const name = esc(l.L.label);
-      row.innerHTML = `<button class="grip" title="Drag, or Alt+↑ / Alt+↓, to reorder" aria-label="Reorder ${name}: Alt+Up or Alt+Down">⋮⋮</button>
-        <button class="eye" title="Show / hide" aria-label="${l.visible ? "Hide" : "Show"} ${name}" aria-pressed="${l.visible}">${l.visible ? "◉" : "○"}</button>
-        <input type="color" value="${l.color}" title="Layer colour" aria-label="Colour of ${name}" />
-        <span class="g-name"><b>${name}</b><small>${esc(l.L.name)}${l.L.warnings.length ? ` <span role="img" aria-label="has warnings">⚠</span>` : ""}</small></span>
+      row.title = `${l.L.name}\n${t("{n} objects", { n: l.L.objs.length.toLocaleString() })} · ${l.L.format === "excellon" ? "Excellon" : "Gerber"}, ${l.L.units}${l.L.warnings.length ? "\n" + l.L.warnings.map(w => t(w)).join("\n") : ""}`;
+      const name = esc(layerLabel(l.L.label));
+      row.innerHTML = `<button class="grip" title="${esc(t("Drag, or Alt+↑ / Alt+↓, to reorder"))}" aria-label="${esc(t("Reorder {name}: Alt+Up or Alt+Down", { name: layerLabel(l.L.label) }))}">⋮⋮</button>
+        <button class="eye" title="${esc(t("Show / hide"))}" aria-label="${esc(t(l.visible ? "Hide {name}" : "Show {name}", { name: layerLabel(l.L.label) }))}" aria-pressed="${l.visible}">${l.visible ? "◉" : "○"}</button>
+        <input type="color" value="${l.color}" title="${esc(t("Layer colour"))}" aria-label="${esc(t("Colour of {name}", { name: layerLabel(l.L.label) }))}" />
+        <span class="g-name"><b>${name}</b><small translate="no">${esc(l.L.name)}${l.L.warnings.length ? ` <span role="img" aria-label="${esc(t("has warnings"))}">⚠</span>` : ""}</small></span>
 `;
       row.querySelector(".eye")!.addEventListener("click", () => { g.setLayerStyle(i, { visible: !l.visible }); refocus(i, ".eye"); });
       row.addEventListener("keydown", e => {
@@ -86,7 +87,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
       row.addEventListener("drop", e => { e.preventDefault(); e.stopPropagation(); row.classList.remove("drop"); if (dragFrom >= 0 && dragFrom !== i) g.moveLayer(dragFrom, i); dragFrom = -1; });
       host.appendChild(row);
     });
-    if (!g.layers.length) emptyState(host, { icon: "layers", title: "No layers yet", text: "Open Gerber, Excellon drill files or a zipped set to see the board.", cta: "Open files", action: opts.open });
+    if (!g.layers.length) emptyState(host, { icon: "layers", title: t("No layers yet"), text: t("Open Gerber, Excellon drill files or a zipped set to see the board."), cta: t("Open files"), action: opts.open });
     for (const id of ["#g-all-on", "#g-all-off"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
   };
   /** After a re-render, puts keyboard focus back on the same control of a layer row. */
@@ -101,7 +102,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     host.innerHTML = "";
     const none = !g.measurements.length;
     for (const id of ["#g-csv", "#g-clear"]) $<HTMLButtonElement>(id).disabled = none;
-    if (none) { emptyState(host, { icon: "ruler", title: "No measurements yet", text: "Click a pad, track or hole with Smart measure; pin a result to keep it here.", cta: "Start Smart measure", action: startSmart }); return; }
+    if (none) { emptyState(host, { icon: "ruler", title: t("No measurements yet"), text: t("Click a pad, track or hole with Smart measure; pin a result to keep it here."), cta: t("Start Smart measure"), action: startSmart }); return; }
     const focused = document.activeElement?.closest("#g-m-list .m-item") ? [...host.children].indexOf(document.activeElement.closest(".m-item")!) : -1;
     const focusSel = document.activeElement?.classList.contains("vis") ? ".vis" : ".m-main";
     g.measurements.forEach((m, i) => {
@@ -109,9 +110,9 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
       el.className = "m-item" + (m.id === g.selected ? " sel" : "") + (m.visible ? "" : " off");
       el.setAttribute("role", "listitem");
       el.style.setProperty("--c", "#22d3ee");
-      const title = `${i + 1}. ${m.title}`, val = m.text();
+      const title = `${i + 1}. ${t(m.title)}`, val = m.text();
       el.innerHTML = `<span class="dot" aria-hidden="true"></span><button class="m-main" aria-pressed="${m.id === g.selected}" title="${esc(`${title}: ${val}`)}"><span class="t">${esc(title)}</span><span class="val">${esc(val)}</span></button>
-        <span class="acts"><button class="vis" title="Show / hide" aria-label="${m.visible ? "Hide" : "Show"} measurement ${i + 1}" aria-pressed="${m.visible}">${m.visible ? "◉" : "○"}</button><button class="del" title="Delete" aria-label="Delete measurement ${i + 1}">✕</button></span>`;
+        <span class="acts"><button class="vis" title="${t("Show / hide")}" aria-label="${t(m.visible ? "Hide measurement {n}" : "Show measurement {n}", { n: i + 1 })}" aria-pressed="${m.visible}">${m.visible ? "◉" : "○"}</button><button class="del" title="${t("Delete")}" aria-label="${t("Delete measurement {n}", { n: i + 1 })}">✕</button></span>`;
       el.querySelector(".m-main")!.addEventListener("click", () => { g.selected = m.id; g.drawOverlay(); renderAll(); });
       el.querySelector(".vis")!.addEventListener("click", e => { e.stopPropagation(); m.visible = !m.visible; g.drawOverlay(); renderAll(); });
       el.querySelector(".del")!.addEventListener("click", e => { e.stopPropagation(); g.deleteMeasurement(m.id); });
@@ -126,9 +127,9 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     if (!m) { box.hidden = true; return; }
     box.hidden = false;
     const isLive = m === g.live;
-    box.innerHTML = `<div class="ttl"><span>${esc(m.title)}</span><button class="x" title="Close (Esc)" aria-label="Close result">✕</button></div>
-      <div class="val"><span class="cp" title="Click to copy">${esc(m.text())}</span></div>
-      <div class="det">${m.rows().map(([k, v]) => `<div>${esc(k)}: <span class="cp" title="Click to copy">${esc(v)}</span></div>`).join("")}</div>
+    box.innerHTML = `<div class="ttl"><span>${esc(t(m.title))}</span><button class="x" title="${t("Close (Esc)")}" aria-label="${t("Close result")}">✕</button></div>
+      <div class="val"><span class="cp" translate="no" title="${t("Click to copy")}">${esc(m.text())}</span></div>
+      <div class="det">${m.rows().map(([k, v]) => `<div>${esc(k)}: <span class="cp" translate="no" title="${t("Click to copy")}">${esc(v)}</span></div>`).join("")}</div>
       <div class="acts">${isLive ? `<button class="btn small" data-a="pin" title="Keep this result (P)">Pin</button>` : ""}
       ${!isLive ? `<button class="btn small danger" data-a="del">Delete</button>` : ""}
       ${isLive && m.feats?.length === 1 ? `<button class="btn small" data-a="area" title="Area of this shape or closed outline (Shift+click)">Area</button>` : ""}</div>`;
@@ -145,9 +146,9 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     const rows: [string, string][] = [];
     if (s.bb) rows.push(["Board", `${g.fmtLen(s.bb[2] - s.bb[0], false)} × ${g.fmtLen(s.bb[3] - s.bb[1])}`]);
     rows.push(["Layers", String(g.layers.length)], ["Copper tracks", s.tracks.toLocaleString()], ["Copper pads", s.pads.toLocaleString()]);
-    if (s.holes) rows.push(["Holes", `${s.holes.toLocaleString()} (${s.drillSizes} sizes)`], ["Smallest hole", L(s.minHole)]);
+    if (s.holes) rows.push(["Holes", `${s.holes.toLocaleString()} (${t("{n} sizes", { n: s.drillSizes })})`], ["Smallest hole", L(s.minHole)]);
     if (s.minTrack !== null) rows.push(["Narrowest track", L(s.minTrack)]);
-    $("#g-stats").innerHTML = rows.map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`).join("");
+    $("#g-stats").innerHTML = rows.map(([k, v]) => `<span class="k">${esc(t(k))}</span><span class="v" translate="no">${esc(v)}</span>`).join("");
   };
 
   const renderAll = () => {
@@ -160,11 +161,12 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     for (const id of ["#g-png", "#g-svg", "#g-body"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
     document.querySelectorAll<HTMLButtonElement>("[data-gdim]").forEach(b => { const on = (b.dataset.gdim === "3d") === g.is3d; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
     const hint = $("#g-hint");
-    hint.innerHTML = TOOL_HINTS[g.tool] + (g.is3d ? ". Drag to orbit, right-drag to pan" : "");
+    hint.innerHTML = t(TOOL_HINTS[g.tool]) + (g.is3d ? t(". Drag to orbit, right-drag to pan") : "");
     renderMeasures();
     renderReadout();
   };
   let layersSig = "";
+  onLangChange(() => { layersSig = ""; });
   g.onChange(() => {
     const sig = g.layers.map(l => `${l.id}:${l.visible}`).join("|");
     if (sig !== layersSig) { layersSig = sig; renderLayers(); }
