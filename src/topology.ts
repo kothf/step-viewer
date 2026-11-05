@@ -23,6 +23,14 @@ export interface FaceInfo {
   radius?: number;
   color: V3 | null;
   edges: number[];
+  /** Exact surface kind from the B-rep, once the kernel has matched the face. */
+  surface?: "plane" | "cylinder" | "cone" | "sphere" | "torus" | "freeform";
+  /** Cone half angle (rad), from the B-rep. */
+  coneAngle?: number;
+  /** Torus major and minor radius, from the B-rep. */
+  torus?: [number, number];
+  /** Smallest and largest principal curvature (1/mm) at sampled points, from the B-rep. */
+  curvature?: [number, number];
 }
 
 export interface EdgeInfo {
@@ -40,6 +48,10 @@ export interface EdgeInfo {
   axis?: V3;
   radius?: number;
   sweep?: number;
+  /** Length (and circle data) come from the B-rep curve, not the polyline. */
+  exact?: boolean;
+  /** The B-rep curve is an ellipse. */
+  ellipse?: boolean;
 }
 
 export interface PartData {
@@ -58,6 +70,8 @@ export interface PartData {
   com: V3;
   bboxMin: V3;
   bboxMax: V3;
+  /** Volume, areas, lengths and radii were replaced by exact B-rep values. */
+  exact?: boolean;
 }
 
 export interface TreeNode {

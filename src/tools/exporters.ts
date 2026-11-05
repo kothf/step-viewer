@@ -76,8 +76,20 @@ export function snapshot(v: Viewer, ann: Annotations, opts: { scale: number; tra
   g.font = `600 ${12 * k}px system-ui, sans-serif`;
   g.textAlign = "center";
   g.textBaseline = "middle";
-  for (const b of ann.labelBoxes()) {
-    const w = g.measureText(b.text[0]).width + 14 * k, h = 20 * k;
+  const boxes = ann.labelBoxes();
+  // Leaders first, so the note boxes cover their inner ends.
+  for (const b of boxes) {
+    if (!b.from) continue;
+    g.strokeStyle = b.color;
+    g.lineWidth = 1.5 * k;
+    g.beginPath(); g.moveTo(b.from[0] * k, b.from[1] * k); g.lineTo(b.x * k, b.y * k); g.stroke();
+    g.fillStyle = b.color;
+    g.beginPath(); g.arc(b.from[0] * k, b.from[1] * k, 3 * k, 0, 2 * Math.PI); g.fill();
+  }
+  for (const b of boxes) {
+    const lines = b.text.length ? b.text : [""];
+    const lh = 15 * k;
+    const w = Math.max(...lines.map(l => g.measureText(l).width)) + 14 * k, h = b.from ? lines.length * lh + 8 * k : 20 * k;
     g.fillStyle = "rgba(255,255,255,0.94)";
     g.strokeStyle = b.color;
     g.lineWidth = 2 * k;
@@ -85,7 +97,7 @@ export function snapshot(v: Viewer, ann: Annotations, opts: { scale: number; tra
     g.roundRect(b.x * k - w / 2, b.y * k - h / 2, w, h, 5 * k);
     g.fill(); g.stroke();
     g.fillStyle = "#111827";
-    g.fillText(b.text[0], b.x * k, b.y * k + 0.5 * k);
+    lines.forEach((l, i) => g.fillText(l, b.x * k, b.y * k + (i - (lines.length - 1) / 2) * (b.from ? lh : 0) + 0.5 * k));
   }
   r.setPixelRatio(oldRatio);
   r.setSize(v.size.x, v.size.y, false);

@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-05
+
+### Added
+- Exact geometry: once a STEP, IGES or BREP model is open, a full OpenCASCADE kernel (opencascade.js, WebAssembly, about 15 MB compressed and cached by the browser) reads the file again in the background and matches its faces and edges to the ones on screen. Volume, centre of mass, surface and face areas, edge lengths, circle and arc radii come from the B-rep from then on, cones and tori are recognised, freeform faces get their real curvature, and the Smart card says where the values come from. There is no switch: measurements just become exact, and the status bar shows when the kernel is ready.
+- STEP export (**STEP** in Export): the whole model with its assembly, names and colours, or only the visible parts when some are hidden. PCB sets export the board body (outline, cut-outs, slots and holes, at the board thickness) as a STEP solid from the PCB Export panel.
+- Section profile to DXF and SVG: **DXF** and **SVG** buttons on each section plane save its cut curves as a 2D drawing in millimetres (DXF R12 for CAD, laser or waterjet; SVG at 1:1), one layer per part. Lines stay lines, holes become true circles and arcs.
+- Notes: the **✎ Note** tool (`T`) places a text note with a leader on the model. Drag the note to move it, double-click to edit it. Notes are saved with the measurements and drawn into PNG exports and the PDF report.
+- Open STL, OBJ and 3MF mesh files. Their triangles are grouped into planar and curved faces, so planes, holes (cylinders), spheres, edges and circles can be measured like a STEP model, along with sections, mass properties and the other tools.
+
 ## [1.12.0] - 2026-11-01
 
 ### Added
@@ -169,7 +178,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/kothf/step-viewer/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/kothf/step-viewer/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/kothf/step-viewer/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/kothf/step-viewer/compare/v1.10.0...v1.10.1

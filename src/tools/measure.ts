@@ -18,7 +18,7 @@ export interface Entity {
 
 export type MeasureType =
   | "distance" | "minDistance" | "angle3" | "angle" | "radius" | "diameter"
-  | "centerDistance" | "arcLength" | "point" | "bbox" | "smart";
+  | "centerDistance" | "arcLength" | "point" | "bbox" | "smart" | "note";
 
 export interface Measurement {
   id: string;
@@ -45,6 +45,7 @@ export const TOOL_INFO: Record<MeasureType, { title: string; picks: number; hint
   arcLength: { title: "Edge / arc length", picks: 1, hint: "Pick an edge" },
   point: { title: "Point & normal", picks: 1, hint: "Pick a point on the model" },
   bbox: { title: "Bounding box", picks: 0, hint: "" },
+  note: { title: "Note", picks: 1, hint: "Click a point on the model, then type the note" },
   smart: { title: "Smart measure", picks: 2, hint: "Click a point, edge or face, then a second one to measure between them" },
 };
 
@@ -402,6 +403,14 @@ export function measureBBox(v: Viewer, parts: Part[], color: string): Measuremen
   });
 }
 
+/** Default place of a note's text box: up and to the right of its point, in screen pixels. */
+export const NOTE_OFFSET: [number, number] = [48, -40];
+
+/** A text note pinned to a point on the model, with a leader to a movable text box. */
+export function makeNote(point: THREE.Vector3, text: string, color: string): Measurement {
+  return { ...base("note", 0, color, [point], [], point), data: { text, off: [...NOTE_OFFSET] } };
+}
+
 /** Label text (title, main value, detail lines) in the current units. */
 export function formatMeasurement(m: Measurement): { title: string; value: string; details: string[]; pairs?: [string, string][] } {
   const d = m.data;
@@ -433,6 +442,7 @@ export function formatMeasurement(m: Measurement): { title: string; value: strin
       const pairs = rows.map(([label, kind, x]) => [t(label), kind === "text" ? tx(String(x)) : fmtRow(kind, x)] as [string, string]);
       return { title: t(String(d.title)), value: String(d.prefix ?? "") + fmtRow(d.kind as RowKind, m.value, m.points[0]), details: pairs.map(p => p.join(" ")), pairs };
     }
+    case "note": return { title: t("Note"), value: String(d.text ?? ""), details: [] };
     case "bbox": return {
       title: t("Bounding box"), value: `${fmtLen(d.x as number, false)} × ${fmtLen(d.y as number, false)} × ${fmtLen(d.z as number)}`,
       details: [`${t("Diagonal")} ${L(m.value)}`, `${t("Parts")} ${d.parts}`],
@@ -547,6 +557,7 @@ export function smartBody(v: Viewer, part: Part, color: string): Measurement {
   if (d.closed) rows.push(["Centre of gravity", "pos", v3(v.toWorld(part, d.com))]);
   else rows.push(["Note", "text", "open shell: no volume"]);
   rows.push(["Part", "text", d.name || `#${part.idx + 1}`]);
+  rows.push(["Values from", "text", d.exact ? "exact B-rep geometry" : "the tessellation"]);
   return smart(geo, "Part", d.closed ? volume : d.area, d.closed ? "vol" : "area", rows, "", { style: "box" });
 }
 
@@ -571,7 +582,7 @@ function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
     const rows: Row[] = ed.type === "line"
       ? [...deltas(a, b), ["Direction", "dir", ed.dir!], ["Midpoint", "pos", v3(v.toWorld(e.part, ed.mid))]]
       : [["Chord", "len", a.distanceTo(b)]];
-    return smart(geo, ed.type === "line" ? "Edge length" : "Curve length", ed.length, "len", rows);
+    return smart(geo, ed.type === "line" ? "Edge length" : ed.ellipse ? "Ellipse length" : "Curve length", ed.length, "len", rows);
   }
   const f = e.face!;
   const area: Row = ["Area", "area", f.area];
@@ -591,8 +602,14 @@ function smartSingle(v: Viewer, e: Entity, color: string): Measurement {
     return smart(geo, "Planar face", f.area, "area", rows);
   }
   const rows: Row[] = [];
-  const k = curvatureRange(e.part, f);
-  if (k) rows.push(curvRow("Min radius of curvature ≈", k.kMax, v.modelSize), curvRow("Max radius of curvature ≈", k.kMin, v.modelSize));
+  if (f.surface === "cone" && f.coneAngle !== undefined) rows.push(["Surface", "text", "Cone"], ["Half angle", "ang", Math.abs(f.coneAngle)], ["Included angle", "ang", 2 * Math.abs(f.coneAngle)]);
+  else if (f.surface === "torus" && f.torus) rows.push(["Surface", "text", "Torus"], ["Major radius", "len", f.torus[0]], ["Minor radius", "len", f.torus[1]]);
+  else if (f.curvature) {
+    rows.push(curvRow("Min radius of curvature", f.curvature[1], v.modelSize), curvRow("Max radius of curvature", f.curvature[0], v.modelSize));
+  } else {
+    const k = curvatureRange(e.part, f);
+    if (k) rows.push(curvRow("Min radius of curvature ≈", k.kMax, v.modelSize), curvRow("Max radius of curvature ≈", k.kMin, v.modelSize));
+  }
   rows.push(["Point", "pos", v3(e.point)]);
   if (e.normal) rows.push(["Normal here", "dir", v3(e.normal)]);
   return smart(geo, "Face", f.area, "area", rows);

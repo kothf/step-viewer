@@ -57,6 +57,28 @@ const pcbFiles = {};
 for (const f of await readdir(pcbDir)) pcbFiles[f] = await readFile(join(pcbDir, f));
 pcbFiles["board.zip"] = zip(Object.entries(pcbFiles).map(([n, d]) => [`gerbers/${n}`, d]));
 pcbFiles["big-F_Cu.gbr"] = bigGerber(300);
+// Mesh files: a 48-sided cylinder (OBJ) and a 20×10×4 box (3MF).
+{
+  const n = 48, r = 5, h = 10, v = [], f = [];
+  for (let i = 0; i < n; i++) { const a = (2 * Math.PI * i) / n; v.push(`v ${r * Math.cos(a)} ${r * Math.sin(a)} 0`, `v ${r * Math.cos(a)} ${r * Math.sin(a)} ${h}`); }
+  v.push("v 0 0 0", `v 0 0 ${h}`);
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n, b0 = 2 * i + 1, t0 = 2 * i + 2, b1 = 2 * j + 1, t1 = 2 * j + 2;
+    f.push(`f ${b0} ${b1} ${t1}`, `f ${b0} ${t1} ${t0}`, `f ${2 * n + 1} ${b1} ${b0}`, `f ${2 * n + 2} ${t0} ${t1}`);
+  }
+  pcbFiles["cyl.obj"] = Buffer.from(["o Cylinder", ...v, ...f].join("\n"));
+  const bx = [[0, 0, 0], [20, 0, 0], [20, 10, 0], [0, 10, 0], [0, 0, 4], [20, 0, 4], [20, 10, 4], [0, 10, 4]];
+  const bt = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+  const model = `<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model" name="Block"><mesh><vertices>${bx.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}"/>`).join("")}</vertices><triangles>${bt.map(([a, b, c]) => `<triangle v1="${a}" v2="${b}" v3="${c}"/>`).join("")}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>`;
+  pcbFiles["block.3mf"] = zip([["_rels/.rels", Buffer.from(rels)], ["3D/3dmodel.model", Buffer.from(model)]]);
+}
+const occtImport = await createRequire(import.meta.url)("occt-import-js")();
+/** Reads a STEP file back with occt-import-js: meshes and their faces. */
+const readStep = buf => {
+  const r = occtImport.ReadStepFile(new Uint8Array(buf), { linearUnit: "millimeter" });
+  return { ok: r.success, meshes: r.meshes.length, faces: r.meshes.reduce((s, m) => s + m.brep_faces.length, 0) };
+};
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".png": "image/png" };
 const server = createServer(async (req, res) => {
   const rel = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -86,8 +108,8 @@ const errors = [];
 page.on("pageerror", e => errors.push(e.message));
 page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
 
-async function open(file) {
-  await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent(`/fixtures/${file}`)}`);
+async function open(file, kernel = false) {
+  await page.goto(`${origin}/index.html?debug${kernel ? "" : "&nokernel"}&url=${encodeURIComponent(`/fixtures/${file}`)}`);
   await page.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
 }
 
@@ -923,7 +945,7 @@ try {
     const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
     const untranslated = () => pg.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|IGES|BREP|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1043,6 +1065,158 @@ try {
     const quiet = await pg.evaluate(() => document.querySelector("#hint").hidden);
     check(/pcb/.test(tipsSeen) && /model/.test(tipsSeen) && off.hidden && off.v === "off" && quiet, `hints: each tip once, Turn off tips stops them (${JSON.stringify({ tipsSeen, off, quiet })})`);
     await ctx.close();
+  }
+
+  // --- exact geometry: the full kernel reads the file again; values switch to the B-rep ---
+  {
+    await open("rounded-cube/rounded-cube.step", true);
+    const mesh = await page.evaluate(() => ({ vol: window.__sv.viewer.parts[0].data.volume, exact: !!window.__sv.viewer.parts[0].data.exact }));
+    await page.waitForFunction(() => ["ready", "partial", "error"].includes(document.querySelector("#st-kernel").dataset.state), null, { timeout: 120000 });
+    const ex = await page.evaluate(() => {
+      const { viewer, handlePick, showBody, state } = window.__sv;
+      const p = viewer.parts[0], d = p.data;
+      const V3 = p.group.position.constructor;
+      const el = document.querySelector("#st-kernel");
+      const free = d.faces.filter(f => f.type === "other");
+      handlePick(null);
+      handlePick({ kind: "faceCenter", point: new V3(...d.faces[0].center), part: p, face: d.faces[0], normal: new V3(0, 0, 1), px: 0 });
+      showBody(p);
+      const rows = Object.fromEntries(JSON.parse(state.live.data.rows).map(([k, , x]) => [k, x]));
+      handlePick(null);
+      return { state: el.dataset.state, text: el.textContent, exact: d.exact, vol: d.volume, area: d.area, edges: d.edges.filter(e => e.exact).length, nEdges: d.edges.length,
+        surfaces: d.faces.map(f => f.surface), curv: free.filter(f => f.curvature).length, nFree: free.length, from: rows["Values from"], bodyVol: state.live?.value };
+    });
+    check(!mesh.exact && ex.state === "ready" && ex.text === "Exact geometry" && ex.exact, `exact: kernel reads the file in the background, status ${ex.state} (${ex.text})`);
+    // OCCT's exact volume of rounded-cube.step; the 'Normal' mesh gives 946.148.
+    check(near(ex.vol, 946.3497, 1e-3) && Math.abs(mesh.vol - ex.vol) > 0.1 && ex.from === "exact B-rep geometry",
+      `exact: volume ${ex.vol.toFixed(4)} mm³ from the B-rep (mesh ${mesh.vol.toFixed(4)}), readout says ${ex.from}`);
+    check(ex.edges === ex.nEdges && ex.surfaces.every(Boolean), `exact: all ${ex.nEdges} edges and every face matched to the B-rep (${ex.edges}, ${[...new Set(ex.surfaces)]})`);
+    check(ex.curv === ex.nFree, `exact: curvature from the surface on ${ex.curv}/${ex.nFree} freeform faces`);
+    const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#step-export", el => el.click())]);
+    const back = readStep(await readFile(await dl.path()));
+    check(dl.suggestedFilename() === "rounded-cube.step" && back.ok && back.meshes === 1 && back.faces === ex.surfaces.length,
+      `STEP export: ${dl.suggestedFilename()} reads back with ${back.meshes} solid and ${back.faces} faces`);
+  }
+  {
+    await open("cax-if/as1_pe_203.stp", true); // this one has true circles (as1-oc-214 has B-splines)
+    await page.waitForFunction(() => ["ready", "partial", "error"].includes(document.querySelector("#st-kernel").dataset.state), null, { timeout: 120000 });
+    const as = await page.evaluate(() => {
+      const { viewer } = window.__sv;
+      const ps = viewer.parts;
+      // Hide all but the first three parts: STEP export then saves only those.
+      ps.slice(3).forEach(p => { p.visible = false; p.group.visible = false; });
+      // Hole edges come as half circles. Exact ones have the file's radius (a round number) and length R·sweep.
+      const arcs = ps.flatMap(p => p.data.edges).filter(e => e.exact && (e.type === "circle" || e.type === "arc") && Math.abs(e.radius * 1000 - Math.round(e.radius * 1000)) < 1e-6);
+      return { n: ps.length, exact: ps.filter(p => p.data.exact).length, state: document.querySelector("#st-kernel").dataset.state, circles: arcs.length,
+        round: arcs.filter(e => Math.abs(e.length - e.sweep * e.radius) < 1e-9 * e.length).length };
+    });
+    check(as.state === "ready" && as.exact === as.n, `exact: all ${as.n} parts of the as1 assembly matched (${as.exact})`);
+    check(as.round > 10, `exact: ${as.round} hole edges have the exact radius, arcs of length R·sweep`);
+    const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#step-export", el => el.click())]);
+    const back = readStep(await readFile(await dl.path()));
+    check(/-parts\.step$/.test(dl.suggestedFilename()) && back.ok && back.meshes === 3, `STEP export: only the 3 visible parts (${dl.suggestedFilename()}, ${back.meshes} read back)`);
+  }
+
+  // --- section profile to DXF and SVG ---
+  {
+    await open("cube-10x10mm/Cube 10x10.stp");
+    await page.$eval('[data-sec="z"]', el => el.click());
+    await page.waitForTimeout(200);
+    const [dxf] = await Promise.all([page.waitForEvent("download"), page.$eval('#sec-list [data-a="dxf"]', el => el.click())]);
+    const txt = await readFile(await dxf.path(), "utf8");
+    const lines = (txt.match(/\n0\nLINE\n/g) || []).length;
+    const pairs = txt.split("\n").reduce((a, l, i, all) => (i % 2 ? a : [...a, [all[i].trim(), all[i + 1]]]), []);
+    const ents = pairs.slice(pairs.findIndex(([c, v]) => c === "2" && v === "ENTITIES"));
+    const xs = ents.filter(([c]) => c === "10" || c === "11").map(([, v]) => +v);
+    check(/\.dxf$/.test(dxf.suggestedFilename()) && /\$ACADVER\n1\nAC1009/.test(txt) && txt.trim().endsWith("EOF") && lines === 4 && near(Math.max(...xs) - Math.min(...xs), 10, 1e-6),
+      `section DXF: the cube's Z cut is 4 lines spanning 10 mm (${dxf.suggestedFilename()}, ${lines} lines, x ${Math.min(...xs)}…${Math.max(...xs)})`);
+    const [svg] = await Promise.all([page.waitForEvent("download"), page.$eval('#sec-list [data-a="svg"]', el => el.click())]);
+    const sv = await readFile(await svg.path(), "utf8");
+    check(/<svg[^>]+width="10\.\d+mm"/.test(sv) && (sv.match(/<line /g) || []).length === 4, "section SVG: 4 lines at 1:1 in millimetres");
+    await open("cax-if/as1-oc-214.stp");
+    const circ = await page.evaluate(async () => {
+      const { section, viewer } = window.__sv;
+      const V3 = viewer.camera.position.constructor;
+      // Through the plate with the holes: a plane across their axes.
+      const holes = viewer.parts.flatMap(p => p.data.faces.filter(f => f.type === "cylinder").map(f => ({ p, f })));
+      const { p, f } = holes[0];
+      const ax = new V3(...f.axis), c = viewer.toWorld(p, f.center);
+      section.add("Hole", ax, c.dot(ax));
+      section.updateProfiles();
+      window.__sv.renderSections();
+      return section.planes.length;
+    });
+    const [d2] = await Promise.all([page.waitForEvent("download"), page.$eval('#sec-list [data-a="dxf"]', el => el.click())]);
+    const t2 = await readFile(await d2.path(), "utf8");
+    const nCirc = (t2.match(/\n0\nCIRCLE\n/g) || []).length;
+    check(circ === 1 && nCirc > 0, `section DXF: holes cut square to their axis are CIRCLE entities (${nCirc}, ${(t2.match(/\n0\nARC\n/g) || []).length} arcs)`);
+  }
+
+  // --- markup notes: text with a leader, kept, in snapshots ---
+  {
+    await open("cube-10x10mm/Cube 10x10.stp");
+    await page.evaluate(() => {
+      const { viewer, handlePick, setTool } = window.__sv;
+      const p = viewer.parts[0], f = p.data.faces.find(x => x.normal?.[2] > 0.99);
+      const V3 = p.group.position.constructor;
+      setTool("note");
+      handlePick({ kind: "faceCenter", point: new V3(...f.center), part: p, face: f, normal: new V3(0, 0, 1), px: 0 });
+    });
+    await page.waitForSelector("#note-dlg[open]");
+    await page.fill("#note-text", "Deburr all edges\nRa 1.6");
+    await page.click('#note-dlg [data-a="ok"]');
+    await page.waitForTimeout(100);
+    const note = await page.evaluate(async () => {
+      const { state, annotations, setTool } = window.__sv;
+      setTool("select");
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const m = state.measurements.find(x => x.type === "note");
+      const el = document.querySelector("#labels .m-note"), leader = document.querySelector("#labels .m-leader");
+      const boxes = annotations.labelBoxes().filter(b => b.from);
+      const saved = JSON.parse(localStorage.getItem(state.fileKey) || "[]").some(x => x.type === "note" && x.data.text === "Deburr all edges\nRa 1.6");
+      return { text: m?.data.text, label: el?.textContent, leader: leader && parseFloat(leader.style.width), box: boxes[0]?.text, saved, translate: el?.getAttribute("translate"), item: document.querySelector("#m-list")?.textContent.includes("Deburr") };
+    });
+    check(note.text === "Deburr all edges\nRa 1.6" && note.label === note.text && note.translate === "no" && note.leader > 30, `note: text box with a leader on the model (${JSON.stringify(note.label)}, leader ${note.leader?.toFixed(0)} px)`);
+    check(note.saved && note.item && note.box?.length === 2, `note: kept with the file's measurements, listed, and drawn into snapshots (${JSON.stringify(note.box)})`);
+  }
+
+  // --- mesh files: STL, OBJ and 3MF are grouped into faces for measuring ---
+  {
+    await open("cube-10x10mm/Cube 10x10.stl");
+    const stl = await page.evaluate(() => {
+      const d = window.__sv.viewer.parts[0].data, el = document.querySelector("#st-kernel");
+      return { planes: d.faces.filter(f => f.type === "plane").length, faces: d.faces.length, lines: d.edges.filter(e => e.type === "line").length, edges: d.edges.length, vol: d.volume, closed: d.closed, kernel: el.hidden };
+    });
+    check(stl.planes === 6 && stl.faces === 6 && stl.lines === 12 && stl.edges === 12 && stl.closed && near(stl.vol, 1000, 1e-6) && stl.kernel,
+      `STL: 12 triangles become 6 planar faces and 12 edges, V=${stl.vol} (${JSON.stringify(stl)})`);
+    await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/cyl.obj")}`);
+    await page.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+    const obj = await page.evaluate(() => {
+      const d = window.__sv.viewer.parts[0].data;
+      const cyl = d.faces.find(f => f.type === "cylinder");
+      return { faces: d.faces.map(f => f.type).sort().join(","), r: cyl?.radius, circles: d.edges.filter(e => e.type === "circle").map(e => e.radius), name: d.name };
+    });
+    check(obj.faces === "cylinder,plane,plane" && near(obj.r, 5, 1e-6) && obj.circles.length === 2 && obj.circles.every(r => near(r, 5, 1e-6)),
+      `OBJ: a 48-sided cylinder reads as one cylinder R${obj.r?.toFixed(4)} with two circular edges (${obj.faces})`);
+    await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/block.3mf")}`);
+    await page.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+    const tmf = await page.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { planes: d.faces.filter(f => f.type === "plane").length, vol: d.volume, box: [0, 1, 2].map(k => d.bboxMax[k] - d.bboxMin[k]) }; });
+    check(tmf.planes === 6 && near(tmf.vol, 800, 1e-6) && tmf.box.join() === "20,10,4", `3MF: a 20×10×4 block, 6 planar faces, V=${tmf.vol}`);
+  }
+
+  // --- PCB board body as a STEP solid ---
+  {
+    await page.goto(`${origin}/index.html?debug&url=${encodeURIComponent("/pcb/board.zip")}`);
+    await page.waitForFunction(() => window.__sv?.gerber.layers.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
+    const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 120000 }), page.$eval("#g-step", el => el.click())]);
+    const buf = await readFile(await dl.path());
+    const back = readStep(buf);
+    const cyl = (buf.toString("latin1").match(/CYLINDRICAL_SURFACE/g) || []).length;
+    const res = occtImport.ReadStepFile(new Uint8Array(buf), { linearUnit: "millimeter" });
+    const zs = res.meshes[0].attributes.position.array.filter((_, i) => i % 3 === 2);
+    const holes = await page.evaluate(() => window.__sv.gerber.boardStepBody().holes.length);
+    check(/-board\.step$/.test(dl.suggestedFilename()) && back.ok && back.meshes === 1 && holes > 0 && cyl >= holes && near(Math.min(...zs), -0.8) && near(Math.max(...zs), 0.8),
+      `PCB STEP: board body is one solid, 1.6 mm thick, ${holes} holes as ${cyl} cylinders (${dl.suggestedFilename()}, ${back.meshes} solid, z ${Math.min(...zs)}…${Math.max(...zs)})`);
   }
 
   // --- PCB performance: ~270k objects ---

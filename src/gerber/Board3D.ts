@@ -61,6 +61,8 @@ export class Board3D {
   private dirty = true;
   /** The board body as built: outline, cut-outs and the holes cut into it. */
   private body: { outer: number[]; cutouts: number[][]; holes: number[][] } | null = null;
+  /** The drilled holes and slots cut into the body. */
+  private cutHoles: Hole[] = [];
   private queued = false;
   private fitted = false;
   private w = 1;
@@ -277,6 +279,7 @@ export class Board3D {
     }
 
     this.body = { outer: outer!, cutouts, holes: cut.map(holePts) };
+    this.cutHoles = cut;
     const shape = new THREE.Shape(v2(outer!));
     for (const c of cutouts) shape.holes.push(new THREE.Path(v2(c)));
     for (const h of cut) shape.holes.push(new THREE.Path(v2(holePts(h))));
@@ -391,6 +394,15 @@ export class Board3D {
 
   /** Builds the geometry now if the layer set or thickness changed. */
   ensureBuilt(g: GerberView) { if (this.dirty) this.build(g); return !!this.body; }
+
+  /** The body for a STEP solid: outline and cut-out loops (slots as loops too), round holes as [x, y, Ø]. */
+  stepBody() {
+    if (!this.body) return null;
+    const round = (h: Hole) => h.x1 === h.x2 && h.y1 === h.y2;
+    const loops = [this.body.outer, ...this.body.cutouts, ...this.cutHoles.filter(h => !round(h)).map(holePts)];
+    const holes = this.cutHoles.filter(round).map(h => [h.x1, h.y1, 2 * h.r] as [number, number, number]);
+    return { loops, holes, z0: -this.thickness / 2, thickness: this.thickness };
+  }
 
   /**
    * The board body as an OpenCASCADE-style mesh (one B-rep face per top, bottom,

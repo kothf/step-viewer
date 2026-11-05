@@ -3,12 +3,12 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import { formatMeasurement, type Measurement } from "./measure";
+import { formatMeasurement, NOTE_OFFSET, type Measurement } from "./measure";
 import { fmtLen } from "./units";
 import { csys } from "./csys";
 
 interface Leg { el: HTMLDivElement; at: number[] }
-interface Drawn { group: THREE.Group; label: HTMLDivElement; legs: Leg[] }
+interface Drawn { group: THREE.Group; label: HTMLDivElement; legs: Leg[]; leader?: HTMLDivElement }
 
 const AXIS_COLORS = ["#e03131", "#2f9e44", "#1c7ed6"];
 
@@ -72,12 +72,27 @@ export class Annotations {
     label.className = "m-label" + (selected ? " selected" : "");
     label.style.setProperty("--c", m.color);
     label.dataset.id = m.id;
-    // One line only, so labels never cover the model; details go to the readout card.
-    label.innerHTML = `<b>${f.value}</b>`;
-    label.title = [f.title, ...f.details].join("\n");
     label.hidden = !m.visible;
+    let leader: HTMLDivElement | undefined;
+    if (m.type === "note") {
+      // Notes are the user's own text: several lines, never translated, and the box can be dragged.
+      label.classList.add("m-note");
+      label.setAttribute("translate", "no");
+      label.textContent = String(m.data.text ?? "");
+      label.title = "";
+      leader = document.createElement("div");
+      leader.className = "m-leader";
+      leader.style.setProperty("--c", m.color);
+      leader.hidden = !m.visible;
+      this.layer.appendChild(leader);
+      this.dragNote(label, m);
+    } else {
+      // One line only, so labels never cover the model; details go to the readout card.
+      label.innerHTML = `<b>${f.value}</b>`;
+      label.title = [f.title, ...f.details].join("\n");
+    }
     this.layer.appendChild(label);
-    return { group, label, legs };
+    return { group, label, legs, leader };
   }
 
   /**
@@ -116,10 +131,40 @@ export class Annotations {
     return g;
   }
 
+  /** Called when a note's text box has been dragged to a new place. */
+  onNoteMoved: ((m: Measurement) => void) | null = null;
+
+  private dragNote(label: HTMLDivElement, m: Measurement) {
+    label.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const off = (m.data.off as number[] | undefined) ?? NOTE_OFFSET;
+      const x0 = e.clientX, y0 = e.clientY, o0 = [off[0], off[1]];
+      let moved = false;
+      label.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => {
+        const dx = ev.clientX - x0, dy = ev.clientY - y0;
+        if (!moved && Math.hypot(dx, dy) < 3) return;
+        moved = true;
+        m.data.off = [o0[0] + dx, o0[1] + dy];
+        this.place();
+      };
+      const up = () => {
+        label.removeEventListener("pointermove", move);
+        label.removeEventListener("pointerup", up);
+        label.removeEventListener("pointercancel", up);
+        if (moved) { label.dataset.dragged = "1"; this.onNoteMoved?.(m); }
+      };
+      label.addEventListener("pointermove", move);
+      label.addEventListener("pointerup", up);
+      label.addEventListener("pointercancel", up);
+    });
+  }
+
   private dispose(d: Drawn) {
     d.group.traverse(o => { const x = o as any; x.geometry?.dispose(); x.material?.dispose(); });
     d.group.removeFromParent();
     d.label.remove();
+    d.leader?.remove();
     for (const l of d.legs) l.el.remove();
   }
 
@@ -129,6 +174,7 @@ export class Annotations {
       const m = this.lookup?.(id);
       const shown = !!m && m.visible;
       if (!shown) d.label.hidden = true;
+      if (d.leader && !shown) d.leader.hidden = true;
       for (const l of d.legs) if (!shown) l.el.hidden = true;
       if (!shown) continue;
       const put = (el: HTMLElement, at: number[]) => {
@@ -136,22 +182,45 @@ export class Annotations {
         el.hidden = this.tmp.z > 1 || this.tmp.z < -1;
         el.style.transform = `translate(${((this.tmp.x + 1) / 2) * size.x}px, ${((1 - this.tmp.y) / 2) * size.y}px) translate(-50%, -50%)`;
       };
-      put(d.label, m.labelAt);
+      if (m.type === "note") this.placeNote(d, m);
+      else put(d.label, m.labelAt);
       for (const l of d.legs) put(l.el, l.at);
     }
+  }
+
+  /** A note's text box at its offset from the point, and the leader line from the point to the box. */
+  private placeNote(d: Drawn, m: Measurement) {
+    const { camera, size } = this.viewer;
+    this.tmp.set(...(m.points[0] as [number, number, number])).project(camera);
+    const off = (m.data.off as number[] | undefined) ?? NOTE_OFFSET;
+    const ax = ((this.tmp.x + 1) / 2) * size.x, ay = ((1 - this.tmp.y) / 2) * size.y;
+    const behind = this.tmp.z > 1 || this.tmp.z < -1;
+    const bx = ax + off[0], by = ay + off[1];
+    d.label.hidden = behind;
+    d.label.style.transform = `translate(${bx}px, ${by}px) translate(-50%, -50%)`;
+    const L = d.leader!;
+    L.hidden = behind;
+    L.style.width = `${Math.hypot(off[0], off[1])}px`;
+    L.style.transform = `translate(${ax}px, ${ay}px) rotate(${Math.atan2(off[1], off[0])}rad)`;
   }
 
   lookup: ((id: string) => Measurement | undefined) | null = null;
 
   /** Screen-space label boxes, for compositing labels into snapshots. */
   labelBoxes() {
-    const out: { x: number; y: number; text: string[]; color: string }[] = [];
+    const out: { x: number; y: number; text: string[]; color: string; from?: [number, number] }[] = [];
     const host = this.layer.getBoundingClientRect();
     for (const [id, d] of this.drawn) {
       const m = this.lookup?.(id);
       if (!m || d.label.hidden) continue;
       const r = d.label.getBoundingClientRect();
       const f = formatMeasurement(m);
+      if (m.type === "note") {
+        const off = (m.data.off as number[] | undefined) ?? NOTE_OFFSET;
+        const x = r.left - host.left + r.width / 2, y = r.top - host.top + r.height / 2;
+        out.push({ x, y, text: String(m.data.text ?? "").split("\n"), color: m.color, from: [x - off[0], y - off[1]] });
+        continue;
+      }
       out.push({ x: r.left - host.left + r.width / 2, y: r.top - host.top + r.height / 2, text: [f.value], color: m.color });
       for (const l of d.legs) {
         if (l.el.hidden) continue;
