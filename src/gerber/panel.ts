@@ -9,7 +9,7 @@ import { layerLabel, onLangChange, t } from "../i18n";
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void; open: () => void; openBody: () => void; panels: Panels }) {
+export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => void; open: () => void; openBody: () => void; exportStep: () => Promise<void> | void; panels: Panels }) {
   // Tabs
   const selectTab = bindTabs($("#g-left .g-tabs"), tab => {
     document.querySelectorAll("#g-left .g-tab").forEach(t => t.classList.toggle("on", t.id === `g-tab-${tab}`));
@@ -37,6 +37,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
   const thick = $<HTMLInputElement>("#g-thick");
   thick.addEventListener("change", () => { const v = parseFloat(thick.value); thick.value = String(g.setThickness(isFinite(v) ? v : 1.6)); });
   $("#g-body").addEventListener("click", e => busy(e.currentTarget as HTMLElement, () => opts.openBody()));
+  $("#g-step").addEventListener("click", e => busy(e.currentTarget as HTMLElement, () => opts.exportStep()));
   $("#g-all-on").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: true })));
   $("#g-all-off").addEventListener("click", () => g.layers.forEach((_, i) => g.setLayerStyle(i, { visible: false })));
   $("#g-png").addEventListener("click", e => busy(e.currentTarget as HTMLElement, () => g.png()));
@@ -158,7 +159,7 @@ export function bindGerberPanel(g: GerberView, opts: { copy: (text: string) => v
     $("[data-gview=flip]").classList.toggle("on", g.view.mirror);
     $("[data-gview=flip]").setAttribute("aria-pressed", String(g.view.mirror));
     document.querySelectorAll<HTMLButtonElement>("#g-tools button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.gtool === g.tool)));
-    for (const id of ["#g-png", "#g-svg", "#g-body"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
+    for (const id of ["#g-png", "#g-svg", "#g-body", "#g-step"]) $<HTMLButtonElement>(id).disabled = !g.layers.length;
     document.querySelectorAll<HTMLButtonElement>("[data-gdim]").forEach(b => { const on = (b.dataset.gdim === "3d") === g.is3d; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
     const hint = $("#g-hint");
     hint.innerHTML = t(TOOL_HINTS[g.tool]) + (g.is3d ? t(". Drag to orbit, right-drag to pan") : "");

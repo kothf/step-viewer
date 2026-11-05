@@ -14,8 +14,10 @@ export default defineConfig({
     extra: [
       { dir: "node_modules/occt-import-js", entry: { author: "Viktor Kovács" },
         files: ["node_modules/occt-import-js/dist/license.occt-import-js.txt"], note: "Loaded at runtime from the occt/ folder, unmodified." },
-      { entry: { name: "Open CASCADE Technology", version: "(in occt-import-js)", license: "LGPL-2.1 with the OCCT exception", author: "Open Cascade SAS", url: "https://dev.opencascade.org" },
+      { entry: { name: "Open CASCADE Technology", version: "(in occt-import-js and opencascade.js)", license: "LGPL-2.1 with the OCCT exception", author: "Open Cascade SAS", url: "https://dev.opencascade.org" },
         files: ["node_modules/occt-import-js/dist/license.occt.txt"], note: "Compiled into occt-import-js.wasm; shipped unmodified in the occt/ folder." },
+      { dir: "node_modules/opencascade.js", entry: { author: "Sebastian Alff" },
+        files: ["node_modules/opencascade.js/LICENSE"], note: "Full OpenCASCADE build for exact geometry and STEP export. Loaded in the background from the occt/ folder, unmodified." },
     ],
     // package.json names one maintainer; the licence names the copyright holders
     overrides: { three: { author: "three.js authors" }, jspdf: { author: "James Hall, yWorks GmbH" } },

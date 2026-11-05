@@ -114,6 +114,8 @@ export function confirmModal(text: string, ok = "Delete", title = "Are you sure?
 export function initModals() {
   const confirm = $<HTMLDialogElement>("#confirm");
   trapFocus(confirm, () => confirm.open);
+  const note = document.querySelector<HTMLDialogElement>("#note-dlg");
+  if (note) trapFocus(note, () => note.open);
 }
 
 // ---------- tabs ----------

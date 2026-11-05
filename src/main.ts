@@ -6,11 +6,12 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
-import { SectionManager } from "./viewer/Section";
+import { SectionManager, type SectionPlane } from "./viewer/Section";
+import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
-  CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
+  CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
   type Entity, type Measurement, type MeasureType,
 } from "./tools/measure";
@@ -28,6 +29,8 @@ import { bindModal, bindTabs, busy, confirmModal, emptyState, initModals, initPa
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
+import { KernelClient, type KernelStatus } from "./kernel/client";
+import { isMeshName, parseMesh } from "./meshLoad";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -224,6 +227,7 @@ bindGerberPanel(gerber, {
   copy: text => { navigator.clipboard?.writeText(text).then(() => toast(t("Copied {v}", { v: text }), "success"), () => toast(t("Copy failed"), true)); },
   open: openPicker,
   openBody: openBoardModel,
+  exportStep: () => exportBoardStep(),
   panels,
 });
 
@@ -252,6 +256,7 @@ function openBoardModel() {
   const mesh = gerber.boardBody();
   if (!mesh) { toast(t("Open a board with an outline or layers first."), true); return; }
   const part = analyzeMesh(mesh);
+  kernel.clear();
   showModel([part], { name: mesh.name, parts: [0], children: [] }, mesh.name, `sv:pcb:${mesh.name}:${gerber.thickness}`, t0);
   toast(t("Board body opened with the 3D model tools. Back to PCB returns to the layers."));
 }
@@ -266,6 +271,7 @@ $("#back-pcb").addEventListener("click", () => {
 async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
+  if (!append) kernel.clear();
   setPcbMode(true);
   const label = list.length === 1 ? list[0].name : t("{n} PCB files", { n: list.length });
   setDoc(label, "loading");
@@ -284,7 +290,7 @@ function pcbStats() {
   $("#st-stats").textContent = `${t("{n} layer|{n} layers", { n })} · ${t("{n} objects", { n: gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString() })}`;
 }
 
-const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep)$/i.test(n);
+const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf)$/i.test(n);
 
 /** Opens dropped or chosen files: one 3D model, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
@@ -310,7 +316,41 @@ async function openFile(file: File) {
   await openBuffer(buffer, file.name);
 }
 
+/** Runs the import worker on one request; null when it failed (the error is shown). */
+function runImport(name: string, msg: unknown, transfer: Transferable[]) {
+  return new Promise<{ parts: PartData[]; tree: TreeNode }>((resolve, reject) => {
+    worker.onmessage = (e: MessageEvent) => {
+      const d = e.data;
+      if (d.type === "progress") setLoading(true, t(d.text, d.params), d.pct);
+      else if (d.type === "done") resolve(d);
+      else reject(new Error(d.text));
+    };
+    worker.postMessage(msg, transfer);
+  }).catch(err => { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t(err.message) }), true); return null; });
+}
+
+/** STL, OBJ or 3MF: triangles only, grouped into faces so the measuring tools work. No B-rep, so no exact values or STEP. */
+async function openMesh(buffer: ArrayBuffer, name: string) {
+  const token = ++loadToken;
+  kernel.clear();
+  setDoc(name, "loading");
+  setLoading(true, t("Reading {name}…", { name }), 2);
+  state.meta = null;
+  const t0 = performance.now();
+  let meshes;
+  try { meshes = await parseMesh(buffer, name); }
+  catch (err) { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true); return; }
+  const result = await runImport(name, { kind: "mesh", name, meshes }, meshes.flatMap(m => (m.idx ? [m.pos.buffer, m.idx.buffer] : [m.pos.buffer])));
+  if (!result || token !== loadToken) return;
+  setLoading(true, t("Building scene…"), 97);
+  await new Promise(r => setTimeout(r, 0));
+  showModel(result.parts, result.tree, name, `sv:m:${name}:${buffer.byteLength || ""}`, t0);
+  showKernelStatus();
+  toast(t("Mesh file: faces are found from the triangles, sizes in millimetres. Exact geometry and STEP export need a STEP, IGES or BREP file."));
+}
+
 async function openBuffer(buffer: ArrayBuffer, name: string) {
+  if (isMeshName(name)) return openMesh(buffer, name);
   if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
   const token = ++loadToken;
   setDoc(name, "loading");
@@ -319,20 +359,74 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   const quality = $<HTMLSelectElement>("#quality").value as "draft" | "normal" | "fine";
   const occtBase = new URL("occt/", document.baseURI).href;
   const t0 = performance.now();
-  const result = await new Promise<{ parts: PartData[]; tree: TreeNode }>((resolve, reject) => {
-    worker.onmessage = (e: MessageEvent) => {
-      const d = e.data;
-      if (d.type === "progress") setLoading(true, t(d.text, d.params), d.pct);
-      else if (d.type === "done") resolve(d);
-      else reject(new Error(d.text));
-    };
-    worker.postMessage({ buffer, name, occtBase, quality }, [buffer]);
-  }).catch(err => { setLoading(false); setDoc(name, "error"); toast(t("Could not open {name}: {err}", { name, err: t(err.message) }), true); return null; });
+  // The kernel worker reads the file again (with its B-rep) once the model is on screen.
+  const copy = buffer.slice(0);
+  const result = await runImport(name, { buffer, name, occtBase, quality }, [buffer]);
   if (!result || token !== loadToken) return;
 
   setLoading(true, t("Building scene…"), 97);
   await new Promise(r => setTimeout(r, 0));
-  showModel(result.parts, result.tree, name, `sv:m:${name}:${buffer.byteLength || ""}`, t0);
+  showModel(result.parts, result.tree, name, `sv:m:${name}:${copy.byteLength || ""}`, t0);
+  startKernel(copy, name, token);
+}
+
+// ---------- exact geometry (full OpenCASCADE in the background) ----------
+const kernel = new KernelClient(new URL("occt/", document.baseURI).href);
+let kernelJob: Promise<number> | null = null;
+let kernelNote = "";
+/** `?nokernel` keeps mesh values only (tests that check the tessellation path). */
+const kernelOff = new URLSearchParams(location.search).has("nokernel");
+function startKernel(bytes: ArrayBuffer, name: string, token: number) {
+  if (kernelOff) return;
+  const parts = viewer.parts.map(p => p.data);
+  // Let the first frames draw before the 50 MB kernel starts compiling.
+  kernelJob = new Promise<void>(r => setTimeout(r, 300)).then(() => (token === loadToken ? kernel.open(bytes, name, parts, () => token === loadToken) : 0));
+  kernelJob.then(n => { if (n && token === loadToken) exactReady(); });
+}
+/** The parts now carry exact values: show them wherever a number is on screen. */
+function exactReady() {
+  if (state.live && state.livePicks.length) showLive(state.livePicks);
+  renderProps();
+  if (lastMassRun) runMass();
+}
+function showKernelStatus() {
+  const el = $("#st-kernel");
+  const s: KernelStatus = kernel.status;
+  const n = viewer.parts.filter(p => p.data.exact).length;
+  el.dataset.state = s;
+  el.textContent = s === "loading" ? t("Exact geometry: loading…") : s === "ready" ? t("Exact geometry") : s === "partial" ? t("Exact geometry: {n} of {m} parts", { n, m: viewer.parts.length }) : s === "error" ? t("Mesh values") : "";
+  el.title = s === "loading" ? t("Values come from the mesh until the full geometry kernel has read the file")
+    : s === "ready" || s === "partial" ? t("Volumes, areas, lengths, radii and curvature come from the exact B-rep surfaces and curves")
+    : s === "error" ? t("The full geometry kernel could not match this file; values come from the mesh") + (kernelNote ? ` (${kernelNote})` : "") : "";
+  el.hidden = s === "off";
+}
+kernel.onStatus = (_s, note) => { kernelNote = note ?? ""; showKernelStatus(); };
+
+/** Saves the visible parts as STEP (the whole file, with its assembly, when everything is visible). */
+async function exportStep() {
+  if (!viewer.parts.length) return;
+  if (state.fileKey.startsWith("sv:pcb:")) return exportBoardStep();
+  if (kernelJob && kernel.status === "loading") { toast(t("Loading the geometry kernel…")); await kernelJob; }
+  if (!kernel.file) { toast(t("STEP export needs a STEP, IGES or BREP model; mesh files have no B-rep."), true); return; }
+  const vis = viewer.parts.filter(p => p.visible);
+  if (!vis.length) { toast(t("Nothing is visible to export"), true); return; }
+  const all = vis.length === viewer.parts.length;
+  try {
+    const bytes = await kernel.step(all ? null : vis.map(p => p.idx), vis.map(p => p.data.name), vis.map(p => p.data.color));
+    download(new Blob([bytes], { type: "model/step" }), `${baseName()}${all ? "" : "-parts"}.step`);
+    toast(all ? t("Saved as STEP") : t("Saved {n} visible parts as STEP", { n: vis.length }));
+  } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
+}
+/** The PCB board body as a STEP solid: outline, cut-outs and drilled holes as true cylinders. */
+async function exportBoardStep() {
+  const body = gerber.boardStepBody();
+  if (!body) { toast(t("Open a board with an outline or layers first."), true); return; }
+  toast(t("Loading the geometry kernel…"));
+  try {
+    const bytes = await kernel.board(body);
+    download(new Blob([bytes], { type: "model/step" }), `${gerber.baseName()}-board.step`);
+    toast(t("Saved as STEP"));
+  } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
 }
 
 /** Shows parsed parts in the 3D model view (a STEP file, or a PCB's board body). */
@@ -698,7 +792,7 @@ function showAll() {
 }
 
 // ---------- tools ----------
-const TOOL_KEYS: Record<string, Tool> = { d: "distance", m: "minDistance", r: "radius", c: "centerDistance", l: "arcLength", a: "angle", n: "point", b: "bbox" };
+const TOOL_KEYS: Record<string, Tool> = { d: "distance", m: "minDistance", r: "radius", c: "centerDistance", l: "arcLength", a: "angle", n: "point", b: "bbox", t: "note" };
 
 function setTool(t: Tool) {
   if (t === "bbox") {
@@ -802,6 +896,17 @@ function handlePick(snap: Snap | null) {
     if (!sp) toast(t("The three points are in line; pick points that span a plane"), true);
     setTool("select");
     renderSections();
+    return;
+  }
+  if (state.tool === "note") {
+    const point = snap.point.clone(), part = snap.part;
+    pickMark(point);
+    viewer.invalidate();
+    noteDialog("").then(text => {
+      hl.pickMarks.clear();
+      viewer.invalidate();
+      if (text) { addMeasurement(tagParts(makeNote(point, text, nextColor()), [part])); hint("note"); }
+    });
     return;
   }
   const info = TOOL_INFO[state.tool];
@@ -1117,11 +1222,56 @@ function deleteMeasurement(id: string) {
 }
 
 $("#labels").addEventListener("click", e => {
-  const id = (e.target as HTMLElement).closest<HTMLElement>(".m-label")?.dataset.id;
+  const el = (e.target as HTMLElement).closest<HTMLElement>(".m-label");
+  const id = el?.dataset.id;
   if (!id) return;
+  if (el!.dataset.dragged) { delete el!.dataset.dragged; return; }
   state.selectedMeasurement = state.selectedMeasurement === id ? null : id;
   refreshMeasurements();
 });
+
+// Double-click a note to change its text.
+$("#labels").addEventListener("dblclick", async e => {
+  const id = (e.target as HTMLElement).closest<HTMLElement>(".m-note")?.dataset.id;
+  const m = state.measurements.find(x => x.id === id);
+  if (!m) return;
+  const text = await noteDialog(String(m.data.text ?? ""));
+  if (text === null) return;
+  if (!text) { deleteMeasurement(m.id); return; }
+  m.data.text = text;
+  saveMeasurements();
+  refreshMeasurements();
+});
+annotations.onNoteMoved = () => saveMeasurements();
+
+/** Asks for a note's text. Resolves with the trimmed text ("" when emptied), or null on Cancel / Esc. */
+function noteDialog(initial: string): Promise<string | null> {
+  const d = $<HTMLDialogElement>("#note-dlg");
+  const area = $<HTMLTextAreaElement>("#note-text");
+  area.value = initial;
+  $("#note-title").textContent = t(initial ? "Edit note" : "Add a note");
+  if (d.open) d.close();
+  const opener = document.activeElement as HTMLElement | null;
+  d.returnValue = "";
+  d.showModal();
+  area.focus();
+  area.select();
+  return new Promise(resolve => {
+    const onClick = (e: Event) => { const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a; if (a) d.close(a); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); d.close("ok"); } };
+    const onClose = () => {
+      if (d.open) return;
+      d.removeEventListener("click", onClick);
+      d.removeEventListener("close", onClose);
+      area.removeEventListener("keydown", onKey);
+      opener?.focus?.();
+      resolve(d.returnValue === "ok" ? area.value.trim().slice(0, 500) : null);
+    };
+    d.addEventListener("click", onClick);
+    d.addEventListener("close", onClose);
+    area.addEventListener("keydown", onKey);
+  });
+}
 
 function saveMeasurements() { if (state.fileKey) storage.set(state.fileKey, JSON.stringify(state.measurements)); }
 function loadMeasurements() {
@@ -1321,7 +1471,8 @@ function renderSections() {
       <button class="btn tiny" data-a="minus">−</button><button class="btn tiny" data-a="plus">+</button></div>
       <div class="ctl angles"><span class="lbl">Az</span><input type="number" data-k="az" step="1" value="${ang.az.toFixed(2)}" title="Normal azimuth from +X about Z (°)">
       <span class="lbl">El</span><input type="number" data-k="el" step="1" value="${ang.el.toFixed(2)}" title="Normal elevation from the XY plane (°)"></div>
-      <div class="stat" data-k="stat"></div>`;
+      <div class="stat" data-k="stat"></div>
+      <div class="ctl"><span class="lbl">${t("Cut profile")}</span><button class="btn tiny" data-a="dxf" title="${t("Save the cut curves as a 2D DXF drawing (mm) for CAD, laser or waterjet")}">DXF</button><button class="btn tiny" data-a="svg" title="${t("Save the cut curves as SVG at 1:1 (mm)")}">SVG</button></div>`;
     const q = <T extends HTMLElement>(sel: string) => el.querySelector(sel) as T;
     const chk = q<HTMLInputElement>('input[type="checkbox"]'), range = q<HTMLInputElement>('[data-k="range"]'), num = q<HTMLInputElement>('[data-k="off"]');
     const step = q<HTMLInputElement>('[data-k="step"]'), az = q<HTMLInputElement>('[data-k="az"]'), elv = q<HTMLInputElement>('[data-k="el"]');
@@ -1342,10 +1493,24 @@ function renderSections() {
     q('[data-a="rot"]').addEventListener("click", () => { section.setGizmo(sp, "rotate"); renderSections(); });
     q('[data-a="flip"]').addEventListener("click", () => section.flip(sp));
     q('[data-a="del"]').addEventListener("click", () => { section.remove(sp); renderSections(); });
+    q('[data-a="dxf"]').addEventListener("click", () => saveProfile(sp, "dxf"));
+    q('[data-a="svg"]').addEventListener("click", () => saveProfile(sp, "svg"));
     host.appendChild(el);
   }
   updateSectionReadouts();
   updateSectionDeps();
+}
+
+/** The plane's cut curves as a 2D drawing file. */
+function saveProfile(sp: SectionPlane, kind: "dxf" | "svg") {
+  if (sp.result === null) section.updateProfiles();
+  const d = sp.enabled ? profileDrawing(viewer, sp) : null;
+  if (!d) { toast(t("This plane does not cut the model"), true); return; }
+  const title = `${state.fileName} · ${sp.label} @ ${sp.offset.toFixed(3)} mm`;
+  const name = `${baseName()}-section-${sp.label.toLowerCase()}`;
+  if (kind === "dxf") download(new Blob([toDxf(d, title)], { type: "image/vnd.dxf" }), `${name}.dxf`);
+  else download(new Blob([toSvg(d, title)], { type: "image/svg+xml" }), `${name}.svg`);
+  toast(t("Saved {n} curves", { n: d.entities.length }));
 }
 
 /** Refreshes numbers in the plane cards in place (gizmo drags, profile updates) without rebuilding them. */
@@ -1526,6 +1691,7 @@ function report() {
   withLang("en", () => inspectionReport({ fileName: state.fileName, meta, mass: lastMass, measurements: state.measurements, image }));
 }
 $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
+$("#step-export").addEventListener("click", e => busy(e.currentTarget as HTMLElement, exportStep));
 $("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 
 // ---------- keyboard ----------
@@ -1589,4 +1755,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections } });

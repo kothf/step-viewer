@@ -302,6 +302,15 @@ export class GerberView {
     return this.b3.bodyMesh(`${this.baseName()} board`, mask ? [0.08, 0.36, 0.2] : [0.61, 0.54, 0.33]);
   }
 
+  /** The board body as loops and holes for a STEP solid, or null without layers. */
+  boardStepBody() {
+    if (!this.layers.length) return null;
+    if (!this.b3) { this.b3 = new Board3D(this.root.querySelector<HTMLCanvasElement>("#g-3d")!, this.over, () => this.view3dChanged()); this.b3.thickness = this.thickness0; this.b3.resize(this.w, this.h); }
+    if (!this.b3.ensureBuilt(this)) return null;
+    const b = this.b3.stepBody();
+    return b ? { ...b, name: `${this.baseName()} board` } : null;
+  }
+
   private view3dChanged() {
     if (this.b3!.sideChanged()) { this.view.mirror = this.b3!.bottom; this.hover = null; this.changed(); }
     this.drawOverlay();
@@ -1217,7 +1226,7 @@ export class GerberView {
     return lines.join("\n") + "\n";
   }
 
-  private baseName() { return (this.name || "pcb").replace(/\.[^.]+$/, ""); }
+  baseName() { return (this.name || "pcb").replace(/\.[^.]+$/, ""); }
 }
 
 /** Row labels into the current language. */

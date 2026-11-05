@@ -15,6 +15,7 @@ export const HINTS = {
   section: "Tip: drag the arrow on the plane, or type an offset, to move the cut. The cut curves can be snapped to for measuring.",
   pcb: "Tip: click a pad, track or hole for its size; a second click gives pitch and clearance. Shift+click a shape for its area, 3 shows the board in 3D.",
   pcb3d: "Tip: in 3D, drag orbits and right-drag pans; measuring works on the side you look at. B turns the board over.",
+  note: "Tip: drag a note's box to move it, double-click it to change the text. Notes appear in PNG snapshots and the PDF report.",
   tree: "Tip: type size>50 or vol<1000 in the filter to find large or small parts. Double-click a part to zoom to it.",
 } as const;
 export type HintId = keyof typeof HINTS;

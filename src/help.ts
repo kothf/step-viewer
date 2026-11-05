@@ -18,12 +18,13 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const REPO = "https://github.com/kothf/step-viewer";
 const ext = (href: string, text: string) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
 // the libraries MöbiusCAD is built on, named up front; the full list is below them
-const MAIN = ["three", "occt-import-js", "Open CASCADE Technology", "three-mesh-bvh", "jspdf", "fflate"];
+const MAIN = ["three", "occt-import-js", "opencascade.js", "Open CASCADE Technology", "three-mesh-bvh", "jspdf", "fflate"];
 const SHOWN: Record<string, string> = { three: "three.js", jspdf: "jsPDF" };
 const MAIN_WHAT: Record<string, [string, string]> = {
   "three": ["3D rendering", "3D-графика"],
   "occt-import-js": ["STEP / IGES / BREP import (WebAssembly)", "импорт STEP / IGES / BREP (WebAssembly)"],
-  "Open CASCADE Technology": ["CAD geometry kernel inside occt-import-js", "геометрическое ядро САПР внутри occt-import-js"],
+  "opencascade.js": ["exact geometry and STEP export (full OpenCASCADE, WebAssembly)", "точная геометрия и экспорт в STEP (полное ядро OpenCASCADE, WebAssembly)"],
+  "Open CASCADE Technology": ["CAD geometry kernel inside occt-import-js and opencascade.js", "геометрическое ядро САПР внутри occt-import-js и opencascade.js"],
   "three-mesh-bvh": ["fast picking and snapping", "быстрый выбор и привязки"],
   "jspdf": ["PDF reports", "PDF-отчёты"],
   "fflate": ["reading .zip PCB sets", "чтение .zip с платами"],
@@ -40,10 +41,10 @@ function about(l: Lang) {
   <div class="about-links">${ext(blog, ru ? "Статья в блоге" : "Blog post")} · ${ext(REPO, ru ? "Исходный код на <span translate=\"no\">GitHub</span>" : "Source on GitHub")} · ${ext(`${REPO}/blob/main/CHANGELOG.md`, ru ? "Что нового" : "What's new")}</div></div>
 </div>
 ${ru
-    ? `<p>Модели STEP, IGES и BREP и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
-<p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; расстояния на поверхностях свободной формы измеряются по сетке. Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`
-    : `<p>STEP, IGES and BREP models and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
-<p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; distances on freeform surfaces are measured on the mesh. Internal units are millimetres; units and decimals only change how values are shown.</p>`}
+    ? `<p>Модели STEP, IGES и BREP, сетки STL, OBJ и 3MF и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
+<p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; затем полное ядро (opencascade.js) в фоне заменяет объёмы, площади, длины, радиусы и кривизну точными значениями B-rep. Расстояния на поверхностях свободной формы измеряются по сетке. Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`
+    : `<p>STEP, IGES and BREP models, STL, OBJ and 3MF meshes and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
+<p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; then the full kernel (opencascade.js) replaces volumes, areas, lengths, radii and curvature with exact B-rep values in the background. Distances on freeform surfaces are measured on the mesh. Internal units are millimetres; units and decimals only change how values are shown.</p>`}
 <h4>${ru ? "Создано с помощью" : "Built with"}</h4>
 <ul class="credits-main" data-credits-main><li>${ru ? "Загрузка…" : "Loading…"}</li></ul>
 <details class="credits-all">
@@ -96,6 +97,7 @@ const EN: Tab[] = [
 <ul>
   <li><b>Open file</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) or drag files onto the window.</li>
   <li><b>3D models</b>: STEP (AP203, AP214, AP242), IGES and BREP. The mesh quality (Draft, Normal, Fine) in the header applies to the next file you open.</li>
+  <li><b>Mesh files</b>: STL, OBJ and 3MF. They hold only triangles, so MöbiusCAD groups them into flat and curved faces first; holes, cylinders and spheres are still recognised, but there are no exact values or STEP export. Sizes are read as millimetres.</li>
   <li><b>PCBs</b>: Gerber RS-274X / X2 layers, Excellon drill files, or a .zip with a whole set. Open several files at once to see them as one board.</li>
 </ul>
 <h4>Screen layout</h4>
@@ -123,13 +125,15 @@ const EN: Tab[] = [
   <li>The filter accepts a name or a condition: <code>size&gt;50</code>, <code>vol&lt;1000</code> (in the current units).</li>
   <li><b>Properties</b> shows the file header (protocol, author, PMI), part size, volume and area, and the selected face or edge. Isolate, hide, recolour or make a part transparent there.</li>
 </ul>
+<h4>Exact geometry</h4>
+<p>A model opens on its mesh, so you can measure at once. In the background the full OpenCASCADE kernel (about 15 MB, downloaded once and then cached by the browser) reads the file again; when the status bar shows <b>● Exact geometry</b>, volumes, mass, areas, edge and curve lengths, radii, cone angles and curvature come from the true B-rep surfaces and curves. Nothing needs to be switched on.</p>
 <h4>Section</h4>
-<p>Add up to three cutting planes: parallel to XY, YZ or XZ, on a selected planar face, through three picked points, or facing the view. Drag the arrow or the rings of the gizmo, or type an offset and angles. Caps fill the cut (with ANSI31 hatching, optionally in each part's colour), and the cut curves can be snapped to for measuring. <b>Snap to cut only</b> limits snapping to the section.</p>
+<p>Add up to three cutting planes: parallel to XY, YZ or XZ, on a selected planar face, through three picked points, or facing the view. Drag the arrow or the rings of the gizmo, or type an offset and angles. Caps fill the cut (with ANSI31 hatching, optionally in each part's colour), and the cut curves can be snapped to for measuring. <b>Snap to cut only</b> limits snapping to the section. <b>DXF</b> and <b>SVG</b> on a plane save its cut curves as a 2D drawing in millimetres, with true circles and arcs (XY, YZ and XZ planes keep the world axes).</p>
 <h4>Exploded view, mass and export</h4>
 <ul>
   <li><b>Exploded view</b> moves parts apart with the slider; <b>Move selected part</b> drags one part with a gizmo.</li>
   <li><b>Mass properties</b>: pick a material or type a density to get volume, mass, area, centre of mass and bounding box of the visible or selected parts.</li>
-  <li><b>Export</b>: PNG (also transparent, 2× to 4×), STL, OBJ, glTF and a PDF inspection report with the view, model data, mass and measurements.</li>
+  <li><b>Export</b>: <b>STEP</b> (the whole model with its assembly, names and colours, or only the visible parts), PNG (also transparent, 2× to 4×), STL, OBJ, glTF and a PDF inspection report with the view, model data, mass and measurements.</li>
 </ul>`,
   },
   {
@@ -152,6 +156,7 @@ const EN: Tab[] = [
   <tr><td>∠ Angle <kbd>A</kbd> · ∡ 3-point angle</td><td>Between edges or faces, or through three points</td></tr>
   <tr><td>⊕ Point / normal <kbd>N</kbd></td><td>Coordinates of a point and the surface normal there</td></tr>
   <tr><td>▭ Bounding box <kbd>B</kbd></td><td>Overall size of the visible or selected parts</td></tr>
+  <tr><td>✎ Note <kbd>T</kbd></td><td>A text note with a leader to a point on the model. Drag the box to move it, double-click to edit; notes show in PNG and the PDF report</td></tr>
 </table>
 <h4>Snapping, units and results</h4>
 <ul>
@@ -179,7 +184,7 @@ const EN: Tab[] = [
 </table>
 <ul>
   <li>Units for boards are mm, in or mil. <kbd>P</kbd> pins the Smart result; the list exports to CSV, the view to PNG or SVG.</li>
-  <li><b>Board</b> shows the size, copper and hole statistics. <b>Measure as 3D model</b> opens the board body in the 3D tools (thickness, hole diameters, sections, mass, STL); <b>Back to PCB</b> returns.</li>
+  <li><b>Board</b> shows the size, copper and hole statistics. <b>Measure as 3D model</b> opens the board body in the 3D tools (thickness, hole diameters, sections, mass, STL); <b>Back to PCB</b> returns. <b>STEP</b> under Export saves the board body as a solid with true round holes for mechanical CAD.</li>
 </ul>`,
   },
   {
@@ -191,7 +196,7 @@ ${table([
   ["F , 0", "Fit, isometric view"],
   ["1 – 5", "Display modes"],
   ["P / O", "Perspective / orthographic"],
-  ["D M R C L A N B", "Point–point, min distance, radius, centre–centre, length, angle, point, bounding box"],
+  ["D M R C L A N B T", "Point–point, min distance, radius, centre–centre, length, angle, point, bounding box, note"],
   ["I / H / U", "Isolate / hide the selected part / show all"],
   ["Del", "Delete the selected measurement"],
   ["Esc", "Cancel the tool, clear the selection"],
@@ -227,6 +232,7 @@ const RU: Tab[] = [
 <ul>
   <li><b>Открыть файл</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) или перетащите файлы в окно.</li>
   <li><b>3D-модели</b>: STEP (AP203, AP214, AP242), IGES и BREP. Качество сетки (черновое, обычное, точное) в заголовке применяется к следующему открытому файлу.</li>
+  <li><b>Сеточные файлы</b>: STL, OBJ и 3MF. В них только треугольники, поэтому MöbiusCAD сначала собирает их в плоские и кривые грани; отверстия, цилиндры и сферы всё равно распознаются, но точных значений и экспорта в STEP нет. Размеры читаются в миллиметрах.</li>
   <li><b>Печатные платы</b>: слои Gerber RS-274X / X2, файлы сверловки Excellon или .zip с полным комплектом. Откройте несколько файлов сразу, чтобы увидеть их как одну плату.</li>
 </ul>
 <h4>Устройство экрана</h4>
@@ -254,13 +260,15 @@ const RU: Tab[] = [
   <li>Фильтр принимает имя или условие: <code>size&gt;50</code>, <code>vol&lt;1000</code> (в текущих единицах).</li>
   <li><b>Свойства</b> показывают заголовок файла (протокол, автор, PMI), размер, объём и площадь детали, а также выбранную грань или ребро. Там же деталь можно изолировать, скрыть, перекрасить или сделать прозрачной.</li>
 </ul>
+<h4>Точная геометрия</h4>
+<p>Модель открывается по сетке, так что измерять можно сразу. В фоне полное ядро OpenCASCADE (около 15 МБ, загружается один раз, дальше браузер берёт его из кэша) читает файл ещё раз; когда в строке состояния появится <b>● Точная геометрия</b>, объёмы, масса, площади, длины рёбер и кривых, радиусы, углы конусов и кривизна берутся из настоящих поверхностей и кривых B-rep. Ничего включать не нужно.</p>
 <h4>Сечение</h4>
-<p>Добавьте до трёх секущих плоскостей: параллельно XY, YZ или XZ, по выбранной плоской грани, через три указанные точки или перпендикулярно взгляду. Тяните стрелку или кольца манипулятора либо введите смещение и углы. Заглушки закрашивают разрез (со штриховкой ANSI31, по желанию цветом детали), а к линиям разреза можно привязываться при измерениях. <b>Привязка только к разрезу</b> ограничивает привязку сечением.</p>
+<p>Добавьте до трёх секущих плоскостей: параллельно XY, YZ или XZ, по выбранной плоской грани, через три указанные точки или перпендикулярно взгляду. Тяните стрелку или кольца манипулятора либо введите смещение и углы. Заглушки закрашивают разрез (со штриховкой ANSI31, по желанию цветом детали), а к линиям разреза можно привязываться при измерениях. <b>Привязка только к разрезу</b> ограничивает привязку сечением. Кнопки <b>DXF</b> и <b>SVG</b> у плоскости сохраняют линии разреза как 2D-чертёж в миллиметрах с настоящими окружностями и дугами (у плоскостей XY, YZ и XZ сохраняются мировые оси).</p>
 <h4>Разнесённый вид, масса и экспорт</h4>
 <ul>
   <li><b>Разнесённый вид</b> раздвигает детали ползунком; <b>Переместить деталь</b> двигает одну деталь манипулятором.</li>
   <li><b>Массовые характеристики</b>: выберите материал или введите плотность и получите объём, массу, площадь, центр масс и габариты видимых или выбранных деталей.</li>
-  <li><b>Экспорт</b>: PNG (в том числе прозрачный, 2×–4×), STL, OBJ, glTF и PDF-отчёт контроля с видом, данными модели, массой и измерениями.</li>
+  <li><b>Экспорт</b>: <b>STEP</b> (вся модель со сборкой, именами и цветами или только видимые детали), PNG (в том числе прозрачный, 2×–4×), STL, OBJ, glTF и PDF-отчёт контроля с видом, данными модели, массой и измерениями.</li>
 </ul>`,
   },
   {
@@ -283,6 +291,7 @@ const RU: Tab[] = [
   <tr><td>∠ Угол <kbd>A</kbd> · ∡ Угол по 3 точкам</td><td>Между рёбрами или гранями либо через три точки</td></tr>
   <tr><td>⊕ Точка / нормаль <kbd>N</kbd></td><td>Координаты точки и нормаль к поверхности в ней</td></tr>
   <tr><td>▭ Габариты <kbd>B</kbd></td><td>Общий размер видимых или выбранных деталей</td></tr>
+  <tr><td>✎ Заметка <kbd>T</kbd></td><td>Текстовая заметка с выноской к точке на модели. Перетащите рамку, чтобы сдвинуть её, двойной щелчок меняет текст; заметки видны в PNG и PDF-отчёте</td></tr>
 </table>
 <h4>Привязка, единицы и результаты</h4>
 <ul>
@@ -310,7 +319,7 @@ const RU: Tab[] = [
 </table>
 <ul>
   <li>Единицы для плат: mm, in или mil. <kbd>P</kbd> закрепляет результат умного измерения; список выгружается в CSV, вид в PNG или SVG.</li>
-  <li><b>Плата</b> показывает размер, статистику меди и отверстий. <b>Измерить как 3D-модель</b> открывает тело платы в 3D-инструментах (толщина, диаметры отверстий, сечения, масса, STL); <b>Назад к плате</b> возвращает.</li>
+  <li><b>Плата</b> показывает размер, статистику меди и отверстий. <b>Измерить как 3D-модель</b> открывает тело платы в 3D-инструментах (толщина, диаметры отверстий, сечения, масса, STL); <b>Назад к плате</b> возвращает. <b>STEP</b> в разделе «Экспорт» сохраняет тело платы как твёрдое тело с настоящими круглыми отверстиями для механической САПР.</li>
 </ul>`,
   },
   {
@@ -322,7 +331,7 @@ ${table([
   ["F , 0", "Вписать, изометрия"],
   ["1 – 5", "Режимы отображения"],
   ["P / O", "Перспектива / ортогональная проекция"],
-  ["D M R C L A N B", "Точка–точка, мин. расстояние, радиус, центр–центр, длина, угол, точка, габариты"],
+  ["D M R C L A N B T", "Точка–точка, мин. расстояние, радиус, центр–центр, длина, угол, точка, габариты, заметка"],
   ["I / H / U", "Изолировать / скрыть выбранную деталь / показать все"],
   ["Del", "Удалить выбранное измерение"],
   ["Esc", "Отменить инструмент, снять выбор"],

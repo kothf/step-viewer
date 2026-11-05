@@ -8,7 +8,8 @@ MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical eng
 
 ## Features
 
-- **Formats**: STEP AP203 / AP214 / AP242 (`.step`, `.stp`), IGES, BREP. Assembly tree, part names and colours are kept.
+- **Formats**: STEP AP203 / AP214 / AP242 (`.step`, `.stp`), IGES, BREP. Assembly tree, part names and colours are kept. Mesh files (STL, OBJ, 3MF) open too: their triangles are grouped into planar and curved faces, so holes, planes and edges can still be measured.
+- **Exact geometry**: after a STEP, IGES or BREP model opens, a full OpenCASCADE kernel (opencascade.js, WebAssembly) reads the file again in the background and replaces the tessellation's values with the B-rep's own: volume, areas, edge lengths, radii, surface types and curvature. Nothing to switch; the status bar shows when it is done.
 - **Topology-aware**: faces and edges are rebuilt from the B-rep tessellation and classified (plane, cylinder, sphere; line, circle, arc). Radii, centres, axes and lengths come from the analytic fit, not from triangles.
 - **Display**: shaded + edges, shaded, wireframe, hidden line, X-ray; perspective / orthographic; NavCube (26 views) and view presets; ambient occlusion; light and dark themes.
 - **Smart measure** (default): click one entity for its size, a second for what relates them: pitch between holes, distance between parallel faces, centre to face, angle, or shortest distance. Details appear in a corner card; Pin keeps the result.
@@ -19,12 +20,14 @@ MöbiusCAD (formerly STEP Viewer) is a STEP and Gerber viewer for mechanical eng
   - point coordinates and surface normal, bounding box
   - colour-coded, pinned per file in the browser, exported as CSV or a PDF inspection report
 - **Sections**: up to 3 planes: XY / YZ / XZ, on a face, through 3 points or facing the view. Solid caps (stencil buffer) with ANSI31 hatching or per-part colours; a gizmo to drag and tilt the plane; numeric offset, step, azimuth/elevation; flip.
+- **Cut profile export**: save a section plane's cut curves as DXF (R12, mm) or SVG at 1:1, with circles and arcs kept as true circles and arcs.
+- **Notes**: text notes with leaders on the model (`T`), draggable, saved with the measurements and drawn into PNG and the PDF report.
 - **Measuring on the cut**: the cut profile is computed and drawn; snap to its curves, vertices, midpoints and circle centres (exact for cylinders cut square-on), or to the cap face. "Snap to cut only" keeps snapping in the section plane. Cut area per plane.
 - **Exploded view** following the assembly hierarchy, plus dragging single parts.
 - **Mass properties**: volume, mass (material presets or custom density), surface area, centre of mass, bounding box.
 - **Model tree**: show/hide, isolate, colour and opacity per part or sub-assembly; filter by name, `size>50`, `vol<1000`.
 - **Metadata**: STEP header, protocol, product revisions, materials, AP242 PMI entity counts.
-- **Export**: PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report.
+- **Export**: STEP (the whole model, or only the visible parts with their names and colours), PNG at 2–4× (optionally transparent, labels included), STL, OBJ, glTF (GLB), PDF report. A PCB's board body exports as a STEP solid with its holes.
 - **PCB / Gerber view**: open Gerber RS-274X and X2 layers, Excellon drill files, or a `.zip` of a whole Gerber set (drop several files at once). Layers are recognised from X2 file functions or common names (KiCad, Altium/Protel, Eagle) and all drawn on a dark 2D canvas, with per-layer show/hide, colour and drag-to-reorder stacking; bottom (mirrored) view.
 - **English / Russian interface** with an EN / RU switch in the header (remembered; `?lang=ru` in the URL), a Help dialog (`F1`) covering the features, measuring tools and shortcuts in both languages, and first-use tips that can be turned off.
 - **3D board**: switch the PCB view to 3D (`3`, back with `2`) to see the board outline extruded to its thickness with cut-outs, drilled and plated holes, copper, solder mask and silkscreen on both sides. It orbits like the model view, and the PCB measuring tools (smart, point to point, clearance, polyline, area, with snapping) work on the face you look at. **Measure as 3D model** opens the board body in the model view for its tools: thickness, hole diameters, angles, sections, mass properties and STL/glTF export.
