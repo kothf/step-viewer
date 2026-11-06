@@ -55,8 +55,8 @@ $(".brand").title = `MöbiusCAD v${__APP_VERSION__}`;
 
 // ---------- state ----------
 const UNIT_LIST: Unit[] = ["mm", "cm", "m", "in", "ft"];
-/** "plane3" picks three points for a section plane. */
-type Tool = MeasureType | "select" | "plane3";
+/** "plane3" picks three points for a section plane; "sectionFace" cuts on the next face clicked (the Section button). */
+type Tool = MeasureType | "select" | "plane3" | "sectionFace";
 const state = {
   fileName: "",
   fileKey: "",
@@ -953,6 +953,11 @@ function updateHint() {
       : `<b>${t("Smart measure")}</b> · ${t("click a point, edge or face; a second click measures between them")}`;
     return;
   }
+  if (state.tool === "sectionFace") {
+    h.hidden = false;
+    h.innerHTML = `<b>${t("Section")}</b> · ${t("click a flat face to cut there, or a cylinder to cut through its axis")} · <span class="muted">${t("Esc to cancel")}</span>`;
+    return;
+  }
   const info = state.tool === "plane3" ? PLANE3_INFO : TOOL_INFO[state.tool];
   const n = state.picks.length;
   h.hidden = false;
@@ -971,6 +976,12 @@ rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEvent
 }, true));
 const showPage = bindTabs(rpTabs, tab => {
   $$(".rp").forEach(s => s.classList.toggle("on", s.id === `rp-${tab}`));
+});
+// The Section button works like CAD: press it, then click the face to cut on.
+$("#rt-section").addEventListener("click", () => {
+  const open = $("#rp-section").classList.contains("on") && !$("#app").classList.contains("no-right");
+  if (open && viewer.parts.length && section.canAdd) setTool("sectionFace");
+  else if (state.tool === "sectionFace") setTool("select");
 });
 /** Labels fold into icons (measuring tools first, then the page tabs) when the strip runs out of room. */
 function fitToolbar() {
@@ -1056,6 +1067,10 @@ function handlePick(snap: Snap | null) {
     if (!sp) toast(t("The three points are in line; pick points that span a plane"), true);
     setTool("select");
     renderSections();
+    return;
+  }
+  if (state.tool === "sectionFace") {
+    if (snap.face) sectionOnFace({ part: snap.part, face: snap.face, point: snap.point.clone() });
     return;
   }
   if (state.tool === "note") {
@@ -1299,6 +1314,7 @@ canvas.addEventListener("pointerup", e => {
   if (moved > 4 || btn !== 0 || !viewer.parts.length) return;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
+  if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
   handlePick(snapper.pick(e.clientX - r.left, e.clientY - r.top));
 });
 canvas.addEventListener("pointermove", e => {
@@ -1316,6 +1332,13 @@ function hover() {
   }
   if (section.arrowHot) { $("#snap-marker").hidden = true; showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
   const r = canvas.getBoundingClientRect();
+  if (state.tool === "sectionFace") {
+    // Picking a face to cut on: light up the whole face under the cursor, no point snapping.
+    $("#snap-marker").hidden = true;
+    const f = faceUnder(lastPointer.x - r.left, lastPointer.y - r.top);
+    showEntity(hl.hoverFace, hl.hoverEdge, f ? { part: f.part, face: f.face, kind: "face" } : null);
+    return;
+  }
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
   const marker = $("#snap-marker");
@@ -1584,6 +1607,7 @@ section.onChange = () => updateSectionReadouts();
 
 function addSection(kind: string) {
   if (!viewer.parts.length) return;
+  if (state.tool === "sectionFace") setTool("select");
   if (!section.canAdd) { toast(t("Up to 3 section planes"), true); return; }
   const c = viewer.computeBounds().getCenter(new THREE.Vector3());
   let axis: THREE.Vector3, label: string;
@@ -1605,6 +1629,42 @@ function addSection(kind: string) {
   section.add(label, axis, c.dot(axis));
   renderSections();
   hint("section");
+}
+/** The B-rep face under a canvas point (section clipping respected), or null. */
+function faceUnder(sx: number, sy: number) {
+  const hit = viewer.pickMeshes(new THREE.Vector2((sx / viewer.size.x) * 2 - 1, -(sy / viewer.size.y) * 2 + 1));
+  if (!hit || hit.faceIndex == null) return null;
+  const part = viewer.partOf(hit.object);
+  const face = part?.data.faces[part.triFace[hit.faceIndex]];
+  return face ? { part, face, point: hit.point.clone() } : null;
+}
+
+/** Section from a face click: on a flat face the plane lies on it; on a cylinder it runs through the axis, square to the view. */
+function sectionOnFace(f: ReturnType<typeof faceUnder>) {
+  if (!f) return null;
+  if (!section.canAdd) { toast(t("Up to 3 section planes"), true); setTool("select"); return null; }
+  const { part, face, point } = f;
+  let sp: SectionPlane | null = null;
+  if (face.type === "plane" && face.normal) {
+    const n = new THREE.Vector3(...face.normal);
+    const p = viewer.toWorld(part, face.centroid);
+    sp = section.add("Face", n, p.dot(n) - viewer.modelSize * 1e-4, point);
+  } else if (face.type === "cylinder" && face.axis) {
+    const a = new THREE.Vector3(...face.axis).normalize();
+    const n = viewer.camera.getWorldDirection(new THREE.Vector3()).negate();
+    n.addScaledVector(a, -n.dot(a));
+    if (n.lengthSq() < 1e-8) n.set(0, 0, 1).cross(a).lengthSq() > 1e-8 ? n.set(0, 0, 1).cross(a) : n.set(1, 0, 0).cross(a);
+    n.normalize();
+    const c = viewer.toWorld(part, face.center);
+    sp = section.add("Axis", n, c.dot(n), c);
+  } else {
+    toast(t("Click a flat or cylindrical face"), true);
+    return null;
+  }
+  setTool("select");
+  renderSections();
+  hint("section");
+  return sp;
 }
 function addSectionFromFace(e: Entity) {
   if (!section.canAdd) { toast(t("Up to 3 section planes"), true); return null; }

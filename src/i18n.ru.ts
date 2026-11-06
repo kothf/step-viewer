@@ -182,6 +182,8 @@ export const RU: Record<string, string> = {
   "Back to the global coordinate system": "Вернуться к глобальной системе координат",
   "⌖ Global CSYS": "⌖ Глобальная СК",
   "Section": "Сечение",
+  "click a flat face to cut there, or a cylinder to cut through its axis": "щёлкните плоскую грань, чтобы разрезать по ней, или цилиндр, чтобы разрезать по его оси",
+  "Click a flat or cylindrical face": "Щёлкните плоскую или цилиндрическую грань",
   "Plane parallel to XY (normal Z)": "Плоскость параллельно XY (нормаль Z)",
   "Plane parallel to YZ (normal X)": "Плоскость параллельно YZ (нормаль X)",
   "Plane parallel to XZ (normal Y)": "Плоскость параллельно XZ (нормаль Y)",
