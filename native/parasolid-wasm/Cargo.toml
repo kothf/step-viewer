@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Pinned: rebuild with `npm run build:parasolid` after changing it.
-parasolid-core = { git = "https://github.com/monozukuri-ai/parasolid-kit", rev = "d093df64fd39e237e93a38edc9b833e9440b2ec9" }
+parasolid-core = { path = "../parasolid-core" }
 
 [profile.release]
 opt-level = "s"
