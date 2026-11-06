@@ -110,6 +110,7 @@ export class ModelController {
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
       this.sizeArrow();
+      this.placeCallouts();
     });
     this.bindDom();
     onLangChange(() => {
@@ -237,7 +238,9 @@ export class ModelController {
     if (!this.store) return;
     const doc = this.displayDoc();
     this.setBusy(1);
-    const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1);
+    const m = this.mode;
+    const previewAt = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") && m.draft.edges.length ? m.index : undefined;
+    const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
     this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
@@ -746,6 +749,7 @@ export class ModelController {
     else for (const r of refs) if (!list.some(x => same(x, r))) list.push(r);
     this.drawDecor();
     this.renderPanel();
+    void this.rebuild();
   }
 
   /** A persistent reference to a shown edge (between two named faces). */
@@ -781,6 +785,7 @@ export class ModelController {
     }
     this.decor.clear();
     this.arrow = null;
+    document.getElementById("mc-layer")?.replaceChildren();
     this.planeMeshes = [];
     this.lineMats = [];
     this.host.viewer.invalidate();
@@ -818,6 +823,7 @@ export class ModelController {
       const pos: number[] = [];
       for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
       this.lines(pos, 0xf08c00, 4);
+      this.drawRoundPreview(m.draft);
     }
     if (m.kind === "feature" && m.draft.type === "plane" && m.draft.axis) {
       const ed = this.edgeOf(m.draft.axis);
@@ -884,7 +890,6 @@ export class ModelController {
 
   private drawArrow() {
     this.arrow = null;
-    $("#mc-layer").replaceChildren();
     const f = this.arrowFeature();
     if (!f) return;
     const sk = this.store!.feature(f.sketch);
@@ -1032,6 +1037,47 @@ export class ModelController {
     mesh.renderOrder = 2300;
     mesh.raycast = () => {};
     this.decor.add(mesh);
+  }
+
+  /**
+   * Live preview of a fillet or chamfer (SolidWorks style): its new faces in see-through yellow over the
+   * body the edges are picked on, and a callout with the size at the first edge (FR-FT-031).
+   */
+  private drawRoundPreview(f: FilletFeature | ChamferFeature) {
+    const pv = this.last?.preview;
+    if (pv?.position.length && f.edges.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pv.position, 3));
+      g.computeVertexNormals();
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+      mesh.renderOrder = 2350;
+      mesh.raycast = () => {};
+      this.decor.add(mesh);
+    }
+    const ed = f.edges.length ? this.edgeOf(f.edges[0]) : null;
+    if (!ed) return;
+    const label = document.createElement("button");
+    label.className = "mc-handle mc-callout";
+    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
+    const size = (v: number) => `${trimNum(v * fu, dec)} ${units.current}`;
+    label.textContent = f.type === "fillet" ? `${t("Radius")}: ${size(f.radius.v)}`
+      : (f.mode ?? "equal") === "two" ? `${size(f.distance.v)} × ${size(f.distance2?.v ?? f.distance.v)}`
+      : (f.mode ?? "equal") === "angle" ? `${size(f.distance.v)} × ${trimNum(((f.angle?.v ?? 0) * 180) / Math.PI, 2)}°`
+      : `${t("Distance")}: ${size(f.distance.v)}`;
+    label.title = t("Click to type the size");
+    label.dataset.at = JSON.stringify(ed.mid);
+    label.addEventListener("click", () => ($("#mc-pm").querySelector<HTMLInputElement>(f.type === "fillet" ? "input[data-num=radius]" : "input[data-num=distance]"))?.focus());
+    $("#mc-layer").appendChild(label);
+    this.placeCallouts();
+  }
+
+  private placeCallouts() {
+    const v = this.host.viewer;
+    $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
+      const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
+      el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24}px`;
+    });
   }
 
   /** "Start a sketch on a plane" over an empty part (FR-HLP-005). */
@@ -1347,7 +1393,7 @@ export class ModelController {
     };
     const sketchSel = (cur: string) => `<label class="pm-field"><span>${esc(t("Sketch"))}</span><select data-k="sketch">${sketches.map(s => `<option value="${s.id}"${s.id === cur ? " selected" : ""}>${esc(featureLabel(s.name))}</option>`).join("")}</select></label>`;
     const name = `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-k="name" value="${esc(featureLabel(f.name))}" spellcheck="false" translate="no" /></label>`;
-    const status = this.last?.statuses.find(s => s.id === f.id);
+    const status = (f.type === "fillet" || f.type === "chamfer") ? this.last?.preview?.status as FeatureStatus | undefined : this.last?.statuses.find(s => s.id === f.id);
     const err = status && !status.ok ? `<p class="pm-err" role="alert">⚠ ${esc(statusText(status))}</p>` : "";
     let body = "";
     let title = "";
@@ -1446,7 +1492,7 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch");
       });
     });
-    pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); } });
+    pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=ok]")!.addEventListener("click", () => this.ok());
