@@ -5,10 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.17.0] - 2026-11-06
-
-### Added
-- Section by clicking a face, as in CAD. Press **Section** in the header, then click a face of the model: a flat face puts the cutting plane on that face, and a cylinder (a capacitor, a shaft, a hole) cuts through its axis, square to your view. The face under the pointer lights up while you choose, and Esc cancels. The plane's sheet and drag arrows appear where you clicked, so you can drag the cut straight away. The **+ XY**, **+ YZ**, **+ XZ**, **+ Face**, **+ 3 points** and **+ View** buttons on the Section page still work as before.
+### Changed
+- The Parasolid parser from parasolid-kit is now kept in this repository (`native/parasolid-core`) instead of being fetched from GitHub at build time, so it can be fixed here. It reads all test files exactly as before.
 
 ## [1.16.0] - 2026-11-06
 
@@ -218,8 +216,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.17.0...HEAD
-[1.17.0]: https://github.com/kothf/step-viewer/compare/v1.16.0...v1.17.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.16.0...HEAD
 [1.16.0]: https://github.com/kothf/step-viewer/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/kothf/step-viewer/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/kothf/step-viewer/compare/v1.14.0...v1.14.1
