@@ -31,6 +31,7 @@ import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
+import { isSolidWorksName } from "./sw/container";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -291,11 +292,13 @@ function pcbStats() {
   $("#st-stats").textContent = `${t("{n} layer|{n} layers", { n })} · ${t("{n} objects", { n: gerber.layers.reduce((s, l) => s + l.L.objs.length, 0).toLocaleString() })}`;
 }
 
-const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf)$/i.test(n);
+const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldprt|sldasm)$/i.test(n);
 
-/** Opens dropped or chosen files: one 3D model, or any number of PCB layers / zips. */
+/** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  const sw = files.filter(f => isSolidWorksName(f.name));
+  if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));
   if (model && files.length === 1) return openFile(model);
   const pcb: File[] = [];
@@ -316,6 +319,82 @@ let loadToken = 0;
   const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
   const warm = () => { if (!loadToken) worker.postMessage({ kind: "warm", occtBase: new URL("occt/", document.baseURI).href }); };
   if (!saveData) "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 3000 }) : setTimeout(warm, 1500);
+}
+
+/**
+ * SolidWorks: the kernel worker reads the Parasolid model inside each part,
+ * places an assembly's parts and hands back STEP, which then opens as usual.
+ * An assembly needs its part files dropped with it (or its whole folder).
+ */
+async function openSolidWorks(files: File[]) {
+  const asm = files.filter(f => /\.sldasm$/i.test(f.name)).sort((a, b) => b.size - a.size);
+  const main = asm[0] ?? files[0];
+  const name = main.name;
+  if (kernelOff) { toast(t("SolidWorks files need the geometry kernel, which is turned off (?nokernel)."), true); return; }
+  ++loadToken;
+  const token = loadToken;
+  restoreEmpty();
+  setDoc(name, "loading");
+  setLoading(true, t("Reading the SolidWorks model in {name}…", { name }), 5);
+  const parts = asm.length ? files : [main];
+  if (!asm.length && files.length > 1) toast(t("Opening {name}. Open one part at a time, or drop the assembly with its parts.", { name }));
+  let res: Awaited<ReturnType<typeof kernel.solidworks>>;
+  try {
+    res = await kernel.solidworks(await Promise.all(parts.map(async f => ({ name: f.name, buffer: await f.arrayBuffer() }))), name);
+  } catch (err) {
+    if (token !== loadToken) return;
+    setLoading(false);
+    setDoc(name, "error");
+    toast(t("Could not open {name}: {err}", { name, err: t((err as Error).message) }), true);
+    return;
+  }
+  if (token !== loadToken) return;
+  const { bytes, report } = res;
+  if (!bytes) {
+    setLoading(false);
+    setDoc(name, "error");
+    if (report.missing.length) toast(t("{name} needs its part files: drop the assembly together with its parts, or the whole folder.", { name }), true);
+    else toast(t("No geometry could be read from {name}.", { name }), true);
+    if (report.preview) showPreview(report.preview, name);
+    return;
+  }
+  await openBuffer(bytes.buffer as ArrayBuffer, name);
+  // openBuffer takes the next load token itself; anything beyond that is a newer file.
+  if (loadToken !== token + 1) return;
+  if (report.missing.length) toast(t("{n} part file is missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.|{n} part files are missing and left out: {list}. Drop the assembly together with its parts, or the whole folder.", { n: report.missing.length, list: listNames(report.missing) }), "warn");
+  else if (report.failedFaces) toast(t("{n} face could not be rebuilt and is left out.|{n} faces could not be rebuilt and are left out.|{n} faces could not be rebuilt and are left out.", { n: report.failedFaces }), "warn");
+  if (report.notes.length) console.info("SolidWorks import notes:", report.notes);
+}
+const listNames = (a: string[]) => (a.length > 4 ? `${a.slice(0, 4).join(", ")} (+${a.length - 4})` : a.join(", "));
+
+/** SolidWorks' own thumbnail of a file whose geometry could not be read. */
+let emptyHtml = "";
+function showPreview(png: Uint8Array, name: string) {
+  const card = $("#empty .empty-card");
+  emptyHtml ||= card.innerHTML;
+  const url = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
+  card.innerHTML = "";
+  const h = document.createElement("h2");
+  h.textContent = t("Preview of {name}", { name });
+  const img = document.createElement("img");
+  img.className = "sw-preview";
+  img.src = url;
+  img.alt = t("Preview of {name}", { name });
+  const p = document.createElement("p");
+  p.textContent = t("This is the picture SolidWorks saved in the file. Its geometry could not be read, so nothing can be measured.");
+  const b = document.createElement("button");
+  b.className = "btn primary";
+  b.textContent = t("Choose files…");
+  b.addEventListener("click", openPicker);
+  card.append(h, img, p, b);
+  $("#empty").hidden = false;
+}
+function restoreEmpty() {
+  if (!emptyHtml) return;
+  const card = $("#empty .empty-card");
+  card.innerHTML = emptyHtml;
+  card.querySelector("[data-open]")?.addEventListener("click", openPicker);
+  emptyHtml = "";
 }
 
 async function openFile(file: File) {
@@ -539,9 +618,33 @@ vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
 vpEl.addEventListener("drop", e => {
   e.preventDefault();
   vpEl.classList.remove("drag");
-  const fs = e.dataTransfer?.files;
-  if (fs?.length) openFiles([...fs]);
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  // A dropped folder (an assembly with its parts) is read through its entries.
+  const entries = [...dt.items].map(i => i.webkitGetAsEntry?.()).filter((x): x is FileSystemEntry => !!x);
+  if (entries.some(x => x.isDirectory)) { filesOf(entries).then(fs => { if (fs.length) openFiles(fs); }); return; }
+  if (dt.files.length) openFiles([...dt.files]);
 });
+
+/** Files in dropped entries, folders included (up to 2000 files, 8 levels). */
+async function filesOf(entries: FileSystemEntry[], depth = 0, out: File[] = []): Promise<File[]> {
+  for (const en of entries) {
+    if (out.length >= 2000) break;
+    if (en.isFile) out.push(await new Promise<File>((res, rej) => (en as FileSystemFileEntry).file(res, rej)));
+    else if (en.isDirectory && depth < 8) {
+      const reader = (en as FileSystemDirectoryEntry).createReader();
+      const kids: FileSystemEntry[] = [];
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        kids.push(...batch);
+      }
+      await filesOf(kids, depth + 1, out);
+    }
+  }
+  // In a folder, only the 3D files matter when there are any (PCB sets are picked up by openFiles).
+  return out;
+}
 
 // ---------- model tree ----------
 const nodeEls = new Map<TreeNode, HTMLElement>();

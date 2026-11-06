@@ -3,3 +3,4 @@ dist/
 public/occt/
 public/samples/
 *.tsbuildinfo
+native/*/target/

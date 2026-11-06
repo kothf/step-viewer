@@ -440,6 +440,25 @@ export class Kernel {
    * A PCB board as a solid: the outline loops (the first is the outside, the rest
    * cut-outs, x/y pairs) extruded from z0 by `thickness`, with drilled holes ([x, y, Ø]) as true cylinders.
    */
+  /** STEP of an XCAF document built elsewhere (a converted SolidWorks model). */
+  stepOfDoc(doc: any): Uint8Array {
+    const oc = this.oc;
+    const path = `/out${++this.seq}.stp`;
+    try {
+      const w = new oc.STEPCAFControl_Writer_1();
+      w.SetColorMode(true);
+      w.SetNameMode(true);
+      if (!w.Transfer_1(doc, oc.STEPControl_StepModelType.STEPControl_AsIs, null, new oc.Message_ProgressRange_1())) throw new Error("STEP transfer failed");
+      if (w.Write(path) !== oc.IFSelect_ReturnStatus.IFSelect_RetDone) throw new Error("STEP write failed");
+      return (oc.FS.readFile(path) as Uint8Array).slice();
+    } finally {
+      try { oc.FS.unlink(path); } catch { /* not written */ }
+    }
+  }
+
+  /** The raw OpenCASCADE module, for converters that build their own shapes. */
+  get module() { return this.oc; }
+
   boardStep(loops: number[][], holes: [number, number, number][], z0: number, thickness: number, name: string): Uint8Array {
     const oc = this.oc;
     const wireOf = (pts: number[], ccw: boolean) => {
