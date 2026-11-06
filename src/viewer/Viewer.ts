@@ -197,7 +197,7 @@ export class Viewer {
     this.tree = null;
   }
 
-  load(partsData: PartData[], tree: TreeNode) {
+  load(partsData: PartData[], tree: TreeNode, fit = true) {
     this.clear();
     this.tree = tree;
     const paths = new Map<number, string>();
@@ -256,13 +256,16 @@ export class Viewer {
     this.computeBounds();
     this.computeExplodeVectors();
     this.setMode(this.mode);
-    this.fit(false);
+    if (fit) this.fit(false);
   }
+
+  /** Half size of the box the view fits when nothing is shown (a new part: 50 mm). */
+  emptySize = 1;
 
   computeBounds() {
     this.bounds.makeEmpty();
     for (const p of this.parts) if (p.visible) this.bounds.expandByObject(p.mesh);
-    if (this.bounds.isEmpty()) this.bounds.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+    if (this.bounds.isEmpty()) this.bounds.set(new THREE.Vector3(-1, -1, -1).multiplyScalar(this.emptySize), new THREE.Vector3(1, 1, 1).multiplyScalar(this.emptySize));
     return this.bounds;
   }
 

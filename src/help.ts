@@ -191,6 +191,34 @@ const EN: Tab[] = [
 </ul>`,
   },
   {
+    id: "model", title: "Modelling",
+    html: `
+<p><b>New part</b> (the page icon next to Open, or on the start screen) starts a parametric part: sketches and features in a history you can edit at any time. The <b>Features</b> tab on the left lists them; the bar over the view holds the commands.</p>
+<h4>Sketch</h4>
+<ul>
+  <li><b>Sketch</b>, then pick <b>Top (XY)</b>, <b>Front (XZ)</b>, <b>Right (YZ)</b> or a flat face of the part (a face picked with Smart measure is used at once). The view turns to face the sketch.</li>
+  <li>Draw with <b>Line</b>, <b>Rectangle</b>, <b>Centre rectangle</b>, <b>Circle</b>, <b>Arc</b> and <b>Point</b>. Points snap to ends, centres, curves and the origin; horizontal, vertical and coincident relations are added as you draw.</li>
+  <li><b>Dimension</b>: click a line, circle or arc (or two items), then where the value goes, and type it. Values accept units and arithmetic, such as <code>25.4 mm</code>, <code>1in</code>, <code>100/3</code> or <code>30deg</code>. Double-click a dimension to change it.</li>
+  <li>Select items (Ctrl+click for more) to add relations in the panel: parallel, perpendicular, equal, tangent, concentric, midpoint, symmetric, fix. <b>Construction</b> (Q) turns lines into reference geometry, for example a revolve axis.</li>
+  <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Drag geometry to try it.</li>
+  <li>✓ or <kbd>Enter</kbd> leaves the sketch; ✕ asks before discarding its changes.</li>
+</ul>
+<h4>Features</h4>
+<ul>
+  <li><b>Extrude</b> and <b>Cut</b> use a closed sketch: blind depth, mid plane or through all, with a second direction and reverse. A cut goes into the material.</li>
+  <li><b>Revolve</b> turns a sketch around one of its lines (a construction line is taken first), by any angle.</li>
+  <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges, and set the size.</li>
+  <li>The view shows the result while you type; ✓ or <kbd>Enter</kbd> keeps it, ✕ or <kbd>Esc</kbd> cancels.</li>
+  <li>Double-click a feature in the tree to edit it. Later features follow the faces and edges they were built on. A row's buttons suppress or delete it; deleting asks before taking dependent features too.</li>
+</ul>
+<h4>Files</h4>
+<ul>
+  <li><b>Save</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes a <code translate="no">.mcadprt</code> part file; open it again with Open. <b>STEP</b> exports the solid for other CAD programs.</li>
+  <li>Unsaved changes are kept in the browser: after a crash or a closed tab the start screen offers to recover them.</li>
+  <li>All the measuring, section, mass and export tools work on the part as on an opened model.</li>
+</ul>`,
+  },
+  {
     id: "keys", title: "Shortcuts",
     html: `
 <h4>3D model</h4>
@@ -203,6 +231,14 @@ ${table([
   ["I / H / U", "Isolate / hide the selected part / show all"],
   ["Del", "Delete the selected measurement"],
   ["Esc", "Cancel the tool, clear the selection"],
+])}
+<h4>Part modelling</h4>
+${table([
+  ["S L R C A P D", "Sketch: select, line, rectangle, circle, arc, point, dimension"],
+  ["Q", "Construction geometry on / off"],
+  ["Enter / Esc", "OK (leave the sketch) / cancel"],
+  ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
+  ["Ctrl+S", "Save the part"],
 ])}
 <h4>PCB</h4>
 ${table([
@@ -328,6 +364,34 @@ const RU: Tab[] = [
 </ul>`,
   },
   {
+    id: "model", title: "Моделирование",
+    html: `
+<p><b>Новая деталь</b> (значок страницы рядом с «Открыть» или на начальном экране) начинает параметрическую деталь: эскизы и элементы в истории, которую можно менять в любой момент. Они перечислены на вкладке <b>Элементы</b> слева; команды на панели над видом.</p>
+<h4>Эскиз</h4>
+<ul>
+  <li><b>Эскиз</b>, затем выберите <b>Сверху (XY)</b>, <b>Спереди (XZ)</b>, <b>Справа (YZ)</b> или плоскую грань детали (грань, выбранная умным измерением, берётся сразу). Вид поворачивается к эскизу.</li>
+  <li>Рисуйте инструментами <b>Отрезок</b>, <b>Прямоугольник</b>, <b>Прямоугольник от центра</b>, <b>Окружность</b>, <b>Дуга</b> и <b>Точка</b>. Точки привязываются к концам, центрам, кривым и началу координат; взаимосвязи горизонтальности, вертикальности и совпадения добавляются при рисовании.</li>
+  <li><b>Размер</b>: щёлкните отрезок, окружность или дугу (или два элемента), затем место для значения и введите его. Можно писать единицы и арифметику: <code>25,4 мм</code>, <code>1 дюйм</code> как <code translate="no">1in</code>, <code>100/3</code>, <code>30°</code>. Двойной щелчок по размеру меняет его.</li>
+  <li>Выберите элементы (Ctrl+щелчок добавляет), чтобы добавить взаимосвязи на панели: параллельность, перпендикулярность, равенство, касательность, концентричность, середина, симметричность, фиксация. <b>Вспомогательная</b> (Q) делает отрезки справочной геометрией, например осью вращения.</li>
+  <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Перетащите геометрию, чтобы проверить.</li>
+  <li>✓ или <kbd>Enter</kbd> выходит из эскиза; ✕ спрашивает, прежде чем отменить изменения.</li>
+</ul>
+<h4>Элементы</h4>
+<ul>
+  <li><b>Вытягивание</b> и <b>Вырез</b> строятся по замкнутому эскизу: на глубину, от средней плоскости или насквозь, со вторым направлением и обратным направлением. Вырез идёт в материал.</li>
+  <li><b>Вращение</b> поворачивает эскиз вокруг одного из его отрезков (сначала берётся вспомогательный) на любой угол.</li>
+  <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) и задайте размер.</li>
+  <li>Вид показывает результат во время ввода; ✓ или <kbd>Enter</kbd> применяет, ✕ или <kbd>Esc</kbd> отменяет.</li>
+  <li>Двойной щелчок по элементу в дереве открывает его для правки. Следующие элементы следуют за гранями и рёбрами, на которых построены. Кнопки строки гасят или удаляют элемент; удаление спрашивает, прежде чем удалить зависимые элементы.</li>
+</ul>
+<h4>Файлы</h4>
+<ul>
+  <li><b>Сохранить</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) записывает файл детали <code translate="no">.mcadprt</code>; откройте его снова кнопкой «Открыть». <b>STEP</b> экспортирует тело для других CAD-программ.</li>
+  <li>Несохранённые изменения хранятся в браузере: после сбоя или закрытой вкладки начальный экран предложит их восстановить.</li>
+  <li>Все инструменты измерений, сечений, массы и экспорта работают с деталью так же, как с открытой моделью.</li>
+</ul>`,
+  },
+  {
     id: "keys", title: "Клавиши",
     html: `
 <h4>3D-модель</h4>
@@ -340,6 +404,14 @@ ${table([
   ["I / H / U", "Изолировать / скрыть выбранную деталь / показать все"],
   ["Del", "Удалить выбранное измерение"],
   ["Esc", "Отменить инструмент, снять выбор"],
+])}
+<h4>Моделирование детали</h4>
+${table([
+  ["S L R C A P D", "Эскиз: выбор, отрезок, прямоугольник, окружность, дуга, точка, размер"],
+  ["Q", "Вспомогательная геометрия: вкл. / выкл."],
+  ["Enter / Esc", "ОК (выйти из эскиза) / отмена"],
+  ["Ctrl+Z / Ctrl+Y", "Отменить / повторить"],
+  ["Ctrl+S", "Сохранить деталь"],
 ])}
 <h4>Плата</h4>
 ${table([

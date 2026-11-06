@@ -1125,7 +1125,7 @@ try {
       `about: credits list from the build (${about.n} packages, ${about.rows} rows), main libraries, licence texts, logo and version (${JSON.stringify({ main: about.main, version: about.version })})`);
     check(leftAbout.length === 0, `i18n: no English left in About${leftAbout.length ? ": " + leftAbout.slice(0, 6).join(" | ") : ""}`);
     await pg.keyboard.press("Escape");
-    check(help.title === "Справка" && help.tabs.length === 6 && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown && help.tips, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
+    check(help.title === "Справка" && help.tabs.length === 7 && help.tabs.includes("Моделирование") && help.tabs.includes("Клавиши") && help.kbd > 10 && keysShown && help.tips, `i18n: Help in Russian with sections and shortcuts (${JSON.stringify(help)})`);
     check(leftHelp.length === 0, `i18n: no English left in Help${leftHelp.length ? ": " + leftHelp.slice(0, 6).join(" | ") : ""}`);
     // axe in Russian too.
     await pg.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
@@ -1398,6 +1398,202 @@ try {
   });
   check(perf.objs === 270000 && loadS < 30, `pcb perf: ${perf.objs} objects load in ${loadS.toFixed(1)} s`);
   check(perf.move < 16, `pcb perf: snap + overlay per mouse move ${perf.move.toFixed(2)} ms (full redraw ${perf.render.toFixed(0)} ms)`);
+
+  // --- Part modelling (FRS P1): new part, sketch with dimensions, extrude, cut on a face, fillet, edit, undo, save/open, STEP, recovery, RU ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    // First-use tips stay out of the way here (they are tested elsewhere).
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const last = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.code), n: window.__sv.model.store.doc.features.length }; });
+    /** Sketch point (editor frame) or world point to page coordinates. */
+    const toPage = (p, sketch) => mp.evaluate(([p, sketch]) => {
+      const v = window.__sv.viewer, f = sketch ? window.__sv.model.editor().frame : null;
+      const w = f ? [0, 1, 2].map(i => f.o[i] + f.x[i] * p[0] + f.y[i] * p[1]) : p;
+      const q = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, [p, sketch]);
+    const click = async (p, sketch = true) => { const [x, y] = await toPage(p, sketch); await mp.mouse.move(x, y); await mp.waitForTimeout(30); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(60); };
+    const dimension = async (at, place, value) => {
+      await click(at); await click(place);
+      await mp.waitForSelector(".sk-input", { timeout: 5000 });
+      await mp.fill(".sk-input", value); await mp.press(".sk-input", "Enter");
+      await mp.waitForTimeout(100);
+    };
+    const sketchInfo = () => mp.evaluate(() => { const e = window.__sv.model.editor(); return { dof: e.info.dof, status: e.info.status, ents: e.sk.ents.length, dims: e.sk.dims.map(d => +d.val.v.toFixed(6)), pm: document.querySelector("#mc-pm .pm-def")?.textContent }; });
+    const iso = () => mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+
+    await mp.click("#new-part");
+    await mp.waitForSelector("#mc-bar:not([hidden])");
+    const start = await mp.evaluate(() => ({ tab: document.querySelector("#t-features").getAttribute("aria-selected"), rows: [...document.querySelectorAll("#mc-tree .ft-name")].map(e => e.textContent) }));
+    check(start.tab === "true" && start.rows.join("|") === "Part1|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
+    // Sketch on Top: corner rectangle from the origin, then 100 × 60 by dimensions (AT-P1-1 style).
+    await mp.click('[data-c="sketch"]');
+    await mp.click('#mc-pm [data-std="XY"]');
+    await idle();
+    await mp.waitForTimeout(600);
+    await mp.keyboard.press("r");
+    await click([0, 0]); await click([80, 50]);
+    await mp.keyboard.press("d");
+    await dimension([40, 50], [40, 62], "100");
+    await dimension([0, 25], [-12, 25], "60");
+    const sk1 = await sketchInfo();
+    check(sk1.ents === 8 && sk1.dof === 0 && sk1.status === "ok" && sk1.dims.join() === "100,60" && /Fully defined/.test(sk1.pm), `model sketch: rectangle snapped to the origin, two dimensions, fully defined (${JSON.stringify(sk1)})`);
+    // Undo inside the sketch takes the last dimension back.
+    await mp.keyboard.press("Control+z");
+    const undone = await sketchInfo();
+    await mp.keyboard.press("Control+y");
+    const redone = await sketchInfo();
+    check(undone.dims.join() === "100,50" && redone.dims.join() === "100,60" && redone.dof === 0, `model sketch: Ctrl+Z / Ctrl+Y step the dimension value back and forth (${undone.dims} → ${redone.dims})`);
+    await mp.keyboard.press("Enter");
+    await idle();
+    // Extrude 20 mm: the 100 × 60 × 20 block.
+    await mp.click('[data-c="extrude"]');
+    await mp.fill('#mc-pm input[data-num="depth"]', "20");
+    await mp.press('#mc-pm input[data-num="depth"]', "Enter");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    const ex = await last();
+    const shown = await mp.evaluate(() => ({ parts: window.__sv.viewer.parts.length, exact: !!window.__sv.viewer.parts[0]?.data.exact, faces: window.__sv.viewer.parts[0]?.data.faces.length }));
+    check(near(ex.v, 120000, 1e-3) && !ex.bad.length && shown.parts === 1 && shown.faces === 6, `model: Extrude 20 mm gives the 100 × 60 × 20 block, 120000 mm³, 6 faces (${ex.v}, ${JSON.stringify(shown)})`);
+    // Sketch on the top face (picked with Smart measure), a circle, then Cut through all.
+    await iso();
+    const topFace = await mp.evaluate(() => {
+      const { viewer, handlePick } = window.__sv, p = viewer.parts[0], V3 = p.group.position.constructor;
+      const f = p.data.faces.find(f => f.normal?.[2] > 0.99);
+      handlePick({ kind: "faceCenter", point: new V3(...f.center), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+      return f.id;
+    });
+    await mp.click('[data-c="sketch"]');
+    await idle();
+    await mp.waitForTimeout(600);
+    const onFace = await mp.evaluate(() => { const e = window.__sv.model.editor(); const sk = window.__sv.model.store.doc.features.at(-1); return { plane: sk.plane, n: e.frame.n, z: e.frame.o[2] }; });
+    check(onFace.plane.face?.name?.endsWith(":end") && near(onFace.n[2], 1, 1e-9) && near(onFace.z, 20, 1e-9), `model: Sketch on the picked top face (face ${topFace}: ${JSON.stringify(onFace.plane)})`);
+    // A circle centred on the block, at world (50, 30, 20) in the face sketch's own axes.
+    const loc = w => mp.evaluate(w => { const f = window.__sv.model.editor().frame, d = [0, 1, 2].map(i => w[i] - f.o[i]); return [d[0] * f.x[0] + d[1] * f.x[1] + d[2] * f.x[2], d[0] * f.y[0] + d[1] * f.y[1] + d[2] * f.y[2]]; }, w);
+    await mp.keyboard.press("c");
+    await click(await loc([50, 30, 20])); await click(await loc([62, 30, 20]));
+    await mp.keyboard.press("d");
+    await click(await loc([62, 30, 20])); await click(await loc([72, 42, 20]));
+    await mp.waitForSelector(".sk-input", { timeout: 5000 });
+    await mp.fill(".sk-input", "20"); await mp.press(".sk-input", "Enter");
+    await mp.waitForTimeout(100);
+    const circ = await mp.evaluate(() => { const c = window.__sv.model.editor().sk.ents.find(e => e.t === "circle"); return c?.r; });
+    await mp.keyboard.press("Enter");
+    await idle();
+    await mp.click('[data-c="cut"]');
+    await mp.waitForSelector("#mc-pm select[data-k=end]");
+    const cutEnd = await mp.$eval("#mc-pm select[data-k=end]", s => s.value);
+    await mp.click("#mc-ok");
+    await idle();
+    const cut = await last();
+    check(near(circ, 10, 1e-6) && cutEnd === "through" && near(cut.v, 120000 - Math.PI * 100 * 20, 1e-3) && !cut.bad.length, `model: ⌀20 circle on the face, Cut through all removes π·10²·20 (${cut.v}, r ${circ}, end ${cutEnd}, ${cut.bad})`);
+    // Fillet R5 on the four vertical edges, picked in the view.
+    await iso();
+    await mp.click('[data-c="fillet"]');
+    await mp.waitForSelector('#mc-pm input[data-num="radius"]');
+    await iso();
+    await mp.waitForTimeout(200);
+    for (const p of [[100, 0, 10], [0, 0, 10], [100, 60, 10]]) await click(p, false);
+    const picked = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
+    // The fourth (hidden) edge: from the other side.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 1, 0.8), false); });
+    await mp.waitForTimeout(200);
+    await click([0, 60, 10], false);
+    await mp.fill('#mc-pm input[data-num="radius"]', "5");
+    await mp.press('#mc-pm input[data-num="radius"]', "Enter");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    const fil = await last();
+    const corner = (r, h) => (r * r - (Math.PI * r * r) / 4) * h;
+    const v20 = 120000 - Math.PI * 100 * 20 - 4 * corner(5, 20);
+    check(picked === 3 && near(fil.v, v20, 1e-3) && !fil.bad.length && fil.n === 5, `model: Fillet R5 on four edges picked in the view (${picked}+1 picks, ${fil.v} vs ${v20.toFixed(3)})`);
+    // Edit Extrude1 to 30 mm: the face sketch, the cut and the fillets follow (topological naming).
+    await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.modeller.editFeature(ex.id); });
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await mp.fill('#mc-pm input[data-num="depth"]', "30");
+    await mp.press('#mc-pm input[data-num="depth"]', "Enter");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    const ed = await last();
+    const v30 = 180000 - Math.PI * 100 * 30 - 4 * corner(5, 30);
+    check(near(ed.v, v30, 1e-3) && !ed.bad.length, `model: editing the extrude depth to 30 rebuilds the cut and fillets on the moved faces (${ed.v} vs ${v30.toFixed(3)})`);
+    await mp.click('[data-c="undo"]');
+    await idle();
+    const un = await last();
+    await mp.click('[data-c="redo"]');
+    await idle();
+    const re = await last();
+    check(near(un.v, v20, 1e-3) && near(re.v, v30, 1e-3), `model: Undo / Redo restore the 20 mm and 30 mm bodies (${un.v}, ${re.v})`);
+    // Suppress the fillet: the corners come back.
+    await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.type === "fillet"); window.__sv.modeller.toggleSuppress(f.id); });
+    await idle();
+    const sup = await last();
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await idle();
+    check(near(sup.v, 180000 - Math.PI * 100 * 30, 1e-3), `model: suppressing the fillet restores the sharp corners (${sup.v})`);
+    // Measuring tools work on the modelled body: exact cylinder radius of the hole.
+    const hole = await mp.evaluate(() => { const p = window.__sv.viewer.parts[0]; const c = p.data.faces.find(f => f.type === "cylinder" && f.radius > 9); return c?.radius; });
+    check(near(hole, 10, 1e-6), `model: Smart measure data on the body: hole radius ${hole}`);
+    // Save as .mcadprt (download fallback), STEP export, reopen.
+    await mp.evaluate(() => { window.showSaveFilePicker = undefined; });
+    const [dlPart] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="save"]')]);
+    const partBytes = await readFile(await dlPart.path());
+    const saved = await mp.evaluate(() => ({ dirty: window.__sv.model.store.dirty, doc: document.querySelector("#doc-name").textContent }));
+    check(/Part1\.mcadprt$/.test(dlPart.suggestedFilename()) && partBytes.readUInt32LE(0) === 0x04034b50 && !saved.dirty && !/•/.test(saved.doc), `model: Save writes ${dlPart.suggestedFilename()} (${partBytes.length} bytes, a zip) and clears the unsaved mark`);
+    const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
+    const stepBack = readStep(await readFile(await dlStep.path()));
+    check(stepBack.ok && stepBack.meshes === 1 && stepBack.faces === 11, `model: STEP export of the body reads back (${JSON.stringify(stepBack)})`);
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const recov0 = await mp.evaluate(() => document.querySelector("#mc-recover").hidden);
+    await mp.setInputFiles("#file-input", { name: "Part1.mcadprt", mimeType: "application/zip", buffer: partBytes });
+    await mp.waitForFunction(() => window.__sv.model.last(), null, { timeout: 60000 });
+    await idle();
+    const reopened = await last();
+    check(recov0 && reopened.n === 5 && near(reopened.v, v30, 1e-3), `model: the saved file opens again with 5 features and the same volume (${reopened.v})`);
+    // Autosave journal: an unsaved change is offered after a reload.
+    await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
+    await mp.waitForTimeout(1200);
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const rec = await mp.evaluate(() => ({ shown: !document.querySelector("#mc-recover").hidden, btn: document.querySelector("#mc-recover [data-rec]")?.textContent }));
+    await mp.click("#mc-recover [data-rec]");
+    await mp.waitForFunction(() => window.__sv.model.last(), null, { timeout: 60000 });
+    await idle();
+    const recName = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(rec.shown && /Recover/.test(rec.btn) && recName.includes("Base"), `model: unsaved work is recovered after a reload (${rec.btn}: ${recName})`);
+    // Accessibility and Russian with the sketcher open.
+    await mp.evaluate(() => window.__sv.modeller.editSketch(window.__sv.model.store.doc.features[0].id));
+    await idle();
+    await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const axeModel = await mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
+    check(axeModel.length === 0, `model: 0 WCAG 2.1 AA violations with the sketcher open${axeModel.length ? ": " + axeModel.join(" | ") : ""}`);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const leftRu = await mp.evaluate(() => {
+      const OK = /^(MöbiusCAD|STEP|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
+      const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
+      const bad = new Set();
+      const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
+      for (const root of document.querySelectorAll("#tab-features, #mc-bar, #mc-confirm, #sk-layer, #t-features")) {
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode(); n; n = w.nextNode()) if (!skip(n.parentElement)) test(n.data, "text");
+        for (const e of [root, ...root.querySelectorAll("[title], [aria-label]")]) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && !skip(e)) test(v, a); }
+      }
+      return [...bad];
+    });
+    check(leftRu.length === 0, `model i18n: command bar, feature tree and sketch panel in Russian${leftRu.length ? ": " + leftRu.slice(0, 6).join(" | ") : ""}`);
+    await mp.click("#lang-btn");
+    await ctx.close();
+  }
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {

@@ -2,7 +2,7 @@ import { dirToLocal, toLocal } from "./csys";
 
 export type Unit = "mm" | "cm" | "m" | "in" | "ft";
 
-const UNITS: Record<Unit, { f: number; d: number }> = {
+export const UNITS: Record<Unit, { f: number; d: number }> = {
   mm: { f: 1, d: 3 },
   cm: { f: 0.1, d: 4 },
   m: { f: 0.001, d: 5 },

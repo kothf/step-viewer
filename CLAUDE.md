@@ -14,6 +14,7 @@ npm run dev        # dev server
 npm run typecheck  # tsc
 npm run package    # dist/step-viewer/ + dist/step-viewer-<version>.tar.gz (+ .sha256)
 npm test           # headless-Chromium smoke test of the packaged build (run `npm run package` first)
+npm run test:unit  # node unit tests: modelling kernel, sketch solver, expressions, documents
 ```
 
 The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright install chromium`). Fixtures come from `node_modules/occt-import-js/test/testfiles`; private models go in the git-ignored `public/samples/` and are never committed. Add a check to the smoke test for every measurement or geometry change.
@@ -43,6 +44,7 @@ The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright 
 - `src/help.ts` (Help dialog content, both languages; the About tab lists credits from the build's `credits.json`, written by `scripts/credits-plugin.mjs` from the bundled packages, with licence texts in `THIRD-PARTY-LICENSES.txt`; non-bundled code such as occt goes in its `extra` option in `vite.config.ts`), `src/hints.ts` (first-use tips, shown once each).
 - `src/main.ts`: UI controller. The default tool `"select"` is **Smart measure**: one click shows an entity's size, a second click the relation between two entities. The result is "live" until the next click and can be pinned. Labels on the model stay one line; details go in the `#readout` card.
 
+- Part modelling (1.18.0, FRS P0/P1): `src/model/` (`types.ts` document schema, `doc.ts` DocStore with snapshot undo, `expr.ts` unit expressions, `file.ts` + `zip.ts` `.mcadprt` and the autosave journal, `kernelClient.ts` long-lived kernel worker, `controller.ts` command bar, Features tab, property panel, ✓/✕ and picking), `src/sketch/` (`profile.ts` regions, `solver.ts` constraint solver, `editor.ts` sketcher), `src/kernel/model.ts` (`Modeller`: features on opencascade.js with persistent face names). A cut goes into the material (against the sketch normal). `npm run test:unit` runs `tests/unit/*.test.ts` (kernel, solver, expressions, documents).
 - `docs/FRS-modelling.md`: functional requirements for growing the viewer into a parametric modeller (phases P0–P7, requirement IDs `FR-…`, acceptance tests `AT-…`). Modelling work follows it; cite the IDs in PRs.
 
 ## Conventions
