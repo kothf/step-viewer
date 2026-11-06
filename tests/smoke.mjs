@@ -498,6 +498,32 @@ try {
   check(arrowAt.mode === "translate" && dragged.active && cursor === "grab" && dragged.offset > arrowAt.offset + 0.5 && camMoved < 1e-6,
     `section arrows: dragging the arrow moves the plane along its normal (${arrowAt.offset.toFixed(3)} → ${dragged.offset.toFixed(3)} mm, cursor ${cursor}, camera moved ${camMoved})`);
 
+  // Section button, then a face click: the plane appears on that face (CAD-style), with its arrows at the click.
+  await page.evaluate(() => { const { section, renderSections } = window.__sv; section.clear(); renderSections(); document.querySelector("#rt-props").click(); });
+  await page.click("#rt-section");
+  const armed = await page.evaluate(() => {
+    const { state, viewer } = window.__sv;
+    const part = viewer.parts[0];
+    const dir = viewer.camera.getWorldDirection(viewer.camera.position.clone());
+    // A planar face turned towards the camera; click its centroid.
+    const f = part.data.faces.filter(f => f.type === "plane" && f.normal)
+      .sort((a, b) => (a.normal[0] * dir.x + a.normal[1] * dir.y + a.normal[2] * dir.z) - (b.normal[0] * dir.x + b.normal[1] * dir.y + b.normal[2] * dir.z))[0];
+    const c = viewer.toWorld(part, f.centroid);
+    const s = c.clone().project(viewer.camera);
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    return { tool: state.tool, hint: document.querySelector("#tool-hint").textContent, n: f.normal, x: r.left + (s.x + 1) / 2 * r.width, y: r.top + (1 - s.y) / 2 * r.height };
+  });
+  await page.mouse.click(armed.x, armed.y);
+  await page.waitForTimeout(150);
+  const onFace = await page.evaluate(() => {
+    const { state, section } = window.__sv;
+    const sp = section.planes[0];
+    return { tool: state.tool, planes: section.planes.length, axis: sp && sp.axis.toArray(), anchored: !!sp?.anchor, arrows: section.gizmoMode };
+  });
+  check(armed.tool === "sectionFace" && /flat face/.test(armed.hint) && onFace.planes === 1 && onFace.tool === "select" && onFace.anchored && onFace.arrows === "translate"
+    && onFace.axis.every((x, i) => Math.abs(x - armed.n[i]) < 1e-6),
+    `section button: press Section, click a face, the plane lies on that face with its arrows (${JSON.stringify({ armed: armed.tool, onFace })})`);
+
   // --- CAX-IF as1 assembly: tree, circles and holes ---
   await open("cax-if/as1-oc-214.stp");
   const as1 = await page.evaluate(() => {

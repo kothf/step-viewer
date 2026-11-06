@@ -18,6 +18,8 @@ export interface SectionPlane {
   flipped: boolean;
   enabled: boolean;
   result: SectionResult | null;
+  /** Where the plane was picked (a face click); the sheet and drag arrows sit there instead of at the model centre. */
+  anchor?: THREE.Vector3;
 }
 
 /** Caps, profiles and other overlays render before the model (caps) or after it. */
@@ -77,12 +79,12 @@ export class SectionManager {
 
   get canAdd() { return this.planes.length < MAX_PLANES; }
 
-  add(label: string, axis: THREE.Vector3, offset: number) {
+  add(label: string, axis: THREE.Vector3, offset: number, anchor?: THREE.Vector3) {
     if (!this.canAdd) return null;
     const sp: SectionPlane = {
       id: Math.random().toString(36).slice(2, 8),
       label, axis: axis.clone().normalize(), offset, flipped: false, enabled: true,
-      plane: new THREE.Plane(), result: null,
+      plane: new THREE.Plane(), result: null, anchor: anchor?.clone(),
     };
     this.planes.push(sp);
     this.syncPlane(sp);
@@ -410,7 +412,7 @@ export class SectionManager {
   }
 
   private centerOn(sp: SectionPlane) {
-    const c = this.viewer.computeBounds().getCenter(new THREE.Vector3());
+    const c = sp.anchor ? sp.anchor.clone() : this.viewer.computeBounds().getCenter(new THREE.Vector3());
     return c.addScaledVector(sp.axis, sp.offset - sp.axis.dot(c));
   }
 
