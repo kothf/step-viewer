@@ -12,7 +12,7 @@ export const HINTS = {
   model: "Tip: click a face, edge or hole to measure it; click a second one for the distance, pitch or angle between them. Right-drag pans, the wheel zooms.",
   live: "Tip: click a value in the result card to copy it. 📌 Pin keeps the result in the Measurements list; Esc clears it.",
   pair: "Tip: for two holes, switch between centre to centre, minimum and maximum in the result card.",
-  section: "Tip: drag the arrow on the plane, or type an offset, to move the cut. The cut curves can be snapped to for measuring.",
+  section: "Tip: drag either arrow on the plane, or type an offset, to move the cut. The cut curves can be snapped to for measuring.",
   pcb: "Tip: click a pad, track or hole for its size; a second click gives pitch and clearance. Shift+click a shape for its area, 3 shows the board in 3D.",
   pcb3d: "Tip: in 3D, drag orbits and right-drag pans; measuring works on the side you look at. B turns the board over.",
   note: "Tip: drag a note's box to move it, double-click it to change the text. Notes appear in PNG snapshots and the PDF report.",

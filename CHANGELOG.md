@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-06
+
+### Added
+- Drag arrows on section planes. A new section plane appears as a see-through sheet with two arrows along its normal, one on each side, at the middle of the cut. Drag either arrow to slide the plane through the model; the caps, cut curves, cut area and the offset in the Section panel follow live, and the camera stays put. The arrows keep the same size on screen at any zoom and turn orange under the pointer. **↕** on a plane brings them back after Esc, and **⟳** swaps them for the rotation rings.
+
 ## [1.14.1] - 2026-11-06
 
 ### Changed
@@ -200,7 +205,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.14.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/kothf/step-viewer/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/kothf/step-viewer/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/kothf/step-viewer/compare/v1.13.2...v1.14.0
 [1.13.2]: https://github.com/kothf/step-viewer/compare/v1.13.1...v1.13.2

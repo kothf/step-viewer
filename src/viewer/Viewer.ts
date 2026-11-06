@@ -118,6 +118,8 @@ export class Viewer {
   }
   private pxTmp = new THREE.Vector3();
   invalidate() { this.dirty = true; }
+  /** Called each frame after the camera settles, before drawing (screen-sized overlays). */
+  readonly beforeRender: (() => void)[] = [];
 
   private resize() {
     const w = Math.max(1, this.container.clientWidth), h = Math.max(1, this.container.clientHeight);
@@ -151,6 +153,7 @@ export class Viewer {
     this.updateClipRange();
     this.headlight.position.copy(this.camera.position);
     this.headlight.target.position.copy(this.controls.target);
+    for (const fn of this.beforeRender) fn();
     this.render();
     for (const fn of this.listeners) fn();
   }
