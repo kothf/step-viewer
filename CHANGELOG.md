@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-06
+
+### Changed
+- Tools are always in view. A tool strip under the header holds every measuring tool (Smart, point–point, min distance, radius, diameter, centre–centre, edge length, angle, 3-point angle, point / normal, bounding box, note), the right-panel pages (**Properties**, **Section**, **Explode**, **Mass**, **Export**) and the units, decimals and measurement colour, so nothing needs scrolling to reach. The right panel shows one page at a time instead of a long stack of sections; click the open page again to hide the panel. Labels fold into icons on narrower screens (hover for the name and key), and on phones the strip wraps onto two rows. Adding a section plane from anywhere brings up the Section page.
+
 ## [1.13.2] - 2026-11-06
 
 ### Changed
@@ -189,7 +194,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.2...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/kothf/step-viewer/compare/v1.13.2...v1.14.0
 [1.13.2]: https://github.com/kothf/step-viewer/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/kothf/step-viewer/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/kothf/step-viewer/compare/v1.12.0...v1.13.0

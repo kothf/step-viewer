@@ -630,4 +630,17 @@ export const RU: Record<string, string> = {
   "Mesh file: faces are found from the triangles, sizes in millimetres. Exact geometry and STEP export need a STEP, IGES or BREP file.": "Сеточный файл: грани найдены по треугольникам, размеры в миллиметрах. Для точной геометрии и экспорта в STEP нужен файл STEP, IGES или BREP.",
   "Finding faces {i}/{n}…": "Поиск граней {i}/{n}…",
   "No triangles in this file": "В файле нет треугольников",
+  // ---------- tool strip (3D) ----------
+  "Smart": "Умное",
+  "Point–point": "Точка–точка",
+  "Centre–centre": "Центр–центр",
+  "Point / normal": "Точка / нормаль",
+  "Right panel": "Правая панель",
+  "Properties of the model or the selected part, face or edge": "Свойства модели или выбранной детали, грани или ребра",
+  "Section planes, caps and cut profiles": "Плоскости сечения, заливка среза и профили",
+  "Exploded view and moving parts": "Разнесённый вид и перемещение деталей",
+  "Material, mass, volume and centre of mass": "Материал, масса, объём и центр масс",
+  "PNG, STEP, STL, OBJ, glTF and PDF report": "PNG, STEP, STL, OBJ, glTF и PDF-отчёт",
+  "Colour of the next measurement": "Цвет следующего измерения",
+  "PNG scale": "Масштаб PNG",
 };

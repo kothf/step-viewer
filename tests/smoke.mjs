@@ -130,6 +130,51 @@ try {
   });
   check(brand.title === "Cube 10x10.stp · MöbiusCAD" && brand.txt === "MöbiusCAD", `app is named MöbiusCAD (${brand.title} / ${brand.txt})`);
   check(brand.logo && brand.icons && brand.man === "MöbiusCAD" && brand.manIcons, "header logo, favicons and manifest icons load");
+
+  // --- tool strip: every measuring tool and right-panel page is on screen at every width, no scrolling ---
+  for (const [w, h] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(150);
+    const r = await page.evaluate(() => {
+      const inView = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.left >= 0 && b.right <= innerWidth + 0.5 && b.top >= 0 && b.bottom <= innerHeight; };
+      const tb = document.querySelector("#toolbar");
+      const btns = [...document.querySelectorAll("#tools button, #rp-tabs [role=tab]")];
+      return {
+        n: btns.length, off: btns.filter(b => !inView(b)).map(b => b.dataset.tool ?? b.dataset.tab),
+        named: btns.every(b => b.textContent.trim().length > 1 && b.title),
+        over: tb.scrollWidth - tb.clientWidth, units: inView(document.querySelector("#units")), page: document.documentElement.scrollWidth - innerWidth,
+      };
+    });
+    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.units && r.page <= 0, `tool strip ${w}px: 12 tools + 5 panel pages + units on screen, no scrolling (${JSON.stringify(r)})`);
+  }
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.waitForTimeout(150);
+  // Section, Explode, Mass and Export each open as one page in the right panel, with their controls above the fold.
+  const pages = {};
+  for (const [tab, ctl] of [["section", "#sec-add [data-sec=z]"], ["explode", "#explode"], ["mass", "#mass-run"], ["export", "#png"], ["props", "#props"]]) {
+    await page.click(`#rt-${tab}`);
+    pages[tab] = await page.evaluate(([tab, ctl]) => {
+      const e = document.querySelector(ctl), b = e.getBoundingClientRect(), right = document.querySelector("#right");
+      return document.querySelectorAll(".rp.on").length === 1 && document.querySelector(`#rp-${tab}`).classList.contains("on")
+        && document.querySelector(`#rt-${tab}`).getAttribute("aria-selected") === "true" && b.width > 0 && b.bottom <= innerHeight && right.scrollTop === 0;
+    }, [tab, ctl]);
+  }
+  check(Object.values(pages).every(Boolean), `right panel: each page opens from the tool strip with its controls in view (${JSON.stringify(pages)})`);
+  // Clicking the open page hides the panel; another page brings it back. A new section plane shows the Section page.
+  await page.click("#rt-props");
+  const hiddenPanel = await page.evaluate(() => document.querySelector("#app").classList.contains("no-right"));
+  await page.click("#rt-mass");
+  const shownPanel = await page.evaluate(() => !document.querySelector("#app").classList.contains("no-right"));
+  await page.click("#rt-props");
+  await page.$eval("#sec-add [data-sec=z]", el => el.click());
+  const secShown = await page.evaluate(() => document.querySelector("#rp-section").classList.contains("on"));
+  await page.evaluate(() => { window.__sv.section.clear(); window.__sv.renderSections(); });
+  await page.click("#rt-props");
+  // Tool buttons report their state.
+  await page.click("#tools [data-tool=radius]");
+  const pressed = await page.evaluate(() => [...document.querySelectorAll("#tools button")].filter(b => b.getAttribute("aria-pressed") === "true").map(b => b.dataset.tool));
+  await page.keyboard.press("Escape");
+  check(hiddenPanel && shownPanel && secShown && pressed.join() === "radius", `tool strip: open page toggles the panel, a new plane shows Section, aria-pressed on the active tool (${JSON.stringify({ hiddenPanel, shownPanel, secShown, pressed })})`);
   const cube =await page.evaluate(() => {
     const { viewer, state, handlePick, setTool } = window.__sv;
     const p = viewer.parts[0];
@@ -1036,6 +1081,7 @@ try {
       document.querySelector("#readout .acts button")?.click();
       handlePick(pick(p.data.faces[0]));
       document.querySelectorAll("details").forEach(d => (d.open = true));
+      document.querySelectorAll(".rp").forEach(p => p.classList.add("on"));
     });
     await pg.waitForTimeout(200);
     const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));

@@ -258,6 +258,9 @@ export function initPanels(app: HTMLElement) {
       else if (breakpoint() === "tablet" && isOpen("left")) toggle("left");
     },
     setGerberTabSelector: (f: (t: string) => void) => { selectGerberTab = f; },
+    toggle,
+    /** Opens a collapsed side panel. */
+    show: (side: "left" | "right") => { if (!isOpen(side)) toggle(side); },
     apply,
   };
 }
