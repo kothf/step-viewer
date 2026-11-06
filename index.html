@@ -17,7 +17,7 @@
   <header class="topbar">
     <button class="icon nav-toggle" id="nav-toggle" aria-label="Toggle side panel (Ctrl+[)" title="Toggle side panel (Ctrl+[)" aria-expanded="true" aria-controls="g-left tree-panel"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
     <div class="brand"><img class="brand-logo" src="icons/logo-mark.png" width="28" height="28" alt="" /><span class="brand-txt">MöbiusCAD<small id="app-version"></small></span></div>
-    <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.stl,.STL,.obj,.OBJ,.3mf,.3MF,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
+    <input id="file-input" type="file" multiple accept=".step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.sldprt,.SLDPRT,.sldasm,.SLDASM,.stl,.STL,.obj,.OBJ,.3mf,.3MF,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
     <button class="btn primary" data-open title="Open STEP / IGES / BREP, STL / OBJ / 3MF, or Gerber / Excellon layers and .zip sets (Ctrl+O)"><span class="open-long">Open file</span><span class="open-short">Open</span></button>
     <div class="doc" id="doc" title="No file open"><span class="doc-dot" id="doc-status" data-state="idle" role="img" aria-label="Status: no file open"></span><span class="doc-name" id="doc-name" translate="no">No file open</span></div>
     <button class="btn small step-only" id="back-pcb" hidden title="Back to the PCB layers and the 3D board">◂ Back to PCB</button>
@@ -149,7 +149,7 @@
       <div class="empty-card">
         <svg viewBox="0 0 32 32" width="56" height="56" aria-hidden="true"><path d="M16 3 28 10v12L16 29 4 22V10z" fill="none" stroke="var(--accent)" stroke-width="1.4"/><path d="M16 3v26M4 10l12 7 12-7" stroke="var(--accent)" stroke-width="1.2" fill="none"/></svg>
         <h2>Drop a STEP file or Gerber set here</h2>
-        <p>AP203 · AP214 · AP242, plus IGES and BREP, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
+        <p>AP203 · AP214 · AP242, plus IGES, BREP and SolidWorks parts and assemblies, parsed by OpenCASCADE, and STL, OBJ and 3MF meshes. PCB layers: Gerber RS-274X / X2, Excellon drill and .zip sets. Everything runs in your browser: files never leave your computer.</p>
         <button class="btn primary" data-open>Choose files…</button>
       </div>
     </div>

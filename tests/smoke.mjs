@@ -1029,7 +1029,7 @@ try {
     const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
     const untranslated = () => pg.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|IGES|BREP|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|SolidWorks|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1201,6 +1201,37 @@ try {
     const [dl] = await Promise.all([page.waitForEvent("download"), page.$eval("#step-export", el => el.click())]);
     const back = readStep(await readFile(await dl.path()));
     check(/-parts\.step$/.test(dl.suggestedFilename()) && back.ok && back.meshes === 3, `STEP export: only the 3 visible parts (${dl.suggestedFilename()}, ${back.meshes} read back)`);
+  }
+
+  // --- SolidWorks: a generated block part (Parasolid X_T inside) and an assembly placing it twice ---
+  {
+    const sw = resolve("tests/fixtures/sw");
+    const swLoad = async (files, title) => {
+      await page.goto(`${origin}/index.html?debug`);
+      await page.waitForFunction(() => window.__sv);
+      await page.setInputFiles("#file-input", files.map(f => join(sw, f)));
+      if (title) await page.waitForFunction(t => document.title.startsWith(t) && window.__sv.viewer.parts.length > 0 && document.querySelector("#loading").hidden, title, { timeout: 120000 });
+    };
+    const swState = () => page.evaluate(() => {
+      const { viewer } = window.__sv;
+      const b = viewer.computeBounds(), s = b.getSize(b.min.clone());
+      return { n: viewer.parts.length, vol: viewer.parts.map(p => p.data.volume), planes: viewer.parts.map(p => p.data.faces.filter(f => f.type === "plane").length),
+        closed: viewer.parts.every(p => p.data.closed), size: [s.x, s.y, s.z].map(v => +v.toFixed(6)),
+        toasts: [...document.querySelectorAll("#toasts .toast")].map(t => `${t.dataset.kind}: ${t.dataset.msg}`) };
+    });
+    await swLoad(["block.SLDPRT"], "block.SLDPRT");
+    const part = await swState();
+    check(part.n === 1 && near(part.vol[0], 24000, 1e-6) && part.planes[0] === 6 && part.closed && part.size.join() === "40,30,20",
+      `SolidWorks part: the block opens as one closed solid, 6 planes, 40 x 30 x 20 mm, V=${part.vol[0]} (${JSON.stringify(part)})`);
+    await swLoad(["pair.SLDASM", "block.SLDPRT"], "pair.SLDASM");
+    const asm = await swState();
+    check(asm.n === 2 && asm.vol.every(v => near(v, 24000, 1e-6)) && asm.size.join() === "100,40,20",
+      `SolidWorks assembly: two blocks, the second turned 90° and moved 100 mm, overall ${asm.size.join(" x ")} mm`);
+    check(asm.toasts.some(t => /^warn: .*lid\.SLDPRT/.test(t)), `SolidWorks assembly: the missing part is named (${asm.toasts})`);
+    await swLoad(["pair.SLDASM"]);
+    await page.waitForSelector("#empty img.sw-preview", { timeout: 60000 });
+    const alone = await page.evaluate(() => ({ toasts: [...document.querySelectorAll("#toasts .toast")].map(t => t.dataset.kind), img: document.querySelector("#empty img.sw-preview").naturalWidth }));
+    check(alone.toasts.includes("error") && alone.img === 1, `SolidWorks assembly without its parts: error toast and SolidWorks' own preview (${JSON.stringify(alone)})`);
   }
 
   // --- opening speed: the import engine warms up while idle, and the kernel worker is kept for the next file ---

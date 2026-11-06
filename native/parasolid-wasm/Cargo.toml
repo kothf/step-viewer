@@ -1,0 +1,23 @@
+[package]
+name = "parasolid-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Parasolid X_B reader for MöbiusCAD: parasolid-core compiled to WebAssembly, B-rep out as JSON"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pinned: rebuild with `npm run build:parasolid` after changing it.
+parasolid-core = { git = "https://github.com/monozukuri-ai/parasolid-kit", rev = "d093df64fd39e237e93a38edc9b833e9440b2ec9" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

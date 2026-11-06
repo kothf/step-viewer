@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-11-06
+
+### Added
+- SolidWorks parts (.sldprt) and assemblies (.sldasm) open directly, with no SolidWorks needed. MöbiusCAD reads the Parasolid model stored inside each part and rebuilds it as exact geometry (planes, cylinders, cones, spheres, tori, fillets, B-splines and intersection curves), so measurements, sections, mass properties and STEP export all work as on a STEP file. Parts made from imported STEP bodies and files from before SolidWorks 2015 open too.
+- Assemblies are put together from their component list with each part's placement, sub-assemblies included, and keep their tree and part names. Drop the assembly with its part files, or drag the whole folder onto the window; parts that are missing are named in a notice and left out.
+- When a file has no geometry that can be read, SolidWorks' own preview picture is shown instead.
+- The Parasolid reader is parasolid-kit (MIT / Apache-2.0), compiled to WebAssembly (about 190 KB compressed) and loaded only when a SolidWorks file is opened.
+
 ## [1.15.0] - 2026-11-06
 
 ### Added
@@ -205,7 +213,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/kothf/step-viewer/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/kothf/step-viewer/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/kothf/step-viewer/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/kothf/step-viewer/compare/v1.13.2...v1.14.0

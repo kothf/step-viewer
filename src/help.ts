@@ -18,7 +18,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const REPO = "https://github.com/kothf/step-viewer";
 const ext = (href: string, text: string) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
 // the libraries MöbiusCAD is built on, named up front; the full list is below them
-const MAIN = ["three", "occt-import-js", "opencascade.js", "Open CASCADE Technology", "three-mesh-bvh", "jspdf", "fflate"];
+const MAIN = ["three", "occt-import-js", "opencascade.js", "Open CASCADE Technology", "parasolid-kit (parasolid-core)", "three-mesh-bvh", "jspdf", "fflate"];
 const SHOWN: Record<string, string> = { three: "three.js", jspdf: "jsPDF" };
 const MAIN_WHAT: Record<string, [string, string]> = {
   "three": ["3D rendering", "3D-графика"],
@@ -26,6 +26,7 @@ const MAIN_WHAT: Record<string, [string, string]> = {
   "opencascade.js": ["exact geometry and STEP export (full OpenCASCADE, WebAssembly)", "точная геометрия и экспорт в STEP (полное ядро OpenCASCADE, WebAssembly)"],
   "Open CASCADE Technology": ["CAD geometry kernel inside occt-import-js and opencascade.js", "геометрическое ядро САПР внутри occt-import-js и opencascade.js"],
   "three-mesh-bvh": ["fast picking and snapping", "быстрый выбор и привязки"],
+  "parasolid-kit (parasolid-core)": ["reading the Parasolid geometry inside SolidWorks files (WebAssembly)", "чтение геометрии Parasolid внутри файлов SolidWorks (WebAssembly)"],
   "jspdf": ["PDF reports", "PDF-отчёты"],
   "fflate": ["reading .zip PCB sets", "чтение .zip с платами"],
 };
@@ -41,9 +42,9 @@ function about(l: Lang) {
   <div class="about-links">${ext(blog, ru ? "Статья в блоге" : "Blog post")} · ${ext(REPO, ru ? "Исходный код на <span translate=\"no\">GitHub</span>" : "Source on GitHub")} · ${ext(`${REPO}/blob/main/CHANGELOG.md`, ru ? "Что нового" : "What's new")}</div></div>
 </div>
 ${ru
-    ? `<p>Модели STEP, IGES и BREP, сетки STL, OBJ и 3MF и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
+    ? `<p>Модели STEP, IGES, BREP и SolidWorks, сетки STL, OBJ и 3MF и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
 <p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; затем полное ядро (opencascade.js) в фоне заменяет объёмы, площади, длины, радиусы и кривизну точными значениями B-rep. Расстояния на поверхностях свободной формы измеряются по сетке. Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`
-    : `<p>STEP, IGES and BREP models, STL, OBJ and 3MF meshes and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
+    : `<p>STEP, IGES, BREP and SolidWorks models, STL, OBJ and 3MF meshes and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
 <p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; then the full kernel (opencascade.js) replaces volumes, areas, lengths, radii and curvature with exact B-rep values in the background. Distances on freeform surfaces are measured on the mesh. Internal units are millimetres; units and decimals only change how values are shown.</p>`}
 <h4>${ru ? "Создано с помощью" : "Built with"}</h4>
 <ul class="credits-main" data-credits-main><li>${ru ? "Загрузка…" : "Loading…"}</li></ul>
@@ -97,6 +98,7 @@ const EN: Tab[] = [
 <ul>
   <li><b>Open file</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) or drag files onto the window.</li>
   <li><b>3D models</b>: STEP (AP203, AP214, AP242), IGES and BREP. The mesh quality (Draft, Normal, Fine) in the <b>Display</b> menu applies to the next file you open.</li>
+  <li><b>SolidWorks</b>: parts (.sldprt) and assemblies (.sldasm), read as exact geometry, so every tool and STEP export work on them. Drop an assembly together with its part files, or drag its whole folder; parts that are missing are named and left out. If a file has no readable geometry, its SolidWorks preview is shown instead.</li>
   <li><b>Mesh files</b>: STL, OBJ and 3MF. They hold only triangles, so MöbiusCAD groups them into flat and curved faces first; holes, cylinders and spheres are still recognised, but there are no exact values or STEP export. Sizes are read as millimetres.</li>
   <li><b>PCBs</b>: Gerber RS-274X / X2 layers, Excellon drill files, or a .zip with a whole set. Open several files at once to see them as one board.</li>
 </ul>
@@ -233,6 +235,7 @@ const RU: Tab[] = [
 <ul>
   <li><b>Открыть файл</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) или перетащите файлы в окно.</li>
   <li><b>3D-модели</b>: STEP (AP203, AP214, AP242), IGES и BREP. Качество сетки (черновое, обычное, точное) в меню <b>Отображение</b> применяется к следующему открытому файлу.</li>
+  <li><b>SolidWorks</b>: детали (.sldprt) и сборки (.sldasm) читаются как точная геометрия, поэтому с ними работают все инструменты и экспорт в STEP. Перетащите сборку вместе с файлами деталей или целую папку; недостающие детали перечисляются и пропускаются. Если в файле нет читаемой геометрии, показывается его эскиз из SolidWorks.</li>
   <li><b>Сеточные файлы</b>: STL, OBJ и 3MF. В них только треугольники, поэтому MöbiusCAD сначала собирает их в плоские и кривые грани; отверстия, цилиндры и сферы всё равно распознаются, но точных значений и экспорта в STEP нет. Размеры читаются в миллиметрах.</li>
   <li><b>Печатные платы</b>: слои Gerber RS-274X / X2, файлы сверловки Excellon или .zip с полным комплектом. Откройте несколько файлов сразу, чтобы увидеть их как одну плату.</li>
 </ul>

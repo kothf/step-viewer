@@ -1,6 +1,6 @@
 {
   "name": "step-viewer",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "Browser STEP/IGES viewer and Gerber PCB viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties.",
   "scripts": {
     "predev": "node scripts/copy-occt.mjs",
@@ -9,7 +9,8 @@
     "typecheck": "tsc",
     "package": "node scripts/package.mjs",
     "test": "node tests/smoke.mjs dist/step-viewer",
-    "release-notes": "node scripts/release-notes.mjs"
+    "release-notes": "node scripts/release-notes.mjs",
+    "build:parasolid": "node scripts/build-parasolid.mjs"
   },
   "license": "MIT",
   "dependencies": {

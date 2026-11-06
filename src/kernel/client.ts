@@ -4,6 +4,7 @@
 // curvature). Measurements read those fields, so they become exact without a switch.
 import type { EdgeInfo, FaceInfo, PartData, V3 } from "../topology";
 import type { PartPatch, PartProbe } from "./occ";
+import type { SwReport } from "./solidworks";
 import KernelWorker from "./kernel.worker?worker";
 
 export type KernelStatus = "off" | "loading" | "ready" | "partial" | "error";
@@ -145,6 +146,18 @@ export class KernelClient {
     await this.ready;
     const r = await this.call<{ bytes: Uint8Array }>({ type: "step", which, names, colors });
     return r.bytes;
+  }
+
+  /**
+   * Converts SolidWorks files (a part, or an assembly with its part files) to
+   * STEP in the worker. Resolves with the STEP (null when no geometry could be
+   * read) and what happened.
+   */
+  async solidworks(files: { name: string; buffer: ArrayBuffer }[], main: string) {
+    if (this.pending.size) this.stop();
+    this.file = null;
+    await this.take();
+    return this.call<{ bytes: Uint8Array | null; report: SwReport }>({ type: "solidworks", files, main }, files.map(f => f.buffer));
   }
 
   /** STEP of a PCB board body. Uses the current worker, or starts one. */
