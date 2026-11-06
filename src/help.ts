@@ -104,7 +104,8 @@ const EN: Tab[] = [
 <ul>
   <li><b>Header</b>: open file, the open file's name and status, view controls, language (EN / RU), theme and this help.</li>
   <li><b>Left panel</b>: model tree or PCB layers, and the list of saved measurements. Hide it with <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Right panel</b>: properties and tools. Hide it with <kbd>Ctrl</kbd>+<kbd>]</kbd>. On a phone, the PCB panels open from the bottom bar.</li>
+  <li><b>Tool strip</b> (3D model, under the header): every measuring tool, the right-panel pages (Properties, Section, Explode, Mass, Export), units, decimals and the measurement colour, always in view. Labels fold into icons on narrower screens; hover an icon for its name and key.</li>
+  <li><b>Right panel</b>: the page picked in the tool strip; click the open page again to hide the panel, or press <kbd>Ctrl</kbd>+<kbd>]</kbd>. On a phone, the PCB panels open from the bottom bar.</li>
   <li><b>Status bar</b>: snapping options, the snapped point and its coordinates.</li>
 </ul>
 <h4>Language</h4>
@@ -239,7 +240,8 @@ const RU: Tab[] = [
 <ul>
   <li><b>Заголовок</b>: открытие файла, имя и состояние открытого файла, управление видом, язык (EN / RU), тема и эта справка.</li>
   <li><b>Левая панель</b>: дерево модели или слои платы и список сохранённых измерений. Скрыть: <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Правая панель</b>: свойства и инструменты. Скрыть: <kbd>Ctrl</kbd>+<kbd>]</kbd>. На телефоне панели платы открываются с нижней панели.</li>
+  <li><b>Панель инструментов</b> (3D-модель, под заголовком): все инструменты измерения, страницы правой панели (Свойства, Сечение, Разнести, Масса, Экспорт), единицы, знаки и цвет измерения, всегда на виду. На узких экранах подписи сворачиваются в значки; наведите на значок, чтобы увидеть название и клавишу.</li>
+  <li><b>Правая панель</b>: страница, выбранная на панели инструментов; повторный щелчок по открытой странице скрывает панель, также <kbd>Ctrl</kbd>+<kbd>]</kbd>. На телефоне панели платы открываются с нижней панели.</li>
   <li><b>Строка состояния</b>: настройки привязки, найденная точка и её координаты.</li>
 </ul>
 <h4>Язык</h4>

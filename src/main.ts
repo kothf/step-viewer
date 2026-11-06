@@ -836,7 +836,7 @@ function setTool(t: Tool) {
   state.picks = [];
   hl.pickMarks.clear();
   clearLive();
-  $$("#tools button").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
+  $$("#tools button").forEach(b => { const on = b.dataset.tool === t; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   updateHint();
   viewer.invalidate();
 }
@@ -857,6 +857,29 @@ function updateHint() {
 }
 
 $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool as Tool)));
+
+// ---------- tool strip and right-panel pages ----------
+// The right panel shows one page (Properties, Section, Explode, Mass, Export) picked from the tool strip,
+// so every tool is one click away and nothing sits below the fold. Clicking the open page again hides the panel.
+const rpTabs = $("#rp-tabs");
+rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEventListener("click", () => {
+  if (b.classList.contains("on") && !$("#app").classList.contains("no-right") && innerWidth > 900) panels.toggle("right");
+  else panels.show("right");
+}, true));
+const showPage = bindTabs(rpTabs, tab => {
+  $$(".rp").forEach(s => s.classList.toggle("on", s.id === `rp-${tab}`));
+});
+/** Labels fold into icons (measuring tools first, then the page tabs) when the strip runs out of room. */
+function fitToolbar() {
+  const tb = $("#toolbar");
+  if (isPcbMode()) return;
+  tb.classList.remove("tb-compact", "tb-icons");
+  if (innerWidth <= 900) { tb.classList.add("tb-icons"); return; }
+  if (tb.scrollWidth > tb.clientWidth + 1) tb.classList.add("tb-compact");
+  if (tb.scrollWidth > tb.clientWidth + 1) tb.classList.add("tb-icons");
+}
+new ResizeObserver(() => fitToolbar()).observe($("#toolbar"));
+onLangChange(() => requestAnimationFrame(fitToolbar));
 const PLANE3_INFO = { title: "Section plane", picks: 3, hint: "Pick three points on the plane" };
 
 const PALETTE = ["#e8590c", "#2f9e44", "#1c7ed6", "#ae3ec9", "#f08c00", "#0ca678", "#e03131", "#5f3dc4"];
@@ -1019,6 +1042,7 @@ function setCsys(c: Csys | null, refresh = true) {
   const reset = $("#csys-reset");
   reset.hidden = !c;
   if (c) reset.textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(c.name) })}`;
+  fitToolbar();
   if (c) {
     csysMark.position.set(...c.origin);
     csysMark.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.x), new THREE.Vector3(...c.y), new THREE.Vector3(...c.z)));
@@ -1397,6 +1421,7 @@ onLangChange(() => {
   renderMass();
   validateDensity();
   if (csys.active) $("#csys-reset").textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(csys.active.name) })}`;
+  fitToolbar();
   gerber.relocalize();
 });
 
@@ -1479,7 +1504,11 @@ $<HTMLInputElement>("#profile-color").addEventListener("input", e => section.set
 
 const unitFactor = unitMm;
 
+let sectionCount = 0;
 function renderSections() {
+  // A new plane (from the strip, a face, the result card or three points) brings up the Section page.
+  if (section.planes.length > sectionCount) showPage("section");
+  sectionCount = section.planes.length;
   const host = $("#sec-list");
   host.innerHTML = section.planes.length ? "" : `<p class="muted" style="margin:4px 0">Up to 3 planes. The cut curves are drawn and can be snapped to for measuring.</p>`;
   $$<HTMLButtonElement>("#sec-add button").forEach(b => (b.disabled = !section.canAdd));

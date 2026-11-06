@@ -65,6 +65,38 @@
     <button class="icon panel-toggle" id="panel-toggle" title="Toggle right panel (Ctrl+])" aria-label="Toggle right panel (Ctrl+])" aria-expanded="true" aria-controls="g-right right"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 2.5v11" stroke="currentColor" stroke-width="1.3"/></svg></button>
   </header>
 
+  <nav class="toolbar step-only" id="toolbar" aria-label="Tools">
+    <div class="tb-group" id="tools" role="group" aria-label="Measure">
+      <button data-tool="select" class="on" aria-pressed="true" title="Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8l1.5 4.7 4.7 1.5-4.7 1.5L8 14.2 6.5 9.5 1.8 8l4.7-1.5z" fill="currentColor" stroke="none"/></svg><span class="tb-lbl">Smart</span></button>
+      <button data-tool="distance" aria-pressed="false" title="Point to point (D)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h12M4.5 5.5 2 8l2.5 2.5M11.5 5.5 14 8l-2.5 2.5"/></svg><span class="tb-lbl">Point–point</span></button>
+      <button data-tool="minDistance" aria-pressed="false" title="Shortest distance between entities (M)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2.5v11M14 2.5v11M4.5 8h7M6.5 6 4.5 8l2 2M9.5 6l2 2-2 2"/></svg><span class="tb-lbl">Min distance</span></button>
+      <button data-tool="radius" aria-pressed="false" title="Radius (R)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 8l4.2-4.2"/><circle cx="8" cy="8" r=".9" fill="currentColor"/></svg><span class="tb-lbl">Radius</span></button>
+      <button data-tool="diameter" aria-pressed="false" title="Diameter"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M3.8 12.2 12.2 3.8"/></svg><span class="tb-lbl">Diameter</span></button>
+      <button data-tool="centerDistance" aria-pressed="false" title="Centre to centre / hole pitch (C)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="8" r="2.6"/><circle cx="12" cy="8" r="2.6"/><path d="M4 8h8M4 6.5v3M12 6.5v3"/></svg><span class="tb-lbl">Centre–centre</span></button>
+      <button data-tool="arcLength" aria-pressed="false" title="Edge / arc length (L)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12.5a6.5 6.5 0 0 1 11 0"/><path d="M2.5 12.5v1.5M13.5 12.5v1.5"/></svg><span class="tb-lbl">Edge length</span></button>
+      <button data-tool="angle" aria-pressed="false" title="Angle between edges or faces (A)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13.5h12M2 13.5 11 3.5"/><path d="M7.5 13.5a5.5 5.5 0 0 0-1.8-4.1"/></svg><span class="tb-lbl">Angle</span></button>
+      <button data-tool="angle3" aria-pressed="false" title="3-point angle"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3.5 8 12.5l5-9"/><circle cx="3" cy="3.5" r="1.3" fill="currentColor"/><circle cx="8" cy="12.5" r="1.3" fill="currentColor"/><circle cx="13" cy="3.5" r="1.3" fill="currentColor"/></svg><span class="tb-lbl">3-point angle</span></button>
+      <button data-tool="point" aria-pressed="false" title="Point coordinates and normal (N)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"/></svg><span class="tb-lbl">Point / normal</span></button>
+      <button data-tool="bbox" aria-pressed="false" title="Bounding box of visible or selected parts (B)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v11h-11z" stroke-dasharray="2 1.6"/><path d="M5.5 5.5h5v5h-5z"/></svg><span class="tb-lbl">Bounding box</span></button>
+      <button data-tool="note" aria-pressed="false" title="Note: a text note with a leader on the model, in PNG and the PDF report (T). Drag the box to move it, double-click to edit"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v8h-6l-3 3v-3h-2z"/><path d="M5 5.5h6M5 7.8h4"/></svg><span class="tb-lbl">Note</span></button>
+    </div>
+    <div class="sep"></div>
+    <div class="tb-group" id="rp-tabs" role="tablist" aria-label="Right panel">
+      <button data-tab="props" role="tab" id="rt-props" class="on" aria-selected="true" aria-controls="rp-props" title="Properties of the model or the selected part, face or edge"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".9" fill="currentColor" stroke="none"/></svg><span class="tb-lbl">Properties</span></button>
+      <button data-tab="section" role="tab" id="rt-section" aria-selected="false" tabindex="-1" aria-controls="rp-section" title="Section planes, caps and cut profiles"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v11h-11z"/><path d="M2.5 13.5 13.5 2.5v11z" fill="currentColor" fill-opacity=".35"/></svg><span class="tb-lbl">Section</span></button>
+      <button data-tab="explode" role="tab" id="rt-explode" aria-selected="false" tabindex="-1" aria-controls="rp-explode" title="Exploded view and moving parts"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6h4v4H6zM2 2l2.6 2.6M14 2l-2.6 2.6M2 14l2.6-2.6M14 14l-2.6-2.6M2 2h2.4M2 2v2.4M14 2h-2.4M14 2v2.4M2 14h2.4M2 14v-2.4M14 14h-2.4M14 14v-2.4"/></svg><span class="tb-lbl">Explode</span></button>
+      <button data-tab="mass" role="tab" id="rt-mass" aria-selected="false" tabindex="-1" aria-controls="rp-mass" title="Material, mass, volume and centre of mass"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="3.8" r="1.6"/><path d="M4.6 6.5h6.8l2.1 7H2.5z"/></svg><span class="tb-lbl">Mass</span></button>
+      <button data-tab="export" role="tab" id="rt-export" aria-selected="false" tabindex="-1" aria-controls="rp-export" title="PNG, STEP, STL, OBJ, glTF and PDF report"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 5l3-3 3 3M3 9.5v4h10v-4"/></svg><span class="tb-lbl">Export</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="tb-units">
+      <label title="Units"><span class="tb-lbl">Units</span> <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
+      <label title="Decimals"><span class="tb-lbl">Decimals</span> <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+      <label title="Colour of the next measurement"><span class="tb-lbl tb-sr">Colour</span> <input type="color" id="m-color" value="#e8590c" /></label>
+      <button id="csys-reset" class="btn small" hidden title="Back to the global coordinate system">⌖ Global CSYS</button>
+    </div>
+  </nav>
+
   <aside class="left panel step-only" id="tree-panel" aria-label="Model tree and measurements">
     <div class="tabs" role="tablist" aria-label="Left panel">
       <button data-tab="tree" class="on" role="tab" id="t-tree" aria-selected="true" aria-controls="tab-tree">Model tree</button>
@@ -164,32 +196,10 @@
   </aside>
 
   <aside class="right panel step-only" id="right" aria-label="Properties and tools">
-    <details open id="sec-selection"><summary>Properties</summary><div id="props" class="props"><p class="muted">Open a model to begin.</p></div></details>
-
-    <details open><summary>Measure</summary>
-      <div class="tools-grid" id="tools">
-        <button data-tool="select" class="on" title="Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)">✦ Smart</button>
-        <button data-tool="distance" title="Point to point (D)">↔ Point–point</button>
-        <button data-tool="minDistance" title="Shortest distance between entities (M)">⇤ Min distance</button>
-        <button data-tool="radius" title="Radius (R)">R Radius</button>
-        <button data-tool="diameter" title="Diameter">Ø Diameter</button>
-        <button data-tool="centerDistance" title="Centre to centre / hole pitch (C)">⊙ Centre–centre</button>
-        <button data-tool="arcLength" title="Edge / arc length (L)">⌒ Edge length</button>
-        <button data-tool="angle" title="Angle between edges or faces (A)">∠ Angle</button>
-        <button data-tool="angle3" title="3-point angle">∡ 3-point angle</button>
-        <button data-tool="point" title="Point coordinates and normal (N)">⊕ Point / normal</button>
-        <button data-tool="bbox" title="Bounding box of visible or selected parts (B)">▭ Bounding box</button>
-        <button data-tool="note" title="Note: a text note with a leader on the model, in PNG and the PDF report (T). Drag the box to move it, double-click to edit">✎ Note</button>
-      </div>
-      <div class="units-row">
-        <label>Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
-        <label>Decimals <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
-        <label>Colour <input type="color" id="m-color" value="#e8590c" /></label>
-        <button id="csys-reset" class="btn small" hidden title="Back to the global coordinate system">⌖ Global CSYS</button>
-      </div>
-    </details>
-
-    <details id="sec-panel"><summary>Section</summary>
+    <section class="rp on" id="rp-props" role="tabpanel" aria-labelledby="rt-props">
+      <div id="props" class="props"><p class="muted">Open a model to begin.</p></div>
+    </section>
+    <section class="rp" id="rp-section" role="tabpanel" aria-labelledby="rt-section"><h2 class="rp-title">Section</h2>
       <div class="row wrap" id="sec-add">
         <button class="btn small" data-sec="z" title="Plane parallel to XY (normal Z)">+ XY</button>
         <button class="btn small" data-sec="x" title="Plane parallel to YZ (normal X)">+ YZ</button>
@@ -211,29 +221,26 @@
         <label class="chk" title="Snap only to the cut: profile curves, their vertices, midpoints and centres, and the cap faces"><input type="checkbox" id="snap-plane" /> Snap to cut only</label>
       </div>
       <div class="row"><button class="btn small" id="sec-clear">Remove all</button></div>
-    </details>
-
-    <details><summary>Exploded view</summary>
+    </section>
+    <section class="rp" id="rp-explode" role="tabpanel" aria-labelledby="rt-explode"><h2 class="rp-title">Exploded view</h2>
       <label class="slider">Explode <input type="range" id="explode" min="0" max="1" step="0.005" value="0" /> <span id="explode-val">0%</span></label>
       <div class="row">
         <button class="btn small" id="drag-part" title="Drag the selected part with a gizmo">Move selected part</button>
         <button class="btn small" id="reset-drag">Reset positions</button>
       </div>
-    </details>
-
-    <details><summary>Mass properties</summary>
+    </section>
+    <section class="rp" id="rp-mass" role="tabpanel" aria-labelledby="rt-mass"><h2 class="rp-title">Mass properties</h2>
       <div class="row"><label for="material">Material</label> <select id="material"></select></div>
       <div class="row"><label for="density">Density</label> <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" aria-describedby="density-err" /> g/cm³</div>
       <p class="field-err" id="density-err" role="alert" hidden></p>
       <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
       <div id="mass-out" class="kv"></div>
-    </details>
-
-    <details><summary>Export</summary>
+    </section>
+    <section class="rp" id="rp-export" role="tabpanel" aria-labelledby="rt-export"><h2 class="rp-title">Export</h2>
       <div class="row wrap">
         <button class="btn small" id="png">PNG</button>
         <button class="btn small" id="png-t">PNG (transparent)</button>
-        <select id="png-scale"><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select>
+        <select id="png-scale" aria-label="PNG scale" title="PNG scale"><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option></select>
       </div>
       <div class="row wrap">
         <button class="btn small" id="step-export" title="Visible parts as STEP AP214 with names and colours, in their original positions (the whole assembly when everything is visible)">STEP</button>
@@ -242,7 +249,7 @@
         <button class="btn small" data-export="glb">glTF (GLB)</button>
         <button class="btn small" id="report">PDF report</button>
       </div>
-    </details>
+    </section>
   </aside>
 
   <nav class="bottom-nav gerber-only" id="g-bottomnav" aria-label="PCB panels">
