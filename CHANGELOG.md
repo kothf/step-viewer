@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-11-06
+
+### Changed
+- The app version is shown under the MöbiusCAD name in the 3D view's header on screens 1360 px wide and up (1366 px laptops included; it used to need 1600 px). On narrower screens the logo's tooltip shows the name and version.
+
 ## [1.13.1] - 2026-11-06
 
 ### Changed
@@ -184,7 +189,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.2...HEAD
+[1.13.2]: https://github.com/kothf/step-viewer/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/kothf/step-viewer/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/kothf/step-viewer/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/kothf/step-viewer/compare/v1.11.0...v1.12.0

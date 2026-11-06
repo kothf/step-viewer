@@ -50,6 +50,7 @@ const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
 applyThemeToViewer();
 $("#app-version").textContent = `v${__APP_VERSION__}`;
+$(".brand").title = `MöbiusCAD v${__APP_VERSION__}`;
 
 // ---------- state ----------
 const UNIT_LIST: Unit[] = ["mm", "cm", "m", "in", "ft"];

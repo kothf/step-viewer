@@ -210,13 +210,14 @@ try {
     handlePick(snapF(bottom)); const par = read();
     handlePick(snapF(top)); handlePick(snapF(side)); const ang = read();
     handlePick(null);
-    return { one, par, ang, cleared: state.live === null, version: document.querySelector("#app-version").textContent };
+    const ver = document.querySelector("#app-version");
+    return { one, par, ang, cleared: state.live === null, version: ver.textContent, verShown: ver.getBoundingClientRect().width > 0, tip: document.querySelector(".brand").title };
   });
   check(smart.one[0] === "Planar face" && near(smart.one[1], 100, 1e-6), `smart: one face gives its area (${smart.one})`);
   check(smart.par[0] === "Parallel faces" && near(smart.par[1], 10, 1e-9), `smart: opposite faces 10 mm apart (${smart.par})`);
   check(smart.ang[0] === "Angle" && near(smart.ang[1], Math.PI / 2, 1e-9), `smart: adjacent faces at 90° (${smart.ang})`);
   check(smart.cleared, "smart: clicking empty space clears the result");
-  check(/^v\d+\.\d+\.\d+$/.test(smart.version), `version shown under the name (${smart.version})`);
+  check(/^v\d+\.\d+\.\d+$/.test(smart.version) && smart.verShown && smart.tip === `MöbiusCAD ${smart.version}`, `version shown under the name at 1400 px and in the logo tooltip (${smart.version}, ${smart.verShown}, ${smart.tip})`);
 
   // --- pick marker keeps its screen size when zooming, so it never covers the model ---
   const mark = await page.evaluate(() => {
