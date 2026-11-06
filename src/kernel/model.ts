@@ -10,7 +10,8 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { EdgeRef, FaceRef, Feature, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "../model/types";
+import type { BodyProps, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, PartDoc, PlaneFeature, PlaneRef, SketchFeature, V3 } from "../model/types";
+import { featureRefs } from "../model/doc";
 import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
 export class FeatureError extends Error {
@@ -50,9 +51,25 @@ export const STD_FRAMES: Record<"XY" | "XZ" | "YZ", Frame> = {
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+/** Rodrigues rotation of v about the unit axis u by angle a. */
+const rotate = (v: V3, u: V3, a: number): V3 => {
+  const c = Math.cos(a), s = Math.sin(a), k = dot(u, v) * (1 - c), w = cross(u, v);
+  return [v[0] * c + w[0] * s + u[0] * k, v[1] * c + w[1] * s + u[1] * k, v[2] * c + w[2] * s + u[2] * k];
+};
+/** A right-handed frame from an origin, an x direction (made square to n) and the normal. */
+function frameFrom(o: V3, x: V3, n: V3): Frame {
+  n = unit(n);
+  x = unit(add(x, mul(n, -dot(x, n))));
+  return { o, x, y: cross(n, x), n };
+}
 
 export class Modeller {
   private cache: CacheEntry[] = [];
+  /** A warning set while evaluating the current feature. */
+  private warning = "";
 
   constructor(private oc: any) {}
 
@@ -142,25 +159,54 @@ export class Modeller {
   }
 
   /** The frame of a sketch plane. */
-  frameOf(sk: SketchFeature, body: Named | null): Frame {
-    if ("std" in sk.plane) return STD_FRAMES[sk.plane.std];
+  frameOf(sk: SketchFeature, body: Named | null, frames: Record<string, Frame> = {}): Frame {
+    return this.planeFrame(sk.plane, body, frames);
+  }
+
+  /** The frame of a plane reference: a standard plane, a flat face, or a reference plane evaluated before. */
+  planeFrame(ref: PlaneRef, body: Named | null, frames: Record<string, Frame>): Frame {
+    if ("std" in ref) return STD_FRAMES[ref.std];
+    if ("plane" in ref) {
+      const f = frames[ref.plane];
+      if (!f) throw new FeatureError("E-FT-PARENT", "The reference plane is missing or has an error.");
+      return f;
+    }
     const oc = this.oc;
-    const face = this.resolveFace(body, sk.plane.face);
+    const face = this.resolveFace(body, ref.face);
     const ad = new oc.BRepAdaptor_Surface_2(face, true);
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-FT-NOTPLANAR", "A sketch needs a flat face or a plane.");
     const pos = ad.Plane().Position();
-    let n = this.xyz(pos.Direction()), x = this.xyz(pos.XDirection());
+    let n = this.xyz(pos.Direction());
+    const x = this.xyz(pos.XDirection());
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
-    // Keep the frame right-handed: y = n × x.
-    const y: V3 = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
-    // Origin: the projection of the world origin, so sketch coordinates stay small and stable.
-    const p0 = this.xyz(pos.Location());
-    const t = p0[0] * n[0] + p0[1] * n[1] + p0[2] * n[2];
-    let o: V3 = mul(n, t);
-    if (sk.plane.offset) o = add(o, mul(n, sk.plane.offset));
-    x = [x[0], x[1], x[2]];
-    return { o, x, y, n };
+    let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));
+    if (ref.offset) o = add(o, mul(n, ref.offset));
+    return frameFrom(o, x, n);
+  }
+
+  /** A reference plane: offset along the base's normal, or turned about a straight edge. */
+  private refPlane(f: PlaneFeature, body: Named | null, frames: Record<string, Frame>): Frame {
+    const base = this.planeFrame(f.base, body, frames);
+    const sg = f.flip ? -1 : 1;
+    if (f.mode === "offset") {
+      const o = add(base.o, mul(base.n, sg * f.offset.v));
+      return { o: mul(base.n, dot(o, base.n)), x: base.x, y: base.y, n: base.n };
+    }
+    if (!f.axis) throw new FeatureError("E-REF-AXIS", "Pick a straight edge to turn the plane about.");
+    const oc = this.oc;
+    const e = this.resolveEdge(body, f.axis);
+    const ad = new oc.BRepAdaptor_Curve_2(e);
+    if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-AXIS", "The plane turns about a straight edge.");
+    const lin = ad.Line();
+    const p = this.xyz(lin.Location());
+    const u = this.xyz(lin.Direction());
+    const a = sg * (f.angle?.v ?? 0);
+    const rot = (v: V3) => rotate(v, u, a);
+    const n = rot(base.n);
+    const x = rot(base.x);
+    // Through the edge: the origin is the world origin's projection onto the turned plane.
+    return frameFrom(mul(n, dot(p, n)), x, n);
   }
 
   // ---------- profiles ----------
@@ -225,14 +271,16 @@ export class Modeller {
 
   // ---------- features ----------
 
-  private sweep(f: Feature & { type: "extrude" | "revolve" }, doc: PartDoc, prev: Named | null): Named {
+  private sweep(f: Feature & { type: "extrude" | "revolve" }, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     const sk = doc.features.find(x => x.id === f.sketch);
     if (!sk || sk.type !== "sketch") throw new FeatureError("E-FT-NOSKETCH", "The feature's sketch is missing.");
     if (sk.suppressed) throw new FeatureError("E-FT-PARENT", "The feature's sketch is suppressed.");
-    const frame = this.frameOf(sk, prev);
+    const frame = frames[sk.id] ?? this.frameOf(sk, prev, frames);
     let tools: Named[] = [];
-    if (f.type === "extrude") {
+    if (f.type === "extrude" && f.end === "upto") {
+      tools = this.upTo(f, sk, frame, prev, frames);
+    } else if (f.type === "extrude") {
       // A cut goes into the material (against the sketch normal); Reverse direction flips either.
       const dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
       let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
@@ -283,9 +331,59 @@ export class Modeller {
     for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
-    const out = this.bool("cut", prev, tool, f.id);
+    const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
     if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
     return out;
+  }
+
+  /**
+   * Up to face/plane (FR-FT-011): a long prism toward the target, then the part beyond the
+   * target's plane cut away with a slab; the target's face becomes the feature's end face.
+   * Flat faces and planes only in P1.
+   */
+  private upTo(f: Feature & { type: "extrude" }, sk: SketchFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>): Named[] {
+    const oc = this.oc;
+    if (!f.upTo) throw new FeatureError("E-FT-UPTO", "Pick the face or plane the extrusion goes up to.");
+    let target: Frame;
+    try { target = this.planeFrame(f.upTo, prev, frames); }
+    catch (err) {
+      if (err instanceof FeatureError && err.code === "E-FT-NOTPLANAR") throw new FeatureError("E-FT-UPTO", "Up to face needs a flat face or a plane.");
+      throw err;
+    }
+    const prof = sketchProfile(sk);
+    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
+    // Where the profile's middle meets the target along the sketch normal.
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : [sg.a, sg.b]))) as [number, number][];
+    const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
+    const c = this.w(frame, mid);
+    const den = dot(frame.n, target.n);
+    if (Math.abs(den) < 1e-9) throw new FeatureError("E-FT-UPTO", "The face is parallel to the extrusion direction.");
+    const s = dot(add(target.o, mul(c, -1)), target.n) / den;
+    if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The face is in the sketch plane.");
+    const dir = Math.sign(s);
+    const big = Math.abs(s) * 2 + (prev ? this.size(prev.shape) : 0) * 2 + 10;
+    const { faces, edgeEnt } = this.profileFaces(sk, frame);
+    const tools: Named[] = [];
+    for (const face of faces) {
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, big * dir)), false, true);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
+      tools.push(this.nameSweep(mk, f.id, edgeEnt, mk.Shape()));
+    }
+    // The slab: a big square on the target plane, swept away from the sketch.
+    const span = big * 4;
+    const pf = new oc.BRepBuilderAPI_MakeFace_9(new oc.gp_Pln_2(new oc.gp_Ax3_3(this.P(target.o), this.D(target.n), this.D(target.x))), -span, span, -span, span).Face();
+    const away = Math.sign(dot(frame.n, target.n)) * dir;
+    const mk = new oc.BRepPrimAPI_MakePrism_1(pf, this.V(mul(target.n, span * away)), false, true);
+    mk.Build(new oc.Message_ProgressRange_1());
+    const slabFaces = this.sub(mk.Shape(), "FACE");
+    const first = this.sub(mk.FirstShape(), "FACE");
+    const slab: Named = { shape: mk.Shape(), faces: slabFaces, names: slabFaces.map(x => (first.some(g => g.IsSame(x)) ? `${f.id}:end` : `${f.id}:slab`)) };
+    return tools.map(t => {
+      const out = this.bool("cut", t, slab, f.id);
+      if (out.names.some(n => n === `${f.id}:slab`)) throw new FeatureError("E-FT-UPTO", "The extrusion does not reach that face.");
+      return out;
+    });
   }
 
   /** Names the faces of a prism or revolution from the sketch curves they were swept from. */
@@ -313,11 +411,12 @@ export class Modeller {
     return { shape, faces, names: names.map(n => n ?? `${fid}:new:${k++}`) };
   }
 
-  private bool(kind: "fuse" | "cut", a: Named, b: Named, fid: string): Named {
+  private bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string): Named {
     const oc = this.oc;
-    const mk = kind === "fuse"
-      ? new oc.BRepAlgoAPI_Fuse_3(a.shape, b.shape, new oc.Message_ProgressRange_1())
-      : new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, new oc.Message_ProgressRange_1());
+    const pr = new oc.Message_ProgressRange_1();
+    const mk = kind === "fuse" ? new oc.BRepAlgoAPI_Fuse_3(a.shape, b.shape, pr)
+      : kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, pr)
+      : new oc.BRepAlgoAPI_Common_3(a.shape, b.shape, pr);
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", kind === "fuse" ? "The new material could not be joined to the body." : "The cut failed.");
     return this.carry(mk, [a, b], mk.Shape(), fid);
   }
@@ -328,25 +427,59 @@ export class Modeller {
     if (!f.edges.length) throw new FeatureError("E-FT-NOEDGES", "Pick at least one edge.");
     const size = f.type === "fillet" ? f.radius.v : f.distance.v;
     if (!(size > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    const mode = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
+    if (f.type === "chamfer" && mode === "two" && !((f.distance2?.v ?? 0) > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    if (f.type === "chamfer" && mode === "angle" && !((f.angle?.v ?? 0) > 1e-6 && (f.angle?.v ?? 0) < Math.PI / 2)) throw new FeatureError("E-FT-ANGLE", "The chamfer angle must be between 0° and 90°.");
     const edges = f.edges.map(r => this.resolveEdge(prev, r));
-    const mk = f.type === "fillet"
-      ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
-      : new oc.BRepFilletAPI_MakeChamfer(prev.shape);
-    for (const e of edges) mk.Add_2(size, e);
-    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
-    if (!mk.IsDone()) {
+    const make = (list: number[]) => {
+      const mk = f.type === "fillet"
+        ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
+        : new oc.BRepFilletAPI_MakeChamfer(prev.shape);
+      for (const i of list) {
+        const e = edges[i];
+        if (f.type === "fillet" || mode === "equal") mk.Add_2(size, e);
+        else {
+          const r = f.edges[i];
+          const face = this.faceOfEdge(prev, e, r.faces[f.type === "chamfer" && f.flip ? 1 : 0]);
+          if (mode === "two") mk.Add_3(size, (f as Feature & { type: "chamfer" }).distance2!.v, e, face);
+          else mk.AddDA(size, (f as Feature & { type: "chamfer" }).angle!.v, e, face);
+        }
+      }
+      try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+      return mk.IsDone() ? mk : null;
+    };
+    const all = edges.map((_e, i) => i);
+    let used = all;
+    let mk = make(all);
+    if (!mk && f.type === "fillet" && f.keepFit) {
+      // Keep features that fit: add edges one at a time, skipping those that fail.
+      used = [];
+      for (const i of all) if (make([...used, i])) used.push(i);
+      mk = used.length ? make(used) : null;
+      if (mk && used.length < all.length) this.warning = `${all.length - used.length} of ${all.length} edges could not be rounded and were skipped.`;
+    }
+    if (!mk) {
       throw new FeatureError(f.type === "fillet" ? "E-FT-FILLET" : "E-FT-CHAMFER",
         f.type === "fillet" ? `The fillet radius ${size} mm is too large for the selected edges, or the edges cannot be rounded.` : `The chamfer ${size} mm is too large for the selected edges.`);
     }
     const out = this.carry(mk, [prev], mk.Shape(), f.id);
     // Faces made from each edge: named after the edge.
-    edges.forEach((e, i) => {
-      for (const g of this.list(mk.Generated(e))) {
+    used.forEach(i => {
+      for (const g of this.list(mk!.Generated(edges[i]))) {
         const j = out.faces.findIndex(x => x.IsSame(g));
         if (j >= 0) out.names[j] = `${f.id}:${f.type}:${i}`;
       }
     });
     return out;
+  }
+
+  /** The face with this name that holds the edge. */
+  private faceOfEdge(body: Named, edge: any, name: string): any {
+    for (let i = 0; i < body.faces.length; i++) {
+      if (body.names[i] !== name) continue;
+      if (this.sub(body.faces[i], "EDGE").some(e => e.IsSame(edge))) return body.faces[i];
+    }
+    throw new FeatureError("E-TN-LOST", `Reference lost: face ${name}`);
   }
 
   private size(shape: any) {
@@ -391,11 +524,13 @@ export class Modeller {
       if (f.suppressed) status = { id: f.id, ok: true, code: "suppressed" };
       else {
         try {
-          const parent = parentOf(f);
-          if (parent && failed.has(parent)) throw new FeatureError("E-FT-PARENT", "The sketch this feature uses has an error.");
-          if (f.type === "sketch") { frame = this.frameOf(f, body); frames[f.id] = frame; }
-          else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body);
+          if (featureRefs(f).features.some(p => failed.has(p))) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
+          this.warning = "";
+          if (f.type === "sketch") { frame = this.frameOf(f, body, frames); frames[f.id] = frame; }
+          else if (f.type === "plane") { frame = this.refPlane(f, body, frames); frames[f.id] = frame; }
+          else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
+          if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;
           status = { id: f.id, ok: false, code: e instanceof FeatureError ? e.code : "E-KRN", message: e instanceof FeatureError ? e.message : `Kernel error: ${e.message ?? e}` };
@@ -450,14 +585,17 @@ export class Modeller {
     return { name, color, brep_faces: ranges, attributes: { position: { array: pos }, normal: { array: nrm } }, index: { array: idx } };
   }
 
-  /** Volume, area and centre of mass of the body. */
-  props(body: Named) {
+  /** Volume, area, centre of mass and principal moments of inertia (density 1) of the body. */
+  props(body: Named): BodyProps {
     const oc = this.oc;
     const vp = new oc.GProp_GProps_1();
     oc.BRepGProp.VolumeProperties_1(body.shape, vp, true, false, false);
     const sp = new oc.GProp_GProps_1();
     oc.BRepGProp.SurfaceProperties_1(body.shape, sp, false, false);
-    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()) };
+    const m = vp.MatrixOfInertia();
+    const I = [0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1)));
+    const { values, vectors } = eigenSym3(I);
+    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3] };
   }
 
   /** Drops cached shapes (a new document). */
@@ -467,4 +605,25 @@ export class Modeller {
 /** The sketch a feature is built from, if any. */
 export function parentOf(f: Feature): string | null {
   return f.type === "extrude" || f.type === "revolve" ? f.sketch : null;
+}
+
+/** Eigenvalues (ascending) and unit eigenvectors of a symmetric 3×3 matrix (Jacobi rotations). */
+export function eigenSym3(m: number[][]): { values: number[]; vectors: number[][] } {
+  const a = m.map(r => [...r]);
+  const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let sweep = 0; sweep < 50; sweep++) {
+    const off = Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]);
+    if (off < 1e-14 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]) + 1e-300)) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      if (Math.abs(a[p][q]) < 1e-300) continue;
+      const th = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 3; k++) { const x = a[k][p], y = a[k][q]; a[k][p] = c * x - s * y; a[k][q] = s * x + c * y; }
+      for (let k = 0; k < 3; k++) { const x = a[p][k], y = a[q][k]; a[p][k] = c * x - s * y; a[q][k] = s * x + c * y; }
+      for (let k = 0; k < 3; k++) { const x = v[k][p], y = v[k][q]; v[k][p] = c * x - s * y; v[k][q] = s * x + c * y; }
+    }
+  }
+  const order = [0, 1, 2].sort((i, j) => a[i][i] - a[j][j]);
+  return { values: order.map(i => a[i][i]), vectors: order.map(i => [v[0][i], v[1][i], v[2][i]]) };
 }

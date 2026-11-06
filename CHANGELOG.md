@@ -5,6 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-06
+
+### Added
+- Drag to extrude or cut: an orange arrow on the model sets the depth of an Extrude or Cut with the mouse while its panel is open, with a live preview and the value beside the arrow (Shift: finer steps). Select an extrude in the tree and drag its arrow to change it at once, as one undo step (FRS FR-FT-017, FR-UI-027).
+- Reference planes (**Plane**): offset from a standard plane, a flat face or another plane, or at an angle about a straight edge. Sketches go on them like on the standard planes, and they are drawn in the view (FR-REF-002).
+- Extrude and Cut **Up to face or plane**, and **Flip side to cut** to keep the material inside the profile (FR-FT-011, FR-FT-016).
+- Chamfer with two distances, or a distance and an angle, with a flip of the measuring face; Fillet **Keep features that fit** skips edges it cannot round and says how many (FR-FT-034, FR-FT-040).
+- Sketch tools: 3-point circle, 3-point arc, polygon (3 to 64 sides on a construction circle), trim up to the nearest crossings, and sketch fillet with tangent relations and a radius dimension; the sketch panel lists every relation with select and delete (FR-SK-014..016, 030, 033, 055).
+- Feature tree: rollback bar (drag it, or use the arrow keys), F2 rename, a right-click menu (edit, edit sketch, rename, suppress, hide plane, roll back, delete), sketches nested under the feature that uses them, the selected feature's faces highlighted in the view, and warnings shown in amber (FR-HIS-002..008).
+- Part properties (double-click the part name): name, title, part number, description, revision, author, material and colour. The material presets the mass panel, which now lists the principal moments and axes of inertia of a modelled part from the exact geometry (FR-DOC-007, FR-MAT-001..003).
+- An empty part shows buttons to start a sketch on Top, Front or Right (FR-HLP-005).
+- Views: Ctrl+1 to Ctrl+7 for the standard views, Ctrl+8 normal to the sketch or the selected flat face (again for the other side); Ctrl+B rebuilds and Ctrl+Q rebuilds everything with a fresh kernel (FR-UI-030/031, FR-HIS-020).
+- Leaving a sketch makes its edits one undo step on the part (FR-UND-003); starting Extrude from inside a sketch leaves the sketch and uses it (FR-SK-004); an edge picked with Smart measure is taken by Fillet and Chamfer (FR-SEL-006).
+
+### Changed
+- New sketches and features go in at the rollback bar.
+- Clicking a face picks it even where a standard plane is drawn in front of it.
+
 ## [1.18.0] - 2026-11-06
 
 ### Added
@@ -234,7 +252,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/kothf/step-viewer/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/kothf/step-viewer/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/kothf/step-viewer/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/kothf/step-viewer/compare/v1.15.0...v1.16.0

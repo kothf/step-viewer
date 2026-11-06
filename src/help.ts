@@ -197,19 +197,24 @@ const EN: Tab[] = [
 <h4>Sketch</h4>
 <ul>
   <li><b>Sketch</b>, then pick <b>Top (XY)</b>, <b>Front (XZ)</b>, <b>Right (YZ)</b> or a flat face of the part (a face picked with Smart measure is used at once). The view turns to face the sketch.</li>
-  <li>Draw with <b>Line</b>, <b>Rectangle</b>, <b>Centre rectangle</b>, <b>Circle</b>, <b>Arc</b> and <b>Point</b>. Points snap to ends, centres, curves and the origin; horizontal, vertical and coincident relations are added as you draw.</li>
+  <li>Draw with <b>Line</b>, <b>Rectangle</b>, <b>Centre rectangle</b>, <b>Circle</b>, <b>3-point circle</b>, <b>Arc</b>, <b>3-point arc</b>, <b>Polygon</b> (sides in the panel) and <b>Point</b>. <b>Trim</b> (T) removes the clicked piece of a curve up to where it crosses others; <b>Fillet</b> (F) rounds the corner of two lines with the radius set in the panel. Points snap to ends, centres, curves and the origin; horizontal, vertical and coincident relations are added as you draw.</li>
   <li><b>Dimension</b>: click a line, circle or arc (or two items), then where the value goes, and type it. Values accept units and arithmetic, such as <code>25.4 mm</code>, <code>1in</code>, <code>100/3</code> or <code>30deg</code>. Double-click a dimension to change it.</li>
   <li>Select items (Ctrl+click for more) to add relations in the panel: parallel, perpendicular, equal, tangent, concentric, midpoint, symmetric, fix. <b>Construction</b> (Q) turns lines into reference geometry, for example a revolve axis.</li>
+  <li>The panel lists the sketch's relations: click one to select it, ✕ deletes it.</li>
   <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Drag geometry to try it.</li>
   <li>✓ or <kbd>Enter</kbd> leaves the sketch; ✕ asks before discarding its changes.</li>
 </ul>
 <h4>Features</h4>
 <ul>
-  <li><b>Extrude</b> and <b>Cut</b> use a closed sketch: blind depth, mid plane or through all, with a second direction and reverse. A cut goes into the material.</li>
+  <li><b>Extrude</b> and <b>Cut</b> use a closed sketch: blind depth, mid plane, through all or up to a face or plane, with a second direction and reverse. A cut goes into the material; <b>Flip side to cut</b> keeps what is inside the profile instead.</li>
+  <li>Drag the orange arrow on the model to set the depth with the mouse (Shift: finer steps). Select an extrude in the tree and drag its arrow to change it at once.</li>
+  <li><b>Plane</b> makes a reference plane offset from a plane or flat face, or at an angle about a straight edge. Sketch on it like on the standard planes.</li>
   <li><b>Revolve</b> turns a sketch around one of its lines (a construction line is taken first), by any angle.</li>
-  <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges, and set the size.</li>
+  <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges (or pick an edge first), and set the size. A chamfer can use two distances or a distance and an angle; <b>Keep features that fit</b> skips edges a fillet cannot round.</li>
   <li>The view shows the result while you type; ✓ or <kbd>Enter</kbd> keeps it, ✕ or <kbd>Esc</kbd> cancels.</li>
   <li>Double-click a feature in the tree to edit it. Later features follow the faces and edges they were built on. A row's buttons suppress or delete it; deleting asks before taking dependent features too.</li>
+  <li>Right-click a row (or Shift+F10) for more: edit, rename (F2), suppress, roll back. Drag the blue <b>rollback bar</b> (or focus it and use the arrow keys) to look at the part at an earlier step; new features go in at the bar.</li>
+  <li>Double-click the part name for its properties: part number, description, revision, material and colour. The mass panel then uses the material and lists the principal moments of inertia.</li>
 </ul>
 <h4>Files</h4>
 <ul>
@@ -235,6 +240,11 @@ ${table([
 <h4>Part modelling</h4>
 ${table([
   ["S L R C A P D", "Sketch: select, line, rectangle, circle, arc, point, dimension"],
+  ["G T F", "Sketch: polygon, trim, fillet"],
+  ["F2", "Rename the selected feature"],
+  ["Ctrl+B / Ctrl+Q", "Rebuild / force rebuild of all features"],
+  ["Ctrl+1 … Ctrl+7", "Front, back, left, right, top, bottom, isometric view"],
+  ["Ctrl+8", "Normal to the sketch or the selected face (again: the other side)"],
   ["Q", "Construction geometry on / off"],
   ["Enter / Esc", "OK (leave the sketch) / cancel"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
@@ -370,19 +380,24 @@ const RU: Tab[] = [
 <h4>Эскиз</h4>
 <ul>
   <li><b>Эскиз</b>, затем выберите <b>Сверху (XY)</b>, <b>Спереди (XZ)</b>, <b>Справа (YZ)</b> или плоскую грань детали (грань, выбранная умным измерением, берётся сразу). Вид поворачивается к эскизу.</li>
-  <li>Рисуйте инструментами <b>Отрезок</b>, <b>Прямоугольник</b>, <b>Прямоугольник от центра</b>, <b>Окружность</b>, <b>Дуга</b> и <b>Точка</b>. Точки привязываются к концам, центрам, кривым и началу координат; взаимосвязи горизонтальности, вертикальности и совпадения добавляются при рисовании.</li>
+  <li>Рисуйте инструментами <b>Отрезок</b>, <b>Прямоугольник</b>, <b>Прямоугольник от центра</b>, <b>Окружность</b>, <b>Окружность по 3 точкам</b>, <b>Дуга</b>, <b>Дуга по 3 точкам</b>, <b>Многоугольник</b> (число сторон на панели) и <b>Точка</b>. <b>Отсечь</b> (T) удаляет щёлкнутый участок кривой до пересечений с другими; <b>Скругление</b> (F) скругляет угол двух отрезков радиусом с панели. Точки привязываются к концам, центрам, кривым и началу координат; взаимосвязи горизонтальности, вертикальности и совпадения добавляются при рисовании.</li>
   <li><b>Размер</b>: щёлкните отрезок, окружность или дугу (или два элемента), затем место для значения и введите его. Можно писать единицы и арифметику: <code>25,4 мм</code>, <code>1 дюйм</code> как <code translate="no">1in</code>, <code>100/3</code>, <code>30°</code>. Двойной щелчок по размеру меняет его.</li>
   <li>Выберите элементы (Ctrl+щелчок добавляет), чтобы добавить взаимосвязи на панели: параллельность, перпендикулярность, равенство, касательность, концентричность, середина, симметричность, фиксация. <b>Вспомогательная</b> (Q) делает отрезки справочной геометрией, например осью вращения.</li>
+  <li>Панель перечисляет взаимосвязи эскиза: щелчок выбирает, ✕ удаляет.</li>
   <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Перетащите геометрию, чтобы проверить.</li>
   <li>✓ или <kbd>Enter</kbd> выходит из эскиза; ✕ спрашивает, прежде чем отменить изменения.</li>
 </ul>
 <h4>Элементы</h4>
 <ul>
-  <li><b>Вытягивание</b> и <b>Вырез</b> строятся по замкнутому эскизу: на глубину, от средней плоскости или насквозь, со вторым направлением и обратным направлением. Вырез идёт в материал.</li>
+  <li><b>Вытягивание</b> и <b>Вырез</b> строятся по замкнутому эскизу: на глубину, от средней плоскости, насквозь или до грани или плоскости, со вторым направлением и обратным направлением. Вырез идёт в материал; <b>Сменить сторону выреза</b> оставляет то, что внутри контура.</li>
+  <li>Перетащите оранжевую стрелку на модели, чтобы задать глубину мышью (Shift: мельче шаг). Выберите вытягивание в дереве и тяните его стрелку, чтобы сразу изменить его.</li>
+  <li><b>Плоскость</b> создаёт справочную плоскость со смещением от плоскости или плоской грани либо под углом вокруг прямого ребра. На ней можно рисовать эскиз, как на стандартных плоскостях.</li>
   <li><b>Вращение</b> поворачивает эскиз вокруг одного из его отрезков (сначала берётся вспомогательный) на любой угол.</li>
-  <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) и задайте размер.</li>
+  <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) либо выберите ребро заранее и задайте размер. Фаска бывает с двумя расстояниями или с расстоянием и углом; <b>Сохранять подходящие</b> пропускает рёбра, которые скругление не может обработать.</li>
   <li>Вид показывает результат во время ввода; ✓ или <kbd>Enter</kbd> применяет, ✕ или <kbd>Esc</kbd> отменяет.</li>
   <li>Двойной щелчок по элементу в дереве открывает его для правки. Следующие элементы следуют за гранями и рёбрами, на которых построены. Кнопки строки гасят или удаляют элемент; удаление спрашивает, прежде чем удалить зависимые элементы.</li>
+  <li>Правый щелчок по строке (или Shift+F10) открывает меню: изменить, переименовать (F2), погасить, откатить. Перетащите синюю <b>полосу отката</b> (или выделите её и нажимайте стрелки), чтобы увидеть деталь на более раннем шаге; новые элементы вставляются у полосы.</li>
+  <li>Двойной щелчок по имени детали открывает её свойства: обозначение, описание, ревизию, материал и цвет. Панель массы берёт этот материал и показывает главные моменты инерции.</li>
 </ul>
 <h4>Файлы</h4>
 <ul>
@@ -408,6 +423,11 @@ ${table([
 <h4>Моделирование детали</h4>
 ${table([
   ["S L R C A P D", "Эскиз: выбор, отрезок, прямоугольник, окружность, дуга, точка, размер"],
+  ["G T F", "Эскиз: многоугольник, отсечь, скругление"],
+  ["F2", "Переименовать выбранный элемент"],
+  ["Ctrl+B / Ctrl+Q", "Перестроить / перестроить все элементы заново"],
+  ["Ctrl+1 … Ctrl+7", "Вид спереди, сзади, слева, справа, сверху, снизу, изометрия"],
+  ["Ctrl+8", "Перпендикулярно эскизу или выбранной грани (повторно: с другой стороны)"],
   ["Q", "Вспомогательная геометрия: вкл. / выкл."],
   ["Enter / Esc", "ОК (выйти из эскиза) / отмена"],
   ["Ctrl+Z / Ctrl+Y", "Отменить / повторить"],

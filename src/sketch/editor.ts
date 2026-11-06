@@ -15,7 +15,7 @@ import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain } from "../model/expr";
 import { t } from "../i18n";
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "arc" | "point" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "point" | "trim" | "fillet" | "dim";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -52,6 +52,9 @@ export const REL_NAME: Record<RelKind, string> = {
 export class SketchEditor {
   sk: SketchFeature;
   tool: SkTool = "select";
+  /** Polygon sides (3–64) and the sketch fillet radius (mm), set in the panel. */
+  polySides = 6;
+  filletRadius = 2;
   selection = new Set<string>();
   info: SolveResult;
   private group = new THREE.Group();
@@ -67,6 +70,7 @@ export class SketchEditor {
 
   constructor(private host: SketchHost, sk: SketchFeature, public frame: Frame) {
     this.sk = structuredClone(sk);
+    this.lastCommitted = structuredClone(sk);
     this.info = solve(this.sk);
     this.group.renderOrder = 3000;
     host.viewer.scene.add(this.group);
@@ -94,6 +98,7 @@ export class SketchEditor {
   /** The stored sketch changed (undo/redo): take it over. */
   setSketch(sk: SketchFeature, frame: Frame) {
     this.sk = structuredClone(sk);
+    this.lastCommitted = structuredClone(sk);
     this.frame = frame;
     for (const id of [...this.selection]) if (!this.has(id)) this.selection.delete(id);
     this.info = solve(this.sk);
@@ -203,6 +208,8 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim") { this.dimClick(p, e); return true; }
+    if (this.tool === "trim") { this.trimAt(p); return true; }
+    if (this.tool === "fillet") { this.filletAt(p); return true; }
     this.drawClick(p, e);
     return true;
   }
@@ -223,8 +230,9 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
-    const snap = this.snapPoint(p, this.tool !== "select");
-    this.hover = this.tool === "select" || this.tool === "dim" ? this.hits(p)[0] ?? null : null;
+    const snap = this.snapPoint(p, this.tool !== "select" && this.tool !== "trim" && this.tool !== "fillet");
+    this.hover = this.tool === "select" || this.tool === "dim" || this.tool === "trim" ? this.hits(p, { points: this.tool !== "trim" })[0] ?? null
+      : this.tool === "fillet" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
     this.draft.cursor = snap.p;
     this.draft.snap = snap.id;
     this.render();
@@ -347,6 +355,58 @@ export class SketchEditor {
         }
         finish(this.tool === "rect" ? "Add rectangle" : "Add centre rectangle");
       }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "circle3" || this.tool === "arc3") {
+      if (d.pts.length < 2) {
+        if (d.pts.length && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < this.px(p) * 3) return;
+        d.pts.push(p); d.ids.push(s.id); this.render(); return;
+      }
+      const [p1, p2] = d.pts;
+      const c = circumcentre(p1, p2, p);
+      if (!c) { this.host.toast(t("The three points are on one line."), "warn"); return; }
+      const r = Math.hypot(p1[0] - c[0], p1[1] - c[1]);
+      const cId = this.usePoint(c, null, null, rels);
+      if (this.tool === "circle3") {
+        const id = uid("c");
+        this.sk.ents.push({ id, t: "circle", c: cId, r });
+        // Clicked existing points stay on the circle.
+        for (const pid of [...d.ids, s.id]) if (pid && pid !== ORIGIN) rels.push({ id: uid("r"), t: "onCurve", e: [pid, id] });
+        finish("Add circle");
+      } else {
+        // Counter-clockwise from start to end through the third point; otherwise the other way round.
+        const ang = (q: V2) => Math.atan2(q[1] - c[1], q[0] - c[0]);
+        const sweep = (a0: number, a1: number) => { let x = a1 - a0; while (x <= 0) x += Math.PI * 2; return x; };
+        const ccw = sweep(ang(p1), ang(p)) < sweep(ang(p1), ang(p2));
+        const aId = this.usePoint(p1, d.ids[0], null, rels), bId = this.usePoint(p2, d.ids[1], null, rels);
+        this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: ccw ? aId : bId, b: ccw ? bId : aId });
+        finish("Add arc");
+      }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "polygon") {
+      if (!d.pts.length) { d.pts = [p]; d.ids = [s.id]; d.snapCurve = s.curve; this.render(); return; }
+      const c = d.pts[0];
+      const r = Math.hypot(p[0] - c[0], p[1] - c[1]);
+      if (r < this.px(p) * 3) return;
+      const n = this.polySides, a0 = Math.atan2(p[1] - c[1], p[0] - c[0]);
+      const cId = this.usePoint(c, d.ids[0], d.snapCurve ?? null, rels);
+      const circ = uid("c");
+      this.sk.ents.push({ id: circ, t: "circle", c: cId, r, cons: true });
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const q: V2 = [c[0] + r * Math.cos(a0 + (2 * Math.PI * i) / n), c[1] + r * Math.sin(a0 + (2 * Math.PI * i) / n)];
+        const id = i === 0 ? this.usePoint(q, s.id, null, rels) : this.usePoint(q, null, null, rels);
+        ids.push(id);
+        rels.push({ id: uid("r"), t: "onCurve", e: [id, circ] });
+      }
+      const lines = ids.map((a, i) => { const id = uid("l"); this.sk.ents.push({ id, t: "line", a, b: ids[(i + 1) % n] }); return id; });
+      for (let i = 1; i < n; i++) rels.push({ id: uid("r"), t: "equal", e: [lines[0], lines[i]] });
+      finish("Add polygon");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -605,7 +665,155 @@ export class SketchEditor {
     return true;
   }
 
+  /** Deletes the given items (relations, dimensions, entities) as one step. */
+  deleteItems(ids: string[]) { this.selection = new Set(ids); this.deleteSelection(); }
+
+  select(ids: string[]) { this.selection = new Set(ids); this.render(); this.emitSel(); }
+
+  // ---------- trim (FR-SK-030) ----------
+
+  /** Where a curve meets the other curves: positions along it (line: 0..1 of a→b; circle/arc: angle from its start). */
+  private cuts(id: string): { u: number; p: V2; other: string; pt?: string }[] {
+    const e = this.ent(id)!;
+    const out: { u: number; p: V2; other: string; pt?: string }[] = [];
+    const geo = (x: SkEnt) => curveOf(x, q => this.pt(q));
+    const me = geo(e);
+    if (!me) return out;
+    for (const o of this.sk.ents) {
+      if (o.id === id || o.t === "point") continue;
+      const og = geo(o);
+      if (!og) continue;
+      for (const q of intersectCurves(me, og)) {
+        if (!onCurve(og, q) || !onCurve(me, q)) continue;
+        // An existing point there (a shared end): reuse it.
+        const pt = this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-7)?.id;
+        out.push({ u: paramOf(me, q), p: q, other: o.id, pt });
+      }
+    }
+    return out;
+  }
+
+  private trimAt(p: V2) {
+    const h = this.hits(p, { points: false })[0];
+    if (!h) return;
+    const e = this.ent(h.id)!;
+    const me = curveOf(e, q => this.pt(q))!;
+    const u = paramOf(me, this.project(p, e.id));
+    const span = me.kind === "line" ? 1 : me.kind === "circle" ? Math.PI * 2 : me.sweep;
+    const eps = 1e-7 * (me.kind === "line" ? 1 : 1);
+    const cuts = this.cuts(e.id).filter(c => c.u > eps && c.u < span - eps).sort((a, b) => a.u - b.u);
+    const lo = [...cuts].reverse().find(c => c.u < u) ?? null, hi = cuts.find(c => c.u > u) ?? null;
+    const rels: SkRel[] = [];
+    const at = (c: { p: V2; other: string; pt?: string }) => {
+      if (c.pt) return c.pt;
+      const id = uid("p");
+      this.sk.ents.push({ id, t: "point", x: c.p[0], y: c.p[1] });
+      rels.push({ id: uid("r"), t: "onCurve", e: [id, c.other] });
+      return id;
+    };
+    if (e.t === "circle") {
+      if (cuts.length < 2) { this.deleteItems([e.id]); return; }
+      // Keep the arc from the cut after the click round to the cut before it.
+      const a = hi ?? cuts[0], b = lo ?? cuts[cuts.length - 1];
+      const aId = at(a), bId = at(b);
+      const i = this.sk.ents.indexOf(e);
+      this.sk.ents[i] = { id: e.id, t: "arc", c: e.c, a: aId, b: bId, ...(e.cons ? { cons: true } : {}) };
+      for (const d of this.sk.dims) if (d.e[0] === e.id && d.t === "diameter") { d.t = "radius"; d.val = { v: d.val.v / 2 }; }
+    } else if (!lo && !hi) { this.deleteItems([e.id]); return; }
+    else if (e.t === "line" || e.t === "arc") {
+      const startKey = e.t === "line" ? "a" : "a", endKey = "b";
+      if (!lo) { (e as { a: string })[startKey] = at(hi!); }
+      else if (!hi) { (e as { b: string })[endKey] = at(lo); }
+      else {
+        // Split: this curve keeps its start up to the first cut; a new one runs from the second cut to the end.
+        const oldEnd = e.b;
+        const loId = at(lo), hiId = at(hi);
+        e.b = loId;
+        const nid = uid(e.t === "line" ? "l" : "a");
+        this.sk.ents.push(e.t === "line" ? { id: nid, t: "line", a: hiId, b: oldEnd, ...(e.cons ? { cons: true } : {}) } : { id: nid, t: "arc", c: e.c, a: hiId, b: oldEnd, ...(e.cons ? { cons: true } : {}) });
+        // Direction relations hold for both pieces.
+        for (const r of [...this.sk.rels]) if (r.e.length === 1 && r.e[0] === e.id && (r.t === "horizontal" || r.t === "vertical" || r.t === "fix")) rels.push({ id: uid("r"), t: r.t, e: [nid] });
+      }
+      // A line's length dimension no longer applies.
+      if (e.t === "line") this.sk.dims = this.sk.dims.filter(d => !(d.e.length === 1 && d.e[0] === e.id));
+    }
+    this.sk.rels.push(...rels);
+    this.dropLoosePoints();
+    this.commit("Trim");
+    this.render();
+  }
+
+  /** Points no curve uses any more (left by a trim or fillet), with their relations and dimensions, unless they are sketch points of their own. */
+  private dropLoosePoints(candidates?: Set<string>) {
+    const used = new Set<string>();
+    for (const o of this.sk.ents) {
+      if (o.t === "line") used.add(o.a).add(o.b);
+      else if (o.t === "circle") used.add(o.c);
+      else if (o.t === "arc") used.add(o.c).add(o.a).add(o.b);
+    }
+    const gone = new Set(this.sk.ents.filter(e => e.t === "point" && !used.has(e.id) && (candidates ? candidates.has(e.id) : this.wasEndpoint.has(e.id))).map(e => e.id));
+    if (!gone.size) return;
+    this.sk.ents = this.sk.ents.filter(e => !gone.has(e.id));
+    this.sk.rels = this.sk.rels.filter(r => !r.e.some(x => gone.has(x)));
+    this.sk.dims = this.sk.dims.filter(d => !d.e.some(x => gone.has(x)));
+  }
+
+  /** Points that were curve ends before the current operation (so lone sketch points stay). */
+  private get wasEndpoint() {
+    const out = new Set<string>();
+    const base = this.lastCommitted;
+    for (const o of base.ents) {
+      if (o.t === "line") out.add(o.a).add(o.b);
+      else if (o.t === "arc") out.add(o.a).add(o.b);
+    }
+    return out;
+  }
+
+  // ---------- sketch fillet (FR-SK-033) ----------
+
+  private filletAt(p: V2) {
+    const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
+    if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
+    const V = h.id;
+    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    const curves = this.sk.ents.filter(e => (e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V)));
+    if (lines.length !== 2 || curves.length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
+    const v = this.pt(V);
+    const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
+    const u = far.map(q => norm2(sub2(q, v)));
+    const len = far.map(q => Math.hypot(q[0] - v[0], q[1] - v[1]));
+    const cos = Math.max(-1, Math.min(1, dot2(u[0], u[1])));
+    const half = Math.acos(cos) / 2;
+    const r = this.filletRadius;
+    if (half < 1e-6 || Math.abs(half - Math.PI / 2) < 1e-6) { this.host.toast(t("The lines are in line: there is no corner to round."), "warn"); return; }
+    const dist = r / Math.tan(half);
+    if (dist >= len[0] - 1e-9 || dist >= len[1] - 1e-9) { this.host.toast(t("The radius is too large for these lines."), "error"); return; }
+    const T = u.map(w => [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2);
+    const bis = norm2([u[0][0] + u[1][0], u[0][1] + u[1][1]]);
+    const C: V2 = [v[0] + bis[0] * (r / Math.sin(half)), v[1] + bis[1] * (r / Math.sin(half))];
+    const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+    lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
+    const cId = uid("p");
+    this.sk.ents.push({ id: cId, t: "point", x: C[0], y: C[1] });
+    const ccw = (T[0][0] - C[0]) * (T[1][1] - C[1]) - (T[0][1] - C[1]) * (T[1][0] - C[0]) > 0;
+    const arc = uid("a");
+    this.sk.ents.push({ id: arc, t: "arc", c: cId, a: ccw ? tIds[0] : tIds[1], b: ccw ? tIds[1] : tIds[0] });
+    this.sk.rels.push({ id: uid("r"), t: "tangent", e: [lines[0].id, arc] }, { id: uid("r"), t: "tangent", e: [lines[1].id, arc] });
+    // The corner point goes when nothing else uses it (its relations and dimensions with it).
+    this.dropLoosePoints(new Set([V]));
+    const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "radius", e: [arc], val: { v: r }, pos: [C[0] + (v[0] - C[0]) * 1.6, C[1] + (v[1] - C[1]) * 1.6] };
+    const res = tryAdd(this.sk, { dim });
+    if (res.ok && !res.redundant) { this.sk = res.sketch; this.info = res.result; }
+    else { dim.driven = true; this.sk.dims.push(dim); }
+    this.commit("Sketch fillet");
+    this.render();
+  }
+
+  /** The sketch as last handed to the host. */
+  private lastCommitted: SketchFeature;
+
   private commit(label: string) {
+    this.lastCommitted = structuredClone(this.sk);
     this.info = solve(this.sk);
     this.host.commit(label, structuredClone(this.sk));
     this.statusHint();
@@ -625,7 +833,7 @@ export class SketchEditor {
       return false;
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
-    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", s: "select" };
+    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", s: "select", t: "trim", g: "polygon", f: "fillet" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
     return false;
@@ -642,6 +850,11 @@ export class SketchEditor {
       circle: "Click the centre, then a point on the circle",
       arc: "Click the centre, the start, then the end (counter-clockwise)",
       point: "Click to place a point",
+      circle3: "Click three points on the circle",
+      arc3: "Click the start, the end, then a point on the arc",
+      polygon: "Click the centre, then a corner; set the sides in the panel",
+      trim: "Click the piece of a curve to remove, up to where it crosses others",
+      fillet: "Click a corner where two lines meet; set the radius in the panel",
       dim: "Click one or two items, then click where the dimension goes",
     };
     this.host.status(`${def} · ${t(hints[this.tool])}`);
@@ -728,6 +941,22 @@ export class SketchEditor {
       else if (this.tool === "rect" || this.tool === "crect") {
         const [x0, y0] = this.tool === "rect" ? a : [2 * a[0] - p[0], 2 * a[1] - p[1]];
         poly([[x0, y0], [p[0], y0], [p[0], p[1]], [x0, p[1]], [x0, y0]], C.pre);
+      } else if (this.tool === "polygon") {
+        const r = Math.hypot(p[0] - a[0], p[1] - a[1]), a0 = Math.atan2(p[1] - a[1], p[0] - a[0]), n = this.polySides;
+        poly(Array.from({ length: n + 1 }, (_, i) => [a[0] + r * Math.cos(a0 + (2 * Math.PI * i) / n), a[1] + r * Math.sin(a0 + (2 * Math.PI * i) / n)] as V2), C.pre);
+      } else if (this.tool === "circle3" || this.tool === "arc3") {
+        const c = d.pts.length === 2 ? circumcentre(d.pts[0], d.pts[1], p) : null;
+        if (!c) push(d.pts.at(-1)!, p, C.pre);
+        else {
+          const r = Math.hypot(a[0] - c[0], a[1] - c[1]);
+          if (this.tool === "circle3") poly(arcPts(c, r, 0, Math.PI * 2, 72), C.pre);
+          else {
+            const ang = (q: V2) => Math.atan2(q[1] - c[1], q[0] - c[0]);
+            const sw = (a0: number, a1: number) => { let x = a1 - a0; while (x <= 0) x += Math.PI * 2; return x; };
+            const [s0, s1] = sw(ang(d.pts[0]), ang(p)) < sw(ang(d.pts[0]), ang(d.pts[1])) ? [d.pts[0], d.pts[1]] : [d.pts[1], d.pts[0]];
+            poly(arcPts(c, r, ang(s0), ang(s0) + sw(ang(s0), ang(s1))), C.pre);
+          }
+        }
       } else if (this.tool === "arc") {
         if (d.pts.length === 1) push(a, p, C.pre);
         else {
@@ -764,7 +993,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && this.tool !== "select" && this.tool !== "dim") addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "trim", "fillet"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));
@@ -923,4 +1152,75 @@ function intersect(a: V2, b: V2, c: V2, d: V2): V2 | null {
 export function trimNum(v: number, places: number) {
   const s = v.toFixed(places);
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+}
+
+function circumcentre(a: V2, b: V2, c: V2): V2 | null {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-12 * (1 + Math.abs(a[0]) + Math.abs(b[0]) + Math.abs(c[0])) ** 2) return null;
+  const A = a[0] ** 2 + a[1] ** 2, B = b[0] ** 2 + b[1] ** 2, C = c[0] ** 2 + c[1] ** 2;
+  return [(A * (b[1] - c[1]) + B * (c[1] - a[1]) + C * (a[1] - b[1])) / d, (A * (c[0] - b[0]) + B * (a[0] - c[0]) + C * (b[0] - a[0])) / d];
+}
+
+type Curve =
+  | { kind: "line"; a: V2; b: V2 }
+  | { kind: "circle"; c: V2; r: number }
+  | { kind: "arc"; c: V2; r: number; a0: number; sweep: number };
+
+function curveOf(e: SkEnt, pt: (id: string) => V2): Curve | null {
+  if (e.t === "line") return { kind: "line", a: pt(e.a), b: pt(e.b) };
+  if (e.t === "circle") return { kind: "circle", c: pt(e.c), r: e.r };
+  if (e.t === "arc") {
+    const c = pt(e.c), a = pt(e.a), b = pt(e.b);
+    const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+    let sweep = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;
+    while (sweep <= 0) sweep += Math.PI * 2;
+    return { kind: "arc", c, r: Math.hypot(a[0] - c[0], a[1] - c[1]), a0, sweep };
+  }
+  return null;
+}
+
+/** Position along a curve: 0..1 on a line, the angle from the start on a circle (from +x) or arc. */
+function paramOf(g: Curve, p: V2): number {
+  if (g.kind === "line") { const u = sub2(g.b, g.a); return dot2(sub2(p, g.a), u) / (dot2(u, u) || 1); }
+  let a = Math.atan2(p[1] - g.c[1], p[0] - g.c[0]) - (g.kind === "arc" ? g.a0 : 0);
+  while (a < 0) a += Math.PI * 2;
+  while (a >= Math.PI * 2) a -= Math.PI * 2;
+  return a;
+}
+
+function onCurve(g: Curve, p: V2): boolean {
+  const tol = 1e-7;
+  if (g.kind === "line") { const u = paramOf(g, p); return u >= -tol && u <= 1 + tol; }
+  if (g.kind === "circle") return true;
+  const u = paramOf(g, p);
+  return u <= g.sweep + tol || u >= Math.PI * 2 - tol;
+}
+
+/** Points where two curves' carriers (infinite line, full circle) meet. */
+function intersectCurves(g: Curve, h: Curve): V2[] {
+  if (g.kind === "line" && h.kind === "line") { const p = intersect(g.a, g.b, h.a, h.b); return p ? [p] : []; }
+  if (g.kind === "line") return lineCircle(g.a, g.b, (h as { c: V2 }).c, (h as { r: number }).r);
+  if (h.kind === "line") return lineCircle(h.a, h.b, g.c, g.r);
+  return circleCircle(g.c, g.r, h.c, h.r);
+}
+
+function lineCircle(a: V2, b: V2, c: V2, r: number): V2[] {
+  const d = sub2(b, a), f = sub2(a, c);
+  const A = dot2(d, d), B = 2 * dot2(f, d), C = dot2(f, f) - r * r;
+  const disc = B * B - 4 * A * C;
+  if (disc < -1e-12 * A * r * r || A < 1e-18) return [];
+  const s = Math.sqrt(Math.max(0, disc));
+  const ts = s < 1e-12 ? [-B / (2 * A)] : [(-B - s) / (2 * A), (-B + s) / (2 * A)];
+  return ts.map(t => [a[0] + d[0] * t, a[1] + d[1] * t] as V2);
+}
+
+function circleCircle(c1: V2, r1: number, c2: V2, r2: number): V2[] {
+  const d = Math.hypot(c2[0] - c1[0], c2[1] - c1[1]);
+  if (d < 1e-12 || d > r1 + r2 + 1e-9 || d < Math.abs(r1 - r2) - 1e-9) return [];
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+  const m: V2 = [c1[0] + ((c2[0] - c1[0]) * a) / d, c1[1] + ((c2[1] - c1[1]) * a) / d];
+  if (h < 1e-12) return [m];
+  const ox = (-(c2[1] - c1[1]) * h) / d, oy = ((c2[0] - c1[0]) * h) / d;
+  return [[m[0] + ox, m[1] + oy], [m[0] - ox, m[1] - oy]];
 }
