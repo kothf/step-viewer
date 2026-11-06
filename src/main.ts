@@ -1372,6 +1372,23 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
   if (v === "fit") viewer.fit(); else viewer.viewFrom(VIEWS[v]);
 }));
+// Display menu: a small popover under the header button; Esc, a click outside or the button closes it.
+{
+  const btn = $("#display-btn"), menu = $("#display-menu");
+  const set = (open: boolean) => {
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.querySelector<HTMLElement>("input")?.focus();
+  };
+  btn.addEventListener("click", () => set(menu.hidden));
+  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target as Node) && !btn.contains(e.target as Node)) set(false); });
+  menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); set(false); btn.focus(); } });
+  window.addEventListener("resize", () => set(false));
+}
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 
 function applyThemeToViewer() {

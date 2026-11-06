@@ -57,8 +57,7 @@
       <button data-gview="flip" title="View from the bottom, mirrored (B)" aria-pressed="false" aria-label="Bottom view"><span class="flip-long">Bottom view</span><span class="flip-short" aria-hidden="true">⇅</span></button>
     </div>
     <div class="spacer"></div>
-    <label class="chk step-only" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Axes</label>
-    <label class="chk step-only" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> AO</label>
+    <button class="btn small step-only" id="display-btn" aria-haspopup="true" aria-expanded="false" aria-controls="display-menu" title="Display options: origin axes, ambient occlusion"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 4.5h12M2 11.5h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="10" cy="4.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="11.5" r="1.8" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/></svg><span class="disp-lbl">Display</span><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button class="icon" id="theme" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">◐</button>
     <button class="icon lang-btn" id="lang-btn" title="Interface language: English. Switch to Russian" aria-label="EN: Interface language: English. Switch to Russian">EN</button>
     <button class="icon" id="help-btn" title="Help: features, measuring and shortcuts (F1)" aria-label="Help: features, measuring and shortcuts (F1)" aria-haspopup="dialog">?</button>
@@ -280,6 +279,12 @@
     <span id="st-stats" class="muted"></span>
     <span id="st-fps" class="muted mono"></span>
   </footer>
+</div>
+
+<div id="display-menu" class="menu" role="group" aria-label="Display options" hidden>
+  <label class="chk" title="X, Y, Z axes from the model origin (0, 0, 0)"><input type="checkbox" id="origin-axes" checked /> Origin axes</label>
+  <label class="chk" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> Ambient occlusion</label>
+  <p class="menu-note">Soft contact shadows in corners and gaps. Looks nicer, costs some speed on large models; off while sectioning.</p>
 </div>
 
 <div id="toasts" class="toasts" role="region" aria-label="Notifications"></div>

@@ -118,7 +118,7 @@ const EN: Tab[] = [
 <ul>
   <li>Left drag orbits, right drag pans, the wheel zooms to the cursor. The cube in the corner turns the view to a face or corner.</li>
   <li><b>Display modes</b>: Shaded+Edges, Shaded, Wire, HLR (hidden lines removed) and X-ray; <b>Persp</b> / <b>Ortho</b> projection; standard views Fit, Iso, Front, Top, Right.</li>
-  <li><b>Axes</b> shows X, Y, Z from the model origin; <b>AO</b> adds ambient occlusion shading.</li>
+  <li>The <b>Display</b> menu in the header: <b>Origin axes</b> shows X, Y, Z from the model origin; <b>Ambient occlusion</b> adds soft contact shadows in corners and gaps (slower on large models, off while sectioning).</li>
 </ul>
 <h4>Model tree and properties</h4>
 <ul>
@@ -254,7 +254,7 @@ const RU: Tab[] = [
 <ul>
   <li>Левая кнопка мыши вращает, правая сдвигает, колесо масштабирует к курсору. Куб в углу поворачивает вид к грани или углу.</li>
   <li><b>Режимы отображения</b>: тонировка с рёбрами, тонировка, каркас, HLR (без невидимых линий) и рентген; проекция <b>Персп.</b> / <b>Орто</b>; стандартные виды: вписать, изометрия, спереди, сверху, справа.</li>
-  <li><b>Оси</b> показывают X, Y, Z от начала координат модели; <b>AO</b> добавляет затенение (ambient occlusion).</li>
+  <li>Меню <b>Отображение</b> в заголовке: <b>Оси начала координат</b> показывают X, Y, Z от начала координат модели; <b>Затенение</b> добавляет мягкие тени в углах и зазорах (медленнее на больших моделях, при сечении выключено).</li>
 </ul>
 <h4>Дерево модели и свойства</h4>
 <ul>

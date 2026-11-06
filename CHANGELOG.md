@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-11-06
+
+### Changed
+- The **Axes** and **AO** checkboxes moved from the header into a **Display** menu, named in full: **Origin axes** and **Ambient occlusion**, with a short note on what ambient occlusion does (soft contact shadows in corners and gaps, a little slower on large models, off while sectioning). The header has more room for the file name and view controls.
+
 ## [1.14.0] - 2026-11-06
 
 ### Changed
@@ -194,7 +199,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.14.1...HEAD
+[1.14.1]: https://github.com/kothf/step-viewer/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/kothf/step-viewer/compare/v1.13.2...v1.14.0
 [1.13.2]: https://github.com/kothf/step-viewer/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/kothf/step-viewer/compare/v1.13.0...v1.13.1

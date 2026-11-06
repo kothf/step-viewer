@@ -163,6 +163,18 @@ input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid v
 }
 .tb-icons .tb-group button { padding: 0 7px; }
 
+/* Display menu (3D): origin axes and ambient occlusion. Fixed, so the scrolling header can't clip it. */
+.menu {
+  position: fixed; z-index: 1150; min-width: 220px; max-width: 280px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 13px;
+}
+.menu-note { margin: 0; font-size: var(--fs-caption); color: var(--muted); white-space: normal; }
+#display-btn { gap: 4px; }
+@media (max-width: 1279px) {
+  #app:not(.gerber) .disp-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+}
+#display-btn[aria-expanded="true"] { border-color: var(--accent); }
+
 /* ---------- side panels ---------- */
 .panel { background: var(--panel); overflow: auto; min-height: 0; }
 .left { grid-area: left; border-right: 1px solid var(--line); display: flex; flex-direction: column; }
