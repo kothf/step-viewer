@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-11-06
+
+### Fixed
+- **New part** on the start screen hides the start card at once, instead of leaving it up until the geometry kernel has loaded.
+
 ## [1.19.0] - 2026-11-06
 
 ### Added
@@ -252,7 +257,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.1...HEAD
+[1.19.1]: https://github.com/kothf/step-viewer/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/kothf/step-viewer/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/kothf/step-viewer/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/kothf/step-viewer/compare/v1.16.0...v1.17.0

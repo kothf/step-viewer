@@ -163,6 +163,8 @@ export class ModelController {
       this.store.onChange(why => this.changed(why));
     }
     document.getElementById("app")!.classList.add("model");
+    // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
+    $("#empty").hidden = true;
     this.host.viewer.emptySize = 50;
     $("#t-features").hidden = false;
     this.host.selectLeftTab("features");
