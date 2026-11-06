@@ -513,13 +513,15 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .btn.ghost:hover { color: var(--text); }
 @media (max-width: 767px) { .hint { top: 8px; max-width: calc(100% - 16px); } }
 
-/* 3D header below 1600 px (longer Russian labels too): logo only, short Open, Fit stays and the
-   other standard views are on the view cube and keys; below 1280 px tighter segments. */
+/* 3D header below 1600 px (longer Russian labels too): short Open, Fit stays and the other
+   standard views are on the view cube and keys; the name and version stay down to 1360 px (1366 px
+   laptops), below that the logo's tooltip carries them; below 1280 px tighter segments. */
 @media (max-width: 1599px) {
-  #app:not(.gerber) .brand-txt, #app:not(.gerber) .open-long { display: none; }
+  #app:not(.gerber) .open-long { display: none; }
   #app:not(.gerber) .open-short { display: inline; }
   #app:not(.gerber) #views button:not([data-view="fit"]) { display: none; }
 }
+@media (max-width: 1359px) { #app:not(.gerber) .brand-txt { display: none; } }
 @media (max-width: 1279px) {
   #app:not(.gerber) .seg button { padding: 5px 6px; font-size: 12px; }
   #app:not(.gerber) .topbar { gap: 5px; }
