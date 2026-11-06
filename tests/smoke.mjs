@@ -472,6 +472,32 @@ try {
   });
   check(near(p3.axisZ, 1, 1e-9) && near(p3.offset, 4, 1e-9), `3-point plane z=4 (|nz| ${p3.axisZ}, |offset| ${p3.offset})`);
 
+  // Drag arrows: a new plane shows a see-through sheet with two arrows along its normal; dragging one slides the plane, not the camera.
+  await page.evaluate(() => { const { viewer } = window.__sv; const V3 = viewer.camera.position.constructor; viewer.viewFrom(new V3(1, -1, 0.6).normalize(), false); viewer.invalidate(); });
+  await page.waitForTimeout(500);
+  const arrowAt = await page.evaluate(() => {
+    const { section, viewer } = window.__sv;
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const a = section.arrowScreen(0, 0.75), b = section.arrowScreen(0, 1);
+    const sp = section.active;
+    return { x: r.left + a.x, y: r.top + a.y, dx: b.x - a.x, dy: b.y - a.y, offset: sp.offset, mode: section.gizmoMode, cam: viewer.camera.position.toArray() };
+  });
+  const len = Math.hypot(arrowAt.dx, arrowAt.dy) || 1;
+  await page.mouse.move(arrowAt.x, arrowAt.y);
+  await page.waitForTimeout(100);
+  const cursor = await page.evaluate(() => window.__sv.viewer.renderer.domElement.style.cursor);
+  await page.mouse.down();
+  for (let k = 1; k <= 5; k++) await page.mouse.move(arrowAt.x + arrowAt.dx / len * 12 * k, arrowAt.y + arrowAt.dy / len * 12 * k);
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const dragged = await page.evaluate(() => {
+    const { section, viewer } = window.__sv;
+    return { offset: section.planes[0].offset, cam: viewer.camera.position.toArray(), active: section.active === section.planes[0] };
+  });
+  const camMoved = Math.hypot(...dragged.cam.map((x, i) => x - arrowAt.cam[i]));
+  check(arrowAt.mode === "translate" && dragged.active && cursor === "grab" && dragged.offset > arrowAt.offset + 0.5 && camMoved < 1e-6,
+    `section arrows: dragging the arrow moves the plane along its normal (${arrowAt.offset.toFixed(3)} → ${dragged.offset.toFixed(3)} mm, cursor ${cursor}, camera moved ${camMoved})`);
+
   // --- CAX-IF as1 assembly: tree, circles and holes ---
   await open("cax-if/as1-oc-214.stp");
   const as1 = await page.evaluate(() => {

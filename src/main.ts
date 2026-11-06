@@ -1211,6 +1211,7 @@ function hover() {
   if (downAt && (Math.abs(lastPointer.x - downAt.x) > 4 || Math.abs(lastPointer.y - downAt.y) > 4)) {
     $("#snap-marker").hidden = true; return; // orbiting
   }
+  if (section.arrowHot) { $("#snap-marker").hidden = true; showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
   const r = canvas.getBoundingClientRect();
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
@@ -1541,7 +1542,7 @@ function renderSections() {
     const g = section.active === sp ? section.gizmoMode : null;
     el.innerHTML = `<div class="hd"><input type="checkbox" ${sp.enabled ? "checked" : ""} title="Enable"><span>${esc(sp.label)}</span>
       <span class="spacer"></span>
-      <button class="btn tiny ${g === "translate" ? "on" : ""}" data-a="move" title="Move gizmo (drag the arrow)">↕</button>
+      <button class="btn tiny ${g === "translate" ? "on" : ""}" data-a="move" title="Show the drag arrows">↕</button>
       <button class="btn tiny ${g === "rotate" ? "on" : ""}" data-a="rot" title="Rotate gizmo (drag the rings)">⟳</button>
       <button class="btn tiny" data-a="flip" title="Flip the kept side">⇅</button>
       <button class="btn tiny" data-a="del" title="Remove">✕</button></div>
