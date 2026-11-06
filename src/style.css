@@ -579,5 +579,5 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
   .toolbar { flex-wrap: wrap; gap: 2px 6px; padding: 3px 6px; overflow: visible; }
   .toolbar .sep, .toolbar .spacer { display: none; }
   .tb-group { flex-wrap: wrap; flex: 0 1 auto; min-width: 0; }
-  .tb-group button { height: 30px; min-width: 30px; padding: 0 5px; }
+  .tb-group button, .tb-icons .tb-group button { height: 30px; min-width: 28px; padding: 0 5px; }
 }
