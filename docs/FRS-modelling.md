@@ -24,7 +24,7 @@
 9. [Functional requirements: part features](#9-functional-requirements-part-features)
 10. [Functional requirements: assemblies](#10-functional-requirements-assemblies)
 11. [Functional requirements: drawings](#11-functional-requirements-drawings)
-12. [Functional requirements: files, storage, interoperability](#12-functional-requirements-files-storage-interoperability)
+12. [Functional requirements: files, storage, interoperability, PDM](#12-functional-requirements-files-storage-interoperability)
 13. [Functional requirements: user interface](#13-functional-requirements-user-interface)
 14. [Non-functional requirements](#14-non-functional-requirements)
 15. [Data model](#15-data-model)
@@ -51,9 +51,10 @@ In scope:
 - Assemblies built from parts and sub-assemblies, positioned by mates.
 - 2D engineering drawings generated from parts and assemblies.
 - A native document format, local storage, and exchange through STEP, DXF, STL, 3MF and PDF.
+- Product data management without a server: a vault with check-out/check-in, versions, revisions, lifecycle workflow, where-used, data cards, change orders and audit trail (section 12.5).
 - Integration of everything above with the existing viewer: measuring, sections, mass properties, exploded view, export, EN/RU interface.
 
-Out of scope for this FRS (may get their own documents later): simulation/FEA, CAM, rendering beyond the existing viewer, PCB/ECAD editing (the PCB view stays a viewer), routing (pipes, cables), weldments beyond the structural basics listed, mould tools, PDM/server collaboration, plug-in API for third parties.
+Out of scope for this FRS (may get their own documents later): simulation/FEA, CAM, rendering beyond the existing viewer, PCB/ECAD editing (the PCB view stays a viewer), routing (pipes, cables), weldments beyond the structural basics listed, mould tools, server-based PDM with real access control (P7), plug-in API for third parties.
 
 ### 1.3 Product principle
 
@@ -84,6 +85,9 @@ MöbiusCAD is an **original product**: its own name, icons, artwork, wording and
 | FSA | File System Access API (open/save to real files and folders, Chromium browsers). |
 | HLR | Hidden line removal, used to make drawing views. |
 | PMI | Product manufacturing information (dimensions and tolerances in 3D). |
+| PDM | Product data management: vault, versions, revisions, workflow (section 12.5). |
+| Version / Revision | Every check-in makes a new numbered version; a revision (A, B …) is the label given to a released version. |
+| ECR / ECO | Engineering change request / order. |
 
 ### 1.5 Requirement notation
 
@@ -220,6 +224,8 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 | Design Library, Toolbox | P5 |
 | Simulation, Flow, Plastics, CAM, Electrical, PDM | — |
 | Macros and API | P6 (scripting console, read-only first) |
+| PDM Standard / Professional (EPDM): vault, check-in/out, versions, revisions, workflows and transitions, data cards, numbering, search, where-used, version-aware BOMs, copy tree, ECO, notifications, audit | P2 (vault, versions, audit), P4 (revisions, workflow, references, data cards, search, BOM per revision), P5 (workflow editor, ECO, shared vault), P7 (server) |
+| PDM replication, cold storage, web portal, ERP integration | — |
 
 ### 2.7 What SolidWorks users value and expect (inputs for UX)
 
@@ -305,12 +311,12 @@ Each phase ships as one or more minor versions through the normal release flow. 
 | --- | --- | --- | --- |
 | **P0** | Foundations | Kernel spike, document model, persistent kernel session, command/undo framework, native file save/open, "Model" mode switch, unit test runner | AT-P0-1..4 |
 | **P1** | MVP part modelling | Sketcher with core entities, relations, dimensions and solver; extrude/revolve (boss and cut); fillet; chamfer; reference planes/axes/points; feature tree with edit, rollback, suppress, delete; topological naming v1; material and mass; STEP/STL export of the part | AT-P1-1..8 (the "bracket" scenario) |
-| **P2** | Productive parts | Hole wizard, cosmetic thread, shell, draft, linear/circular/mirror patterns, more sketch tools (slots, ellipse, spline, sketch patterns/mirror, DXF import), more end conditions, thin features, parameters/equations, configurations, reorder, parent/child, editing imported bodies as base | AT-P2-1..6 |
+| **P2** | Productive parts | Hole wizard, cosmetic thread, shell, draft, linear/circular/mirror patterns, more sketch tools (slots, ellipse, spline, sketch patterns/mirror, DXF import), more end conditions, thin features, parameters/equations, configurations, reorder, parent/child, editing imported bodies as base; **local vault** with check-out/check-in, versions, history, roll back, audit trail | AT-P2-1..6, AT-PDM-1..2 |
 | **P3** | Advanced parts | Sweep, loft, rib, helix, split line, multibody (combine, split, move/copy, delete body), variable/face fillets, 3MF export, imported body healing | AT-P3-1..4 |
-| **P4** | Assemblies | Components (native, STEP, SLDPRT), sub-assemblies, standard mates + limit/width/symmetric, mate solver with drag, interference, component patterns, BOM, stored exploded views, assembly STEP export with structure | AT-P4-1..6 |
-| **P5** | Drawings and extras | Drawing documents: sheets, templates, title block, standard/projected/section/detail/auxiliary views, dimensions and annotations, BOM and revision tables, PDF/DXF/SVG export; mechanical mates (hinge, slot, gear, screw); fastener library; in-context references; surfaces; direct edit; 3D sketch | AT-P5-1..6 |
+| **P4** | Assemblies | Components (native, STEP, SLDPRT), sub-assemblies, standard mates + limit/width/symmetric, mate solver with drag, interference, component patterns, BOM, stored exploded views, assembly STEP export with structure; **revisions and default lifecycle workflow**, where-used/contains, version-aware references and BOMs, copy tree, rename with reference update, data cards, numbering, search, version compare | AT-P4-1..6, AT-PDM-3..6 |
+| **P5** | Drawings and extras | Drawing documents: sheets, templates, title block, standard/projected/section/detail/auxiliary views, dimensions and annotations, BOM and revision tables, PDF/DXF/SVG export; mechanical mates (hinge, slot, gear, screw); fastener library; in-context references; surfaces; direct edit; 3D sketch; **workflow editor, change orders (ECO), release packages, shared-folder vault** | AT-P5-1..6, AT-PDM-7..8 |
 | **P6** | Specialist | Sheet metal, basic weldments, simple motion animator, scripting console | per feature |
-| **P7** | Collaboration (optional) | Local version history browsing, document compare, export/import of history; any sharing beyond files needs a separate decision (C-1) | separate FRS |
+| **P7** | Server vault and collaboration (optional) | Server PDM with authenticated users and permissions, git backend for vaults, real-time co-editing; any sharing beyond files needs a separate decision (C-1) | separate FRS |
 
 Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–12 weeks, P2 8 weeks, P3 6 weeks, P4 8–10 weeks, P5 10–12 weeks. These are planning numbers, not commitments.
 
@@ -796,7 +802,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-STO-002** (P0, M) **Browser workspace** (OPFS, IndexedDB fallback): all documents created or opened in modelling are kept there with their names, so the user can reopen them from **Recent** without the file. Storage use is shown with an option to delete items; quota errors are reported clearly.
 - **FR-STO-003** (P0, M) **Autosave**: every committed command is journaled to the workspace within 2 s (debounced); after a crash or closed tab, the next start offers to recover unsaved changes per document.
 - **FR-STO-004** (P4, S) **Project folder** (FSA directory handle, Chromium): open a folder, browse its parts/assemblies/drawings in a side list, links resolved inside it.
-- **FR-STO-005** (P5, S) Local version history: named and automatic snapshots per document in the workspace (keep last 50), restore or open as copy.
+- **FR-STO-005** (P2, S) Outside a vault, each document keeps automatic snapshots at every save in the browser workspace (last 20), restorable or openable as a copy. Inside a vault, versions (FR-PDM-010..017) replace this.
 - **FR-STO-030** (P2, S) Service worker for full offline start (cache app shell and WASM per version).
 
 ### 12.4 Exchange formats
@@ -817,6 +823,108 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-IO-021** (P1, M) Exported STEP files reopen in MöbiusCAD and in at least FreeCAD with identical volume (±1e-6 relative) and face count (test fixture round trip).
 - **FR-IO-022** (P1, M) STL/3MF/OBJ/glTF export of modelled parts uses the existing exporters, with a tessellation quality choice (chord tolerance and angle).
 - **FR-IO-023** (P4, M) STEP export of assemblies writes the product structure (components as instances of one product definition each), with names and colours.
+
+### 12.5 Product data management: vault, versions, revisions
+
+Reference: SolidWorks PDM Professional (formerly Enterprise PDM, "EPDM") and PDM Standard. They keep CAD files in a **vault**: users check files out (lock) and in (new **version**), files move through a **workflow** of lifecycle states, a **revision** label is assigned on release, data cards hold metadata, and the vault knows which assemblies and drawings use which parts (where-used), so references never break. MöbiusCAD provides the same concepts without a server (C-1): the vault lives in a folder the user chooses, or in browser storage, and every operation runs in the browser. A server vault for teams with real access control is out of scope here (P7, separate FRS).
+
+**Terms used in this section**
+
+| Term | Meaning in MöbiusCAD |
+| --- | --- |
+| Vault | A folder (FSA directory handle) or a browser workspace (OPFS) holding working files plus a hidden `.mcadvault/` store with every version, metadata and the audit log. |
+| Version | An immutable snapshot of one file, created at each check-in. Numbered 1, 2, 3 … per file. Saving without check-in only updates the working copy. |
+| Revision | A human label (A, B, C … or 01, 02 …) given to a version when it is released through the workflow. Several versions can exist between two revisions. |
+| State | The lifecycle state of a file (Work in progress, In review, Released, Change pending, Obsolete). |
+| Transition | A move from one state to another, with rules (who, required fields, actions). |
+| Data card | The form of metadata fields of a file (part number, description, material, project ...), stored in the document properties and indexed by the vault. |
+| Change order (ECO) | A record that groups the files changed for one reason, with request, approval and closing. |
+
+#### 12.5.1 Vault
+
+- **FR-PDM-001** (P2, M) **Create vault** in a folder (Chromium, FSA) or in the browser workspace (all browsers). A vault has a name, a revision scheme, a numbering scheme, a workflow (default one shipped) and a list of user names.
+- **FR-PDM-002** (P2, M) **Open vault**: the left panel gets a **Vault** tab showing the folder tree and files with columns: name, kind, state, revision, latest version, local version, checked out by, part number, description, modified date. Columns are configurable; the list is sortable and filterable.
+- **FR-PDM-003** (P2, M) **Add to vault**: drag files or folders in, or **Save to vault** from an open document. Adding an assembly or drawing offers to add every referenced file, keeping relative paths.
+- **FR-PDM-004** (P2, M) Foreign files (STEP, PDF, DXF, images, spreadsheets) can be vaulted too: versioned and given states and data cards, without CAD-specific functions.
+- **FR-PDM-005** (P2, M) The store keeps each version's bytes content-addressed (`.mcadvault/objects/<sha256>`), so identical content is stored once; metadata in `.mcadvault/index.json` (rebuilt from the per-file records if lost) and per-file records `.mcadvault/files/<fileId>.json`.
+- **FR-PDM-006** (P2, M) **Integrity check**: verifies hashes, missing objects, broken references, orphan objects; reports and repairs what can be repaired (re-index, drop orphans after confirmation).
+- **FR-PDM-007** (P2, M) **Export vault** to a ZIP (all versions and metadata, or latest only) and **import** a vault ZIP, for backup and moving between computers.
+- **FR-PDM-008** (P2, S) **Storage report**: size by file and version, with **Purge old versions** (keep released revisions, keep the last *n* versions) after confirmation.
+
+#### 12.5.2 Check-out, check-in and versions
+
+- **FR-PDM-010** (P2, M) A vaulted file is read-only until **checked out**. Check-out records the user name, time and computer label, and shows a lock badge. Opening a file not checked out shows a "Read-only, check out to edit" bar with a Check out button.
+- **FR-PDM-011** (P2, M) **Check in** creates a new version from the working copy with a required comment (configurable as optional), options **keep checked out** and **check in referenced files too** (list with checkboxes, pre-ticked for changed files). Unchanged files are skipped.
+- **FR-PDM-012** (P2, M) **Undo check-out** discards local changes after confirmation and releases the lock.
+- **FR-PDM-013** (P2, M) **History** dialog per file: every version with number, date, user, comment, size, state at check-in, revision label if any, and transitions and other events in between. Actions: open version read-only, get version (make it the local copy), compare (FR-PDM-050), roll back.
+- **FR-PDM-014** (P2, M) **Roll back** to an older version creates a new version with that content (history is never rewritten); destroying versions is an admin action logged in the audit trail.
+- **FR-PDM-015** (P2, M) **Get latest** refreshes local copies of the selected files (and their references) to the latest versions; files with local changes are not overwritten without confirmation.
+- **FR-PDM-016** (P2, M) Status badges everywhere a file appears (vault list, document tab, title bar, assembly tree): checked out by me / by someone else / local copy outdated / local copy modified / not in vault.
+- **FR-PDM-017** (P2, M) Versions store the derived caches (`cache/*.brep`, thumbnail) so an old version opens fast; caches may be dropped by purge and are rebuilt on demand.
+
+#### 12.5.3 References, where-used, copy and rename
+
+- **FR-PDM-020** (P4, M) The vault indexes references between files at each check-in: assembly → components, drawing → models, part → inserted/derived parts and external references. Each reference records the target file id and **the version it was checked in against**.
+- **FR-PDM-021** (P4, M) **Contains** and **Where used** views for a file, for the latest version or a chosen version, as an expandable tree with quantities.
+- **FR-PDM-022** (P4, M) When opening a version of an assembly, the user chooses how components resolve: **as checked in** (the exact versions referenced, "as built"), **latest**, or **latest released revision**.
+- **FR-PDM-023** (P4, M) **Rename** and **move** inside the vault update every referencing file (new versions are checked in for them, with an automatic comment); files referenced by released revisions keep their old references in those versions.
+- **FR-PDM-024** (P4, M) **Copy tree**: copy an assembly or drawing with chosen referenced files to a new folder, with renaming rules (prefix, suffix, find/replace, new part numbers from the numbering scheme) and references redirected to the copies; the copies start as new files at version 1.
+- **FR-PDM-025** (P4, M) **Delete** moves files to the vault recycle bin (restorable); a file that is referenced by any version of another file cannot be deleted, and the dialog lists the users of it.
+- **FR-PDM-026** (P4, M) Outside a vault, **Pack** (FR-IO-012) still works; a pack made from a vault records the vault versions it was made from.
+
+#### 12.5.4 Revisions and lifecycle
+
+- **FR-PDM-030** (P4, M) **Revision scheme** per vault: letters A, B, … Z, AA (skipping I, O, Q, S, X, Z by option, as ASME Y14.35 recommends), numbers 01, 02 …, or a custom pattern; optional pre-release revisions (`-`, `0.1`, `0.2` or `X1`, `X2`) before the first release; RU option: ESKD change numbers (Изм. 1, 2 …) and production letters (О, О1, А, Б) (D-11).
+- **FR-PDM-031** (P4, M) **Default workflow** shipped with every vault:
+
+```
+ ┌──────────────────┐ Submit  ┌───────────┐ Approve  ┌──────────┐
+ │ Work in progress ├────────▶│ In review ├─────────▶│ Released │
+ └──────────────────┘◀────────┴───────────┘ Reject   └────┬─────┘
+          ▲                                   Change      │
+          │        ┌────────────────┐ ◀───────────────────┘
+          └────────┤ Change pending │                 Obsolete ──▶ ┌──────────┐
+          (next    └────────────────┘                              │ Obsolete │
+          revision)                                                └──────────┘
+```
+
+- **FR-PDM-032** (P4, M) Rules of the default workflow: only *Work in progress* and *Change pending* files can be checked out; **Approve** assigns the next revision label to the latest version and makes it read-only; **Change** on a released file moves it to *Change pending* (the released revision stays available and is what "latest released" resolves to); **Obsolete** marks a file not for new use (warning when inserted into an assembly).
+- **FR-PDM-033** (P4, M) A transition can require: a comment, filled data card fields (e.g. part number, material, description), referenced files to be in a given state (an assembly cannot be released while a component is in work, option), the drawing to be up to date with its model (FR-DRW-016), and a role (Designer, Checker, Approver).
+- **FR-PDM-034** (P4, M) Releasing writes the revision, state, approver name and date into the document properties, so title blocks (FR-DRW-003), revision tables (FR-DRW-024) and BOMs show them; STEP export writes the revision as the product definition formation id.
+- **FR-PDM-035** (P5, S) **Workflow editor**: states (name, colour, read-only flag), transitions (name, from, to, conditions, roles, actions), revision increment on a transition, multiple workflows chosen by folder or file kind; saved in the vault, exportable as JSON.
+- **FR-PDM-036** (P5, S) **Transition actions**: on release, generate and store PDF of drawings and STEP of parts/assemblies beside the revision (named by a pattern, e.g. `BR-001_revB.pdf`), set a watermark "Not released" on PDFs of unreleased versions, run the integrity check.
+- **FR-PDM-037** (P4, M) Users and roles: in a personal vault, the single local user has every role. In a shared vault (FR-PDM-070) user names and roles come from the vault's user list; the app asks who is working at first use per browser. This is **identification, not security**: anyone with write access to the folder can change files; the UI says so in the vault settings.
+
+#### 12.5.5 Data cards, numbering and search
+
+- **FR-PDM-040** (P4, M) **Data card** per file kind: fields (text, number, date, list, checkbox, user), mapped to document custom properties both ways, with required flags and default values; shown in the right panel for the selected vault file and editable when checked out.
+- **FR-PDM-041** (P4, M) **Numbering schemes**: patterns such as `MC-{YYYY}-{0000}` or `{PROJECT}-{0000}`, issued once per new file or on demand, never reused (counter kept in the vault).
+- **FR-PDM-042** (P4, M) **Search**: by name, any data card field, state, revision, checked-out user, date range, file kind, and "contains material = Aluminium 6061"; saved searches; results open, check out or show where-used.
+- **FR-PDM-043** (P4, S) Full-text search in notes and drawing text.
+
+#### 12.5.6 Compare, BOMs and change orders
+
+- **FR-PDM-050** (P4, M) **Compare two versions** of a part or assembly: data card differences; feature tree differences (added, removed, changed parameters with old → new values); geometry difference in the view (added volume in one colour, removed in another, via kernel booleans); volume and mass change.
+- **FR-PDM-051** (P5, M) **Compare two versions of a drawing**: overlay of the two PDFs/views with differences highlighted.
+- **FR-PDM-052** (P4, M) **BOM per version/revision**: the BOM of an assembly as checked in (exact component versions) or as of a revision; **BOM compare** between two revisions (added, removed, quantity changed, revision changed); CSV export.
+- **FR-PDM-053** (P5, S) **Change requests and change orders (ECR/ECO)**: a change request (title, reason, affected files, attachments, requester) is reviewed; an approved request becomes a change order whose affected files move to *Change pending*; closing the order releases them together with new revisions and links the order number into their revision tables.
+- **FR-PDM-054** (P5, S) **Release package**: the set of files released together (one transition on a selection, or an ECO) is recorded as a baseline, and can be exported as a ZIP with PDFs and STEP files for a supplier.
+
+#### 12.5.7 Audit, notifications and sharing
+
+- **FR-PDM-060** (P2, M) **Audit trail**: every vault action (add, check-out, check-in, undo check-out, transition, rename, move, delete, restore, destroy, purge, settings change) is appended to `.mcadvault/log/` with user, time, file, version and details; viewable and filterable per file or vault; exportable as CSV.
+- **FR-PDM-061** (P5, S) **Notifications**: in a shared vault, the app shows a list of events since the user's last visit (files checked in, released, assigned for review); a transition can address a user or role.
+- **FR-PDM-070** (P5, S) **Shared vault** on a folder several people can reach (network drive, or a synced folder such as Nextcloud, Dropbox, OneDrive, Google Drive): check-out writes a lock record; check-in refuses when the file's latest version moved on since the local copy was taken, offering to save the work as a new file or to discard; stale locks (older than a set time, or by a user who confirms) can be broken by an admin with a log entry.
+- **FR-PDM-071** (P5, S) Because synced folders deliver changes with delay, every vault write is append-only (new object files, new log files, new per-file records with a sequence number) so concurrent writers never overwrite each other's data; the index is recomputed from these records; conflicting lock records are resolved by the earliest timestamp and reported to both users.
+- **FR-PDM-072** (P7, C) **Git backend**: a vault folder may also be a git repository; check-in can create a commit (JSON documents diff well, FR-IO-004). Pushing is done by the user's own git tools.
+- **FR-PDM-073** (P7, C) **Server vault** with authenticated users, permissions per folder and state, replication and web access: separate FRS and an explicit decision on C-1.
+
+#### 12.5.8 PDM user interface
+
+- **FR-PDM-080** (P2, M) Vault commands appear in a **Vault** tab of the command bar (Check out, Check in, Undo check-out, Get latest, History, Change state ▾, Where used, Contains, Copy tree, Search) and in context menus of files, document tabs and assembly components.
+- **FR-PDM-081** (P2, M) The title bar and document tab show `name · Rev B · Released · v12` (state colour from the workflow); a modified file that is not checked out cannot be saved over the vault copy (Save as only).
+- **FR-PDM-082** (P2, M) Check-in and transition dialogs list the files involved with their state, version and warnings (e.g. "Bracket.mcaddrw is out of date with its model") before anything is written.
+- **FR-PDM-083** (P2, M) All PDM strings are translated (EN/RU); state names and revision labels are stored as defined in the vault and shown as typed (user data, not translated).
 
 ---
 
@@ -847,14 +955,14 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 ```
 
 - **FR-UI-001** (P0, M) The modelling layout reuses the existing header, panels, right-panel pages, NavCube, status bar, toasts and dialogs from `ui.ts`. Viewer-only users see no change until they create or edit a model.
-- **FR-UI-002** (P1, M) **Left panel** (SW habit: FeatureManager on the left) with tabs: **Tree** (feature or assembly tree), **Feature** (the feature panel while a command runs), **Parameters** (P2), **Display** (P4 display states). Collapsible with Ctrl+[ like today; width resizable and remembered.
+- **FR-UI-002** (P1, M) **Left panel** (SW habit: FeatureManager on the left) with tabs: **Tree** (feature or assembly tree), **Feature** (the feature panel while a command runs), **Parameters** (P2), **Vault** (P2, FR-PDM-002), **Display** (P4 display states). Collapsible with Ctrl+[ like today; width resizable and remembered.
 - **FR-UI-003** (P1, M) While a feature or sketch command runs, the left panel switches to the **Feature** tab (SW habit: PropertyManager replaces the tree) and a **mini tree** (fly-out, semi-transparent) is shown at the top left of the graphics area so planes and features can still be picked from the tree.
 - **FR-UI-004** (P1, M) The **right panel** keeps MöbiusCAD's pages (properties, section, explode, mass, export, measurement list); its Properties page shows the selected entity's data (face type, area, radius, owning feature).
 - **FR-UI-005** (P1, M) Breakpoints from the UI standards: ≥1366 px full layout on one command row; 1280–1365 labels fold to icons (existing `fitToolbar` logic); 768–1279 left and right panels are overlays; <768 view-only (FR-UI-090).
 
 ### 13.2 Command bar
 
-- **FR-UI-010** (P1, M) A tabbed command bar below the header (SW habit: CommandManager) with tabs **Features**, **Sketch**, **Evaluate** (measure, mass properties, section, interference P4, analyses), **View** (display modes, projection, standard views, hide/show), and in later phases **Assembly** (P4), **Drawing** tabs in drawing documents (P5), **Sheet metal** (P6).
+- **FR-UI-010** (P1, M) A tabbed command bar below the header (SW habit: CommandManager) with tabs **Features**, **Sketch**, **Evaluate** (measure, mass properties, section, interference P4, analyses), **View** (display modes, projection, standard views, hide/show), and in later phases **Vault** (P2, FR-PDM-080), **Assembly** (P4), **Drawing** tabs in drawing documents (P5), **Sheet metal** (P6).
 - **FR-UI-011** (P1, M) Buttons show icon + label (labels fold to icons with tooltips under 1366 px), grouped by function with separators; split buttons hold variants (Rectangle ▾ corner/centre/3-point).
 - **FR-UI-012** (P1, M) Disabled commands explain why in the tooltip ("Select a closed sketch or a plane first").
 - **FR-UI-013** (P1, M) Context tabs: entering a sketch selects the Sketch tab; finishing returns to Features.
@@ -964,6 +1072,9 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 | NFR-PERF-030 | Assembly of 200 components (50 distinct parts) opens | ≤ 10 s, 30 fps orbit | P4 |
 | NFR-PERF-031 | Mate solve after a change, 200 mates | ≤ 100 ms | P4 |
 | NFR-PERF-040 | Drawing view update (HLR exact), part of 2 000 faces | ≤ 5 s per view, fast preview ≤ 1 s | P5 |
+| NFR-PERF-060 | Check-in of an assembly with 50 changed files (100 MB) | ≤ 10 s on a local SSD folder | P4 |
+| NFR-PERF-061 | Vault search over 10 000 files and 50 000 versions | ≤ 1 s | P4 |
+| NFR-PERF-062 | Where-used of a part in a 10 000-file vault | ≤ 1 s | P4 |
 | NFR-PERF-050 | Kernel worker heap for a 100-feature part | ≤ 1.5 GB, worker recycle per FR-ARC-011 | P1 |
 | NFR-PERF-051 | Main thread memory (JS heap) for a 100-feature part | ≤ 500 MB | P1 |
 
@@ -972,6 +1083,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 - **NFR-REL-001** (P0, M) No user data loss on tab close, crash or kernel failure beyond the last 2 s of edits (autosave journal, FR-STO-003).
 - **NFR-REL-002** (P0, M) A document that fails to rebuild still opens and stays editable (features error, data intact).
 - **NFR-REL-003** (P0, M) Saving is atomic: a failed write never leaves a truncated file (write to a temp handle / OPFS then swap where possible; for downloads the previous file is untouched).
+- **NFR-REL-005** (P2, M) Vault writes are append-only and crash-safe: an interrupted check-in leaves the previous version intact and is either completed or rolled back at the next vault open; no vault operation ever deletes the only copy of a version except an explicit, confirmed, logged destroy/purge.
 - **NFR-REL-004** (P1, M) Kernel exceptions (`Standard_Failure`, `StdFail_NotDone`) are caught per feature and converted to feature errors; no uncaught exception stops the rebuild loop.
 
 ### 14.3 Accuracy
@@ -1104,7 +1216,27 @@ Transforms are column-major 4×4 in mm (same convention as three.js and the veri
 }
 ```
 
-### 15.5 Migration
+### 15.5 Vault records (schema sketch)
+
+```jsonc
+// .mcadvault/vault.json
+{ "schema": 1, "name": "Workshop", "revisionScheme": { "kind": "letters", "skip": ["I","O","Q","S","X","Z"], "pre": "numbers" },
+  "numbering": [ { "id": "n1", "pattern": "MC-{YYYY}-{0000}", "next": 17 } ],
+  "workflows": [ { "id": "wf_default", "states": ["wip", "review", "released", "change", "obsolete"], "transitions": [ /* … */ ] } ],
+  "users": [ { "name": "Andrey", "roles": ["designer", "checker", "approver", "admin"] } ] }
+
+// .mcadvault/files/<fileId>.json  (one record per event, append-only: <fileId>/<seq>.json)
+{ "fileId": "v_8Hf2", "path": "parts/Bracket.mcadprt", "kind": "part",
+  "versions": [
+    { "n": 11, "object": "sha256:…", "user": "Andrey", "at": "2026-11-06T21:30:00Z", "comment": "Hole Ø10 → Ø20",
+      "refs": [ { "fileId": "v_P1n0", "version": 4 } ], "props": { "partNumber": "MC-2026-0007", "material": "Aluminium 6061" } },
+    { "n": 12, "object": "sha256:…", "user": "Andrey", "at": "2026-11-07T09:02:00Z", "comment": "Fillets R5", "refs": [], "props": {} }
+  ],
+  "state": "released", "revisions": [ { "label": "A", "version": 9, "at": "…", "by": "Andrey" }, { "label": "B", "version": 12, "at": "…", "by": "Andrey" } ],
+  "lock": null }
+```
+
+### 15.6 Migration
 
 - **FR-IO-030** (P0, M) `migrations/<n>.ts` transforms schema *n* to *n+1*; unit tests open stored fixtures of every schema version.
 
@@ -1179,6 +1311,17 @@ All values exact to 1e-6 relative unless stated.
 - **AT-P5-5** Hinge mate allows rotation only, with a 0–90° limit.
 - **AT-P5-6** Fastener library: insert an M6×20 ISO 4762 screw into a hole with automatic mates.
 
+**PDM**
+
+- **AT-PDM-1** (P2) Create a vault in a folder, add the bracket, check out, change the hole, check in with a comment: version 2 exists, version 1 opens read-only with the old volume, the audit log has both entries.
+- **AT-PDM-2** (P2) Kill the tab in the middle of a check-in (debug hook): reopening the vault shows version 1 intact and the check-in either completed or rolled back; the integrity check reports no errors.
+- **AT-PDM-3** (P4) Release the bracket (revision A), change it (Change pending), check in twice, release again: revision B points to the latest version; "latest released" in an assembly resolves to B; the title block shows Rev B.
+- **AT-PDM-4** (P4) Rename the pin part inside the vault: the assembly and drawing that use it get new versions with updated references and still open without missing files.
+- **AT-PDM-5** (P4) Where-used of the pin lists the assembly and its drawing; deleting the pin is refused with that list.
+- **AT-PDM-6** (P4) Compare bracket versions 1 and 2: the tree diff shows `Hole Ø10 → Ø20`, the geometry diff shows removed volume 2 000π − 500π = 4 712.389 mm³; BOM compare between assembly revisions A and B lists the changed component revision.
+- **AT-PDM-7** (P5) ECO with two affected files: closing it releases both with new revisions and the ECO number appears in their revision tables.
+- **AT-PDM-8** (P5) Two browser profiles on one shared folder: user 1 checks out the bracket; user 2 sees the lock and cannot check out; user 1 checks in; user 2 gets latest and sees the new version.
+
 ### 16.3 Solver acceptance set (P0 spike and P1)
 
 1. Fully defined rectangle (4 lines, 2 dims, H/V, coincident at origin): DOF 0.
@@ -1206,6 +1349,8 @@ All values exact to 1e-6 relative unless stated.
 | R-9 | UI complexity hurts the simple viewer users | Medium | Medium | Lazy-loaded modelling mode; viewer layout unchanged until a model is created; smoke test on viewer layout |
 | R-10 | Accessibility regressions in complex panels | Medium | Low | axe-core gates in light/dark for every new panel; keyboard tests |
 | R-11 | Drawing HLR quality/speed for complex parts | Medium | Medium | PolyAlgo preview, exact HLR in background, per-view caching |
+| R-13 | Shared vault on a synced folder corrupts data or loses locks (sync delay, conflict copies) | Medium | High | Append-only records, content-addressed objects, sequence numbers, conflict detection on check-in (FR-PDM-071), integrity check, clear documentation of supported folders |
+| R-14 | Users mistake vault roles for security | Medium | Medium | Settings and Help state that a folder vault identifies users but does not protect files (FR-PDM-037); real permissions only with a server vault (P7) |
 | R-12 | Trademark/look-alike concerns from adopting SolidWorks habits | Low | Medium | Own icons, names, artwork, help text; only generic interaction patterns adopted (section 1.3) |
 
 ---
@@ -1223,6 +1368,9 @@ All values exact to 1e-6 relative unless stated.
 | D-7 | Phase order after P2 | assemblies before advanced parts / as listed | As listed (P3 parts, P4 assemblies), revisit after P2 user feedback |
 | D-8 | Drawing standard default | ISO first angle / by language (RU → ESKD/GOST) | ISO for both, GOST format offered |
 | D-9 | Unit test runner | `node --test` / Vitest | `node --test` (no new dependency) |
+| D-10 | Team PDM backend | shared synced folder (P5) / git repository / own server (P7) | Shared folder first (no server, fits C-1); server only if teams need permissions |
+| D-11 | Default revision scheme | letters A, B, C (ASME/ISO practice) / numbers 01, 02 / ESKD change numbers and letters for RU | Letters with skips; ESKD scheme offered as a vault template |
+| D-12 | Version storage | full copy per version, content-addressed (proposed) / deltas | Full copies (simple, robust; files are compressed ZIPs) with purge |
 
 ---
 
