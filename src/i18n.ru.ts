@@ -912,4 +912,5 @@ export const RU: Record<string, string> = {
   "The chamfer angle must be between 0° and 90°.": "Угол фаски должен быть от 0° до 90°.",
   "The reference plane is missing or has an error.": "Справочная плоскость отсутствует или содержит ошибку.",
   "A sketch or plane this feature uses has an error.": "Эскиз или плоскость этого элемента содержит ошибку.",
+  "Click to type the size": "Щёлкните, чтобы ввести размер",
 };

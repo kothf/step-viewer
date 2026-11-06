@@ -1503,6 +1503,9 @@ try {
     await mp.waitForTimeout(200);
     for (const p of [[100, 0, 10], [0, 0, 10], [100, 60, 10]]) await click(p, false);
     const picked = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
+    await idle();
+    const prev = await mp.evaluate(() => ({ tris: (window.__sv.model.last().preview?.position.length ?? 0) / 9, callout: document.querySelector("#mc-layer .mc-callout")?.textContent }));
+    check(prev.tris > 10 && /Radius: 2 mm/.test(prev.callout ?? ""), `model: the fillet previews live (yellow faces) while edges are picked, with a radius callout (${JSON.stringify(prev)})`);
     // The fourth (hidden) edge: from the other side.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 1, 0.8), false); });
     await mp.waitForTimeout(200);

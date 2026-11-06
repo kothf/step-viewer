@@ -21,7 +21,7 @@ export type KernelRequest =
   | { id: number; type: "board"; loops: number[][]; holes: [number, number, number][]; z0: number; thickness: number; name: string }
   | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
-  | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number }
+  | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] };
 
@@ -91,7 +91,26 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         applyPatch(data, kernel.exact(0, probe(data)));
         props = modeller.props(res.body);
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, data, faceNames: res.body?.names ?? [], props, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      // Preview of the feature at `previewAt` (fillet, chamfer) while its edges are picked on the body before it:
+      // only the faces it makes, as a plain triangle list.
+      let preview: { position: number[]; status: unknown } | null = null;
+      if (r.previewAt != null) {
+        const fid = r.doc.features[r.previewAt]?.id;
+        const pr = modeller.evaluate({ ...r.doc, rollback: r.previewAt + 1 });
+        const status = pr.statuses[r.previewAt];
+        const position: number[] = [];
+        if (pr.body && fid && status?.ok) {
+          const m = modeller.mesh(pr.body, "preview", r.color, r.quality);
+          const P = m.attributes.position.array, I = m.index.array;
+          pr.body.names.forEach((n, i) => {
+            if (!n.startsWith(`${fid}:`)) return;
+            const fr = m.brep_faces[i];
+            for (let t = fr.first; t <= fr.last; t++) for (let k = 0; k < 3; k++) { const v = I[t * 3 + k]; position.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
+          });
+        }
+        preview = { position, status };
+      }
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, data, faceNames: res.body?.names ?? [], props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "modelStep") {
       if (!lastBody) throw new Error("There is no body to export yet.");
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];

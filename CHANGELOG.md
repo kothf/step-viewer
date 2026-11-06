@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-11-06
+
+### Fixed
+- Fillet and Chamfer preview live again, SolidWorks style: while edges are picked on the body, the new faces show in see-through yellow and a callout at the first edge gives the radius or distances; it follows every change of edges or size. A size that does not fit shows its error in the panel at once.
+
 ## [1.19.1] - 2026-11-06
 
 ### Fixed
@@ -257,7 +262,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.1...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.2...HEAD
+[1.19.2]: https://github.com/kothf/step-viewer/compare/v1.19.1...v1.19.2
 [1.19.1]: https://github.com/kothf/step-viewer/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/kothf/step-viewer/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/kothf/step-viewer/compare/v1.17.0...v1.18.0
