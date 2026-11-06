@@ -37,6 +37,9 @@ jobs:
       - name: Browser for the tests
         run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
 
+      - name: Unit tests (kernel, sketch solver, documents)
+        run: npm run test:unit
+
       - name: Package
         run: npm run package
 

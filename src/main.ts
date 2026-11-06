@@ -32,6 +32,7 @@ import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
+import { ModelController } from "./model/controller";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -50,6 +51,30 @@ const snapper = new Snapper(viewer);
 const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
 applyThemeToViewer();
+// Part modelling: command bar, Features tab, sketcher; its parts show through showPartModel.
+const modeller = new ModelController({
+  viewer,
+  vp: vpEl,
+  show: (data, name, first) => showPartModel(data, name, first),
+  faceAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
+  },
+  edgeAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.pick(x - r.left, y - r.top);
+    if (s?.edge) return { edge: s.edge };
+    if (s?.face) return { faceId: s.face.id };
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { faceId: f.face.id } : null;
+  },
+  selectedFace: () => (state.selection?.kind === "face" && state.selection.face ? state.selection.face.id : null),
+  clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
+  setDoc: label => setDoc(label, "ready"),
+  selectLeftTab: tab => showLeftTab(tab),
+  appVersion: __APP_VERSION__,
+}, new URL("occt/", document.baseURI).href);
 $("#app-version").textContent = `v${__APP_VERSION__}`;
 $(".brand").title = `MöbiusCAD v${__APP_VERSION__}`;
 
@@ -273,6 +298,7 @@ $("#back-pcb").addEventListener("click", () => {
 async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
+  modeller.close();
   if (!append) kernel.clear();
   setPcbMode(true);
   const label = list.length === 1 ? list[0].name : t("{n} PCB files", { n: list.length });
@@ -297,6 +323,8 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  const partFile = files.find(f => modeller.isPartName(f.name));
+  if (partFile) return modeller.openFile(partFile);
   const sw = files.filter(f => isSolidWorksName(f.name));
   if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));
@@ -540,6 +568,7 @@ async function exportBoardStep() {
 /** Shows parsed parts in the 3D model view (a STEP file, or a PCB's board body). */
 function showModel(parts: PartData[], tree: TreeNode, name: string, key: string, t0: number) {
   const result = { parts, tree };
+  modeller.close();
   resetForNewModel();
   setPcbMode(false);
   $("#back-pcb").hidden = !key.startsWith("sv:pcb:");
@@ -559,6 +588,36 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   showModelStats();
   viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
   hint("model");
+}
+
+/** A modelled part's body after a rebuild: the first time like a newly opened file, later keeping the view and tools. */
+function showPartModel(data: PartData | null, name: string, first: boolean) {
+  ++loadToken;
+  if (first) {
+    resetForNewModel();
+    setPcbMode(false);
+    kernel.clear();
+    showKernelStatus();
+    $("#back-pcb").hidden = true;
+  } else {
+    state.selection = null;
+    state.picks = [];
+    hl.pickMarks.clear();
+    clearLive();
+    showEntity(hl.selFace, hl.selEdge, null);
+    showEntity(hl.hoverFace, hl.hoverEdge, null);
+  }
+  viewer.load(data ? [data] : [], { name, parts: data ? [0] : [], children: [] }, first && !!data);
+  state.fileName = name;
+  state.fileKey = "";
+  document.title = `${name} · MöbiusCAD`;
+  $("#empty").hidden = true;
+  setLoading(false);
+  buildTree();
+  renderProps();
+  updateHint();
+  if (first && data) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+  if (lastMassRun) runMass();
 }
 
 let modelStats = { parts: 0, faces: 0, tris: 0, s: 0 };
@@ -1311,7 +1370,7 @@ canvas.addEventListener("pointerup", e => {
   const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
   const btn = downAt.button;
   downAt = null;
-  if (moved > 4 || btn !== 0 || !viewer.parts.length) return;
+  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking) return;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
@@ -1475,7 +1534,7 @@ $("#m-clear").addEventListener("click", async () => {
 $("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast(t("No measurements yet")));
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast(t("No measurements yet")));
 
-bindTabs($(".tabs"), tab => $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)));
+const showLeftTab = bindTabs($(".tabs"), tab => $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)));
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -1999,4 +2058,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

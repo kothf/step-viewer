@@ -1,0 +1,111 @@
+// Solver acceptance set (FRS 16.3).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { solve, tryAdd, measureDim, ORIGIN } from "../../src/sketch/solver";
+import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
+
+const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
+const pt = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+const ln = (id: string, a: string, b: string): SkEnt => ({ id, t: "line", a, b });
+const rel = (t: SkRel["t"], ...e: string[]): SkRel => ({ id: `r${Math.random()}`, t, e });
+const dim = (t: SkDim["t"], v: number, ...e: string[]): SkDim => ({ id: `d${Math.random()}`, name: "D", t, e, val: { v } });
+const P = (s: SketchFeature, id: string) => { const e = s.ents.find(x => x.id === id)!; return e.t === "point" ? [e.x, e.y] : null; };
+const near = (a: number, b: number, tol = 1e-7) => assert.ok(Math.abs(a - b) < tol, `${a} ≠ ${b}`);
+
+function rectangle() {
+  return sk(
+    [pt("a", -4, -3), pt("b", 6, -2.5), pt("c", 5.5, 3.2), pt("d", -4.2, 2.8), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a")],
+    [rel("horizontal", "l1"), rel("horizontal", "l3"), rel("vertical", "l2"), rel("vertical", "l4")],
+  );
+}
+
+test("rectangle: DOF counts down to fully defined (1)", () => {
+  const s = rectangle();
+  let r = solve(s);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 4);
+  s.dims.push(dim("distance", 100, "l1"), dim("distance", 60, "l2"));
+  r = solve(s);
+  assert.equal(r.dof, 2);
+  // Centre on the origin: midpoint of a diagonal construction line.
+  s.ents.push(ln("diag", "a", "c"));
+  (s.ents.at(-1) as any).cons = true;
+  s.rels.push(rel("midpoint", ORIGIN, "diag"));
+  r = solve(s);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 0);
+  assert.ok(r.defined.has("l1") && r.defined.has("c"));
+  near(P(s, "a")![0], -50); near(P(s, "a")![1], -30); near(P(s, "c")![0], 50); near(P(s, "c")![1], 30);
+});
+
+test("slot with tangent arcs and equal radii (2)", () => {
+  const s = sk([
+    pt("c1", 0, 0), pt("c2", 30, 1), pt("a1", 0, 5), pt("b1", 0, -5), pt("a2", 30, -5), pt("b2", 30, 5),
+    { id: "arc1", t: "arc", c: "c1", a: "a1", b: "b1" }, { id: "arc2", t: "arc", c: "c2", a: "a2", b: "b2" },
+    ln("top", "b2", "a1"), ln("bot", "b1", "a2"),
+  ], [rel("tangent", "top", "arc1"), rel("tangent", "top", "arc2"), rel("tangent", "bot", "arc1"), rel("tangent", "bot", "arc2"), rel("equal", "arc1", "arc2"), rel("horizontal", "c1", "c2"), rel("coincident", "c1", ORIGIN)],
+  [dim("radius", 5, "arc1"), dim("distance", 40, "c1", "c2")]);
+  const r = solve(s);
+  assert.equal(r.status, "ok");
+  near(P(s, "c2")![0], 40, 1e-6);
+  near(Math.hypot(P(s, "a2")![0] - 40, P(s, "a2")![1]), 5, 1e-6);
+});
+
+test("over-defined triangle is refused (3)", () => {
+  const s = sk([pt("a", 0, 0), pt("b", 10, 0), pt("c", 3, 8), ln("ab", "a", "b"), ln("bc", "b", "c"), ln("ca", "c", "a")],
+    [rel("coincident", "a", ORIGIN), rel("horizontal", "ab")],
+    [dim("distance", 10, "ab"), dim("distance", 10, "bc"), dim("distance", 10, "ca")]);
+  assert.equal(solve(s).status, "ok");
+  const r = tryAdd(s, { dim: dim("angle", Math.PI / 2, "ab", "ca") });
+  assert.equal(r.ok, false);
+  assert.equal(r.sketch, s);
+});
+
+test("200-entity profile solves fast (4)", () => {
+  const ents: SkEnt[] = [], rels: SkRel[] = [], dims: SkDim[] = [];
+  const n = 60;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    ents.push(pt(`p${i}`, 50 * Math.cos(t) + Math.random(), 50 * Math.sin(t) + Math.random()));
+  }
+  for (let i = 0; i < n; i++) { ents.push(ln(`l${i}`, `p${i}`, `p${(i + 1) % n}`)); dims.push(dim("distance", 5, `l${i}`)); }
+  for (let i = 0; i < n; i++) ents.push({ id: `c${i}`, t: "circle", c: `p${i}`, r: 1 + Math.random() }), rels.push(rel("equal", `c${i}`, "c0"));
+  const s = sk(ents, rels, dims);
+  const t0 = performance.now();
+  const r = solve(s);
+  const ms = performance.now() - t0;
+  assert.equal(r.status, "ok");
+  assert.ok(ms < 2000, `${ms} ms`);
+});
+
+test("dragging a four-bar linkage keeps lengths (5)", () => {
+  const s = sk([pt("a", 0, 0), pt("b", 10, 0), pt("c", 12, 8), pt("d", 2, 9), ln("ab", "a", "b"), ln("bc", "b", "c"), ln("cd", "c", "d"), ln("da", "d", "a")],
+    [rel("fix", "a"), rel("fix", "b")], [dim("distance", 10, "bc"), dim("distance", 12, "cd"), dim("distance", 9, "da")]);
+  solve(s);
+  for (let k = 0; k < 10; k++) {
+    const d = P(s, "d")!;
+    const r = solve(s, { point: "d", to: [d[0] - 0.3, d[1] + 0.1] });
+    assert.equal(r.status, "ok");
+    near(Math.hypot(P(s, "d")![0], P(s, "d")![1]), 9, 1e-6);
+    near(Math.hypot(P(s, "c")![0] - P(s, "d")![0], P(s, "c")![1] - P(s, "d")![1]), 12, 1e-6);
+  }
+});
+
+test("large change keeps the shape (6)", () => {
+  const s = rectangle();
+  s.dims.push(dim("distance", 10, "l1"), dim("distance", 6, "l2"));
+  s.rels.push(rel("coincident", "a", ORIGIN));
+  solve(s);
+  s.dims[0].val.v = 1000;
+  assert.equal(solve(s).status, "ok");
+  near(P(s, "b")![0], 1000, 1e-6);
+  near(P(s, "c")![1], 6, 1e-6);
+});
+
+test("redundant but consistent relation (7)", () => {
+  const s = rectangle();
+  const r = tryAdd(s, { rel: rel("parallel", "l1", "l3") });
+  assert.equal(r.ok, true);
+  assert.equal(r.redundant, true);
+  near(measureDim(r.sketch, { t: "distance", e: ["l1"] }), Math.hypot(P(r.sketch, "b")![0] - P(r.sketch, "a")![0], P(r.sketch, "b")![1] - P(r.sketch, "a")![1]));
+});

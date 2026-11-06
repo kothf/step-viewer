@@ -7,6 +7,10 @@
 import { Kernel, type PartProbe } from "./occ";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
+import { Modeller } from "./model";
+import { analyzeMesh } from "../topology";
+import { applyPatch, probe } from "./patch";
+import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
 
 export type KernelRequest =
@@ -15,7 +19,11 @@ export type KernelRequest =
   | { id: number; type: "exact"; probes: (PartProbe | null)[] }
   | { id: number; type: "step"; which: number[] | null; names: string[]; colors: ([number, number, number] | null)[] }
   | { id: number; type: "board"; loops: number[][]; holes: [number, number, number][]; z0: number; thickness: number; name: string }
-  | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string };
+  | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
+  /** Modelling: evaluate a part document and return its body (FRS 6.3). */
+  | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number }
+  /** Modelling: STEP of the last evaluated body. */
+  | { id: number; type: "modelStep"; name: string; color: [number, number, number] };
 
 let parasolid: Promise<ParasolidReader> | null = null;
 /** The Parasolid reader (600 kB of WASM), loaded at the first SolidWorks file. */
@@ -26,6 +34,9 @@ function parasolidReader() {
 }
 
 let kernel: Kernel | null = null;
+let modeller: Modeller | null = null;
+/** The last evaluated body, for STEP export. */
+let lastBody: { shape: unknown; faces: unknown[] } | null = null;
 let heap: () => number = () => 0;
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
@@ -64,6 +75,28 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       if (bytes) transfer.push(bytes.buffer);
       if (preview) transfer.push(preview.buffer);
       post({ id: r.id, ok: true, bytes, report: { ...report, preview } }, transfer);
+    } else if (r.type === "model") {
+      modeller ??= new Modeller(kernel.module);
+      const t0 = performance.now();
+      const res = modeller.evaluate(r.doc);
+      const t1 = performance.now();
+      let data = null, props = null;
+      lastBody = res.body;
+      if (res.body) {
+        const mesh = modeller.mesh(res.body, r.doc.name, r.color, r.quality);
+        data = analyzeMesh(mesh);
+        data.name = r.doc.name;
+        data.color = r.color;
+        kernel.meshes = [{ shape: res.body.shape, faces: res.body.faces, name: r.doc.name, color: r.color, solid: true }];
+        applyPatch(data, kernel.exact(0, probe(data)));
+        props = modeller.props(res.body);
+      }
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, data, faceNames: res.body?.names ?? [], props, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+    } else if (r.type === "modelStep") {
+      if (!lastBody) throw new Error("There is no body to export yet.");
+      kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];
+      const bytes = kernel.writeStep([0], [r.name], [r.color]).slice();
+      post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
     } else if (r.type === "board") {
       const bytes = kernel.boardStep(r.loops, r.holes, r.z0, r.thickness, r.name).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);

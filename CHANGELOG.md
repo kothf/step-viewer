@@ -5,8 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-06
+
+### Added
+- Part modelling, the first slice of the parametric modeller in [docs/FRS-modelling.md](docs/FRS-modelling.md) (phases P0 and P1). **New part** (the page icon next to Open, or on the start screen) starts a part with a feature history; the **Features** tab lists the origin planes, sketches and features, and a command bar over the view holds the commands, SolidWorks style, with ✓ / ✕ in the corner of the view.
+- Sketcher on Top (XY), Front (XZ), Right (YZ) or any flat face: lines, corner and centre rectangles, circles, arcs and points, with snapping and automatic horizontal, vertical and coincident relations. Smart dimensions take units and arithmetic (`25.4 mm`, `1in`, `100/3`, `30deg`). Relations: coincident, horizontal, vertical, parallel, perpendicular, collinear, equal, tangent, concentric, midpoint, symmetric, fix, plus construction geometry. A constraint solver shows free (blue), fully defined (black) and over-defined (red) geometry and the degrees of freedom left, and geometry can be dragged.
+- Features: Extrude and Cut (blind, mid plane, through all, second direction, reverse), Revolve (boss or cut, any angle, around a sketch line), Fillet and Chamfer on edges picked in the view (a face picks all its edges). The view previews the result while values are typed. Faces and edges keep their names through edits, so changing an early feature rebuilds the later ones on the moved faces.
+- Edit any feature by double-clicking it, suppress or delete it (dependent features are named first), undo and redo every step (Ctrl+Z / Ctrl+Y, 200 steps).
+- Part files: **Save** (Ctrl+S) writes a `.mcadprt` file (a zip with the feature history as JSON, stable for version control), and Open reads it back. **STEP** exports the solid. Unsaved changes are kept in the browser and offered for recovery on the start screen after a crash or a closed tab.
+- Modelled parts use the existing tools: Smart measure, sections, mass properties and exports work on them with exact geometry.
+- The geometry kernel is full OpenCASCADE (opencascade.js) in a worker, which keeps the part's history cached so edits near the end rebuild fast; a worker that crashes or grows too large is restarted from the document.
+- Unit tests for the kernel, the sketch solver, expressions and documents (`npm run test:unit`, run in CI), and modelling checks in the smoke test.
+- Help has a Modelling page, and the new interface is in Russian too.
+
 ### Changed
 - The Parasolid parser from parasolid-kit is now kept in this repository (`native/parasolid-core`) instead of being fetched from GitHub at build time, so it can be fixed here. It reads all test files exactly as before.
+
+## [1.17.0] - 2026-11-06
+
+### Added
+- Section button: press **Section** in the header and click a face. A flat face puts the plane on that face; a cylinder cuts through its axis, square to the view. The face under the pointer is highlighted while choosing and Esc cancels. The plane's sheet and drag arrows are anchored at the click instead of the model centre.
 
 ## [1.16.0] - 2026-11-06
 
@@ -216,7 +234,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/kothf/step-viewer/compare/v1.17.0...v1.18.0
+[1.17.0]: https://github.com/kothf/step-viewer/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/kothf/step-viewer/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/kothf/step-viewer/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/kothf/step-viewer/compare/v1.14.0...v1.14.1

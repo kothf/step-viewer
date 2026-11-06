@@ -74,7 +74,7 @@ Stack: TypeScript, Vite, Three.js, three-mesh-bvh, occt-import-js (OpenCASCADE 7
 
 ### Roadmap
 
-Parametric modelling (sketches, features, assemblies, drawings) is specified in [docs/FRS-modelling.md](docs/FRS-modelling.md).
+Part modelling (since 1.18.0): New part, sketches with dimensions and relations, extrude, cut, revolve, fillet and chamfer, `.mcadprt` part files. The full parametric modeller (sketches, features, assemblies, drawings) is specified in [docs/FRS-modelling.md](docs/FRS-modelling.md).
 
 ### Releasing
 

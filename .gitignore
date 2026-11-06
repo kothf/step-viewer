@@ -4,3 +4,4 @@ public/occt/
 public/samples/
 *.tsbuildinfo
 native/*/target/
+tests/.tmp/
