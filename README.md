@@ -72,6 +72,10 @@ npm test           # headless-Chromium smoke test of the packaged build
 
 Stack: TypeScript, Vite, Three.js, three-mesh-bvh, occt-import-js (OpenCASCADE 7.x as WebAssembly), jsPDF.
 
+### Roadmap
+
+Parametric modelling (sketches, features, assemblies, drawings) is specified in [docs/FRS-modelling.md](docs/FRS-modelling.md).
+
 ### Releasing
 
 1. Bump `version` in `package.json` and add a section to `CHANGELOG.md`.

@@ -43,6 +43,8 @@ The smoke test (`tests/smoke.mjs`) needs Playwright's Chromium (`npx playwright 
 - `src/help.ts` (Help dialog content, both languages; the About tab lists credits from the build's `credits.json`, written by `scripts/credits-plugin.mjs` from the bundled packages, with licence texts in `THIRD-PARTY-LICENSES.txt`; non-bundled code such as occt goes in its `extra` option in `vite.config.ts`), `src/hints.ts` (first-use tips, shown once each).
 - `src/main.ts`: UI controller. The default tool `"select"` is **Smart measure**: one click shows an entity's size, a second click the relation between two entities. The result is "live" until the next click and can be pinned. Labels on the model stay one line; details go in the `#readout` card.
 
+- `docs/FRS-modelling.md`: functional requirements for growing the viewer into a parametric modeller (phases P0–P7, requirement IDs `FR-…`, acceptance tests `AT-…`). Modelling work follows it; cite the IDs in PRs.
+
 ## Conventions
 
 - Internal units are millimetres and radians; format only for display (`units.ts`).
