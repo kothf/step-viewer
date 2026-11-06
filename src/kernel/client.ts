@@ -21,14 +21,21 @@ function compile(base: string) {
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
+/** A worker whose WASM heap has grown past this is replaced at the next file (OCCT objects are not freed one by one). */
+const RECYCLE_HEAP = 1024 * 1024 * 1024;
+
 export class KernelClient {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
   private pending = new Map<number, Pending>();
   private seq = 0;
+  /** WASM heap size of the current worker after its last file. */
+  private heap = 0;
   /** The file in the worker now (null: none, or a model that has no B-rep, such as a mesh). */
   file: string | null = null;
   status: KernelStatus = "off";
+  /** Where the last open spent its time (ms), for `?debug` profiling. */
+  timing: Record<string, number> = {};
   onStatus: ((s: KernelStatus, note?: string) => void) | null = null;
 
   constructor(private base: string) {}
@@ -43,11 +50,24 @@ export class KernelClient {
     });
   }
 
-  /** A fresh worker (the last file's shapes go with the old one). */
-  private fresh() {
+  private stop() {
     this.worker?.terminate();
+    this.worker = null;
+    this.ready = null;
+    this.file = null;
+    this.heap = 0;
     for (const p of this.pending.values()) p.reject(new Error("cancelled"));
     this.pending.clear();
+  }
+
+  /**
+   * A worker ready for the next file. Starting one costs seconds (the 50 MB module
+   * sets itself up), so an idle worker is kept and reused; a busy one (still on
+   * the last file) or one with a big heap is replaced.
+   */
+  private take() {
+    if (this.worker && this.ready && !this.pending.size && this.heap < RECYCLE_HEAP) return this.ready;
+    this.stop();
     const w = new KernelWorker();
     w.onmessage = (e: MessageEvent) => {
       const d = e.data, p = this.pending.get(d.id);
@@ -57,39 +77,64 @@ export class KernelClient {
     };
     w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "kernel worker failed")); this.pending.clear(); };
     this.worker = w;
-    this.file = null;
-    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
-    return this.ready;
+    const t = performance.now();
+    const ready = compile(this.base)
+      .then(module => { this.timing.compile = performance.now() - t; return this.call<void>({ type: "init", base: this.base, module }); });
+    // A worker that failed to start is not reused.
+    ready.catch(() => { if (this.ready === ready) this.stop(); });
+    this.ready = ready;
+    return ready;
   }
 
-  /** Stops background work for a model that has no B-rep (a mesh file, or a PCB). */
+  /** Starts the kernel worker ahead of the first file, so its set-up is out of the way. */
+  warm() {
+    if (!this.worker) this.take().catch(() => {});
+  }
+
+  /** Stops background work for a model that has no B-rep (a mesh file, or a PCB). An idle worker stays for the next file. */
   clear() {
-    this.worker?.terminate();
-    this.worker = null;
-    this.ready = null;
+    if (this.pending.size) this.stop();
     this.file = null;
-    for (const p of this.pending.values()) p.reject(new Error("cancelled"));
-    this.pending.clear();
     this.set("off");
   }
 
-  /** Reads `bytes` in a new worker and makes the parts exact. Resolves with how many parts matched. */
-  async open(bytes: ArrayBuffer, name: string, parts: PartData[], stillCurrent: () => boolean) {
+  /**
+   * Reads `bytes` in the worker and makes the parts exact. The read starts at once,
+   * alongside the import; `parts` resolves once the import is done (null: it failed).
+   * Resolves with how many parts matched.
+   */
+  async open(bytes: ArrayBuffer, name: string, parts: Promise<PartData[] | null>, stillCurrent: () => boolean) {
     this.set("loading");
+    let t = performance.now();
+    this.timing = {};
+    const lap = (k: string) => { const n = performance.now(); this.timing[k] = n - t; t = n; };
     try {
-      await this.fresh();
-      const { counts } = await this.call<{ counts: number[] }>({ type: "load", buffer: bytes, name }, [bytes]);
+      // A file still loading in the worker can't be interrupted: start a new worker.
+      if (this.pending.size) this.stop();
+      this.file = null;
+      await this.take();
+      lap("init");
+      const { counts, heap } = await this.call<{ counts: number[]; heap: number }>({ type: "load", buffer: bytes, name }, [bytes]);
+      this.heap = heap ?? 0;
+      lap("load");
+      const ps = await parts;
       if (!stillCurrent()) return 0;
+      if (!ps) { this.set("off"); return 0; }
+      t = performance.now();
       this.file = name;
-      if (counts.length !== parts.length) { this.set("error", `${counts.length} ≠ ${parts.length} parts`); return 0; }
-      const { patches } = await this.call<{ patches: (PartPatch | null)[] }>({ type: "exact", probes: parts.map(probe) });
+      if (counts.length !== ps.length) { this.set("error", `${counts.length} ≠ ${ps.length} parts`); return 0; }
+      const { patches } = await this.call<{ patches: (PartPatch | null)[] }>({ type: "exact", probes: ps.map(probe) });
       if (!stillCurrent()) return 0;
+      lap("match");
       let n = 0;
-      patches.forEach((p, i) => { if (p?.ok && applyPatch(parts[i], p)) n++; });
-      this.set(n === parts.length ? "ready" : n ? "partial" : "error");
+      patches.forEach((p, i) => { if (p?.ok && applyPatch(ps[i], p)) n++; });
+      this.set(n === ps.length ? "ready" : n ? "partial" : "error");
       return n;
     } catch (err) {
-      if ((err as Error).message !== "cancelled" && stillCurrent()) this.set("error", (err as Error).message);
+      if ((err as Error).message === "cancelled") return 0;
+      // The module may be left broken (an OCCT abort): the next file gets a new worker.
+      this.stop();
+      if (stillCurrent()) this.set("error", (err as Error).message);
       return 0;
     }
   }
@@ -104,8 +149,7 @@ export class KernelClient {
 
   /** STEP of a PCB board body. Uses the current worker, or starts one. */
   async board(body: { loops: number[][]; holes: [number, number, number][]; z0: number; thickness: number; name: string }) {
-    if (!this.worker) await this.fresh();
-    await this.ready;
+    await this.take();
     const r = await this.call<{ bytes: Uint8Array }>({ type: "board", ...body });
     return r.bytes;
   }

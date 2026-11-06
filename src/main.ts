@@ -310,6 +310,12 @@ async function openFiles(files: File[]) {
 // ---------- loading ----------
 const worker = new ImportWorker();
 let loadToken = 0;
+// Get OpenCASCADE (≈3 MB compressed) loaded and warmed up while the user picks a file.
+{
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+  const warm = () => { if (!loadToken) worker.postMessage({ kind: "warm", occtBase: new URL("occt/", document.baseURI).href }); };
+  if (!saveData) "requestIdleCallback" in window ? requestIdleCallback(warm, { timeout: 3000 }) : setTimeout(warm, 1500);
+}
 
 async function openFile(file: File) {
   const buffer = await file.arrayBuffer();
@@ -318,7 +324,7 @@ async function openFile(file: File) {
 
 /** Runs the import worker on one request; null when it failed (the error is shown). */
 function runImport(name: string, msg: unknown, transfer: Transferable[]) {
-  return new Promise<{ parts: PartData[]; tree: TreeNode }>((resolve, reject) => {
+  return new Promise<{ parts: PartData[]; tree: TreeNode; timing?: Record<string, number> }>((resolve, reject) => {
     worker.onmessage = (e: MessageEvent) => {
       const d = e.data;
       if (d.type === "progress") setLoading(true, t(d.text, d.params), d.pct);
@@ -359,16 +365,25 @@ async function openBuffer(buffer: ArrayBuffer, name: string) {
   const quality = $<HTMLSelectElement>("#quality").value as "draft" | "normal" | "fine";
   const occtBase = new URL("occt/", document.baseURI).href;
   const t0 = performance.now();
-  // The kernel worker reads the file again (with its B-rep) once the model is on screen.
-  const copy = buffer.slice(0);
+  timings = {};
+  // The kernel worker reads the file again, with its B-rep, alongside the import.
+  const size = buffer.byteLength;
+  const parts = startKernel(buffer.slice(0), name, token, t0);
   const result = await runImport(name, { buffer, name, occtBase, quality }, [buffer]);
+  parts(result?.parts ?? null);
   if (!result || token !== loadToken) return;
+  Object.assign(timings, result.timing, { worker: performance.now() - t0 });
 
   setLoading(true, t("Building scene…"), 97);
   await new Promise(r => setTimeout(r, 0));
-  showModel(result.parts, result.tree, name, `sv:m:${name}:${copy.byteLength || ""}`, t0);
-  startKernel(copy, name, token);
+  const ts = performance.now();
+  showModel(result.parts, result.tree, name, `sv:m:${name}:${size || ""}`, t0);
+  timings.scene = performance.now() - ts;
+  timings.shown = performance.now() - t0;
 }
+
+/** Where the last open spent its time (ms), for `?debug` profiling. */
+let timings: Record<string, number> = {};
 
 // ---------- exact geometry (full OpenCASCADE in the background) ----------
 const kernel = new KernelClient(new URL("occt/", document.baseURI).href);
@@ -376,12 +391,25 @@ let kernelJob: Promise<number> | null = null;
 let kernelNote = "";
 /** `?nokernel` keeps mesh values only (tests that check the tessellation path). */
 const kernelOff = new URLSearchParams(location.search).has("nokernel");
-function startKernel(bytes: ArrayBuffer, name: string, token: number) {
-  if (kernelOff) return;
-  const parts = viewer.parts.map(p => p.data);
-  // Let the first frames draw before the 50 MB kernel starts compiling.
-  kernelJob = new Promise<void>(r => setTimeout(r, 300)).then(() => (token === loadToken ? kernel.open(bytes, name, parts, () => token === loadToken) : 0));
-  kernelJob.then(n => { if (n && token === loadToken) exactReady(); });
+function warmKernel() { if (!kernelOff && kernelAlongside) kernel.warm(); }
+/** With fewer cores the kernel waits for the model to be on screen instead of reading alongside the import. */
+const kernelAlongside = (navigator.hardwareConcurrency || 2) >= 6;
+/** Starts the exact-geometry read of a file; call the result with the imported parts (null: the import failed). */
+function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number): (parts: PartData[] | null) => void {
+  if (kernelOff) return () => {};
+  let give!: (parts: PartData[] | null) => void;
+  const parts = new Promise<PartData[] | null>(r => (give = r));
+  const current = () => token === loadToken;
+  const start = kernelAlongside ? Promise.resolve()
+    // Let the first frames draw before the kernel starts.
+    : parts.then(() => new Promise<void>(r => setTimeout(r, 300)));
+  kernelJob = start.then(() => (current() ? kernel.open(bytes, name, parts, current) : 0));
+  kernelJob.then(n => {
+    if (!n || !current()) return;
+    timings.exact = performance.now() - t0;
+    exactReady();
+  });
+  return give;
 }
 /** The parts now carry exact values: show them wherever a number is on screen. */
 function exactReady() {
@@ -503,6 +531,9 @@ $<HTMLInputElement>("#file-input").addEventListener("change", e => {
   (e.target as HTMLInputElement).value = "";
 });
 vpEl.addEventListener("dragover", e => { e.preventDefault(); vpEl.classList.add("drag"); });
+// The user is about to open a file: start the exact-geometry kernel now (it takes seconds to set up).
+$("#file-input").addEventListener("click", () => warmKernel());
+window.addEventListener("dragenter", e => { if (e.dataTransfer?.types.includes("Files")) warmKernel(); });
 vpEl.addEventListener("dragleave", () => vpEl.classList.remove("drag"));
 vpEl.addEventListener("drop", e => {
   e.preventDefault();
@@ -1755,4 +1786,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
