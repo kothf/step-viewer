@@ -131,21 +131,23 @@ try {
   check(brand.title === "Cube 10x10.stp · MöbiusCAD" && brand.txt === "MöbiusCAD", `app is named MöbiusCAD (${brand.title} / ${brand.txt})`);
   check(brand.logo && brand.icons && brand.man === "MöbiusCAD" && brand.manIcons, "header logo, favicons and manifest icons load");
 
-  // --- tool strip: every measuring tool and right-panel page is on screen at every width, no scrolling ---
-  for (const [w, h] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
+  // --- header tools: every measuring tool and right-panel page is on screen at every width, no scrolling;
+  //     one header row from 1366 px up, a second row only on narrower windows ---
+  for (const [w, h] of [[1920, 1080], [1440, 900], [1366, 768], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(150);
     const r = await page.evaluate(() => {
       const inView = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.left >= 0 && b.right <= innerWidth + 0.5 && b.top >= 0 && b.bottom <= innerHeight; };
-      const tb = document.querySelector("#toolbar");
+      const tb = document.querySelector(".topbar");
       const btns = [...document.querySelectorAll("#tools button, #rp-tabs [role=tab]")];
       return {
         n: btns.length, off: btns.filter(b => !inView(b)).map(b => b.dataset.tool ?? b.dataset.tab),
         named: btns.every(b => b.textContent.trim().length > 1 && b.title),
-        over: tb.scrollWidth - tb.clientWidth, units: inView(document.querySelector("#units")), page: document.documentElement.scrollWidth - innerWidth,
+        over: tb.scrollWidth - tb.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
+        rows: tb.classList.contains("tb-wrap") ? 2 : 1, h: Math.round(tb.getBoundingClientRect().height),
       };
     });
-    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.units && r.page <= 0, `tool strip ${w}px: 12 tools + 5 panel pages + units on screen, no scrolling (${JSON.stringify(r)})`);
+    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.page <= 0 && (w < 1366 || (r.rows === 1 && r.h <= 48)), `header tools ${w}px: 12 tools + 5 panel pages on screen, no scrolling${w >= 1366 ? ", one row" : ""} (${JSON.stringify(r)})`);
   }
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.waitForTimeout(150);
@@ -170,6 +172,16 @@ try {
   const secShown = await page.evaluate(() => document.querySelector("#rp-section").classList.contains("on"));
   await page.evaluate(() => { window.__sv.section.clear(); window.__sv.renderSections(); });
   await page.click("#rt-props");
+  // Display menu: axes and ambient occlusion live in a header menu, not loose in the header.
+  const inHeader = await page.evaluate(() => !!document.querySelector(".topbar #ao, .topbar #origin-axes"));
+  await page.click("#display-btn");
+  const menuOpen = await page.evaluate(() => { const m = document.querySelector("#display-menu"), b = m.getBoundingClientRect(); return { open: !m.hidden && document.querySelector("#display-btn").getAttribute("aria-expanded") === "true", inView: b.left >= 0 && b.right <= innerWidth && b.top >= 40, focus: m.contains(document.activeElement) }; });
+  await page.click("#ao");
+  const aoOn = await page.evaluate(() => window.__sv.viewer.aoEnabled === true);
+  await page.click("#ao");
+  await page.keyboard.press("Escape");
+  const menuClosed = await page.evaluate(() => document.querySelector("#display-menu").hidden && document.activeElement?.id === "display-btn");
+  check(!inHeader && menuOpen.open && menuOpen.inView && menuOpen.focus && aoOn && menuClosed, `display menu: axes and AO in a header menu that opens, toggles AO and closes on Esc (${JSON.stringify({ inHeader, menuOpen, aoOn, menuClosed })})`);
   // Tool buttons report their state.
   await page.click("#tools [data-tool=radius]");
   const pressed = await page.evaluate(() => [...document.querySelectorAll("#tools button")].filter(b => b.getAttribute("aria-pressed") === "true").map(b => b.dataset.tool));
@@ -1082,6 +1094,7 @@ try {
       handlePick(pick(p.data.faces[0]));
       document.querySelectorAll("details").forEach(d => (d.open = true));
       document.querySelectorAll(".rp").forEach(p => p.classList.add("on"));
+      document.querySelector("#display-menu").hidden = false;
     });
     await pg.waitForTimeout(200);
     const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));

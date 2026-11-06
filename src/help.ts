@@ -96,7 +96,7 @@ const EN: Tab[] = [
 <h4>Opening files</h4>
 <ul>
   <li><b>Open file</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) or drag files onto the window.</li>
-  <li><b>3D models</b>: STEP (AP203, AP214, AP242), IGES and BREP. The mesh quality (Draft, Normal, Fine) in the header applies to the next file you open.</li>
+  <li><b>3D models</b>: STEP (AP203, AP214, AP242), IGES and BREP. The mesh quality (Draft, Normal, Fine) in the <b>Display</b> menu applies to the next file you open.</li>
   <li><b>Mesh files</b>: STL, OBJ and 3MF. They hold only triangles, so MöbiusCAD groups them into flat and curved faces first; holes, cylinders and spheres are still recognised, but there are no exact values or STEP export. Sizes are read as millimetres.</li>
   <li><b>PCBs</b>: Gerber RS-274X / X2 layers, Excellon drill files, or a .zip with a whole set. Open several files at once to see them as one board.</li>
 </ul>
@@ -104,8 +104,8 @@ const EN: Tab[] = [
 <ul>
   <li><b>Header</b>: open file, the open file's name and status, view controls, language (EN / RU), theme and this help.</li>
   <li><b>Left panel</b>: model tree or PCB layers, and the list of saved measurements. Hide it with <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Tool strip</b> (3D model, under the header): every measuring tool, the right-panel pages (Properties, Section, Explode, Mass, Export), units, decimals and the measurement colour, always in view. Labels fold into icons on narrower screens; hover an icon for its name and key.</li>
-  <li><b>Right panel</b>: the page picked in the tool strip; click the open page again to hide the panel, or press <kbd>Ctrl</kbd>+<kbd>]</kbd>. On a phone, the PCB panels open from the bottom bar.</li>
+  <li><b>Tools</b> (3D model, in the header): every measuring tool and the right-panel pages (Properties, Section, Explode, Mass, Export), always in view, next to the display modes, projection and Fit. Units, decimals, measurement colour, mesh quality, origin axes and ambient occlusion are in the <b>Display</b> menu. Hover an icon for its name and key; on narrow windows the tools move to a second row.</li>
+  <li><b>Right panel</b>: the page picked in the header; click the open page again to hide the panel, or press <kbd>Ctrl</kbd>+<kbd>]</kbd>. On a phone, the PCB panels open from the bottom bar.</li>
   <li><b>Status bar</b>: snapping options, the snapped point and its coordinates.</li>
 </ul>
 <h4>Language</h4>
@@ -118,7 +118,7 @@ const EN: Tab[] = [
 <ul>
   <li>Left drag orbits, right drag pans, the wheel zooms to the cursor. The cube in the corner turns the view to a face or corner.</li>
   <li><b>Display modes</b>: Shaded+Edges, Shaded, Wire, HLR (hidden lines removed) and X-ray; <b>Persp</b> / <b>Ortho</b> projection; standard views Fit, Iso, Front, Top, Right.</li>
-  <li><b>Axes</b> shows X, Y, Z from the model origin; <b>AO</b> adds ambient occlusion shading.</li>
+  <li>The <b>Display</b> menu in the header: <b>Origin axes</b> shows X, Y, Z from the model origin; <b>Ambient occlusion</b> adds soft contact shadows in corners and gaps (slower on large models, off while sectioning).</li>
 </ul>
 <h4>Model tree and properties</h4>
 <ul>
@@ -232,7 +232,7 @@ const RU: Tab[] = [
 <h4>Открытие файлов</h4>
 <ul>
   <li><b>Открыть файл</b> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) или перетащите файлы в окно.</li>
-  <li><b>3D-модели</b>: STEP (AP203, AP214, AP242), IGES и BREP. Качество сетки (черновое, обычное, точное) в заголовке применяется к следующему открытому файлу.</li>
+  <li><b>3D-модели</b>: STEP (AP203, AP214, AP242), IGES и BREP. Качество сетки (черновое, обычное, точное) в меню <b>Отображение</b> применяется к следующему открытому файлу.</li>
   <li><b>Сеточные файлы</b>: STL, OBJ и 3MF. В них только треугольники, поэтому MöbiusCAD сначала собирает их в плоские и кривые грани; отверстия, цилиндры и сферы всё равно распознаются, но точных значений и экспорта в STEP нет. Размеры читаются в миллиметрах.</li>
   <li><b>Печатные платы</b>: слои Gerber RS-274X / X2, файлы сверловки Excellon или .zip с полным комплектом. Откройте несколько файлов сразу, чтобы увидеть их как одну плату.</li>
 </ul>
@@ -240,8 +240,8 @@ const RU: Tab[] = [
 <ul>
   <li><b>Заголовок</b>: открытие файла, имя и состояние открытого файла, управление видом, язык (EN / RU), тема и эта справка.</li>
   <li><b>Левая панель</b>: дерево модели или слои платы и список сохранённых измерений. Скрыть: <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Панель инструментов</b> (3D-модель, под заголовком): все инструменты измерения, страницы правой панели (Свойства, Сечение, Разнести, Масса, Экспорт), единицы, знаки и цвет измерения, всегда на виду. На узких экранах подписи сворачиваются в значки; наведите на значок, чтобы увидеть название и клавишу.</li>
-  <li><b>Правая панель</b>: страница, выбранная на панели инструментов; повторный щелчок по открытой странице скрывает панель, также <kbd>Ctrl</kbd>+<kbd>]</kbd>. На телефоне панели платы открываются с нижней панели.</li>
+  <li><b>Инструменты</b> (3D-модель, в заголовке): все инструменты измерения и страницы правой панели (Свойства, Сечение, Разнести, Масса, Экспорт), всегда на виду, рядом с режимами отображения, проекцией и «Вписать». Единицы, знаки, цвет измерения, качество сетки, оси и затенение — в меню <b>Отображение</b>. Наведите на значок, чтобы увидеть название и клавишу; в узком окне инструменты переходят во вторую строку.</li>
+  <li><b>Правая панель</b>: страница, выбранная в заголовке; повторный щелчок по открытой странице скрывает панель, также <kbd>Ctrl</kbd>+<kbd>]</kbd>. На телефоне панели платы открываются с нижней панели.</li>
   <li><b>Строка состояния</b>: настройки привязки, найденная точка и её координаты.</li>
 </ul>
 <h4>Язык</h4>
@@ -254,7 +254,7 @@ const RU: Tab[] = [
 <ul>
   <li>Левая кнопка мыши вращает, правая сдвигает, колесо масштабирует к курсору. Куб в углу поворачивает вид к грани или углу.</li>
   <li><b>Режимы отображения</b>: тонировка с рёбрами, тонировка, каркас, HLR (без невидимых линий) и рентген; проекция <b>Персп.</b> / <b>Орто</b>; стандартные виды: вписать, изометрия, спереди, сверху, справа.</li>
-  <li><b>Оси</b> показывают X, Y, Z от начала координат модели; <b>AO</b> добавляет затенение (ambient occlusion).</li>
+  <li>Меню <b>Отображение</b> в заголовке: <b>Оси начала координат</b> показывают X, Y, Z от начала координат модели; <b>Затенение</b> добавляет мягкие тени в углах и зазорах (медленнее на больших моделях, при сечении выключено).</li>
 </ul>
 <h4>Дерево модели и свойства</h4>
 <ul>

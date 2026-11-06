@@ -871,14 +871,16 @@ const showPage = bindTabs(rpTabs, tab => {
 });
 /** Labels fold into icons (measuring tools first, then the page tabs) when the strip runs out of room. */
 function fitToolbar() {
-  const tb = $("#toolbar");
+  const top = $(".topbar");
+  top.classList.remove("tb-icons", "tb-nodisp", "tb-nobrand", "tb-wrap");
   if (isPcbMode()) return;
-  tb.classList.remove("tb-compact", "tb-icons");
-  if (innerWidth <= 900) { tb.classList.add("tb-icons"); return; }
-  if (tb.scrollWidth > tb.clientWidth + 1) tb.classList.add("tb-compact");
-  if (tb.scrollWidth > tb.clientWidth + 1) tb.classList.add("tb-icons");
+  if (innerWidth <= 900) { top.classList.add("tb-icons", "tb-wrap"); return; }
+  const full = () => top.scrollWidth > top.clientWidth + 1;
+  // Fold step by step: page labels into icons, the Display label, the name beside the logo, then wrap.
+  for (const c of ["tb-icons", "tb-nodisp", "tb-nobrand", "tb-wrap"]) if (full()) top.classList.add(c);
 }
-new ResizeObserver(() => fitToolbar()).observe($("#toolbar"));
+new ResizeObserver(() => fitToolbar()).observe($(".topbar"));
+new MutationObserver(() => fitToolbar()).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
 onLangChange(() => requestAnimationFrame(fitToolbar));
 const PLANE3_INFO = { title: "Section plane", picks: 3, hint: "Pick three points on the plane" };
 
@@ -1372,6 +1374,23 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
   if (v === "fit") viewer.fit(); else viewer.viewFrom(VIEWS[v]);
 }));
+// Display menu: a small popover under the header button; Esc, a click outside or the button closes it.
+{
+  const btn = $("#display-btn"), menu = $("#display-menu");
+  const set = (open: boolean) => {
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.querySelector<HTMLElement>("input")?.focus();
+  };
+  btn.addEventListener("click", () => set(menu.hidden));
+  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target as Node) && !btn.contains(e.target as Node)) set(false); });
+  menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); set(false); btn.focus(); } });
+  window.addEventListener("resize", () => set(false));
+}
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 
 function applyThemeToViewer() {

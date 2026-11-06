@@ -643,4 +643,13 @@ export const RU: Record<string, string> = {
   "PNG, STEP, STL, OBJ, glTF and PDF report": "PNG, STEP, STL, OBJ, glTF и PDF-отчёт",
   "Colour of the next measurement": "Цвет следующего измерения",
   "PNG scale": "Масштаб PNG",
+  // ---------- display menu ----------
+  "Display": "Отображение",
+  "Display options: origin axes, ambient occlusion": "Настройки отображения: оси начала координат, затенение",
+  "Mesh": "Сетка",
+  "Display: origin axes, ambient occlusion, mesh quality, units and decimals": "Отображение: оси начала координат, затенение, качество сетки, единицы и знаки",
+  "Display options": "Настройки отображения",
+  "Origin axes": "Оси начала координат",
+  "Ambient occlusion": "Затенение (ambient occlusion)",
+  "Soft contact shadows in corners and gaps. Looks nicer, costs some speed on large models; off while sectioning.": "Мягкие тени в углах и зазорах. Красивее, но на больших моделях немного медленнее; при сечении выключено.",
 };
