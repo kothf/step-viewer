@@ -1618,7 +1618,9 @@ try {
     const iso = () => mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const ents = () => mp.evaluate(() => window.__sv.model.editor().sk.ents);
 
-    await mp.click("#new-part");
+    await mp.click("#empty-new");
+    const cardGone = await mp.evaluate(() => document.querySelector("#empty").hidden);
+    check(cardGone, "model 1.19: New part on the start card hides the card at once");
     await mp.waitForSelector("#mc-empty:not([hidden])");
     const rows0 = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-name")].map(e => e.textContent).join("|"));
     await mp.click('#mc-empty [data-plane="XY"]');
