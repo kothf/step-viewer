@@ -3,7 +3,7 @@
 // started in the background after a model opens. It reads the file again with
 // its B-rep kept, so measurements can use exact values and the model can be
 // saved as STEP. The main thread compiles the WASM once and hands the module
-// to each new worker, so replacing a worker (a new file) is quick.
+// to the worker; the worker is kept for the next file while it is idle.
 import { Kernel, type PartProbe } from "./occ";
 
 export type KernelRequest =
@@ -14,6 +14,7 @@ export type KernelRequest =
   | { id: number; type: "board"; loops: number[][]; holes: [number, number, number][]; z0: number; thickness: number; name: string };
 
 let kernel: Kernel | null = null;
+let heap: () => number = () => 0;
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
 async function init(base: string, module: WebAssembly.Module) {
@@ -28,6 +29,7 @@ async function init(base: string, module: WebAssembly.Module) {
     },
   });
   kernel = new Kernel(oc);
+  heap = () => oc.HEAPU8?.length ?? 0;
 }
 
 self.onmessage = async (e: MessageEvent<KernelRequest>) => {
@@ -35,7 +37,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
   try {
     if (r.type === "init") { await init(r.base, r.module); post({ id: r.id, ok: true }); return; }
     if (!kernel) throw new Error("Kernel not started");
-    if (r.type === "load") post({ id: r.id, ok: true, counts: kernel.load(new Uint8Array(r.buffer), r.name) });
+    if (r.type === "load") post({ id: r.id, ok: true, counts: kernel.load(new Uint8Array(r.buffer), r.name), heap: heap() });
     else if (r.type === "exact") post({ id: r.id, ok: true, patches: r.probes.map((p, i) => (p ? kernel!.exact(i, p) : null)) });
     else if (r.type === "step") {
       const bytes = kernel.writeStep(r.which, r.names, r.colors);

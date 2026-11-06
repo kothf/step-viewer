@@ -318,16 +318,35 @@ export function analyzeMesh(m: OcctMesh): PartData {
     }
   }
 
-  // Weld vertices by position.
+  // Weld vertices by position: an open-addressing hash on the quantised coordinates
+  // (a string-keyed Map was the slowest part of opening big models).
   const q = 1 / Math.max(tol * 0.01, 1e-9);
-  const weldMap = new Map<string, number>();
   const weld = new Uint32Array(nv);
   const weldPos: V3[] = [];
-  for (let i = 0; i < nv; i++) {
-    const key = `${Math.round(P[3 * i] * q)},${Math.round(P[3 * i + 1] * q)},${Math.round(P[3 * i + 2] * q)}`;
-    let w = weldMap.get(key);
-    if (w === undefined) { w = weldPos.length; weldMap.set(key, w); weldPos.push(vec(i)); }
-    weld[i] = w;
+  {
+    let cap = 16;
+    while (cap < nv * 2) cap <<= 1;
+    const mask = cap - 1;
+    const slots = new Int32Array(cap).fill(-1);
+    const keys = new Float64Array(nv * 3);
+    for (let i = 0; i < nv; i++) {
+      const x = Math.round(P[3 * i] * q), y = Math.round(P[3 * i + 1] * q), z = Math.round(P[3 * i + 2] * q);
+      let h = (Math.imul((x % 0x7fffffff) | 0, 73856093) ^ Math.imul((y % 0x7fffffff) | 0, 19349663) ^ Math.imul((z % 0x7fffffff) | 0, 83492791)) & mask;
+      let w = -1;
+      for (;;) {
+        const s = slots[h];
+        if (s < 0) break;
+        if (keys[3 * s] === x && keys[3 * s + 1] === y && keys[3 * s + 2] === z) { w = s; break; }
+        h = (h + 1) & mask;
+      }
+      if (w < 0) {
+        w = weldPos.length;
+        slots[h] = w;
+        keys[3 * w] = x; keys[3 * w + 1] = y; keys[3 * w + 2] = z;
+        weldPos.push(vec(i));
+      }
+      weld[i] = w;
+    }
   }
   const W = weldPos.length;
   const ekey = (a: number, b: number) => (a < b ? a * W + b : b * W + a);
@@ -337,34 +356,40 @@ export function analyzeMesh(m: OcctMesh): PartData {
   const faces: FaceInfo[] = [];
   let hasFaceColor = false;
   let volume = 0, area = 0;
-  const com: V3 = [0, 0, 0];
+  let cx = 0, cy = 0, cz = 0;
 
   // Boundary segment -> faces using it.
   const segFaces = new Map<number, number[]>();
+  // Vertices seen in the current face (stamped with the face id + 1).
+  const seen = new Uint32Array(nv);
+  const count = new Map<number, number>();
 
   brepFaces.forEach((bf, fid) => {
     const triStart = bf.first, triCount = bf.last - bf.first + 1;
-    const count = new Map<number, number>();
-    const vset = new Set<number>();
-    let fArea = 0;
-    const fc: V3 = [0, 0, 0];
+    count.clear();
+    const verts: number[] = [];
+    let fArea = 0, fx = 0, fy = 0, fz = 0;
     for (let t = triStart; t < triStart + triCount; t++) {
       triFace[t] = fid;
       const ia = I[3 * t], ib = I[3 * t + 1], ic = I[3 * t + 2];
-      vset.add(ia); vset.add(ib); vset.add(ic);
-      const a = vec(ia), b = vec(ib), c = vec(ic);
-      const ta = len(cross(sub(b, a), sub(c, a))) / 2;
+      if (seen[ia] !== fid + 1) { seen[ia] = fid + 1; verts.push(ia); }
+      if (seen[ib] !== fid + 1) { seen[ib] = fid + 1; verts.push(ib); }
+      if (seen[ic] !== fid + 1) { seen[ic] = fid + 1; verts.push(ic); }
+      const ax = P[3 * ia], ay = P[3 * ia + 1], az = P[3 * ia + 2];
+      const bx = P[3 * ib], by = P[3 * ib + 1], bz = P[3 * ib + 2];
+      const qx = P[3 * ic], qy = P[3 * ic + 1], qz = P[3 * ic + 2];
+      const ux = bx - ax, uy = by - ay, uz = bz - az, vx = qx - ax, vy = qy - ay, vz = qz - az;
+      const ta = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+      const sx = ax + bx + qx, sy = ay + by + qy, sz = az + bz + qz;
       fArea += ta;
-      for (let k = 0; k < 3; k++) fc[k] += ta * (a[k] + b[k] + c[k]) / 3;
-      const tv = dot(a, cross(b, c)) / 6;
+      fx += ta * sx / 3; fy += ta * sy / 3; fz += ta * sz / 3;
+      const tv = (ax * (by * qz - bz * qy) + ay * (bz * qx - bx * qz) + az * (bx * qy - by * qx)) / 6;
       volume += tv;
-      for (let k = 0; k < 3; k++) com[k] += tv * (a[k] + b[k] + c[k]) / 4;
-      for (const [x, y] of [[ia, ib], [ib, ic], [ic, ia]]) {
-        const wa = weld[x], wb = weld[y];
-        if (wa === wb) continue;
-        const k = ekey(wa, wb);
-        count.set(k, (count.get(k) ?? 0) + 1);
-      }
+      cx += tv * sx / 4; cy += tv * sy / 4; cz += tv * sz / 4;
+      const wa = weld[ia], wb = weld[ib], wc = weld[ic];
+      if (wa !== wb) { const k = ekey(wa, wb); count.set(k, (count.get(k) ?? 0) + 1); }
+      if (wb !== wc) { const k = ekey(wb, wc); count.set(k, (count.get(k) ?? 0) + 1); }
+      if (wc !== wa) { const k = ekey(wc, wa); count.set(k, (count.get(k) ?? 0) + 1); }
     }
     for (const [k, c] of count) {
       if (c !== 1) continue;
@@ -372,8 +397,7 @@ export function analyzeMesh(m: OcctMesh): PartData {
       if (list) { if (!list.includes(fid)) list.push(fid); } else segFaces.set(k, [fid]);
     }
     area += fArea;
-    const centroid: V3 = fArea > 0 ? [fc[0] / fArea, fc[1] / fArea, fc[2] / fArea] : [0, 0, 0];
-    const verts = [...vset];
+    const centroid: V3 = fArea > 0 ? [fx / fArea, fy / fArea, fz / fArea] : [0, 0, 0];
     const pts = verts.map(vec);
     const nrms = verts.map(i => [normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]] as V3);
     const cls = classifyFace(pts, nrms, tol);
@@ -385,6 +409,7 @@ export function analyzeMesh(m: OcctMesh): PartData {
       color: (bf.color as V3) ?? null, edges: [],
     });
   });
+  const com: V3 = [cx, cy, cz];
 
   // Group boundary segments by the pair of faces they separate, then chain them.
   const groups = new Map<string, [number, number][]>();

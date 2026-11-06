@@ -3,12 +3,20 @@
 // off the main thread, then hands typed arrays back as transferables.
 import { analyzeMesh, convertTree, type PartData, type TreeNode } from "../topology";
 import { facetFaces } from "../meshFaces";
+// A 16×10×4 mm block with a hole (written by the app's own STEP export), read once while idle.
+import warmupStep from "./warmup.step?raw";
 
 /** A mesh file (STL, OBJ, 3MF) already parsed into triangle soups, one per object. */
 export interface MeshRequest {
   kind: "mesh";
   name: string;
   meshes: { name: string; pos: Float32Array; idx: Uint32Array | null; color?: number[] }[];
+}
+
+/** Loads OpenCASCADE and reads a tiny model while the app is idle, so the first real file opens faster. */
+export interface WarmRequest {
+  kind: "warm";
+  occtBase: string;
 }
 
 export interface ImportRequest {
@@ -40,13 +48,13 @@ function loadOcct(base: string) {
 
 const post = (msg: unknown, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 
-function finish(parts: PartData[], tree: TreeNode) {
+function finish(parts: PartData[], tree: TreeNode, timing: Record<string, number> = {}) {
   const transfer: Transferable[] = [];
   for (const p of parts) {
     transfer.push(p.positions.buffer, p.normals.buffer, p.index.buffer, p.edgeSegs.buffer);
     if (p.colors) transfer.push(p.colors.buffer);
   }
-  post({ type: "done", parts, tree }, transfer);
+  post({ type: "done", parts, tree, timing }, transfer);
 }
 
 function importMesh(r: MeshRequest) {
@@ -63,7 +71,20 @@ function importMesh(r: MeshRequest) {
   finish(parts, tree);
 }
 
-self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest>) => {
+async function warm(occtBase: string) {
+  const occt = await loadOcct(occtBase);
+  // The browser optimises WASM code only once it has run for a while: read the block twice,
+  // at fine quality so the mesher's hot paths are covered too.
+  const bytes = new TextEncoder().encode(warmupStep);
+  for (let i = 0; i < 2; i++) occt.ReadStepFile(bytes, { linearUnit: "millimeter", linearDeflectionType: "bounding_box_ratio", ...QUALITY.fine });
+}
+
+self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest | WarmRequest>) => {
+  if (e.data.kind === "warm") {
+    // Best effort: a failure here shows up again (with a message) when a file is opened.
+    try { await warm(e.data.occtBase); } catch { occtPromise = null; }
+    return;
+  }
   if (e.data.kind === "mesh") {
     try { importMesh(e.data); } catch (err) { post({ type: "error", text: err instanceof Error ? err.message : String(err) }); }
     return;
@@ -71,7 +92,11 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest>) => {
   const { buffer, name, occtBase, quality } = e.data;
   try {
     post({ type: "progress", text: "Loading geometry kernel…", pct: 5 });
+    let t = performance.now();
+    const timing: Record<string, number> = {};
+    const lap = (k: string) => { const n = performance.now(); timing[k] = n - t; t = n; };
     const occt = await loadOcct(occtBase);
+    lap("wasm");
     post({ type: "progress", text: "Parsing and tessellating B-rep…", pct: 20 });
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
     const params = { linearUnit: "millimeter", linearDeflectionType: "bounding_box_ratio", ...QUALITY[quality] };
@@ -80,6 +105,7 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest>) => {
       : ext === "brep" ? occt.ReadBrepFile(bytes, params)
       : occt.ReadStepFile(bytes, params);
     if (!res?.success) throw new Error("OpenCASCADE could not read this file.");
+    lap("read");
 
     const parts: PartData[] = [];
     const n = res.meshes.length;
@@ -87,7 +113,8 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest>) => {
       if (i % 4 === 0) post({ type: "progress", text: "Rebuilding topology {i}/{n}…", params: { i: i + 1, n }, pct: 40 + (55 * i) / n });
       parts.push(analyzeMesh(res.meshes[i]));
     }
-    finish(parts, convertTree(res.root));
+    lap("topology");
+    finish(parts, convertTree(res.root), timing);
   } catch (err) {
     post({ type: "error", text: err instanceof Error ? err.message : String(err) });
   }

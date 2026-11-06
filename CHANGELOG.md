@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-11-06
+
+### Changed
+- STEP, IGES and BREP files open faster. OpenCASCADE now loads and warms up while the page is idle, so the first file no longer waits for it (a 0.6 MB, 41-part assembly shows in 2.4 s instead of 3.5 s; small parts open about twice as fast), and rebuilding faces and edges from the mesh takes about 40% less time.
+- Exact values arrive sooner. The exact-geometry kernel is kept running between files instead of being restarted for each one (its start-up took 4–5 s every time), starts as soon as you pick or drag a file, and on machines with 6 or more cores reads the file alongside the import instead of after it. The part's surface area is now the sum of its exact face areas, saving a second integration. On the same assembly exact values now arrive about 10 s after opening the first file (was 15 s) and about 4.3 s after opening each file after that (was 9.3 s).
+
 ## [1.13.0] - 2026-11-05
 
 ### Added
@@ -178,7 +184,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/kothf/step-viewer/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/kothf/step-viewer/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/kothf/step-viewer/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/kothf/step-viewer/compare/v1.10.1...v1.11.0

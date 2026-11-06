@@ -251,9 +251,13 @@ export class Kernel {
     }
 
     const out: PartPatch = { ok: true, faces, edges: this.edges(m, probe) };
-    const props = new oc.GProp_GProps_1();
-    oc.BRepGProp.SurfaceProperties_1(m.shape, props, false, false);
-    out.area = props.Mass();
+    // The faces' areas add up to the part's; integrate the whole shape only when a face failed.
+    if (faces.every(f => f)) out.area = faces.reduce((s, f) => s + f!.area, 0);
+    else {
+      const props = new oc.GProp_GProps_1();
+      oc.BRepGProp.SurfaceProperties_1(m.shape, props, false, false);
+      out.area = props.Mass();
+    }
     if (m.solid && m.shape.ShapeType() === oc.TopAbs_ShapeEnum.TopAbs_SOLID) {
       const vp = new oc.GProp_GProps_1();
       oc.BRepGProp.VolumeProperties_1(m.shape, vp, true, false, false);
