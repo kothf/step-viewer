@@ -70,6 +70,14 @@ const modeller = new ModelController({
     return f ? { faceId: f.face.id } : null;
   },
   selectedFace: () => (state.selection?.kind === "face" && state.selection.face ? state.selection.face.id : null),
+  selectedEdge: () => (state.selection?.kind === "edge" && state.selection.edge ? state.selection.edge : null),
+  setMaterial: m => {
+    if (!m) return;
+    const i = MATERIALS.findIndex(x => x.name === m.name && x.density === m.density);
+    matSel.value = i >= 0 ? String(i) : "custom";
+    $<HTMLInputElement>("#density").value = String(m.density);
+    validateDensity();
+  },
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
@@ -1560,6 +1568,19 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
   if (v === "fit") viewer.fit(); else viewer.viewFrom(VIEWS[v]);
 }));
+/** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
+let lastNormal: THREE.Vector3 | null = null;
+function normalTo() {
+  let n: THREE.Vector3 | null = null;
+  const sn = modeller.sketchNormal();
+  if (sn) n = new THREE.Vector3(...sn);
+  else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = new THREE.Vector3(...state.selection.face.normal);
+  if (!n) { toast(t("Select a flat face first (or open a sketch).")); return; }
+  const cam = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
+  if (lastNormal && lastNormal.equals(n) && cam.dot(n) > 0.999) n.negate();
+  lastNormal = n.clone();
+  viewer.viewFrom(n);
+}
 // Display menu: a small popover under the header button; Esc, a click outside or the button closes it.
 {
   const btn = $("#display-btn"), menu = $("#display-menu");
@@ -1940,6 +1961,13 @@ function massRows(): [string, string][] {
     ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((r.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
   ];
   if (r.openParts.length) rows.push(["Warning", t("{n} open shells: volume not reliable", { n: r.openParts.length })]);
+  // Modelled parts: exact principal moments of inertia from the kernel (FR-MAT-002).
+  const mp = whole && modeller.active ? modeller.bodyProps() : null;
+  if (mp?.moments && mp.axes) {
+    const k = density / 1000 / 1000; // mm⁵ × g/mm³ → g·mm² → kg·mm²
+    rows.push(["Principal moments", `${mp.moments.map(v => Number((v * k).toPrecision(5)).toLocaleString("en")).join(", ")} kg·mm²`]);
+    rows.push(["Principal axes", mp.axes.map(a => `(${a.map(c => (Math.abs(c) < 5e-7 ? 0 : c).toFixed(3)).join(", ")})`).join(" ")]);
+  }
   return rows;
 }
 function renderMass() { $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : ""; }
@@ -2005,6 +2033,13 @@ window.addEventListener("keydown", e => {
   if ((e.key === "Enter" || e.key === " ") && t.matches("button, summary, a, [role=treeitem], [role=tab]")) return;
   if (t.closest("dialog") || ($("#app").dataset.sheet && t.closest(".sheet"))) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
+  // Standard views Ctrl+1..7 and Normal to Ctrl+8 (FR-UI-030/031).
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[1-8]$/.test(e.key) && viewer.parts.length + (modeller.active ? 1 : 0) > 0 && !isPcbMode()) {
+    e.preventDefault();
+    if (e.key === "8") normalTo();
+    else viewer.viewFrom(VIEWS[["front", "back", "left", "right", "top", "bottom", "iso"][+e.key - 1]]);
+    return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "F1" || e.key === "?") { e.preventDefault(); help.open(); return; }
   if (isPcbMode()) { if (gerber.onKey(e)) e.preventDefault(); return; }

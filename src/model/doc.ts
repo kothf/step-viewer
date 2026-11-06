@@ -1,7 +1,7 @@
 // Document store: every change goes through `change()` (a command with a label),
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
-import { SCHEMA, type Feature, type FeatureType, type PartDoc } from "./types";
+import { SCHEMA, type Feature, type FeatureType, type PartDoc, type PlaneRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
@@ -29,8 +29,9 @@ export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
 }
 
 export class DocStore {
-  private undoStack: { doc: string; label: string }[] = [];
+  private undoStack: { doc: string; label: string; seq?: number }[] = [];
   private redoStack: { doc: string; label: string }[] = [];
+  private seq = 0;
   private listeners: ((why: string) => void)[] = [];
   /** Snapshot at the last save, to tell whether there are unsaved changes. */
   private savedAt: string;
@@ -50,7 +51,7 @@ export class DocStore {
     const next: PartDoc = JSON.parse(before);
     fn(next);
     if (JSON.stringify(next) === before) return false;
-    this.undoStack.push({ doc: before, label });
+    this.undoStack.push({ doc: before, label, seq: ++this.seq });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
     this.redoStack = [];
     this.doc = next;
@@ -65,6 +66,17 @@ export class DocStore {
     this.redoStack = [];
     this.savedAt = JSON.stringify(doc);
     this.emit("open");
+  }
+
+  /** A mark for `collapse`: steps made after it can be merged into one. */
+  mark() { return this.seq + 1; }
+
+  /** Merges the undo steps made since `mark` into one (leaving a sketch: FR-UND-003). */
+  collapse(mark: number, label: string) {
+    const i = this.undoStack.findIndex(s => (s.seq ?? 0) >= mark);
+    if (i < 0) return;
+    const first = this.undoStack[i];
+    this.undoStack.splice(i, this.undoStack.length - i, { doc: first.doc, label, seq: first.seq });
   }
 
   get canUndo() { return this.undoStack.length > 0; }
@@ -94,18 +106,39 @@ export class DocStore {
   feature(id: string): Feature | undefined { return this.doc.features.find(f => f.id === id); }
 }
 
+/** Names of model faces and features a feature refers to (for dependants and repair). */
+export function featureRefs(f: Feature): { faces: string[]; features: string[] } {
+  const faces: string[] = [], features: string[] = [];
+  const plane = (p: PlaneRef | undefined) => {
+    if (!p) return;
+    if ("face" in p) faces.push(p.face.name);
+    else if ("plane" in p) features.push(p.plane);
+  };
+  if (f.type === "extrude" || f.type === "revolve") features.push(f.sketch);
+  if (f.type === "extrude") plane(f.upTo);
+  if (f.type === "sketch") plane(f.plane);
+  if (f.type === "plane") { plane(f.base); if (f.axis) faces.push(...f.axis.faces); }
+  if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  return { faces, features };
+}
+
 /** Features that use this one (a sketch's extrude, a face's sketch on it...). */
 export function dependants(doc: PartDoc, id: string): Feature[] {
   const out: Feature[] = [];
   const idx = doc.features.findIndex(f => f.id === id);
   const uses = (f: Feature, x: string) => {
-    if ((f.type === "extrude" || f.type === "revolve") && f.sketch === x) return true;
-    const names: string[] = [];
-    if (f.type === "sketch" && "face" in f.plane) names.push(f.plane.face.name);
-    if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) names.push(...e.faces);
-    return names.some(n => n.startsWith(`${x}:`));
+    const r = featureRefs(f);
+    return r.features.includes(x) || r.faces.some(n => n.startsWith(`${x}:`));
   };
   const ids = new Set([id]);
   for (const f of doc.features.slice(idx + 1)) if ([...ids].some(x => uses(f, x))) { out.push(f); ids.add(f.id); }
   return out;
+}
+
+/** Features this one needs (directly): earlier features whose faces or results it refers to. */
+export function parents(doc: PartDoc, f: Feature): string[] {
+  const r = featureRefs(f);
+  const ids = new Set(r.features);
+  for (const n of r.faces) ids.add(n.split(":")[0]);
+  return doc.features.filter(g => ids.has(g.id)).map(g => g.id);
 }

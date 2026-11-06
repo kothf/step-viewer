@@ -39,10 +39,11 @@ export interface SkDim {
   flip?: [boolean, boolean];
 }
 
-/** Plane of a sketch: a standard plane, or a planar face of the model. */
+/** Plane of a sketch or a reference: a standard plane, a planar face of the model, or a reference plane feature. */
 export type PlaneRef =
   | { std: "XY" | "XZ" | "YZ" }
-  | { face: FaceRef; offset?: number };
+  | { face: FaceRef; offset?: number }
+  | { plane: string };
 
 /** World frame of a sketch plane: origin, x and y directions, normal. */
 export interface Frame { o: V3; x: V3; y: V3; n: V3 }
@@ -64,7 +65,7 @@ export interface EdgeRef { faces: [string, string]; hint?: V3 }
 
 // ---------- features ----------
 
-export type EndKind = "blind" | "through" | "mid";
+export type EndKind = "blind" | "through" | "mid" | "upto";
 
 export interface ExtrudeFeature {
   id: string; type: "extrude"; name: string; suppressed?: boolean;
@@ -75,6 +76,10 @@ export interface ExtrudeFeature {
   /** Second direction depth (blind only); 0 or absent: one direction. */
   depth2?: Num;
   flip?: boolean;
+  /** Up to face/plane: the face or plane the extrusion ends at. */
+  upTo?: PlaneRef;
+  /** Cut: keep the material outside the profile instead (flip side to cut). */
+  outside?: boolean;
 }
 
 export interface RevolveFeature {
@@ -92,15 +97,37 @@ export interface FilletFeature {
   id: string; type: "fillet"; name: string; suppressed?: boolean;
   radius: Num;
   edges: EdgeRef[];
+  /** Keep features that fit: skip edges that cannot be rounded, with a warning. */
+  keepFit?: boolean;
 }
 
 export interface ChamferFeature {
   id: string; type: "chamfer"; name: string; suppressed?: boolean;
   distance: Num;
   edges: EdgeRef[];
+  /** Equal distances (default), two distances, or distance and angle. */
+  mode?: "equal" | "two" | "angle";
+  distance2?: Num;
+  angle?: Num;
+  /** Measure the first distance on the edge's other face. */
+  flip?: boolean;
 }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature;
+/** Reference plane (FRS FR-REF-002): offset from a plane or face, or at an angle to it about an edge. */
+export interface PlaneFeature {
+  id: string; type: "plane"; name: string; suppressed?: boolean;
+  base: PlaneRef;
+  mode: "offset" | "angle";
+  offset: Num;
+  angle?: Num;
+  /** Angle mode: the straight edge the plane turns about. */
+  axis?: EdgeRef;
+  flip?: boolean;
+  /** Hidden in the view. */
+  hidden?: boolean;
+}
+
+export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
@@ -125,5 +152,8 @@ export interface PartDoc {
 // ---------- kernel results ----------
 
 export interface FeatureStatus { id: string; ok: boolean; code?: string; message?: string; warning?: string }
+
+/** Mass properties of the body for density 1 (mm units): volume, area, centre of mass, principal moments (mm⁵) and axes. */
+export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3] }
 
 export const SCHEMA = 1;

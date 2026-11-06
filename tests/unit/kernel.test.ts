@@ -100,3 +100,64 @@ test("mid-plane extrude and errors", async () => {
   const bad = m.evaluate(doc([open, { id: "f", type: "extrude", name: "E", sketch: "o", op: "boss", end: "blind", depth: { v: 5 } }]));
   assert.equal(bad.statuses[1].code, "E-SK-OPEN");
 });
+
+test("reference planes, up to face, flip side to cut (FR-REF-002, FR-FT-011/016)", async () => {
+  const m = new Modeller(await occ());
+  const base = rect("s", 0, 0, 40, 20);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  // Offset plane 30 mm above Top; a sketch on it extruded up to the block's top face.
+  const pl: Feature = { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } };
+  const s2 = circle("c", 0, 0, 5, { plane: "p" });
+  const up: Feature = { id: "u", type: "extrude", name: "U", sketch: "c", op: "boss", end: "upto", depth: { v: 1 }, upTo: { face: { name: "e:end" } } };
+  let r = run(m, doc([base, ex, pl, s2, up]));
+  assert.deepEqual(r.frames.p.o, [0, 0, 30]);
+  close(r.props!.volume, 8000 + Math.PI * 25 * 20);
+  assert.ok(r.body!.names.includes("u:end") || r.body!.names.some(n => n.startsWith("u:side")));
+
+  // Up to an angled plane: 45° about the block's front top edge (y = -10, z = 10).
+  const ang: Feature = { id: "a", type: "plane", name: "Plane2", base: { std: "XY" }, mode: "angle", offset: { v: 0 }, angle: { v: Math.PI / 4 }, axis: { faces: ["e:end", "e:side:sl1"] } };
+  const s3 = rect("t", 0, 0, 40, 20, { face: { name: "e:end" } });
+  const up2: Feature = { id: "u2", type: "extrude", name: "U2", sketch: "t", op: "boss", end: "upto", depth: { v: 1 }, upTo: { plane: "a" } };
+  r = run(m, doc([base, ex, ang, s3, up2]));
+  // A wedge 40 long, 20 deep, rising to 20 at the back: 40 * 20 * 20 / 2.
+  close(r.props!.volume, 8000 + 8000, 1e-5);
+
+  // Flip side to cut: keep only what is inside a Ø10 cylinder.
+  const s4 = circle("h", 0, 0, 5, { face: { name: "e:end" } });
+  const keep: Feature = { id: "k", type: "extrude", name: "K", sketch: "h", op: "cut", end: "through", depth: { v: 0 }, outside: true };
+  r = run(m, doc([base, ex, s4, keep]));
+  close(r.props!.volume, Math.PI * 25 * 10);
+});
+
+test("chamfer modes, fillet keep features that fit, principal moments", async () => {
+  const m = new Modeller(await occ());
+  const s = rect("s", 0, 0, 40, 20);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const edge = { faces: ["e:end", "e:side:sl1"] as [string, string] };
+  // Two distances 2 (on the top) and 4 (on the side): the triangle 2 × 4 / 2 along 40 mm.
+  const two: Feature = { id: "c", type: "chamfer", name: "C", distance: { v: 2 }, distance2: { v: 4 }, mode: "two", edges: [edge] };
+  let r = run(m, doc([s, ex, two]));
+  close(r.props!.volume, 8000 - 4 * 40, 1e-6);
+  // Distance 3 and 45°: 3 × 3 / 2.
+  const da: Feature = { id: "c", type: "chamfer", name: "C", distance: { v: 3 }, angle: { v: Math.PI / 4 }, mode: "angle", edges: [edge] };
+  r = run(m, doc([s, ex, da]));
+  close(r.props!.volume, 8000 - 4.5 * 40, 1e-6);
+
+  // A 12 mm fillet does not fit the 10 mm high vertical edges... but fits nothing too big; keep what fits.
+  const sides = ["sl1", "sl2", "sl3", "sl4"].map(e => `e:side:${e}`);
+  const vert = sides.map((a, i) => ({ faces: [a, sides[(i + 1) % 4]] as [string, string] }));
+  const fil: Feature = { id: "f", type: "fillet", name: "F", radius: { v: 15 }, edges: [vert[0], edge] };
+  const bad = m.evaluate(doc([s, ex, fil]));
+  assert.equal(bad.statuses[2].ok, false);
+  const fit = m.evaluate(doc([s, ex, { ...fil, keepFit: true } as Feature]));
+  assert.equal(fit.statuses[2].ok, true);
+  assert.equal(fit.statuses[2].code, "warning");
+  close(m.props(fit.body!).volume, 8000 - 10 * 225 * (1 - Math.PI / 4));
+
+  // Box 40 × 20 × 10: principal moments m(b² + c²)/12 with m = volume (density 1).
+  r = run(m, doc([s, ex]));
+  const V = 8000;
+  const mom = [V * (20 * 20 + 10 * 10) / 12, V * (40 * 40 + 10 * 10) / 12, V * (40 * 40 + 20 * 20) / 12].sort((a, b) => a - b);
+  r.props!.moments!.forEach((v, i) => close(v, mom[i], 1e-6));
+  assert.ok(Math.abs(Math.abs(r.props!.axes![0][0]) - 1) < 1e-9);
+});

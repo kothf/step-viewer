@@ -6,14 +6,14 @@
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
-import type { FeatureStatus, Frame, PartDoc, V3 } from "./types";
+import type { BodyProps, FeatureStatus, Frame, PartDoc, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
   frames: Record<string, Frame>;
   data: PartData | null;
   faceNames: string[];
-  props: { volume: number; area: number; com: V3 } | null;
+  props: BodyProps | null;
   ms: { eval: number; mesh: number };
 }
 
