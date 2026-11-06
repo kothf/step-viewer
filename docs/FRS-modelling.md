@@ -7,7 +7,7 @@
 | Date | 2026-11-06 |
 | Owner | Andrey Dumchin |
 | Product baseline | MöbiusCAD 1.17.0 (viewer: STEP/IGES/BREP/SLDPRT/SLDASM/mesh, PCB view) |
-| Status | Draft. Decisions marked **[D-n]** in section 15 are open. |
+| Status | Draft. Open decisions are listed in section 18. |
 
 ---
 
@@ -114,7 +114,7 @@ SolidWorks (Dassault Systèmes) is the most used mechanical CAD in small and med
 
 SolidWorks is history-based and parametric: a **part** is a sequence of features in the FeatureManager design tree, each feature driven by sketches and dimensions; changing a dimension rebuilds the part. Parts are inserted into **assemblies** and positioned by mates; **drawings** are 2D views projected from the 3D models and stay associative (a model change updates the drawing). Three document types (`.sldprt`, `.sldasm`, `.slddrw`) reference each other by file path. UI elements: CommandManager (tabbed ribbon), FeatureManager tree, PropertyManager (left panel to edit a feature), Heads-up View toolbar, shortcut bar (S key), mouse gestures, confirmation corner (OK/Cancel in the graphics area), Instant3D (drag arrows to change sizes), rollback bar.
 
-MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies, associative drawings) and the same interaction habits, mapped onto its existing interface (section 13), with one native container format for all three document kinds (section 12).
+MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies, associative drawings) and the same interaction habits, mapped onto its existing interface (section 13), with one native container format with an extension per document kind (section 12).
 
 ### 2.2 Sketching
 
@@ -213,7 +213,7 @@ MöbiusCAD keeps the same workflow model (history-based parts, mated assemblies,
 
 | SolidWorks capability | MöbiusCAD |
 | --- | --- |
-| Native files referencing each other by path; Pack and Go | P0 (single container, embedded or linked parts), P4 (pack) |
+| Native files referencing each other by path; Pack and Go | P0 (one container, `.mcadprt`/`.mcadasm`/`.mcaddrw`, embedded or linked parts), P4 (pack) |
 | Import STEP, IGES, Parasolid, ACIS, DXF/DWG, STL, 3MF; Import Diagnostics | already (STEP, IGES, BREP, SLDPRT, STL, OBJ, 3MF), P2 (DXF to sketch), P3 (heal imported bodies) |
 | Export STEP AP203/AP214/AP242, IGES, Parasolid, STL, 3MF, glTF, PDF 3D | already (STEP, STL, OBJ, glTF), P1 (STEP of modelled parts), P3 (3MF) |
 | Custom properties (part number, description, material, revision) | P1 |
@@ -677,7 +677,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 ### 10.1 Components
 
 - **FR-ASM-001** (P4, M) An assembly contains components: part documents, sub-assemblies, and foreign models (STEP/IGES/BREP/SLDPRT/SLDASM/mesh) used as rigid components.
-- **FR-ASM-002** (P4, M) **Insert component**: from open documents, recent files, the project folder (FSA), or a file picker; placed by click, or at the origin (first component fixed at origin by default).
+- **FR-ASM-002** (P4, M) **Insert component**: from open documents, recent files, the project folder (FSA), or a file picker that lists `.mcadprt`, `.mcadasm` and foreign models (no drawings); placed by click, or at the origin (first component fixed at origin by default).
 - **FR-ASM-003** (P4, M) Components can be **linked** (reference to a document by project-relative path and content hash) or **embedded** (copied into the assembly file). The choice is per component and changeable (FR-IO-011).
 - **FR-ASM-004** (P4, M) Each component instance has: name (`Bracket<2>`), referenced document and configuration, transform, fixed/floating, visibility, colour override, suppressed (excluded from geometry, BOM by option).
 - **FR-ASM-005** (P4, M) The same part inserted several times shares one evaluated shape (FR-ARC-016).
@@ -770,29 +770,29 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 12.1 Native format
 
-- **FR-IO-001** (P0, M) Native file extension `.mcad` (D-5): a ZIP container with:
+- **FR-IO-001** (P0, M) Native files use one ZIP container format with a separate extension per document kind (decided by Andrey 2026-11-06, D-5): **`.mcadprt`** part, **`.mcadasm`** assembly, **`.mcaddrw`** drawing. "MöbiusCAD file" below means any of the three. The container holds:
   - `manifest.json`: format id, schema version, app version, document kind, created/modified dates, units, root document id.
   - `document.json`: the document model (section 15).
   - `thumbnail.png`: 256×256 view for file pickers and recent files.
   - `cache/<featureId>.brep` (optional): evaluated shapes for fast open; ignored if the app version or a hash does not match.
   - `bodies/<id>.brep`: imported bodies (exact B-rep, required, FR-FT-130).
-  - `embedded/<docId>.mcad`: embedded component documents (assemblies) or the referenced model (drawings), optional.
+  - `embedded/<docId>.mcadprt|.mcadasm`: embedded component documents (assemblies) or the referenced model (drawings), optional.
   - `meta/hole-tables.json`, `meta/materials.json`: user tables used by this document.
-- **FR-IO-002** (P0, M) Opening a `.mcad` file rebuilds from `document.json` alone when caches are missing or stale; the result shall be identical within tolerance (NFR-ACC-002).
+- **FR-IO-002** (P0, M) Opening a MöbiusCAD file rebuilds from `document.json` alone when caches are missing or stale; the result shall be identical within tolerance (NFR-ACC-002).
 - **FR-IO-003** (P0, M) Schema versioning: every file states its schema version; newer apps open older files through ordered migrations; an older app opening a newer file refuses with a clear message (no partial read).
 - **FR-IO-004** (P0, M) The JSON is human-readable (pretty-printed, stable key order) so files diff well in git.
-- **FR-IO-005** (P0, M) A `.mcad` file is opened by drag-and-drop, the Open dialog, `?url=` and the File Handling API (installed PWA, Chromium) like other formats today.
+- **FR-IO-005** (P0, M) A MöbiusCAD file is opened by drag-and-drop, the Open dialog, `?url=` and the File Handling API (installed PWA, Chromium) like other formats today. The extension must match the manifest's document kind; a mismatch opens by the manifest and warns.
 
 ### 12.2 References between documents
 
 - **FR-IO-010** (P4, M) Linked components and drawing models are referenced by path relative to the referencing file plus a content hash and the document's id.
 - **FR-IO-011** (P4, M) When a linked document cannot be found, the user is asked to locate it (or the folder); a component whose document is missing shows its last cached mesh (if any) and is marked.
-- **FR-IO-012** (P4, M) **Pack**: save an assembly or drawing with everything it references embedded into one `.mcad`, or into a ZIP of separate files (pack-and-go).
+- **FR-IO-012** (P4, M) **Pack**: save an assembly or drawing with everything it references embedded into one `.mcadasm`/`.mcaddrw`, or into a ZIP of separate files (pack-and-go).
 - **FR-IO-013** (P4, M) **Save as** of a referenced part asks whether to update references in open assemblies.
 
 ### 12.3 Storage
 
-- **FR-STO-001** (P0, M) **Save** writes the file back to where it came from when the browser allows (FSA file handle, Chromium); otherwise **Save** downloads `name.mcad` and also keeps a copy in the browser workspace.
+- **FR-STO-001** (P0, M) **Save** writes the file back to where it came from when the browser allows (FSA file handle, Chromium); otherwise **Save** downloads `name.mcadprt` (or `.mcadasm`, `.mcaddrw`) and also keeps a copy in the browser workspace.
 - **FR-STO-002** (P0, M) **Browser workspace** (OPFS, IndexedDB fallback): all documents created or opened in modelling are kept there with their names, so the user can reopen them from **Recent** without the file. Storage use is shown with an option to delete items; quota errors are reported clearly.
 - **FR-STO-003** (P0, M) **Autosave**: every committed command is journaled to the workspace within 2 s (debounced); after a crash or closed tab, the next start offers to recover unsaved changes per document.
 - **FR-STO-004** (P4, S) **Project folder** (FSA directory handle, Chromium): open a folder, browse its parts/assemblies/drawings in a side list, links resolved inside it.
@@ -960,7 +960,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 | NFR-PERF-021 | Fillet preview, 20 edges on a 50-feature part | ≤ 1.5 s | P1 |
 | NFR-PERF-022 | Full rebuild of a 100-feature typical machined part | ≤ 5 s | P2 |
 | NFR-PERF-023 | Edit of the last feature in a 100-feature part | ≤ 1 s (shape cache) | P1 |
-| NFR-PERF-024 | Open of a saved 100-feature `.mcad` with valid caches | ≤ 2 s to first display, editable ≤ 5 s | P1 |
+| NFR-PERF-024 | Open of a saved 100-feature `.mcadprt` with valid caches | ≤ 2 s to first display, editable ≤ 5 s | P1 |
 | NFR-PERF-030 | Assembly of 200 components (50 distinct parts) opens | ≤ 10 s, 30 fps orbit | P4 |
 | NFR-PERF-031 | Mate solve after a change, 200 mates | ≤ 100 ms | P4 |
 | NFR-PERF-040 | Drawing view update (HLR exact), part of 2 000 faces | ≤ 5 s per view, fast preview ≤ 1 s | P5 |
@@ -997,7 +997,7 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 ### 14.6 Security and privacy
 
 - **NFR-SEC-001** (P0, M) No network requests with model data; the only network use is loading the app and WASM from the same origin (C-1). Checked by the smoke test (request log after a modelling session).
-- **NFR-SEC-002** (P0, M) Opening a `.mcad` file executes no code from it: expressions are parsed by the app's own expression parser (no `eval`/`Function`), ZIP entries are size-limited (zip-bomb guard: total ≤ 2 GB, ratio ≤ 200:1) and paths sanitised.
+- **NFR-SEC-002** (P0, M) Opening a MöbiusCAD file executes no code from it: expressions are parsed by the app's own expression parser (no `eval`/`Function`), ZIP entries are size-limited (zip-bomb guard: total ≤ 2 GB, ratio ≤ 200:1) and paths sanitised.
 - **NFR-SEC-003** (P6, M) A scripting console (if built) runs scripts in a worker with only the documented API, and only scripts the user typed or opened explicitly.
 
 ### 14.7 Maintainability and quality
@@ -1074,9 +1074,9 @@ Reference machine: 4-core laptop CPU (2020 or newer), 8 GB RAM, integrated GPU, 
 {
   "schema": 1, "kind": "assembly", "id": "d_k2P0",
   "components": [
-    { "id": "c_1", "name": "Base<1>", "doc": { "path": "Base.mcad", "id": "d_a91F", "hash": "sha256:…" }, "config": "Default",
+    { "id": "c_1", "name": "Base<1>", "doc": { "path": "Base.mcadprt", "id": "d_a91F", "hash": "sha256:…" }, "config": "Default",
       "fixed": true, "xf": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] },
-    { "id": "c_2", "name": "Pin<1>", "doc": { "embedded": "embedded/d_p1n.mcad" }, "fixed": false, "xf": [/* column-major */] }
+    { "id": "c_2", "name": "Pin<1>", "doc": { "embedded": "embedded/d_p1n.mcadprt" }, "fixed": false, "xf": [/* column-major */] }
   ],
   "mates": [
     { "id": "m_1", "t": "concentric", "a": { "comp": "c_1", "ref": { "feature": "f_hole1", "role": "wall", "index": 0 } },
@@ -1095,7 +1095,7 @@ Transforms are column-major 4×4 in mm (same convention as three.js and the veri
 ```jsonc
 {
   "schema": 1, "kind": "drawing", "standard": "ISO", "projection": "first",
-  "model": { "path": "Bracket.mcad", "id": "d_a91F" },
+  "model": { "path": "Bracket.mcadprt", "id": "d_a91F" },
   "sheets": [ { "id": "sh1", "name": "Sheet1", "size": "A3", "orient": "landscape", "scale": [1, 2], "format": "iso7200-a3",
     "views": [ { "id": "v1", "t": "model", "orient": "front", "pos": [120, 150], "style": "hlr-hidden-dashed", "scale": null },
                { "id": "v2", "t": "projected", "parent": "v1", "dir": "right", "pos": [260, 150] },
@@ -1119,14 +1119,14 @@ Transforms are column-major 4×4 in mm (same convention as three.js and the veri
 | Unit | node test runner (NFR-QA-001) | expression parser, units, document model and commands, undo, migrations, solver adapter, region detection, naming resolution on synthetic histories |
 | Kernel | headless Chromium page running the worker | each feature evaluator on reference inputs, error codes |
 | Smoke / E2E | `tests/smoke.mjs` on the packaged build | scripted modelling sessions, UI checks, axe-core, layout, RU translation, network check |
-| Golden models | `tests/fixtures/model/*.mcad` | rebuild results vs expectations |
+| Golden models | `tests/fixtures/model/*.mcadprt|asm|drw` | rebuild results vs expectations |
 | Manual | per release | STEP round trip in FreeCAD, hallway usability test (P1), drawing print check (P5) |
 
 ### 16.2 Phase acceptance tests
 
 **P0 Foundations**
 
-- **AT-P0-1** Create a Part, add a standard plane offset, undo, redo, save as `.mcad`, reload the page, reopen from Recent: identical document (deep-equal JSON).
+- **AT-P0-1** Create a Part, add a standard plane offset, undo, redo, save as `.mcadprt`, reload the page, reopen from Recent: identical document (deep-equal JSON).
 - **AT-P0-2** Kill the kernel worker during a rebuild (debug command): the app recovers, rebuilds, shows a notice, no data lost.
 - **AT-P0-3** Opening a viewer STEP fixture is not slower than 1.17.0 (NFR-PERF-001) and no modelling code is loaded (network log).
 - **AT-P0-4** Spike report in `docs/` lists available OCCT classes and the solver decision with benchmark numbers.
@@ -1218,7 +1218,7 @@ All values exact to 1e-6 relative unless stated.
 | D-2 | Sketch solver | PlaneGCS WASM (`@salusoft89/planegcs`, licence to verify) / own TypeScript solver | Spike both in P0; prefer PlaneGCS if the licence allows a separate replaceable WASM, else own |
 | D-3 | Topological naming strategy depth | history + signatures (proposed) / full OCAF TNaming | History + signatures in P1, revisit OCAF in P3 if failures |
 | D-4 | Default mouse mapping in modelling | keep MöbiusCAD left-drag orbit / SolidWorks middle-drag | Ask on first modelling start, remember the choice |
-| D-5 | Native extension and format | one `.mcad` ZIP+JSON for parts, assemblies and drawings (kind in the manifest) / separate `.mcadprt`, `.mcadasm`, `.mcaddrw` with the same container / plain JSON | One `.mcad` (simpler file handling, one file association); switch to separate extensions if Andrey prefers seeing the kind in the file name |
+| D-5 | Native extensions | **Decided 2026-11-06:** separate `.mcadprt`, `.mcadasm`, `.mcaddrw`, same ZIP+JSON container | Kind visible in folders, Open/Insert dialogs filter by kind, own icon per kind |
 | D-6 | Standard plane names | XY/XZ/YZ / Top/Front/Right / both | Show "Front (XZ)" style with both |
 | D-7 | Phase order after P2 | assemblies before advanced parts / as listed | As listed (P3 parts, P4 assemblies), revisit after P2 user feedback |
 | D-8 | Drawing standard default | ISO first angle / by language (RU → ESKD/GOST) | ISO for both, GOST format offered |
