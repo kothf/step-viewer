@@ -131,21 +131,23 @@ try {
   check(brand.title === "Cube 10x10.stp · MöbiusCAD" && brand.txt === "MöbiusCAD", `app is named MöbiusCAD (${brand.title} / ${brand.txt})`);
   check(brand.logo && brand.icons && brand.man === "MöbiusCAD" && brand.manIcons, "header logo, favicons and manifest icons load");
 
-  // --- tool strip: every measuring tool and right-panel page is on screen at every width, no scrolling ---
-  for (const [w, h] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
+  // --- header tools: every measuring tool and right-panel page is on screen at every width, no scrolling;
+  //     one header row from 1366 px up, a second row only on narrower windows ---
+  for (const [w, h] of [[1920, 1080], [1440, 900], [1366, 768], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(150);
     const r = await page.evaluate(() => {
       const inView = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.left >= 0 && b.right <= innerWidth + 0.5 && b.top >= 0 && b.bottom <= innerHeight; };
-      const tb = document.querySelector("#toolbar");
+      const tb = document.querySelector(".topbar");
       const btns = [...document.querySelectorAll("#tools button, #rp-tabs [role=tab]")];
       return {
         n: btns.length, off: btns.filter(b => !inView(b)).map(b => b.dataset.tool ?? b.dataset.tab),
         named: btns.every(b => b.textContent.trim().length > 1 && b.title),
-        over: tb.scrollWidth - tb.clientWidth, units: inView(document.querySelector("#units")), page: document.documentElement.scrollWidth - innerWidth,
+        over: tb.scrollWidth - tb.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
+        rows: tb.classList.contains("tb-wrap") ? 2 : 1, h: Math.round(tb.getBoundingClientRect().height),
       };
     });
-    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.units && r.page <= 0, `tool strip ${w}px: 12 tools + 5 panel pages + units on screen, no scrolling (${JSON.stringify(r)})`);
+    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.page <= 0 && (w < 1366 || (r.rows === 1 && r.h <= 48)), `header tools ${w}px: 12 tools + 5 panel pages on screen, no scrolling${w >= 1366 ? ", one row" : ""} (${JSON.stringify(r)})`);
   }
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.waitForTimeout(150);

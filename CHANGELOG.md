@@ -8,7 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [1.14.1] - 2026-11-06
 
 ### Changed
-- The **Axes** and **AO** checkboxes moved from the header into a **Display** menu, named in full: **Origin axes** and **Ambient occlusion**, with a short note on what ambient occlusion does (soft contact shadows in corners and gaps, a little slower on large models, off while sectioning). The header has more room for the file name and view controls.
+- One header row. The measuring tools and the right-panel pages (Properties, Section, Explode, Mass, Export) moved from the strip under the header into the header itself, next to the display modes, projection and Fit, which are now icons (hover for the name and key). The header stays one row from 1366 px wide, in English and Russian: when space runs short the page labels fold into icons, then the Display label, then the name beside the logo (the logo's tooltip keeps it). Only narrower windows and phones put the tools on a second row.
+- A **Display** menu in the header holds what used to be loose controls: **Origin axes** and **Ambient occlusion** (was Axes and AO, now with a short note on what ambient occlusion does), mesh quality, and the measurement units, decimals and colour.
 
 ## [1.14.0] - 2026-11-06
 

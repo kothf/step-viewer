@@ -646,6 +646,8 @@ export const RU: Record<string, string> = {
   // ---------- display menu ----------
   "Display": "Отображение",
   "Display options: origin axes, ambient occlusion": "Настройки отображения: оси начала координат, затенение",
+  "Mesh": "Сетка",
+  "Display: origin axes, ambient occlusion, mesh quality, units and decimals": "Отображение: оси начала координат, затенение, качество сетки, единицы и знаки",
   "Display options": "Настройки отображения",
   "Origin axes": "Оси начала координат",
   "Ambient occlusion": "Затенение (ambient occlusion)",

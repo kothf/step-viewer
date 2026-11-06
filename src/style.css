@@ -77,8 +77,8 @@ h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 
 #app {
   display: grid;
-  --tb: 42px;
-  grid-template: "top top top" 46px "tools tools tools" var(--tb) "left vp right" 1fr "status status status" 28px / 270px 1fr 300px;
+  --top-h: auto;
+  grid-template: "top top top" var(--top-h) "left vp right" 1fr "status status status" 28px / 270px 1fr 300px;
   height: 100vh; height: 100dvh;
   transition: grid-template-columns 180ms ease-in-out;
 }
@@ -87,7 +87,7 @@ h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 #app.no-right { grid-template-columns: 270px 1fr 0; }
 #app.no-left.no-right { grid-template-columns: 0 1fr 0; }
 #app.no-left .left, #app.no-right .right { display: none; }
-#app.gerber { --tb: 0px; }
+#app.gerber { --top-h: 46px; }
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -139,29 +139,32 @@ select, input[type="number"], input[type="search"] {
 input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer; }
 .chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
 
-/* ---------- tool strip (3D view): measuring tools, right-panel pages and units, always visible ---------- */
-.toolbar {
-  grid-area: tools; display: flex; align-items: center; gap: 8px; padding: 0 10px; min-width: 0;
-  background: var(--panel-2); border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
-}
-.tb-group { display: flex; align-items: center; gap: 2px; flex: none; }
+/* ---------- header tools (3D view): measuring tools and right-panel pages share the header row ----------
+   fitToolbar() in main.ts folds the page labels into icons when the row is full, and only then lets the
+   tools drop to a second row (narrow windows and phones). */
+#app:not(.gerber) .topbar { min-height: 46px; }
+.hb-tools { display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
+.tb-group { display: flex; align-items: center; gap: 1px; flex: none; }
 .tb-group button {
-  display: inline-flex; align-items: center; gap: 5px; height: 32px; min-width: 32px; padding: 0 7px; justify-content: center;
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; min-width: 30px; padding: 0 6px; justify-content: center;
   border: 1px solid transparent; border-radius: 7px; background: none; cursor: pointer; white-space: nowrap; font-size: 12px; color: var(--text);
 }
 .tb-group button svg { flex: none; }
-.tb-group button:hover { background: var(--panel); border-color: var(--line); }
+.tb-group button:hover { background: var(--panel-2); border-color: var(--line); }
 .tb-group button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .tb-group button:active { filter: brightness(0.92); }
-.tb-units { display: flex; align-items: center; gap: 8px; flex: none; font-size: 12px; }
-.tb-units label { display: flex; align-items: center; gap: 4px; color: var(--muted); }
-.tb-units select { padding: 2px 4px; color: var(--text); }
-/* Labels shrink to icons (still read by screen readers, full name in the tooltip) when space runs out. */
-.tb-units #csys-reset { max-width: 240px; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
-.tb-sr, .tb-compact #tools button:not([data-tool=select]) .tb-lbl, .tb-icons .tb-lbl {
+.hb-tools #csys-reset { max-width: 220px; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+/* Icon buttons keep their name for screen readers; the tooltip shows it with the key. */
+.tb-sr, #tools button:not([data-tool=select]) .tb-lbl, .tb-icons .tb-lbl {
   position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
-.tb-icons .tb-group button { padding: 0 7px; }
+#app:not(.gerber) #display-mode button, #app:not(.gerber) #projection button, #app:not(.gerber) #views button[data-view="fit"] { padding: 4px 7px; display: inline-grid; place-items: center; }
+.topbar.tb-nobrand .brand-txt { display: none; }
+.topbar.tb-nodisp .disp-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.topbar.tb-wrap { flex-wrap: wrap; overflow: visible; row-gap: 0; padding-top: 7px; }
+.topbar.tb-wrap .hb-tools { margin-top: 7px !important; }
+.topbar.tb-wrap .hb-tools { order: 99; flex-basis: 100%; height: 40px; border-top: 1px solid var(--line); margin: 0 -10px; padding: 0 10px; overflow-x: auto; }
+.topbar.tb-wrap .hb-tools .sep { display: block; }
 
 /* Display menu (3D): origin axes and ambient occlusion. Fixed, so the scrolling header can't clip it. */
 .menu {
@@ -169,6 +172,9 @@ input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid v
   background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); font-size: 13px;
 }
 .menu-note { margin: 0; font-size: var(--fs-caption); color: var(--muted); white-space: normal; }
+.menu-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.menu-row select { min-width: 110px; }
+.menu-h { margin: 4px 0 0; padding-top: 8px; border-top: 1px solid var(--line); }
 #display-btn { gap: 4px; }
 @media (max-width: 1279px) {
   #app:not(.gerber) .disp-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
@@ -370,7 +376,7 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
-  #app { grid-template: "top" 46px "tools" var(--tb) "vp" 1fr "right" 38vh "status" 28px / 1fr; }
+  #app { grid-template: "top" var(--top-h) "vp" 1fr "right" 38vh "status" 28px / 1fr; }
   .left { display: none; }
   #app:not(.gerber) .nav-toggle, #app:not(.gerber) .panel-toggle { display: none; }
   .right { border-left: 0; border-top: 1px solid var(--line); }
@@ -585,11 +591,11 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 #note-dlg textarea { width: 100%; box-sizing: border-box; font: inherit; resize: vertical; margin: 4px 0 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg, var(--panel)); color: var(--text); }
 #note-dlg .note-lbl { font-size: 12px; color: var(--muted); }
 
-/* Tool strip on phones and narrow windows: wraps onto a second row instead of scrolling sideways. */
+/* Phones: the tools row wraps instead of scrolling sideways. */
 @media (max-width: 900px) {
-  #app:not(.gerber) { --tb: auto; }
-  .toolbar { flex-wrap: wrap; gap: 2px 6px; padding: 3px 6px; overflow: visible; }
-  .toolbar .sep, .toolbar .spacer { display: none; }
+  .topbar.tb-wrap .hb-tools { height: auto; flex-wrap: wrap; padding: 3px 6px; margin: 0 -10px; gap: 2px 6px; overflow: visible; }
+  .topbar.tb-wrap .hb-tools .sep { display: none; }
   .tb-group { flex-wrap: wrap; flex: 0 1 auto; min-width: 0; }
-  .tb-group button, .tb-icons .tb-group button { height: 30px; min-width: 28px; padding: 0 5px; }
+  .tb-group button { min-width: 28px; padding: 0 5px; }
 }
+#app:not(.gerber) .doc { min-width: 90px; }
