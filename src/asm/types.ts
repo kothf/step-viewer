@@ -33,8 +33,9 @@ export interface AsmDoc {
   patterns?: CompPattern[];
   /** Named exploded views (FR-ASM-023). */
   explodes?: ExplodeView[];
-  /** The documents the components use, embedded (FR-ASM-003), by key. */
-  parts: Record<string, { name: string; file: string; doc: PartDoc }>;
+  /** The documents the components use, embedded (FR-ASM-003), by key. An entry with `asm` is a
+   * sub-assembly (rigid, FR-ASM-006); its `doc` is then an empty placeholder part. */
+  parts: Record<string, { name: string; file: string; doc: PartDoc; asm?: AsmDoc }>;
 }
 
 /** The kernel's answer for an assembly: one mesh per shown component, and mass properties of the solved assembly. */

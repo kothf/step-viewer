@@ -3773,6 +3773,84 @@ try {
     await ctx.close();
   }
 
+  // --- 1.64: sub-assemblies, replace, suppress, colour, BOM modes (FR-ASM-001/006/008/024) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 10, 0), P("c", 10, 10), P("d", 0, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const box = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    const newAsm = async () => { await mp.click("#new-more"); await mp.click("#new-asm"); await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length); };
+    const insert = (b, name) => mp.evaluate(([b, name]) => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], name)), [b, name]);
+    // Assembly A: two boxes, the second 20 mm along X.
+    await newAsm();
+    await insert(box, "box.mcadprt");
+    await shown(1);
+    await insert(box, "box.mcadprt");
+    await shown(2);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 20, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    const A = [...await mp.evaluate(async () => [...await window.__sv.asm.bytes()])];
+    // Assembly B: a box, then A as a sub-assembly placed 50 mm along Y.
+    await newAsm();
+    await insert(box, "box.mcadprt");
+    await shown(1);
+    await insert(A, "A.mcadasm");
+    await shown(3);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 0, 0, 1, 0, 50, 0, 0, 1, 0]; }));
+    await shown(3);
+    const sub = await mp.evaluate(() => {
+      const r = n => Math.round(n * 1000) / 1000;
+      const a = window.__sv.asm;
+      return {
+        sub: [...document.querySelectorAll("#asm-tree .ft-sub .ft-name")].map(e => e.textContent),
+        kids: [...document.querySelectorAll("#asm-tree .ft-sub + .ft-group .ft-inst .ft-name")].map(e => e.textContent),
+        at: window.__sv.viewer.parts.map(p => [r(p.data.bboxMin[0]), r(p.data.bboxMin[1])]),
+        top: a.bom("top").map(x => `${x.part}:${x.qty}`).join(), parts: a.bom("parts").map(x => `${x.part}:${x.qty}`).join(),
+        v: Math.round(a.props?.volume ?? 0),
+      };
+    });
+    // Colour the sub-assembly: its parts take it.
+    const subId = await mp.evaluate(() => window.__sv.asm.doc.components[1].id);
+    await mp.evaluate(id => window.__sv.asm.setColor(id, [1, 0, 0]), subId);
+    await shown(3);
+    const col = await mp.evaluate(() => window.__sv.asm.expanded.doc.components.filter(c => c.color?.[0] === 1).length);
+    // Suppress the top box: it leaves the view and the BOM.
+    const boxId = await mp.evaluate(() => window.__sv.asm.doc.components[0].id);
+    await mp.evaluate(id => window.__sv.asm.setSuppressed(id, true), boxId);
+    await shown(2);
+    const sup = await mp.evaluate(() => ({ parts: window.__sv.asm.bom("parts").map(x => `${x.part}:${x.qty}`).join(), row: document.querySelector("#asm-tree .ft-comp")?.className }));
+    await mp.evaluate(id => window.__sv.asm.setSuppressed(id, false), boxId);
+    await shown(3);
+    // Replace the top box with the 10 mm cube STEP.
+    const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
+    await mp.evaluate(([b, id]) => window.__sv.asm.replaceComponent(id, new File([new Uint8Array(b)], "Cube 10x10.stp")), [cube, boxId]);
+    await mp.waitForFunction(() => window.__sv.asm.doc.components[0].name.startsWith("Cube"), null, { timeout: 120000 });
+    await shown(3);
+    const rep = await mp.evaluate(() => ({ name: window.__sv.asm.doc.components[0].name, keys: Object.keys(window.__sv.asm.doc.parts).length, top: window.__sv.asm.bom("top").map(x => `${x.part}:${x.qty}`).join() }));
+    const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "b.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.components.length; });
+    await shown(3);
+    check(sub.sub.join() === "(-) A<1>" && sub.kids.join() === "box<1>,box<2>" && JSON.stringify(sub.at) === JSON.stringify([[0, 0], [0, 50], [20, 50]])
+      && sub.top === "box:1,A:1" && sub.parts === "box:3" && sub.v === 3000 && col === 2 && sup.parts === "box:2" && / sup/.test(sup.row)
+      && rep.name === "Cube 10x10<1>" && rep.keys === 2 && rep.top === "Cube 10x10:1,A:1" && re === 2,
+      `asm 1.64: sub-assembly placed rigidly with its parts in the tree, BOM top level and parts only, colour, suppress, replace (FR-ASM-001/006/008/024) (${JSON.stringify({ sub, col, sup, rep, re })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

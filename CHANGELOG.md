@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Sub-assemblies: a saved assembly inserted as a component moves as one rigid piece, with its parts listed under it in the tree, and counts in mass properties, interference and STEP export (FR-ASM-001/006).
+- Replace component with another part, assembly or STEP/IGES/BREP model; mates keep the faces they find by name and a warning counts the ones that could not (FR-ASM-008).
+- Suppress and unsuppress components, and per-component colour, from the tree's right-click menu.
+- BOM as top-level items or parts only; parts only counts parts inside sub-assemblies together with the same parts at the top (FR-ASM-024).
+
 ## [1.63.0] - 2026-11-07
 
 ### Added

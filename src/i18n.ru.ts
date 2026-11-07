@@ -1935,4 +1935,13 @@ export const RU: Record<string, string> = {
   "Collapse": "Собрать",
   "Edit pattern": "Изменить массив",
   "Edit exploded view": "Изменить разнесённый вид",
+  "Mate to faces of part components: sub-assemblies are rigid.": "Сопрягайте грани компонентов-деталей: подсборки жёсткие.",
+  "An assembly cannot contain itself.": "Сборка не может содержать саму себя.",
+  "Insert a MöbiusCAD part or assembly, or a STEP, IGES or BREP model.": "Вставьте деталь или сборку MöbiusCAD либо модель STEP, IGES или BREP.",
+  "{n} mate could not find its face on the new component.|{n} mates could not find their faces on the new component.": "{n} сопряжение не нашло свою грань на новом компоненте.|{n} сопряжения не нашли свои грани на новом компоненте.|{n} сопряжений не нашли свои грани на новом компоненте.",
+  "Component colour…": "Цвет компонента…",
+  "Replace component…": "Заменить компонент…",
+  "BOM type": "Тип спецификации",
+  "Top level": "Верхний уровень",
+  "Parts only": "Только детали",
 };

@@ -85,3 +85,36 @@ export function autoExplode(comps: { id: string; centre: V3; fixed?: boolean }[]
   }
   return steps;
 }
+
+/**
+ * Sub-assemblies flattened (FR-ASM-001/006, rigid): every component whose part entry holds an assembly
+ * is replaced by that assembly's components (its own sub-assemblies and patterns' stored transforms
+ * included), placed by the parent component; ids and part keys are prefixed with the parent's.
+ */
+export function flattenSubs(doc: AsmDoc, depth = 0): AsmDoc {
+  if (depth > 8 || !Object.values(doc.parts).some(p => p.asm)) return doc;
+  const parts: AsmDoc["parts"] = {};
+  const comps: Component[] = [];
+  const flat = new Map<string, AsmDoc>();
+  for (const [k, p] of Object.entries(doc.parts)) {
+    if (!p.asm) { parts[k] = p; continue; }
+    const sub = flattenSubs(p.asm, depth + 1);
+    flat.set(k, sub);
+    for (const [sk, sp] of Object.entries(sub.parts)) parts[`${k}/${sk}`] = sp;
+  }
+  for (const c of doc.components) {
+    const sub = flat.get(c.part);
+    if (!sub) { comps.push(c); continue; }
+    for (const sc of sub.components) {
+      comps.push({
+        id: `${c.id}/${sc.id}`, name: sc.name, part: `${c.part}/${sc.part}`, tf: compose(c.tf, sc.tf), fixed: true,
+        ...(c.hidden || sc.hidden ? { hidden: true } : {}), ...(c.suppressed || sc.suppressed ? { suppressed: true } : {}),
+        ...((c.color ?? sc.color) ? { color: c.color ?? sc.color } : {}),
+      });
+    }
+  }
+  return { ...doc, parts, components: comps };
+}
+
+/** The top-level component a shown (flattened or pattern) id belongs to. */
+export const topOf = (id: string) => id.split("/")[0];

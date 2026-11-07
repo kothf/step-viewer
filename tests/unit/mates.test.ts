@@ -115,3 +115,21 @@ test("exploded views: steps add up; auto explode moves floating components outwa
   assert.equal(steps.length, 1);
   assert.deepEqual(steps[0], { comps: ["b"], dir: [1, 0, 0], dist: 20 });
 });
+
+import { flattenSubs, topOf } from "../../src/asm/patterns";
+
+test("sub-assemblies flatten rigidly, placed by their component (FR-ASM-001/006)", () => {
+  const sub = doc([]);
+  sub.id = "sub";
+  sub.components[1].tf = translation([10, 0, 0]);
+  const top = doc([]);
+  top.parts.s = { name: "pinplate", file: "pinplate.mcadasm", doc: stub, asm: sub };
+  top.components.push({ id: "k", name: "pinplate<1>", part: "s", tf: translation([0, 100, 0]), hidden: true });
+  const f = flattenSubs(top);
+  assert.deepEqual(f.components.map(c => c.id), ["p", "q", "k/p", "k/q"]);
+  assert.deepEqual(f.components.map(c => c.part), ["plate", "pin", "s/plate", "s/pin"]);
+  assert.ok(f.parts["s/pin"] && !f.parts.s);
+  assert.deepEqual(applyPoint(f.components[3].tf, [0, 0, 0]), [10, 100, 0]);
+  assert.ok(f.components[3].fixed && f.components[3].hidden);
+  assert.equal(topOf("k/q"), "k");
+});

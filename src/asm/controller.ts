@@ -11,7 +11,7 @@ import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
-import { autoExplode, expandPatterns, explodeOffsets, patternSteps, type Expanded } from "./patterns";
+import { autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, topOf, type Expanded } from "./patterns";
 import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
@@ -65,6 +65,8 @@ export class AsmController {
   private centres = new Map<string, V3>();
   /** The transforms the shown meshes were made with, and their face names. */
   private shownTf: Record<string, Tf> = {};
+  /** The top-level transforms the shown meshes were built with (sub-assembly children follow theirs). */
+  private builtTf: Record<string, Tf> = {};
   private faceNames: string[][] = [];
   /** The last mate solve: degrees of freedom and failing mates. */
   solved: SolveResult | null = null;
@@ -101,7 +103,10 @@ export class AsmController {
 
   /** The document with pattern instances added (what the kernel builds and the BOM counts). */
   private expand(doc: AsmDoc): Expanded {
-    const e = expandPatterns(doc, ref => { const c = doc.components.find(x => x.id === ref.comp), g = c && this.geo.get(c.part)?.get(ref.face); return c && g ? placeGeo(g, c.tf) : null; });
+    const p = expandPatterns(doc, ref => { const c = doc.components.find(x => x.id === ref.comp), g = c && this.geo.get(c.part)?.get(ref.face); return c && g ? placeGeo(g, c.tf) : null; });
+    // Sub-assemblies go in flattened (rigid): their parts are built like any other.
+    const e: Expanded = { ...p, doc: flattenSubs(p.doc) };
+    if (doc === this.doc) this.patterned = p.doc;
     if (doc === this.doc) this.expanded = e;
     return e;
   }
@@ -316,18 +321,52 @@ export class AsmController {
   }
 
   /** BOM rows (FR-ASM-024): one per part, in the order first used, with quantity and mass. */
-  bom() {
+  /** BOM type: top level (sub-assemblies as one row) or parts only (flattened, FR-ASM-024). */
+  bomMode: "top" | "parts" = "top";
+  private patterned: AsmDoc | null = null;
+
+  /** BOM rows (FR-ASM-024): one per part or sub-assembly, in the order first used, with quantity and unit mass. */
+  bom(mode = this.bomMode) {
     if (!this.doc) return [];
+    const ex = this.expand(this.doc), flat = ex.doc, top = this.patterned ?? this.doc;
+    const entry = (k: string) => flat.parts[k] ?? top.parts[k];
+    const unit = (k: string): number | null => {
+      const p = entry(k);
+      if (!p) return null;
+      if (p.asm) {
+        let sum = 0;
+        for (const [fk, fp] of Object.entries(flat.parts)) {
+          if (!fk.startsWith(`${k}/`)) continue;
+          const n = flat.components.filter(c => c.part === fk && !c.suppressed && c.id.split("/").length > 1).length / Math.max(1, top.components.filter(c => c.part === k && !c.suppressed).length);
+          const v = this.volumes.get(fk);
+          if (v === undefined || !fp.doc.material) return null;
+          sum += n * (v / 1e6) * fp.doc.material.density;
+        }
+        return sum;
+      }
+      const v = this.volumes.get(k);
+      return v !== undefined && p.doc.material ? (v / 1e6) * p.doc.material.density : null;
+    };
     const rows: { item: number; part: string; number: string; description: string; material: string; qty: number; mass: number | null }[] = [];
-    const at = new Map<string, number>();
-    for (const c of this.expand(this.doc).doc.components) {
+    const at = new Map<string, number>(), same = new Map<string, string>();
+    // Parts only: the same part used at the top and inside sub-assemblies is one row.
+    const group = (k: string) => {
+      if (mode !== "parts") return k;
+      let g = same.get(k);
+      if (g === undefined) { const p = entry(k); g = p ? JSON.stringify(p.doc) : k; same.set(k, g); }
+      return g;
+    };
+    for (const c of (mode === "parts" ? flat : top).components) {
       if (c.suppressed) continue;
-      let i = at.get(c.part);
+      const gk = group(c.part);
+      let i = at.get(gk);
       if (i === undefined) {
-        const p = this.doc.parts[c.part], d = p.doc, v = this.volumes.get(c.part);
+        const p = entry(c.part);
+        if (!p) continue;
+        const d = p.asm ? null : p.doc;
         i = rows.length;
-        at.set(c.part, i);
-        rows.push({ item: i + 1, part: p.name, number: d.props?.partNumber ?? "", description: d.props?.description ?? "", material: d.material?.name ?? "", qty: 0, mass: v !== undefined && d.material ? (v / 1000) * d.material.density / 1000 : null });
+        at.set(gk, i);
+        rows.push({ item: i + 1, part: p.name, number: d?.props?.partNumber ?? "", description: d?.props?.description ?? "", material: d?.material?.name ?? "", qty: 0, mass: unit(c.part) });
       }
       rows[i].qty++;
     }
@@ -336,6 +375,8 @@ export class AsmController {
 
   showBom() {
     const dlg = $<HTMLDialogElement>("#asm-bom"), rows = this.bom();
+    const sel = dlg.querySelector<HTMLSelectElement>("#asm-bom-type");
+    if (sel) { sel.value = this.bomMode; sel.onchange = () => { this.bomMode = sel.value as "top" | "parts"; dlg.close(); this.showBom(); }; }
     const kg = (m: number | null) => (m === null ? "" : m.toLocaleString(undefined, { maximumFractionDigits: 4 }));
     $("#asm-bom-body").innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Part"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Material"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Mass (kg)"))}</th></tr></thead><tbody>`
       + rows.map(r => `<tr><td>${r.item}</td><td translate="no">${esc(r.part)}</td><td translate="no">${esc(r.number)}</td><td translate="no">${esc(r.description)}</td><td>${esc(r.material ? t(r.material) : "")}</td><td>${r.qty}</td><td>${kg(r.mass)}</td></tr>`).join("") + `</tbody></table>`;
@@ -620,6 +661,8 @@ export class AsmController {
   private learn(doc: AsmDoc, parts: { id: string; data: PartData; faces: string[] }[]) {
     this.faceNames = parts.map(p => p.faces);
     this.shownTf = {};
+    this.builtTf = {};
+    for (const c of this.doc?.components ?? []) this.builtTf[c.id] = c.tf.slice();
     const seen = new Set<string>();
     for (const p of parts) {
       const c = doc.components.find(x => x.id === p.id);
@@ -657,9 +700,11 @@ export class AsmController {
   private previewTfs(tfs: Record<string, Tf>) {
     const v = this.host.viewer;
     this.shownIds.forEach((id, i) => {
-      const part = v.parts[i], t0 = this.shownTf[id], t1 = tfs[id];
-      if (!part || !t0 || !t1) return;
-      const M = compose(t1, invert(t0));
+      const part = v.parts[i], t0 = this.shownTf[id], top = topOf(id);
+      let M: Tf | null = null;
+      if (tfs[id] && t0) M = compose(tfs[id], invert(t0));
+      else if (top !== id && tfs[top] && this.builtTf[top]) M = compose(tfs[top], invert(this.builtTf[top]));
+      if (!part || !M) return;
       new THREE.Matrix4().set(M[0], M[1], M[2], M[3], M[4], M[5], M[6], M[7], M[8], M[9], M[10], M[11], 0, 0, 0, 1).decompose(part.group.position, part.group.quaternion, part.group.scale);
     });
     v.invalidate();
@@ -746,6 +791,7 @@ export class AsmController {
     const hit = this.host.partAt(x, y);
     if (!m || !hit) return;
     const id = this.shownIds[hit.idx], c = this.comp(id), face = this.faceNames[hit.idx]?.[hit.face];
+    if (!c && this.comp(topOf(id))) { toast(t("Mate to faces of part components: sub-assemblies are rigid."), true); return; }
     if (!c || !face) return;
     if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
     const ref = { comp: id, face };
@@ -834,25 +880,13 @@ export class AsmController {
   insertComponent(file?: File) {
     if (!this.doc) return;
     const run = async (f: File) => {
-      let pd: PartDoc;
-      try {
-        if (f.name.toLowerCase().endsWith(PART_EXT)) pd = await unpackPart(await f.arrayBuffer());
-        else if (FOREIGN.test(f.name)) {
-          if (f.size > 100 * 1024 * 1024) { toast(t("The file is too large to import (over 100 MB)."), true); return; }
-          $("#asm-busy").hidden = false;
-          const r = await this.kernel.importBody(await f.arrayBuffer(), f.name);
-          if (!r.faces) { toast(t("No faces or solids were found in the file."), true); return; }
-          const base = f.name.replace(/\.[^.]+$/, "");
-          pd = newPart(base);
-          pd.features.push({ id: "i", type: "import", name: "Imported1", file: f.name, brep: r.brep, ...(r.solids ? {} : { heal: true, tol: { v: 0.1 } }) });
-        } else { toast(t("Insert a MöbiusCAD part, or a STEP, IGES or BREP model."), true); return; }
-      } catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return; }
-      finally { $("#asm-busy").hidden = true; }
+      const src = await this.readSource(f);
+      if (!src || !this.doc) return;
+      const { pd, asm } = src;
       // Components are named after their file, as in SolidWorks.
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
-      const json = JSON.stringify(pd);
-      const key = Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.doc) === json)?.[0] ?? uid("p_");
+      const key = this.sourceKey(pd, asm);
       const n = this.doc!.components.filter(c => c.part === key).length + 1;
       const id = uid("c_");
       const firstOne = !this.doc!.components.length;
@@ -860,7 +894,7 @@ export class AsmController {
       const box = this.host.viewer.parts.length ? this.host.viewer.computeBounds() : null;
       const at: V3 = firstOne || !box ? [0, 0, 0] : [box.max.x + Math.max(10, (box.max.x - box.min.x) * 0.2), 0, 0];
       this.change(d => {
-        d.parts[key] ??= { name: base, file: f.name, doc: pd };
+        d.parts[key] ??= { name: base, file: f.name, doc: pd, ...(asm ? { asm } : {}) };
         d.components.push({ id, name: `${base}<${n}>`, part: key, tf: firstOne ? IDENTITY : translation(at), ...(firstOne ? { fixed: true } : {}) });
       });
       this.selected = id;
@@ -869,8 +903,76 @@ export class AsmController {
     if (file) { void run(file); return; }
     const inp = document.createElement("input");
     inp.type = "file";
-    inp.accept = `${PART_EXT},.step,.stp,.iges,.igs,.brep`;
+    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
     inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
+  /** A file as a component source: a part, an assembly (sub-assembly) or a foreign model as an imported part. */
+  private async readSource(f: File): Promise<{ pd: PartDoc; asm?: AsmDoc } | null> {
+    try {
+      const low = f.name.toLowerCase();
+      if (low.endsWith(PART_EXT)) return { pd: await unpackPart(await f.arrayBuffer()) };
+      if (low.endsWith(ASM_EXT)) {
+        const asm = await unpackAsm(await f.arrayBuffer());
+        if (asm.id === this.doc?.id) { toast(t("An assembly cannot contain itself."), true); return null; }
+        return { pd: newPart(asm.name), asm };
+      }
+      if (FOREIGN.test(f.name)) {
+        if (f.size > 100 * 1024 * 1024) { toast(t("The file is too large to import (over 100 MB)."), true); return null; }
+        $("#asm-busy").hidden = false;
+        const r = await this.kernel.importBody(await f.arrayBuffer(), f.name);
+        if (!r.faces) { toast(t("No faces or solids were found in the file."), true); return null; }
+        const pd = newPart(f.name.replace(/\.[^.]+$/, ""));
+        pd.features.push({ id: "i", type: "import", name: "Imported1", file: f.name, brep: r.brep, ...(r.solids ? {} : { heal: true, tol: { v: 0.1 } }) });
+        return { pd };
+      }
+      toast(t("Insert a MöbiusCAD part or assembly, or a STEP, IGES or BREP model."), true);
+      return null;
+    } catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return null; }
+    finally { $("#asm-busy").hidden = true; }
+  }
+
+  /** The key of an embedded source with this content, or a new one (FR-ASM-005). */
+  private sourceKey(pd: PartDoc, asm?: AsmDoc) {
+    const json = JSON.stringify(asm ?? pd);
+    return Object.entries(this.doc!.parts).find(([, p]) => JSON.stringify(p.asm ?? p.doc) === json && !!p.asm === !!asm)?.[0] ?? uid(asm ? "s_" : "p_");
+  }
+
+  /** Replace component (FR-ASM-008): another file in its place; mates find their faces by name where they can. */
+  replaceComponent(id: string, file?: File) {
+    const run = async (f: File) => {
+      const src = await this.readSource(f);
+      if (!src || !this.doc) return;
+      const key = this.sourceKey(src.pd, src.asm), base = f.name.replace(/\.[^.]+$/, "") || src.pd.name;
+      this.change(d => {
+        d.parts[key] ??= { name: base, file: f.name, doc: src.pd, ...(src.asm ? { asm: src.asm } : {}) };
+        const c = d.components.find(x => x.id === id);
+        if (!c) return;
+        c.part = key;
+        c.name = `${base}<${d.components.filter(x => x.part === key).length}>`;
+        for (const k of Object.keys(d.parts)) if (!d.components.some(x => x.part === k)) delete d.parts[k];
+      });
+      const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && this.solved?.missing.includes(m.id)).length;
+      if (lost) toast(t("{n} mate could not find its face on the new component.|{n} mates could not find their faces on the new component.", { n: lost }), "warn");
+    };
+    if (file) { void run(file); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
+  setSuppressed(id: string, on: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (on) c.suppressed = true; else delete c.suppressed; } }); }
+  setColor(id: string, color: V3 | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (color) c.color = color; else delete c.color; } }); }
+
+  private pickColor(c: Component) {
+    const inp = document.createElement("input");
+    inp.type = "color";
+    const v = c.color ?? this.doc?.parts[c.part]?.doc.color ?? [0.72, 0.74, 0.78];
+    inp.value = `#${v.map(x => Math.round(x * 255).toString(16).padStart(2, "0")).join("")}`;
+    inp.addEventListener("change", () => { const h = inp.value; this.setColor(c.id, [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255) as V3); });
     inp.click();
   }
 
@@ -984,7 +1086,8 @@ export class AsmController {
       if (this.picking) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
       const hit = this.host.partAt(e.clientX, e.clientY);
       if (!hit) return;
-      const id = this.shownIds[hit.idx], c = this.comp(id);
+      // A sub-assembly moves as one (FR-ASM-006): its children drag their top component.
+      const id = topOf(this.shownIds[hit.idx]), c = this.comp(id);
       if (!c) return;
       this.selected = id;
       if (c.fixed) { this.renderTree(); return; }
@@ -1105,7 +1208,12 @@ export class AsmController {
       const mark = c.fixed ? "(f) " : over ? "(+) " : sv && sv.dof[c.id] === 0 ? "" : "(-) ";
       const err = s && !s.ok ? `<span class="ft-err" title="${esc(s.message ?? "")}" role="img" aria-label="${esc(t("Error"))}: ${esc(s.message ?? "")}">⚠</span>` : "";
       const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="hide" title="${esc(c.hidden ? t("Show component") : t("Hide component"))}" aria-label="${esc(c.hidden ? t("Show component") : t("Hide component"))}">${c.hidden ? "◌" : "◉"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
-      html += row(c.id, "▣", mark + c.name, `${c.hidden ? " sup" : ""} ft-comp`, err + tools);
+      const sub = !!doc.parts[c.part]?.asm;
+      html += row(c.id, sub ? "◫" : "▣", mark + c.name, `${c.hidden || c.suppressed ? " sup" : ""} ft-comp${sub ? " ft-sub" : ""}`, err + tools);
+      if (sub) {
+        const kids = (this.expanded?.doc.components ?? []).filter(k => k.id.startsWith(`${c.id}/`) && !k.id.slice(c.id.length + 1).includes("/"));
+        if (kids.length) html += `<div class="ft-group" role="group">${kids.map(k => row(k.id, "▣", k.name, " ft-inst")).join("")}</div>`;
+      }
     }
     if (doc.mates?.length) {
       html += row("folder:mates", "⧉", t("Mates"), " ft-mates");
@@ -1179,6 +1287,10 @@ export class AsmController {
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
+      [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
+      [t("Component colour…"), () => this.pickColor(c)],
+      ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
+      [t("Replace component…"), () => this.replaceComponent(c.id)],
       [t("Delete"), () => void this.deleteComponent(c.id)],
     ], x, y);
   }
