@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.58.0] - 2026-11-07
+
+### Added
+- **Insert body** (FR-FT-130/131, AT-P3-4), in the **Sweep ▾** menu: a STEP, IGES or BREP file goes into the part as an **Imported** feature (kept in the part file, so it opens without the original). **Check and heal** sews faces whose edges are closer than the tolerance, fixes the shape and closes shells into solids, and reports free edges and validity before and after. A file with faces but no solids is healed from the start. The imported body joins the part as its own body.
+
 ## [1.57.0] - 2026-11-07
 
 ### Added
@@ -563,7 +568,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.57.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.58.0...HEAD
+[1.58.0]: https://github.com/kothf/step-viewer/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/kothf/step-viewer/compare/v1.56.0...v1.57.0
 [1.56.0]: https://github.com/kothf/step-viewer/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/kothf/step-viewer/compare/v1.54.1...v1.55.0

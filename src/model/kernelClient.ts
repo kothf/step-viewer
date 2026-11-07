@@ -114,6 +114,12 @@ export class ModelKernel {
     this.running = false;
   }
 
+  /** Reads a STEP/IGES/BREP file into BREP text for an imported body (FR-FT-130). */
+  async importBody(buffer: ArrayBuffer, name: string): Promise<{ brep: string; solids: number; faces: number }> {
+    await this.start();
+    return this.call<{ brep: string; solids: number; faces: number }>({ type: "importBody", buffer, name });
+  }
+
   async step(name: string, color: V3): Promise<Uint8Array> {
     await this.start();
     const r = await this.call<{ bytes: Uint8Array }>({ type: "modelStep", name, color });

@@ -3363,6 +3363,36 @@ try {
     await ctx.close();
   }
 
+  // --- 1.58: Insert body (FR-FT-130/131): a STEP cube into a new part, then Check and heal ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    const bytes = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
+    await mp.evaluate(b => window.__sv.modeller.importBodyFile(new File([new Uint8Array(b)], "Cube 10x10.stp")), bytes);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind !== "none", null, { timeout: 120000 });
+    await settle();
+    const ib = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, file: document.querySelector("#mc-pm")?.textContent.includes("Cube 10x10.stp"), ...window.__sv.model.last().props }));
+    await mp.click('#mc-pm input[data-k="heal"]');
+    await settle();
+    const heal = await mp.evaluate(() => document.querySelector("#mc-pm [data-heal]")?.textContent ?? "");
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.type + ":" + f.name).join(",") }));
+    check(ib.title === "Imported body" && ib.file && Math.abs(ib.volume - 1000) < 1 && ib.bodies === 1 && /^Check and heal: \d+ free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(heal) && !done.bad && Math.abs(done.v - 1000) < 1 && /import:Imported1/.test(done.f),
+      `model 1.58: Insert body reads a STEP cube into the part and Check and heal reports it (FR-FT-130/131) (${JSON.stringify(ib)}, ${heal}, ${JSON.stringify(done)})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
