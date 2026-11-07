@@ -11,6 +11,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
+import { tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
 import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { evaluate, ExprError, isPlain } from "./expr";
@@ -140,6 +141,7 @@ export class ModelController {
 
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
+    document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
     host.viewer.beforeRender.push(() => {
@@ -627,6 +629,8 @@ export class ModelController {
   }
   removeFromFolder(id: string) { this.store?.change("Remove from folder", d => { for (const g of d.folders ?? []) g.ids = g.ids.filter(x => x !== id); }); }
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
+  /** Fillet/chamfer picking adds the tangent chain of an edge (FR-SEL-005). */
+  private tangentProp = true;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
 
@@ -994,7 +998,9 @@ export class ModelController {
     const data = this.host.viewer.parts[0]?.data;
     const names = this.last?.faceNames ?? [];
     if (!hit || !data) return;
-    const edges = hit.edge ? [hit.edge] : data.edges.filter(x => x.faces.includes(hit.faceId!));
+    let edges = hit.edge ? [hit.edge] : data.edges.filter(x => x.faces.includes(hit.faceId!));
+    // Tangent propagation (FR-SEL-005, on by default as in SolidWorks): an edge brings its smooth chain.
+    if (hit.edge && this.tangentProp) edges = tangentChain(data.edges, hit.edge);
     const refs: EdgeRef[] = [];
     for (const ed of edges) {
       const [a, b] = ed.faces;
@@ -2058,6 +2064,18 @@ export class ModelController {
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
+    // Name filter (FR-HIS-011): feature rows whose name doesn't match hide; a folder stays while a member matches.
+    const q = (document.getElementById("ft-search") as HTMLInputElement | null)?.value.trim().toLowerCase() ?? "";
+    if (q) {
+      const keep = new Set<string>();
+      for (const r of box.querySelectorAll<HTMLElement>(".ft-row[data-i]")) {
+        const hit = (r.querySelector(".ft-name")?.textContent ?? "").toLowerCase().includes(q);
+        r.hidden = !hit;
+        const g = folderOf.get(r.dataset.id!);
+        if (hit && g) keep.add(g.id);
+      }
+      for (const r of box.querySelectorAll<HTMLElement>(".ft-folder")) r.hidden = !keep.has(r.dataset.id!.slice(7)) && !(r.querySelector(".ft-name")?.textContent ?? "").toLowerCase().includes(q);
+    }
     this.bindTree(box);
   }
 
@@ -2378,7 +2396,7 @@ export class ModelController {
         + (f.type === "chamfer" && cm !== "equal" ? chk("flip", f.flip, t("Flip direction")) : "");
       body = group(f.type === "fillet" ? t("Items to fillet") : t("Items to chamfer"), `<p class="pm-count">${esc(t("{n} edge|{n} edges", { n: f.edges.length }))}</p>` + items)
         + group(f.type === "fillet" ? t("Fillet parameters") : t("Chamfer parameters"), sizes)
-        + (f.type === "fillet" ? group(t("Fillet options"), chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)"))) : "");
+        + group(f.type === "fillet" ? t("Fillet options") : t("Chamfer options"), `<label class="chk pm-chk"><input type="checkbox" data-ui="tangent"${this.tangentProp ? " checked" : ""} />${esc(t("Tangent propagation"))}</label>` + (f.type === "fillet" ? chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)")) : ""));
     }
     if (f.type === "axis" || f.type === "point") {
       title = f.type === "axis" ? t("Axis") : t("Point");
@@ -2595,6 +2613,7 @@ export class ModelController {
       f.edges.splice(+b.dataset.rm!, 1);
       this.drawDecor(); this.renderPanel(); void this.rebuild();
     }));
+    pm.querySelector<HTMLInputElement>("[data-ui=tangent]")?.addEventListener("change", e => { this.tangentProp = (e.target as HTMLInputElement).checked; });
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
