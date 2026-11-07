@@ -32,7 +32,15 @@ export interface Measurement {
   segments: [number, number][];
   labelAt: V3;
   data: Record<string, number | number[] | string>;
+  /** What it was measured on, by persistent names, so it re-measures after a part rebuild (modelling only). */
+  src?: MeasureSource;
+  /** Its geometry is gone after a rebuild: the value is from before the change. */
+  stale?: boolean;
 }
+
+/** One pick of an associative measurement: a face or edge by name (point: where on it), or a fixed point. */
+export interface PickRef { kind: Entity["kind"]; ref?: { edge?: { faces: [string, string]; hint?: V3 }; face?: { name: string; hint: V3 } }; at?: "center" | "mid" | "start" | "end" | "near"; point: V3; normal?: V3 }
+export interface MeasureSource { type: MeasureType | "smart"; mode?: CircleMode; picks: PickRef[] }
 
 export const TOOL_INFO: Record<MeasureType, { title: string; picks: number; hint: string }> = {
   distance: { title: "Point to point", picks: 2, hint: "Pick two points (vertices, midpoints, centres…)" },

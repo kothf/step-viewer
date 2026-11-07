@@ -157,7 +157,7 @@ const EN: Tab[] = [
   <tr><td>⊙ Centre–centre <kbd>C</kbd></td><td>Distance between hole centres, or pitch between parallel axes</td></tr>
   <tr><td>⌒ Edge length <kbd>L</kbd></td><td>Length of a straight or curved edge, with radius and sweep for arcs</td></tr>
   <tr><td>∠ Angle <kbd>A</kbd> · ∡ 3-point angle</td><td>Between edges or faces, or through three points</td></tr>
-  <tr><td>⊕ Point / normal <kbd>N</kbd></td><td>Coordinates of a point and the surface normal there</td></tr>
+  <tr><td>⊕ Point / normal <kbd>V</kbd></td><td>Coordinates of a point and the surface normal there</td></tr>
   <tr><td>▭ Bounding box <kbd>B</kbd></td><td>Overall size of the visible or selected parts</td></tr>
   <tr><td>✎ Note <kbd>T</kbd></td><td>A text note with a leader to a point on the model. Drag the box to move it, double-click to edit; notes show in PNG and the PDF report</td></tr>
 </table>
@@ -221,6 +221,7 @@ const EN: Tab[] = [
   <li><b>Sketch Mirror</b>: select entities and the line to mirror about (a construction line wins), then click Mirror. The copies stay symmetric to the originals. <b>DXF</b> imports a drawing's lines, arcs, circles and polylines into the open sketch, in the file's units.</li>
   <li><b>Extrude options</b>: end conditions Offset from surface (stop short of a face or plane) and, for cuts, Through all - both; Draft tapers the sides inward or outward; Thin feature makes a wall along the profile (inside, outside or centred) instead of a solid. Revolve has the same Thin feature, Direction 2 and Up to face or plane (a plane through the axis).</li>
   <li><b>Sketch patterns</b>: select entities and click Linear pattern (count and spacing in one or two directions) or Circular pattern (count and total angle about the origin, or about a point you also select). The green preview follows the values; the copies stay equal to the originals. Move, Rotate and Scale work the same way, in place or as copies.</li>
+  <li><b>Planes and sketch visibility</b>: the Top, Front and Right planes are drawn faintly in the view; click one (off the model) to select it and get Sketch and Normal to. Hide or show them, and any sketch, from the tree's right-click menu: a sketch used by a feature is hidden until you show it. <kbd>N</kbd> (or Normal to under the views) looks square at the selected flat face, plane or the open sketch; press it again for the other side. In the Hole wizard, clicks snap to the origin and to model vertices, arc centres and midpoints on the face. Hovering a circle edge shows its centre, and a straight edge its midpoint, as a faint marker you can then pick. Cosmetic threads and tapped holes are shaded with a thread texture. Measurements pinned in a part you are modelling are measured again after every change; one whose face or edge is gone is marked out of date.</li>
   <li><b>Folders and freeze bar</b>: right-click a feature to put it in a folder (click the folder to open or close it) or to freeze the part up to it; frozen features are not rebuilt until you unfreeze them. The box above the tree filters features by name. Fillet and Chamfer pick the whole tangent chain of a clicked edge (Tangent propagation). Right-click an edge while picking them for Select loop (the face boundary through it), Select tangency, or the edges of the same size (all holes of one radius, say).</li>
   <li><b>Cosmetic thread</b>: click a round edge of a hole or shaft; the nearest ISO size is filled in and the thread is drawn as dashed circles, without changing the geometry. In the Hole panel, Save as favourite keeps a hole definition to reuse.</li>
   <li><b>Equations</b> (Σ at the top of the Features tree): global variables, like Width = 80 or Holes = 4, that any value box can use by name (Width/2). Sketch dimensions are named like D1@Sketch1 and can drive other values too. Change a variable and everything that uses it rebuilds; the panel lists every equation in the part.</li>
@@ -249,7 +250,8 @@ ${table([
   ["F , 0", "Fit, isometric view"],
   ["1 – 5", "Display modes"],
   ["P / O", "Perspective / orthographic"],
-  ["D M R C L A N B T", "Point–point, min distance, radius, centre–centre, length, angle, point, bounding box, note"],
+  ["N", "Normal to the selected flat face or the sketch (again: the other side)"],
+  ["D M R C L A V B T", "Point–point, min distance, radius, centre–centre, length, angle, point, bounding box, note"],
   ["I / H / U", "Isolate / hide the selected part / show all"],
   ["Del", "Delete the selected measurement"],
   ["Esc", "Cancel the tool, clear the selection"],
@@ -361,7 +363,7 @@ const RU: Tab[] = [
   <tr><td>⊙ Центр–центр <kbd>C</kbd></td><td>Расстояние между центрами отверстий или шаг между параллельными осями</td></tr>
   <tr><td>⌒ Длина ребра <kbd>L</kbd></td><td>Длина прямого или криволинейного ребра, для дуг с радиусом и углом</td></tr>
   <tr><td>∠ Угол <kbd>A</kbd> · ∡ Угол по 3 точкам</td><td>Между рёбрами или гранями либо через три точки</td></tr>
-  <tr><td>⊕ Точка / нормаль <kbd>N</kbd></td><td>Координаты точки и нормаль к поверхности в ней</td></tr>
+  <tr><td>⊕ Точка / нормаль <kbd>V</kbd></td><td>Координаты точки и нормаль к поверхности в ней</td></tr>
   <tr><td>▭ Габариты <kbd>B</kbd></td><td>Общий размер видимых или выбранных деталей</td></tr>
   <tr><td>✎ Заметка <kbd>T</kbd></td><td>Текстовая заметка с выноской к точке на модели. Перетащите рамку, чтобы сдвинуть её, двойной щелчок меняет текст; заметки видны в PNG и PDF-отчёте</td></tr>
 </table>
@@ -425,6 +427,7 @@ const RU: Tab[] = [
   <li><b>Зеркало в эскизе</b>: выберите объекты и линию отражения (вспомогательная линия в приоритете) и нажмите «Зеркало». Копии остаются симметричными оригиналам. <b>DXF</b> импортирует отрезки, дуги, окружности и полилинии чертежа в открытый эскиз в единицах файла.</li>
   <li><b>Параметры вытягивания</b>: граничные условия «На расстоянии от поверхности» (не доходя до грани или плоскости) и, для вырезов, «Насквозь в обе стороны»; «Уклон» сужает или расширяет боковые грани; «Тонкостенный элемент» делает стенку вдоль контура (внутрь, наружу или по центру) вместо сплошного тела. У поворота есть такие же «Тонкостенный элемент», «Направление 2» и «До поверхности или плоскости» (плоскость через ось).</li>
   <li><b>Массивы в эскизе</b>: выберите объекты и нажмите «Линейный массив» (число и шаг в одном или двух направлениях) или «Круговой массив» (число и общий угол вокруг начала координат или выбранной точки). Зелёный предпросмотр следует за значениями; копии остаются равными оригиналам. «Переместить», «Повернуть» и «Масштаб» работают так же, на месте или с копированием.</li>
+  <li><b>Плоскости и видимость эскизов</b>: плоскости «Сверху», «Спереди» и «Справа» показаны в виде бледно; щёлкните одну (вне модели), чтобы выбрать её и получить «Эскиз» и «Нормально к». Скрыть или показать их, как и любой эскиз, можно из контекстного меню дерева: эскиз, использованный элементом, скрыт, пока вы его не покажете. <kbd>N</kbd> (или «Нормально к» среди видов) разворачивает вид перпендикулярно выбранной плоской грани, плоскости или открытому эскизу; повторно — с другой стороны. В мастере отверстий щелчки привязываются к началу координат и к вершинам, центрам дуг и серединам рёбер модели на грани. При наведении на круглую кромку показывается её центр, на прямую — середина; к этой бледной метке затем можно привязаться. Условная резьба и резьбовые отверстия показаны текстурой резьбы. Измерения, закреплённые в моделируемой детали, пересчитываются после каждого изменения; если их грань или кромка исчезла, измерение помечается как устаревшее.</li>
   <li><b>Папки и полоса заморозки</b>: щёлкните элемент правой кнопкой, чтобы положить его в папку (щелчок по папке открывает и закрывает её) или заморозить деталь до него; замороженные элементы не перестраиваются, пока вы их не разморозите. Поле над деревом фильтрует элементы по имени. Скругление и фаска выбирают всю цепочку касательных рёбер (распространение по касательной). Щёлкните кромку правой кнопкой при выборе: «Выбрать контур» (граница грани через неё), «Выбрать касательные» или кромки того же размера (например, все отверстия одного радиуса).</li>
   <li><b>Условное изображение резьбы</b>: щёлкните круглую кромку отверстия или вала; подставляется ближайший размер ISO, резьба показывается штриховыми окружностями без изменения геометрии. В панели отверстия «Сохранить в избранное» запоминает определение отверстия для повторного использования.</li>
   <li><b>Уравнения</b> (Σ вверху дерева элементов): глобальные переменные, например Width = 80 или Holes = 4, которые можно использовать по имени в любом поле значения (Width/2). Размеры эскизов называются как D1@Sketch1 и тоже могут управлять другими значениями. Измените переменную — и всё, что её использует, перестроится; на панели видны все уравнения детали.</li>
@@ -453,7 +456,8 @@ ${table([
   ["F , 0", "Вписать, изометрия"],
   ["1 – 5", "Режимы отображения"],
   ["P / O", "Перспектива / ортогональная проекция"],
-  ["D M R C L A N B T", "Точка–точка, мин. расстояние, радиус, центр–центр, длина, угол, точка, габариты, заметка"],
+  ["N", "Нормально к выбранной плоской грани или эскизу (повторно — с другой стороны)"],
+  ["D M R C L A V B T", "Точка–точка, мин. расстояние, радиус, центр–центр, длина, угол, точка, габариты, заметка"],
   ["I / H / U", "Изолировать / скрыть выбранную деталь / показать все"],
   ["Del", "Удалить выбранное измерение"],
   ["Esc", "Отменить инструмент, снять выбор"],

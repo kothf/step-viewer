@@ -57,6 +57,8 @@ export interface Frame { o: V3; x: V3; y: V3; n: V3 }
 
 export interface SketchFeature {
   id: string; type: "sketch"; name: string; suppressed?: boolean;
+  /** Shown in the view: true hides it, false shows it even when a feature uses it; absent: shown until a feature uses it. */
+  hidden?: boolean;
   plane: PlaneRef;
   ents: SkEnt[];
   rels: SkRel[];
@@ -326,6 +328,8 @@ export interface PartDoc {
   freezeAfter?: string;
   /** The active configuration's name. */
   config?: string;
+  /** Standard planes hidden in the view (they are shown by default). */
+  stdHidden?: ("XY" | "XZ" | "YZ")[];
 }
 
 // ---------- kernel results ----------

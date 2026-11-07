@@ -53,6 +53,8 @@ export interface ModelHost {
   faceAt(clientX: number, clientY: number): { faceId: number; point: V3 } | null;
   /** Edge under a screen point (snapping), or the face when no edge is close. */
   edgeAt(clientX: number, clientY: number): { edge?: EdgeInfo; faceId?: number } | null;
+  /** A snap point near a screen point (vertex, arc centre, midpoint, quadrant, face centre), if any. */
+  snapAt?(clientX: number, clientY: number): { point: V3; kind: string } | null;
   /** The face picked with Smart measure, if any (used as the sketch plane). */
   selectedFace(): number | null;
   /** Clears Smart measure's pick and highlights. */
@@ -317,7 +319,7 @@ export class ModelController {
     if (this.pendingHole.length && hm.kind === "feature" && hm.draft.type === "hole") {
       // A rebuild started before the face was picked has no frame yet: keep waiting for the next one.
       const fr = r.frames[hm.draft.id];
-      if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, w, fr); }
+      if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, this.holeSnap(w.at, fr) ?? w.p, fr); }
     } else this.pendingHole = [];
   }
 
@@ -676,8 +678,28 @@ export class ModelController {
     this.store!.change(`Rename ${f.name}`, d => { d.features.find(x => x.id === id)!.name = v; });
   }
 
+  /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (SolidWorks absorbs it). */
+  private sketchShown(f: SketchFeature) {
+    return !(f.hidden ?? this.doc.features.some(g => (g.type === "extrude" || g.type === "revolve") && g.sketch === f.id));
+  }
+
   toggleHidden(id: string) {
+    if (id.startsWith("std:")) {
+      const k = id.slice(4) as "XY" | "XZ" | "YZ";
+      const was = (this.doc.stdHidden ?? []).includes(k);
+      this.store!.change(was ? `Show ${k}` : `Hide ${k}`, d => {
+        const list = (d.stdHidden ?? []).filter(x => x !== k);
+        if (!was) list.push(k);
+        if (list.length) d.stdHidden = list; else delete d.stdHidden;
+      });
+      return;
+    }
     const f = this.store?.feature(id);
+    if (f?.type === "sketch") {
+      const show = !this.sketchShown(f);
+      this.store!.change(show ? `Show ${f.name}` : `Hide ${f.name}`, d => { (d.features.find(x => x.id === id) as SketchFeature).hidden = !show; });
+      return;
+    }
     if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point") return;
     this.store!.change(f.hidden ? `Show ${f.name}` : `Hide ${f.name}`, d => {
       const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature;
@@ -1176,7 +1198,7 @@ export class ModelController {
       m.focus = "pts";
       // The first click on a face also places the first hole there.
       const hit = this.host.faceAt(e.clientX, e.clientY);
-      this.pendingHole = hit && "face" in r ? [hit.point] : [];
+      this.pendingHole = hit && "face" in r ? [{ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }] : [];
       this.draftChanged();
       return;
     }
@@ -1184,18 +1206,37 @@ export class ModelController {
     const fr = this.last?.frames[f.id];
     if (!hit) return;
     // Clicks made before the plane's frame arrives are placed once it does.
-    if (!fr || this.pendingHole.length) { this.pendingHole.push(hit.point); return; }
-    this.placeHole(f, hit.point, fr);
+    if (!fr || this.pendingHole.length) { this.pendingHole.push({ p: hit.point, at: { clientX: e.clientX, clientY: e.clientY } }); return; }
+    this.placeHole(f, this.holeSnap(e, fr) ?? hit.point, fr);
+  }
+
+  /**
+   * Where a hole click snaps (SolidWorks-style): the origin (projected onto the hole's face), or a
+   * vertex, arc centre or midpoint of the model lying in that face, when within a few pixels.
+   */
+  private holeSnap(e: { clientX: number; clientY: number }, fr: Frame): V3 | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const onScreen = (w: V3) => { const s = new THREE.Vector3(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; };
+    const dn = -(fr.o[0] * fr.n[0] + fr.o[1] * fr.n[1] + fr.o[2] * fr.n[2]);
+    const origin: V3 = [-fr.n[0] * dn, -fr.n[1] * dn, -fr.n[2] * dn];
+    const [ox, oy] = onScreen(origin);
+    if (Math.hypot(ox - e.clientX, oy - e.clientY) <= 10) return origin;
+    const s = this.host.snapAt?.(e.clientX, e.clientY);
+    if (s && ["vertex", "circleCenter", "midpoint", "faceCenter", "quadrant", "intersection"].includes(s.kind)) {
+      const off = (s.point[0] - fr.o[0]) * fr.n[0] + (s.point[1] - fr.o[1]) * fr.n[1] + (s.point[2] - fr.o[2]) * fr.n[2];
+      if (Math.abs(off) < 1e-4 * Math.max(1, Math.hypot(...s.point))) return s.point;
+    }
+    return null;
   }
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
-  private pendingHole: V3[] = [];
+  private pendingHole: { p: V3; at: { clientX: number; clientY: number } }[] = [];
 
   private placeHole(f: HoleFeature, w: V3, fr: Frame) {
     const d: V3 = [w[0] - fr.o[0], w[1] - fr.o[1], w[2] - fr.o[2]];
     const p: [number, number] = [d[0] * fr.x[0] + d[1] * fr.x[1] + d[2] * fr.x[2], d[0] * fr.y[0] + d[1] * fr.y[1] + d[2] * fr.y[2]];
-    // Snap to 0.01 mm so typed-in feel values stay tidy.
-    const q = (x: number) => Math.round(x * 100) / 100;
+    // Round to 0.01 mm so typed-in feel values stay tidy (snapped points are exact).
+    const q = (x: number) => Math.abs(x) < 1e-9 ? 0 : Math.round(x * 100) / 100;
     const near = f.pts.findIndex(o => Math.hypot(o[0] - p[0], o[1] - p[1]) < Math.max(f.diameter.v * 0.75, 1));
     if (near >= 0) f.pts.splice(near, 1); else f.pts.push([q(p[0]), q(p[1])]);
     this.draftChanged();
@@ -1272,6 +1313,31 @@ export class ModelController {
     return { faces: [names[a], names[b]], hint: ed.mid };
   }
 
+  /** A face or edge of the shown part by its persistent names (for measurements that follow rebuilds). */
+  entityRef(e: { edge?: EdgeInfo; faceId?: number }): { edge?: EdgeRef; face?: { name: string; hint: V3 } } | null {
+    if (!this.active || !this.last) return null;
+    if (e.edge) { const r = this.refOfEdge(e.edge); return r ? { edge: r } : null; }
+    if (e.faceId != null) {
+      const name = this.last.faceNames[e.faceId], f = this.host.viewer.parts[0]?.data.faces[e.faceId];
+      return name && f ? { face: { name, hint: [...f.center] as V3 } } : null;
+    }
+    return null;
+  }
+
+  /** What an entityRef points at after a rebuild, if it still exists. */
+  resolveRef(r: { edge?: EdgeRef; face?: { name: string; hint: V3 } }): { edge?: EdgeInfo; faceId?: number } | null {
+    if (r.edge) { const ed = this.edgeOf(r.edge); return ed ? { edge: ed } : null; }
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!r.face || !data || !names) return null;
+    let best = -1, bd = Infinity;
+    names.forEach((n, i) => {
+      if (n !== r.face!.name || !data.faces[i]) return;
+      const c = data.faces[i].center, h = r.face!.hint, d = Math.hypot(c[0] - h[0], c[1] - h[1], c[2] - h[2]);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best >= 0 ? { faceId: best } : null;
+  }
+
   /** The shown edge an edge reference points at (same face names, nearest to the hint). */
   private edgeOf(ref: EdgeRef): EdgeInfo | null {
     const data = this.host.viewer.parts[0]?.data;
@@ -1293,6 +1359,7 @@ export class ModelController {
     for (const c of [...this.decor.children]) {
       const o = c as THREE.Mesh;
       o.geometry?.dispose();
+      ((o.material as THREE.MeshBasicMaterial)?.map)?.dispose?.();
       (o.material as THREE.Material)?.dispose?.();
     }
     this.decor.clear();
@@ -1303,11 +1370,11 @@ export class ModelController {
     this.host.viewer.invalidate();
   }
 
-  private lines(pos: number[], color: number, width: number, dashed = false) {
+  private lines(pos: number[], color: number, width: number, dashed = false, depthTest = false) {
     if (!pos.length) return;
     const g = new LineSegmentsGeometry();
     g.setPositions(pos);
-    const mat = new LineMaterial({ color, linewidth: width, worldUnits: false, depthTest: false, transparent: true, dashed, dashSize: 3, gapSize: 2 });
+    const mat = new LineMaterial({ color, linewidth: width, worldUnits: false, depthTest, transparent: true, dashed, dashSize: 3, gapSize: 2 });
     mat.resolution.set(this.host.viewer.size.x, this.host.viewer.size.y);
     const l = new LineSegments2(g, mat);
     if (dashed) l.computeLineDistances();
@@ -1326,7 +1393,8 @@ export class ModelController {
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
     this.doc.features.slice(0, end).forEach(f => {
-      if (f.type !== "sketch" || f.suppressed || used.has(f.id) || (m.kind === "sketch" && m.id === f.id)) return;
+      if (f.type !== "sketch" || f.suppressed || (m.kind === "sketch" && m.id === f.id)) return;
+      if (f.hidden ?? used.has(f.id)) return;
       this.lines(sketchSegments(f, this.frameOf(f)), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
     });
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
@@ -1417,8 +1485,44 @@ export class ModelController {
       const at = (a: number, s: number) => [0, 1, 2].map(i => g.c[i] + n[i] * s + r * (u[i] * Math.cos(a) + v[i] * Math.sin(a)));
       for (const s of [0, L]) for (let k = 0; k < 48; k++) segs.push(...at((k / 48) * Math.PI * 2, s), ...at(((k + 1) / 48) * Math.PI * 2, s));
       for (let k = 0; k < 4; k++) segs.push(...at((k * Math.PI) / 2, 0), ...at((k * Math.PI) / 2, L));
+      this.threadShade(g.c, n, g.r, L, f.pitch ?? Math.max(0.25, f.diameter.v * 0.15), g.internal);
     }
     if (segs.length) { const before = this.decor.children.length; this.lines(segs, 0x2b8a3e, 1.6, true); for (const o of this.decor.children.slice(before)) o.userData.thread = true; }
+  }
+
+  /** Diagonal stripes, one per tile: repeated a turn around by a pitch along, they read as a helix. */
+  private static threadTex: THREE.CanvasTexture | null = null;
+
+  /**
+   * Shaded cosmetic thread (FR-FT-054, SolidWorks' thread texture): a helically striped sleeve just off the
+   * cylinder (inside it for a hole), from c along dir for length L.
+   */
+  private threadShade(c: V3, dir: V3, r: number, L: number, pitch: number, internal: boolean) {
+    if (!(L > 0) || !(r > 0)) return;
+    let base = ModelController.threadTex;
+    if (!base) {
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = 64;
+      const g = cv.getContext("2d")!;
+      g.strokeStyle = "rgba(20, 24, 32, 0.55)";
+      g.lineWidth = 14;
+      for (const k of [-1, 0, 1]) { g.beginPath(); g.moveTo(-8, 64 * k + 72); g.lineTo(72, 64 * k - 8); g.stroke(); }
+      base = ModelController.threadTex = new THREE.CanvasTexture(cv);
+      base.wrapS = base.wrapT = THREE.RepeatWrapping;
+      base.colorSpace = THREE.SRGBColorSpace;
+    }
+    const tex = base.clone();
+    tex.needsUpdate = true;
+    tex.repeat.set(1, Math.min(L / pitch, 2000));
+    const off = Math.max(r * 0.004, 0.005);
+    const geo = new THREE.CylinderGeometry(r + (internal ? -off : off), r + (internal ? -off : off), L, 64, 1, true);
+    geo.translate(0, L / 2, 0);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir).normalize());
+    mesh.position.set(...c);
+    mesh.renderOrder = 2300;
+    mesh.userData.threadShade = true;
+    this.decor.add(mesh);
   }
 
   private drawHoles() {
@@ -1433,6 +1537,9 @@ export class ModelController {
       const at = (p: [number, number], dx: number, dy: number) => [0, 1, 2].map(i => fr.o[i] + fr.x[i] * (p[0] + dx) + fr.y[i] * (p[1] + dy));
       for (const p of h.pts) {
         if (h.kind === "tapped" && h.major) {
+          const td = h.threadDepth?.v ?? (h.end === "through" ? 0 : h.depth.v);
+          const o = at(p, 0, 0) as V3;
+          if (td > 0) this.threadShade(o, [-fr.n[0], -fr.n[1], -fr.n[2]], h.diameter.v / 2, td, h.pitch ?? Math.max(0.25, h.major * 0.15), true);
           const r = h.major / 2, n = 48;
           for (let k = 0; k < n; k++) {
             const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2;
@@ -1454,7 +1561,7 @@ export class ModelController {
     const b = v.parts.length ? v.bounds : null;
     const s = b && !b.isEmpty() ? Math.max(b.getSize(new THREE.Vector3()).length() * 0.45, 20) : 60;
     const m = this.mode;
-    const square = (f: Frame, color: number, ref: PlaneRef, opacity: number, pick: boolean, centre?: THREE.Vector3) => {
+    const square = (f: Frame, color: number, ref: PlaneRef, opacity: number, pick: boolean, centre?: THREE.Vector3, depth = false) => {
       const o = centre ?? new THREE.Vector3(...f.o);
       const c = (u: number, w: number) => o.clone().addScaledVector(new THREE.Vector3(...f.x), u * s).addScaledVector(new THREE.Vector3(...f.y), w * s);
       const p = [c(-1, -1), c(1, -1), c(1, 1), c(-1, 1)];
@@ -1469,11 +1576,14 @@ export class ModelController {
       }
       const pos: number[] = [];
       for (let i = 0; i < 4; i++) pos.push(...p[i].toArray(), ...p[(i + 1) % 4].toArray());
-      this.lines(pos, color, 1.2);
+      this.lines(pos, color, 1.2, false, depth);
     };
-    if (std) {
-      const colors = { XY: 0x2f6fed, XZ: 0x2f9e44, YZ: 0xe8590c };
-      for (const k of ["XY", "XZ", "YZ"] as const) square(STD_FRAMES[k], colors[k], { std: k }, 0.12, true);
+    // Standard planes: always while picking a plane; otherwise unless hidden, fainter, and clickable (context bar).
+    const colors = { XY: 0x2f6fed, XZ: 0x2f9e44, YZ: 0xe8590c };
+    const hiddenStd = this.doc.stdHidden ?? [];
+    for (const k of ["XY", "XZ", "YZ"] as const) {
+      const sel = this.selected === `std:${k}`;
+      if (std || sel || !hiddenStd.includes(k)) square(STD_FRAMES[k], sel ? 0xf08c00 : colors[k], { std: k }, std ? 0.12 : sel ? 0.14 : 0.05, true, undefined, !std && !sel);
     }
     // Reference planes, centred where the model's centre projects onto them.
     const centre = b && !b.isEmpty() ? b.getCenter(new THREE.Vector3()) : new THREE.Vector3();
@@ -2001,6 +2111,23 @@ export class ModelController {
       const face = this.host.viewer.parts[0]?.data.faces[fid];
       if (face?.type === "plane") items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
       addOwner(owner(fid));
+    } else {
+      // A standard or reference plane drawn in the view: select it (as in the tree) and offer Sketch, Normal to.
+      const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((at.x - r.left) / r.width) * 2 - 1, -((at.y - r.top) / r.height) * 2 + 1);
+      // Only off the model: a click on the body (even one the selection filter skips) never picks a plane behind it.
+      const body = v.pickMeshes(ndc);
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(ndc, v.camera);
+      const ph = body ? undefined : rc.intersectObjects(this.planeMeshes, false)[0];
+      const ref = ph?.object.userData.ref as PlaneRef | undefined;
+      if (ref && ("std" in ref || "plane" in ref)) {
+        this.selected = "std" in ref ? `std:${ref.std}` : ref.plane;
+        this.ctxPick = { plane: ref };
+        this.renderTree();
+        this.drawDecor();
+        items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
+      }
     }
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
@@ -2051,7 +2178,7 @@ export class ModelController {
   }
 
   /** What the context toolbar was opened for: its commands act on that, not on Smart measure's first pick. */
-  private ctxPick: { edge?: EdgeInfo; faceId?: number } | null = null;
+  private ctxPick: { edge?: EdgeInfo; faceId?: number; plane?: PlaneRef } | null = null;
   private pickedEdge() { return this.ctxPick ? this.ctxPick.edge ?? null : this.host.selectedEdge?.() ?? null; }
   private pickedFace() { return this.ctxPick ? this.ctxPick.faceId ?? null : this.host.selectedFace(); }
 
@@ -2124,7 +2251,9 @@ export class ModelController {
       case "filter": this.toggleFilterBar(); break;
       case "normal": {
         const f = this.ctxPick?.faceId != null ? this.host.viewer.parts[0]?.data.faces[this.ctxPick.faceId] : undefined;
-        this.host.normalTo?.(f?.type === "plane" ? f.normal : undefined);
+        const pl = this.ctxPick?.plane;
+        const fr = pl ? ("std" in pl ? STD_FRAMES[pl.std] : "plane" in pl ? this.last?.frames[pl.plane] : undefined) : undefined;
+        this.host.normalTo?.(f?.type === "plane" ? f.normal : fr ? fr.n : undefined);
         break;
       }
       default:
@@ -2383,6 +2512,8 @@ export class ModelController {
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
     if (id.startsWith("std:") || f?.type === "plane") items.push([t("Sketch on this plane"), () => void this.createSketch(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
+    if (id.startsWith("std:")) items.push([(this.doc.stdHidden ?? []).includes(id.slice(4) as "XY") ? t("Show") : t("Hide"), () => this.toggleHidden(id)]);
+    if (f?.type === "sketch") items.push([this.sketchShown(f) ? t("Hide") : t("Show"), () => this.toggleHidden(f.id)]);
     if (f) {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
@@ -3082,6 +3213,14 @@ export class ModelController {
 
   /** The open sketch's normal (Normal to). */
   sketchNormal(): V3 | null { const m = this.mode; return m.kind === "sketch" ? m.editor.frame.n : null; }
+
+  /** The normal of the standard or reference plane selected in the tree or the view, if any. */
+  selectedPlaneNormal(): V3 | null {
+    const id = this.selected;
+    if (!id) return null;
+    if (id.startsWith("std:")) return STD_FRAMES[id.slice(4) as "XY" | "XZ" | "YZ"]?.n ?? null;
+    return this.store?.feature(id)?.type === "plane" ? this.last?.frames[id]?.n ?? null : null;
+  }
 
   /** Test and debug handle. */
   debug() {

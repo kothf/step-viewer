@@ -303,7 +303,9 @@ details > :last-child { margin-bottom: 12px; }
 .snap-marker[data-kind="midpoint"] .glyph { border: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #2f9e44; }
 .snap-marker[data-kind="quadrant"] .glyph { width: 12px; height: 12px; left: -6px; top: -6px; border: 0; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); background: #2f9e44; }
 .snap-marker[data-kind="circleCenter"] .glyph { border-radius: 50%; border-color: #0c8599; background: rgba(21, 170, 191, .45); }
-.snap-marker[data-kind="circleCenter"] .glyph::before, .snap-marker[data-kind="circleCenter"] .glyph::after { content: ""; position: absolute; background: #0c8599; }
+.snap-marker[data-kind="circleCenter"] .glyph::before, .snap-hint { z-index: 5; opacity: .75; }
+.snap-hint .glyph { border-style: dashed; }
+.snap-marker[data-kind="circleCenter"] .glyph::after { content: ""; position: absolute; background: #0c8599; }
 .snap-marker[data-kind="circleCenter"] .glyph::before { left: -6px; right: -6px; top: 50%; height: 1.5px; margin-top: -.75px; }
 .snap-marker[data-kind="circleCenter"] .glyph::after { top: -6px; bottom: -6px; left: 50%; width: 1.5px; margin-left: -.75px; }
 .snap-marker[data-kind="intersection"] .glyph { border: 0; background: none; }

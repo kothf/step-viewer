@@ -2495,6 +2495,101 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.37.0: sketch Show/Hide, visible main planes, Normal to (N), hole snapping to the origin ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    const settle = () => mp.waitForFunction(() => { const p = window.__sv.viewer.camera.position.toArray().join(); const same = window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 });
+    const camDir = () => mp.evaluate(() => { const v = window.__sv.viewer; return v.camera.position.clone().sub(v.controls.target).normalize().toArray(); });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -15), P("b", 20, -15), P("c", 20, 15), P("d", -20, 15), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a"), P("h", 10, 0), { id: "k", t: "circle", c: "h", r: 5 }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }); }); });
+    await idle();
+    // An absorbed sketch is hidden; Show in the tree draws it over the body.
+    const skLines = () => mp.evaluate(() => window.__sv.modeller.decor.children.filter(o => o.isLineSegments2 && [0x1d4ed8, 0x8ab4ff].includes(o.material.color.getHex())).length);
+    const before = await skLines();
+    await mp.click('#mc-tree .ft-row[data-id="s"]', { button: "right" });
+    const skMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent === "Show")?.click());
+    await idle();
+    const after = await skLines(), skHidden = await mp.evaluate(() => window.__sv.model.store.doc.features[0].hidden);
+    // The three main planes are drawn (faintly) and a click on one, off the model, offers Sketch and Normal to.
+    const nPlanes = await mp.evaluate(() => window.__sv.modeller.planeMeshes.length);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, -1, 0), false); v.fit(false); });
+    await settle();
+    const [px, py] = await world([-23, 0, 23]);
+    await mp.mouse.click(px, py);
+    await mp.waitForSelector("#mc-cbar", { timeout: 5000 }).catch(() => {});
+    const cbar = await mp.evaluate(() => [...document.querySelectorAll("#mc-cbar button")].map(b => b.dataset.c).join("|"));
+    const selPlane = await mp.evaluate(() => window.__sv.modeller.selected);
+    // N turns the view normal to the selected plane, from an iso view.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await settle();
+    await mp.mouse.move(5, 5);
+    await mp.keyboard.press("n");
+    await settle();
+    const dN = await camDir();
+    const hasBtn = await mp.evaluate(() => !!document.querySelector('#views [data-view="normal"]'));
+    // Hovering a hole's edge offers its centre (shown faintly, then picked); hovering a straight edge its midpoint.
+    const hover = async w => { const [x, y] = await world(w); await mp.mouse.move(x, y, { steps: 3 }); await mp.waitForTimeout(200); };
+    const hintOf = () => mp.evaluate(() => { const h = window.__sv.snapper.hint; return h ? { kind: h.kind, p: h.point.toArray().map(x => +x.toFixed(4)), shown: !document.querySelector("#snap-hint").hidden } : null; });
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await settle();
+    await hover([10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
+    const hC = await hintOf();
+    await hover([10, 0, 20]);
+    const atC = await mp.evaluate(() => { const s = window.__sv.state.lastSnap; return s ? { kind: s.kind, p: s.point.toArray().map(x => +x.toFixed(4)) } : null; });
+    await hover([-12, -15, 20]);
+    const hM = await hintOf();
+    // Hole wizard: a click a fraction of a millimetre off the origin's projection on the top face lands exactly on it.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await settle();
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-c="hole"]');
+    const [hx, hy] = await world([0.3, 0.2, 20]);
+    await mp.mouse.click(hx, hy);
+    await idle();
+    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const hole = await mp.evaluate(() => { const r = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1), fr = r.frames[f.id], p = f.pts[0]; return { type: f.type, st: r.statuses.at(-1)?.ok, at: p && fr ? [0, 1, 2].map(i => fr.o[i] + fr.x[i] * p[0] + fr.y[i] * p[1]) : null }; });
+    // Shaded cosmetic thread: a striped sleeve inside the hole.
+    await mp.evaluate(() => { const ed = window.__sv.viewer.parts[0].data.edges.find(e => e.center && Math.hypot(e.center[0] - 10, e.center[1], e.center[2] - 20) < 1e-6); const ref = window.__sv.modeller.entityRef({ edge: ed }); window.__sv.model.store.change("Thread", d => { d.features.push({ id: "t", type: "thread", name: "Thread1", edge: ref.edge, size: "M12", diameter: { v: 12 }, length: { v: 10 }, upToEnd: true, pitch: 1.75, internal: true }); }); });
+    await idle();
+    const shade = await mp.evaluate(() => window.__sv.modeller.decor.children.filter(o => o.userData.threadShade).map(o => ({ r: +o.geometry.parameters.radiusTop.toFixed(2), h: +o.geometry.parameters.height.toFixed(2), rep: +o.material.map.repeat.y.toFixed(2) })));
+    // Pinned measurements follow the model: the top front edge (40) and the hole's rim, then the block widens and the hole grows.
+    await mp.keyboard.press("Escape");
+    const pin = async w => { await hover(w); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(250); await mp.evaluate(() => [...document.querySelectorAll("#readout button")].find(b => /Pin/.test(b.textContent))?.click()); await mp.waitForTimeout(100); };
+    await settle();
+    await pin([5, -15, 20]);
+    await mp.evaluate(() => window.__sv.handlePick(null));
+    await pin([10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
+    const vals = () => mp.evaluate(() => window.__sv.state.measurements.map(m => ({ v: +m.value.toFixed(4), src: !!m.src, stale: !!m.stale, ty: m.type, k: m.src?.picks.map(p => p.kind + ":" + p.at).join() })));
+    const m0 = await vals();
+    await mp.evaluate(() => window.__sv.model.store.change("Widen", d => { const sk = d.features[0], P = id => sk.ents.find(e => e.id === id); P("a").x = -25; P("d").x = -25; P("b").x = 25; P("c").x = 25; sk.ents.find(e => e.id === "k").r = 6; }));
+    await idle();
+    await mp.waitForTimeout(200);
+    const m1 = await vals();
+    check(before === 0 && /Show/.test(skMenu) && skHidden === false && after > 0, `model 1.37: an absorbed sketch shows from the tree (${before} → ${after}, ${skMenu}, ${skHidden})`);
+    check(nPlanes >= 3 && selPlane === "std:XZ" && cbar.includes("sketch") && cbar.includes("normal"), `model 1.37: main planes drawn and clickable (${nPlanes}, ${selPlane}, ${cbar})`);
+    check(hasBtn && Math.abs(dN[1]) > 0.999, `model 1.37: Normal to button and N turn the view to the selected plane (${hasBtn}, ${dN.map(x => x.toFixed(3))})`);
+    check(hC?.kind === "circleCenter" && hC.shown && hC.p.join() === "10,0,20" && atC?.kind === "circleCenter" && hM?.kind === "midpoint" && hM.p.join() === "0,-15,20", `model 1.37: hovering an edge offers its centre or midpoint (${JSON.stringify(hC)}, ${JSON.stringify(atC)}, ${JSON.stringify(hM)})`);
+    check(shade.length === 1 && shade[0].r < 5 && shade[0].r > 4.9 && shade[0].h === 20 && Math.abs(shade[0].rep - 20 / 1.75) < 0.01, `model 1.37: a cosmetic thread is shaded with a helical texture (${JSON.stringify(shade)})`);
+    check(m0.length === 2 && m0.every(m => m.src) && m0[0].v === 40 && m1.length === 2 && m1[0].v === 50 && !m1[0].stale && Math.abs(m1[1].v / m0[1].v - 1.2) < 1e-6 && !m1[1].stale, `model 1.37: pinned measurements re-measure after a rebuild (${JSON.stringify(m0)} → ${JSON.stringify(m1)})`);
+    check(hole.type === "hole" && hole.st && hole.at && Math.hypot(hole.at[0], hole.at[1], hole.at[2] - 20) < 1e-6, `model 1.37: a hole clicked near the origin snaps onto it (${JSON.stringify(hole)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);
