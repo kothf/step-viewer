@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
+import type { Feature, FilletFeature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import { occ } from "./occ";
 
 const rect = (id: string, cx: number, cy: number, w: number, h: number, plane: SketchFeature["plane"] = { std: "XY" }): SketchFeature => {
@@ -742,4 +742,20 @@ test("multibody: new body, split by a plane and combine back (AT-P3-3), subtract
   const cp = run(m, doc([...box, { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "x:end" }], copy: true, dx: { v: 0 }, dy: { v: 50 }, dz: { v: 0 } }]));
   assert.equal(cp.props!.bodies, 2);
   close(cp.props!.volume, 16000);
+});
+
+test("variable radius fillet: an edge going from 1 to 4 mm (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const edge = { faces: ["x:side:sl1", "x:side:sl2"] as [string, string] };
+  const vol = (f: Partial<FilletFeature>) => run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [edge], ...f } as Feature])).props!.volume;
+  const full = 8000;
+  // A linear radius r(z) from 1 at the bottom to 4 at the top: (1 - π/4)·∫r² dz = (1 - π/4)·10·(1 + 4 + 16)/3.
+  const up = full - vol({ variable: true, edges: [{ ...edge, r: 1, r2: 4, at: [20, -10, 0] }] });
+  const down = full - vol({ variable: true, edges: [{ ...edge, r: 1, r2: 4, at: [20, -10, 10] }] });
+  const want = (1 - Math.PI / 4) * 70;
+  assert.ok(Math.abs(up - want) / want < 0.03, `${up} vs ${want}`);
+  assert.ok(Math.abs(down - want) / want < 0.03, `${down} vs ${want}`);
+  // Constant 1 and 4 bound it.
+  assert.ok(up > (1 - Math.PI / 4) * 10 && up < (1 - Math.PI / 4) * 160);
 });

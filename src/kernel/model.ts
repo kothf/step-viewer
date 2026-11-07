@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -703,14 +703,23 @@ export class Modeller {
     const edges = f.edges.map(r => this.resolveEdge(prev, r));
     // Multiple radius fillet (FR-FT-031): an edge's own radius, else the feature's.
     const rad = (i: number) => (f.type === "fillet" && f.multi ? f.edges[i].r ?? size : size);
-    if (f.edges.some((_e, i) => !(rad(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    const vari = f.type === "fillet" && !!f.variable;
+    const rad2 = (i: number) => (vari ? (f as FilletFeature).edges[i].r2 ?? rad(i) : rad(i));
+    const radV = (i: number) => (vari ? (f as FilletFeature).edges[i].r ?? size : rad(i));
+    if (f.edges.some((_e, i) => !(radV(i) > 1e-6) || !(rad2(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
     const make = (list: number[]) => {
       const mk = f.type === "fillet"
         ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
         : new oc.BRepFilletAPI_MakeChamfer(prev.shape);
       for (const i of list) {
         const e = edges[i];
-        if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
+        if (vari) {
+          // Variable radius: r at the end nearer `at` (else the edge's first vertex), r2 at the other.
+          const at = (f as FilletFeature).edges[i].at;
+          const p0 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, true))), p1 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.LastVertex(e, true)));
+          const swap = !!at && d3(p1, at) < d3(p0, at);
+          (mk as any).Add_3(swap ? rad2(i) : radV(i), swap ? radV(i) : rad2(i), e);
+        } else if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
         else {
           const r = f.edges[i];
           const face = this.faceOfEdge(prev, e, r.faces[f.type === "chamfer" && f.flip ? 1 : 0]);

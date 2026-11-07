@@ -1787,4 +1787,8 @@ export const RU: Record<string, string> = {
   "Nothing would be left: keep at least one body.": "Ничего не останется: сохраните хотя бы одно тело.",
   "Give a distance or an angle.": "Задайте расстояние или угол.",
   "Pick an axis.": "Выберите ось.",
+  "Variable radius fillet": "Скругление переменного радиуса",
+  "Start radius": "Начальный радиус",
+  "End radius": "Конечный радиус",
+  "Each edge goes from its start radius (a) to its end radius (b): type them in the list or click the callouts at the edge ends.": "Радиус каждой кромки меняется от начального (a) до конечного (b): введите их в списке или щёлкните выноски на концах кромки.",
 };

@@ -3342,6 +3342,24 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // Variable radius fillet on a corner edge: callouts at both ends, the end radius typed in the list.
+    const v1 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.evaluate(() => window.__sv.modeller.command("fillet"));
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.edges = [{ faces: ["x:side:l1", "x:side:l2"] }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click('#mc-pm input[data-k="variable"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-er2="0"]', "4");
+    await mp.press('#mc-pm input[data-er2="0"]', "Enter");
+    await settle();
+    const vf = await mp.evaluate(() => ({ calls: [...document.querySelectorAll("#mc-layer .mc-callout")].map(e => e.textContent), d: window.__sv.model.mode().draft, v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    await mp.click("#mc-ok");
+    await settle();
+    vf.v = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    const removed = v1 - vf.v, want = (1 - Math.PI / 4) * 10 * (4 + 8 + 16) / 3;
+    check(vf.d.variable && vf.d.edges[0].r2 === 4 && vf.d.edges[0].at && vf.calls.length === 2 && /^R1a: 2/.test(vf.calls[0]) && /^R1b: 4/.test(vf.calls[1]) && !vf.bad && Math.abs(removed - want) / want < 0.03,
+      `model 1.57: Variable radius fillet from 2 to 4 mm, callouts at both ends (FR-FT-032) (${JSON.stringify(vf.calls)}, ${removed.toFixed(3)} vs ${want.toFixed(3)})`);
     await ctx.close();
   }
 
