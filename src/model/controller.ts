@@ -23,6 +23,7 @@ import { MATERIALS } from "../tools/analysis";
 import { STD_FRAMES } from "../kernel/model";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
+import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { confirmModal, toast } from "../ui";
 import { onLangChange, t } from "../i18n";
@@ -46,6 +47,8 @@ export interface ModelHost {
   selectedEdge?(): EdgeInfo | null;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
   setMaterial?(m: { name: string; density: number } | undefined): void;
+  /** Normal to the picked flat face (the view's "8"). */
+  normalTo?(normal?: V3): void;
   appVersion: string;
 }
 
@@ -284,7 +287,7 @@ export class ModelController {
   startSketch() {
     if (!this.store) return;
     this.exitMode(false);
-    const fid = this.host.selectedFace();
+    const fid = this.pickedFace();
     const pr = fid != null ? this.planeOfFace(fid) : null;
     if (pr) { void this.createSketch(pr); return; }
     const sel = this.selected && this.selected.startsWith("std:") ? this.selected.slice(4) as "XY" | "XZ" | "YZ" : null;
@@ -359,12 +362,12 @@ export class ModelController {
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
     if (fromSketch) { this.ok(); this.selected = fromSketch; }
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
-    const selEdge = (type === "fillet" || type === "chamfer") ? this.host.selectedEdge?.() ?? null : null;
+    const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
-    const preFace = type === "plane" ? this.host.selectedFace() : null;
+    const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
-    const refEdge = type === "axis" || type === "point" ? this.host.selectedEdge?.() ?? null : null;
-    const refFace = type === "axis" || type === "point" ? this.host.selectedFace() : null;
+    const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
+    const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     this.exitMode(false);
     const d = this.doc;
     const end = d.rollback ?? d.features.length;
@@ -649,7 +652,8 @@ export class ModelController {
       this.down = null;
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
-      if (m.kind === "plane") this.pickPlane(e);
+      if (m.kind === "none") { const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
+      else if (m.kind === "plane") this.pickPlane(e);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) this.pickEdge(e);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
@@ -689,7 +693,8 @@ export class ModelController {
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
     if (mod || e.altKey) return;
-    if (k === "escape" && document.getElementById("mc-sbar")) { stop(); this.hideShortcutBar(); return; }
+    if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
+    if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     const m = this.mode;
     // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
@@ -1366,6 +1371,8 @@ export class ModelController {
           return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="plane" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
         })()
         + `</div><div class="mc-sep"></div><div class="mc-g">`
+        + btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices))
+        + `</div><div class="mc-sep"></div><div class="mc-g">`
         + btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, busy || !this.store.canUndo) + btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, busy || !this.store.canRedo)
         + `</div><div class="mc-sep"></div><div class="mc-g">`
         + btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)")) + btn("step", t("STEP"), t("Export the body as STEP"))
@@ -1397,23 +1404,118 @@ export class ModelController {
   showShortcutBar() {
     const m = this.mode;
     this.hideShortcutBar();
+    this.ctxPick = null;
     const items: [string, string][] = m.kind === "sketch"
       ? [["sk:line", t("Line")], ["sk:rect", t("Rectangle")], ["sk:circle", t("Circle")], ["sk:arc", t("Arc")], ["sk:slot", t("Slot")], ["sk:trim", t("Trim")], ["sk:offset", t("Offset")], ["sk:fillet", t("Fillet")], ["sk:dim", t("Dimension")], ["sk:select", t("Select")]]
       : [["sketch", t("Sketch")], ["extrude", t("Extrude")], ["cut", t("Cut")], ["revolve", t("Revolve")], ["fillet", t("Fillet")], ["chamfer", t("Chamfer")], ["plane", t("Plane")]];
+    const vr = this.host.vp.getBoundingClientRect();
+    this.popBar("mc-sbar", t("Shortcut bar"), items, this.pointer ?? { x: vr.left + vr.width / 2, y: vr.top + vr.height / 2 }, false);
+  }
+
+  /**
+   * The context toolbar (FR-UI-026): after a click picks a face or an edge, the commands for it in a small
+   * bar by the cursor, as in SolidWorks. It fades as the pointer moves away and goes at 160 px.
+   */
+  showContextBar(at: { x: number; y: number }, other = false) {
+    this.hideShortcutBar();
+    if (this.mode.kind !== "none" || !this.store || !this.last) return;
+    const items: [string, string][] = [];
+    const names = this.last.faceNames;
+    const owner = (faceId: number) => {
+      const id = names[faceId]?.split(":")[0];
+      const f = id ? this.store!.feature(id) : undefined;
+      return f && !f.suppressed ? f : undefined;
+    };
+    const addOwner = (f: Feature | undefined) => {
+      if (!f) return;
+      if ("sketch" in f && typeof f.sketch === "string" && this.store!.feature(f.sketch)) items.push([`editsk:${f.sketch}`, t("Edit sketch")]);
+      items.push([`edit:${f.id}`, t("Edit feature")]);
+    };
+    // The entity under the click: with one entity already picked, Smart measure keeps that one as its selection.
+    // Select other (Alt+click) picks a face behind the one under the cursor: the bar follows that pick.
+    const sf = other ? this.host.selectedFace() : null;
+    const hit = other ? (sf != null ? { faceId: sf } : null) : this.host.edgeAt(at.x, at.y);
+    const edge = hit?.edge ?? null;
+    const fid = edge ? null : hit?.faceId ?? null;
+    this.ctxPick = { edge: edge ?? undefined, faceId: fid ?? undefined };
+    if (edge) {
+      items.push(["fillet", t("Fillet")], ["chamfer", t("Chamfer")]);
+      const a = owner(edge.faces[0]), b = owner(edge.faces[1]);
+      addOwner(a);
+      if (b && b !== a) addOwner(b);
+    } else if (fid != null) {
+      const face = this.host.viewer.parts[0]?.data.faces[fid];
+      if (face?.type === "plane") items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
+      addOwner(owner(fid));
+    }
+    const seen = new Set<string>();
+    const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
+    if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
+    else this.ctxPick = null;
+  }
+
+  /**
+   * The selection filter bar (FR-SEL-003, F5): toggles for faces, edges and vertices that limit what a click
+   * picks, in Smart measure and in the modelling commands alike. Closing the bar keeps the filter; Clear resets it.
+   */
+  toggleFilterBar(show = !document.getElementById("mc-filter")) {
+    document.getElementById("mc-filter")?.remove();
+    if (show) {
+      const bar = document.createElement("div");
+      bar.id = "mc-filter";
+      bar.className = "mc-filter";
+      bar.setAttribute("role", "toolbar");
+      bar.setAttribute("aria-label", t("Selection filter"));
+      $("#mc-tools").after(bar);
+      this.renderFilterBar();
+    }
+    this.renderBar();
+  }
+
+  private renderFilterBar() {
+    const bar = document.getElementById("mc-filter");
+    if (!bar) return;
+    const items: [keyof typeof SEL_FILTER, string][] = [["faces", t("Faces")], ["edges", t("Edges")], ["vertices", t("Vertices")]];
+    bar.innerHTML = `<span class="mc-filter-t">${esc(t("Selection filter"))}</span>`
+      + items.map(([k, l]) => `<button data-f="${k}" aria-pressed="${SEL_FILTER[k]}" class="${SEL_FILTER[k] ? "on" : ""}" title="${esc(l)}"><span aria-hidden="true">${ICON_SVG[`sel:${k}`]}</span>${esc(l)}</button>`).join("")
+      + `<button data-f="clear" title="${esc(t("Clear the filter: pick anything"))}">${esc(t("Clear"))}</button>`
+      + `<button data-f="close" class="x" title="${esc(t("Close (F5)"))}" aria-label="${esc(t("Close (F5)"))}">✕</button>`;
+    bar.querySelectorAll<HTMLButtonElement>("[data-f]").forEach(b => b.addEventListener("click", () => {
+      const f = b.dataset.f!;
+      if (f === "close") { this.toggleFilterBar(false); return; }
+      if (f === "clear") { SEL_FILTER.faces = SEL_FILTER.edges = SEL_FILTER.vertices = true; }
+      else {
+        const k = f as keyof typeof SEL_FILTER;
+        SEL_FILTER[k] = !SEL_FILTER[k];
+        // Never filter everything out.
+        if (!SEL_FILTER.faces && !SEL_FILTER.edges && !SEL_FILTER.vertices) SEL_FILTER[k] = true;
+      }
+      this.renderFilterBar();
+      this.renderBar();
+      bar.querySelector<HTMLElement>(`[data-f="${f}"]`)?.focus();
+    }));
+  }
+
+  /** What the context toolbar was opened for: its commands act on that, not on Smart measure's first pick. */
+  private ctxPick: { edge?: EdgeInfo; faceId?: number } | null = null;
+  private pickedEdge() { return this.ctxPick ? this.ctxPick.edge ?? null : this.host.selectedEdge?.() ?? null; }
+  private pickedFace() { return this.ctxPick ? this.ctxPick.faceId ?? null : this.host.selectedFace(); }
+
+  /** A small bar of icon buttons near a screen point; `fade` dims it as the pointer leaves. */
+  private popBar(id: string, label: string, items: [string, string][], at: { x: number; y: number }, fade: boolean) {
     const bar = document.createElement("div");
-    bar.id = "mc-sbar";
+    bar.id = id;
     bar.className = "mc-sbar";
     bar.setAttribute("role", "toolbar");
-    bar.setAttribute("aria-label", t("Shortcut bar"));
-    bar.innerHTML = items.map(([id, label]) => `<button data-c="${id}" title="${esc(label)}" aria-label="${esc(label)}"><span aria-hidden="true">${ICON_SVG[id] ?? ""}</span></button>`).join("");
+    bar.setAttribute("aria-label", label);
+    bar.innerHTML = items.map(([c, l]) => `<button data-c="${esc(c)}" title="${esc(l)}" aria-label="${esc(l)}"><span aria-hidden="true">${ICON_SVG[c.split(":")[0]] ?? ICON_SVG[c] ?? ""}</span></button>`).join("");
     document.body.appendChild(bar);
-    const vr = this.host.vp.getBoundingClientRect();
-    const at = this.pointer ?? { x: vr.left + vr.width / 2, y: vr.top + vr.height / 2 };
     const r = bar.getBoundingClientRect();
-    bar.style.left = `${Math.max(4, Math.min(at.x - r.width / 2, innerWidth - r.width - 4))}px`;
+    const dx0 = fade ? 14 : -r.width / 2;
+    bar.style.left = `${Math.max(4, Math.min(at.x + dx0, innerWidth - r.width - 4))}px`;
     bar.style.top = `${Math.max(4, Math.min(at.y - r.height - 12, innerHeight - r.height - 4))}px`;
     const btns = [...bar.querySelectorAll<HTMLButtonElement>("button")];
-    btns.forEach(b => b.addEventListener("click", () => { this.hideShortcutBar(); this.command(b.dataset.c!); }));
+    btns.forEach(b => b.addEventListener("click", () => { this.hideShortcutBar(true); this.command(b.dataset.c!); this.ctxPick = null; }));
     bar.addEventListener("keydown", e => {
       const k = btns.indexOf(document.activeElement as HTMLButtonElement);
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); btns[(k + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length].focus(); }
@@ -1423,20 +1525,26 @@ export class ModelController {
     const away = (e: PointerEvent) => {
       const b = bar.getBoundingClientRect();
       const dx = Math.max(b.left - e.clientX, 0, e.clientX - b.right), dy = Math.max(b.top - e.clientY, 0, e.clientY - b.bottom);
-      if (Math.hypot(dx, dy) > 160) this.hideShortcutBar();
+      const d = Math.hypot(dx, dy);
+      if (d > 160) this.hideShortcutBar();
+      else if (fade) bar.style.opacity = String(Math.max(0.15, 1 - Math.max(0, d - 20) / 140));
     };
     const outside = (e: PointerEvent) => { if (!bar.contains(e.target as Node)) this.hideShortcutBar(); };
     window.addEventListener("pointermove", away);
     window.addEventListener("pointerdown", outside, true);
     this.sbarOff = () => { window.removeEventListener("pointermove", away); window.removeEventListener("pointerdown", outside, true); };
-    btns[0]?.focus({ preventScroll: true });
+    // The S bar takes the focus for the keyboard; the context bar must not steal it from the view.
+    if (!fade) btns[0]?.focus({ preventScroll: true });
   }
 
   private sbarOff: (() => void) | null = null;
-  hideShortcutBar() {
+  /** Removes the S bar and the context bar; `keepPick` keeps what the context bar was for (its command runs next). */
+  hideShortcutBar(keepPick = false) {
+    if (!keepPick) this.ctxPick = null;
     this.sbarOff?.();
     this.sbarOff = null;
     document.getElementById("mc-sbar")?.remove();
+    document.getElementById("mc-cbar")?.remove();
   }
 
   /** The tool each sketch flyout shows (the last one picked from it). */
@@ -1454,6 +1562,14 @@ export class ModelController {
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
       case "step": void this.exportStep(); break;
+      case "filter": this.toggleFilterBar(); break;
+      case "normal": {
+        const f = this.ctxPick?.faceId != null ? this.host.viewer.parts[0]?.data.faces[this.ctxPick.faceId] : undefined;
+        this.host.normalTo?.(f?.type === "plane" ? f.normal : undefined);
+        break;
+      }
+      default:
+        if ((c.startsWith("edit:") || c.startsWith("editsk:")) && this.store?.feature(c.slice(c.indexOf(":") + 1))) this.editFeature(c.slice(c.indexOf(":") + 1));
     }
   }
 
@@ -2009,6 +2125,13 @@ const ICON_SVG: Record<string, string> = {
   save: S('<path d="M2.5 2.5h9l2 2v9h-11z"/><path d="M5 2.5v3.5h5V2.5M5 13.5V9h6v4.5"/>'),
   step: S('<path d="M8 10V2M5 5l3-3 3 3M3 9.5v4h10v-4"/>'),
   exit: S('<path d="m3 8.5 3 3 7-7"/>'),
+  normal: S('<path d="M1.5 12 4.5 7h10l-3 5z"/><path d="M8 9.5V1.5M6 3.5l2-2 2 2"/>'),
+  edit: S('<path d="M2.5 2.5h7v4"/><path d="M2.5 2.5v11h5"/><path d="m8.5 13.5.5-2.5 4.5-4.5 2 2-4.5 4.5z"/>'),
+  editsk: S('<path d="M2 12.5h7M2 12.5 6 5"/><path d="m9 13.5.5-2.5 4-4 2 2-4 4z"/>'),
+  filter: S('<path d="M2 3h12l-4.5 5.5V13l-3 1.5v-6z"/>'),
+  "sel:faces": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" fill="currentColor" fill-opacity=".35"/>'),
+  "sel:edges": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><path d="M8 8.5v6" stroke-width="2.4"/>'),
+  "sel:vertices": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><circle cx="8" cy="8.5" r="2" fill="currentColor"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),
   "sk:select": S('<path d="M3 2l9 5-4 1.2L6.5 13z"/>'),
   "sk:line": S('<path d="M3 13 13 3"/><circle cx="3" cy="13" r="1.3" fill="currentColor"/><circle cx="13" cy="3" r="1.3" fill="currentColor"/>'),

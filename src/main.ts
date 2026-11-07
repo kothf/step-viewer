@@ -8,7 +8,7 @@ import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
-import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, type Snap } from "./tools/Snapper";
+import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
@@ -57,6 +57,7 @@ const modeller = new ModelController({
   vp: vpEl,
   show: (data, name, first) => showPartModel(data, name, first),
   faceAt: (x, y) => {
+    if (!SEL_FILTER.faces) return null;
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
@@ -66,6 +67,7 @@ const modeller = new ModelController({
     const s = snapper.pick(x - r.left, y - r.top);
     if (s?.edge) return { edge: s.edge };
     if (s?.face) return { faceId: s.face.id };
+    if (!SEL_FILTER.faces) return null;
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { faceId: f.face.id } : null;
   },
@@ -78,6 +80,7 @@ const modeller = new ModelController({
     $<HTMLInputElement>("#density").value = String(m.density);
     validateDensity();
   },
+  normalTo: n => normalTo(n),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
@@ -1382,8 +1385,21 @@ canvas.addEventListener("pointerup", e => {
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
+  if (e.altKey && state.tool === "select") { selectOther(e.clientX - r.left, e.clientY - r.top); return; }
   handlePick(snapper.pick(e.clientX - r.left, e.clientY - r.top));
 });
+/** Select other (FR-SEL-004): Alt+click picks the next face behind, cycling at the same spot. */
+let otherAt: { x: number; y: number; i: number } | null = null;
+function selectOther(x: number, y: number) {
+  const faces = snapper.facesUnder(x, y);
+  if (!faces.length) { handlePick(null); return; }
+  const same = otherAt && Math.hypot(otherAt.x - x, otherAt.y - y) <= 4;
+  const i = same ? (otherAt!.i + 1) % faces.length : Math.min(1, faces.length - 1);
+  otherAt = { x, y, i };
+  handlePick(null);
+  handlePick(faces[i]);
+  toast(t("Face {i} of {n} under the cursor (Alt+click for the next)", { i: i + 1, n: faces.length }));
+}
 canvas.addEventListener("pointermove", e => {
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   if (moveQueued || !viewer.parts.length) return;
@@ -1570,10 +1586,11 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
 }));
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;
-function normalTo() {
+function normalTo(given?: [number, number, number]) {
   let n: THREE.Vector3 | null = null;
   const sn = modeller.sketchNormal();
-  if (sn) n = new THREE.Vector3(...sn);
+  if (given) n = new THREE.Vector3(...given);
+  else if (sn) n = new THREE.Vector3(...sn);
   else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = new THREE.Vector3(...state.selection.face.normal);
   if (!n) { toast(t("Select a flat face first (or open a sketch).")); return; }
   const cam = viewer.camera.position.clone().sub(viewer.controls.target).normalize();

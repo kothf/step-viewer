@@ -1981,6 +1981,58 @@ try {
     await mp.keyboard.press("Escape");
     const sbarGone = await mp.evaluate(() => !document.querySelector("#mc-sbar"));
     check(sbar?.n === 7 && /^Sketch\|Extrude/.test(sbar.labels) && sbarGone, `model 1.21: S shows the shortcut bar with the part commands, Esc hides it (${JSON.stringify(sbar)})`);
+    // 1.22: the context toolbar after a click on a face or an edge.
+    const cbar = () => mp.evaluate(() => { const b = document.querySelector("#mc-cbar"); return b ? [...b.querySelectorAll("button")].map(x => x.getAttribute("aria-label")).join("|") : null; });
+    const topF = await world([20, 10, 20]);
+    await mp.mouse.click(topF[0], topF[1]);
+    await mp.waitForTimeout(150);
+    const faceBar = await cbar();
+    await mp.click('#mc-cbar button[data-c="normal"]');
+    await mp.waitForTimeout(700);
+    const camDir = await mp.evaluate(() => { const v = window.__sv.viewer; const d = v.camera.position.clone().sub(v.controls.target).normalize(); return [d.x, d.y, d.z].map(x => Math.round(x * 100) / 100); });
+    const cbarGone = await mp.evaluate(() => !document.querySelector("#mc-cbar"));
+    check(faceBar === "Sketch|Normal to|Edit sketch|Edit feature" && camDir.join() === "0,0,1" && cbarGone, `model 1.22: a flat face shows the context toolbar; Normal to turns the view (${faceBar}, ${camDir})`);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const edgeP = await world([0, -30, 20]);
+    await mp.mouse.click(edgeP[0], edgeP[1]);
+    await mp.waitForTimeout(150);
+    const edgeBar = await cbar();
+    await mp.click('#mc-cbar button[data-c="fillet"]');
+    await idle();
+    const filletMode = await mp.evaluate(() => { const m = window.__sv.model.mode(); return m.kind === "feature" ? `${m.draft.type}:${m.draft.edges?.length ?? 0}` : m.kind; });
+    await mp.click("#mc-cancel");
+    await idle();
+    check(/^Fillet\|Chamfer\|Edit sketch\|Edit feature/.test(edgeBar ?? "") && filletMode === "fillet:1", `model 1.22: an edge shows Fillet/Chamfer in the context toolbar, and Fillet starts with that edge (${edgeBar}, ${filletMode})`);
+    // 1.22: selection filter (F5): edges only, so a click inside a face picks nothing and an edge still shows its bar.
+    await mp.mouse.move(topF[0], topF[1]);
+    await mp.keyboard.press("F5");
+    const filterBar = await mp.evaluate(() => !!document.querySelector("#mc-filter"));
+    await mp.click('#mc-filter [data-f="faces"]');
+    await mp.click('#mc-filter [data-f="vertices"]');
+    const fState = await mp.evaluate(() => [...document.querySelectorAll("#mc-filter [data-f]")].filter(b => b.classList.contains("on")).map(b => b.dataset.f).join());
+    await mp.mouse.click(topF[0], topF[1]);
+    await mp.waitForTimeout(150);
+    const faceFiltered = await cbar();
+    await mp.keyboard.press("Escape");
+    await mp.mouse.click(edgeP[0], edgeP[1]);
+    await mp.waitForTimeout(150);
+    const edgeStill = await cbar();
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-filter [data-f="clear"]');
+    await mp.keyboard.press("F5");
+    const filterOff = await mp.evaluate(() => !document.querySelector("#mc-filter") && [...document.querySelectorAll("#mc-tools [data-c=filter]")].every(b => !b.classList.contains("on")));
+    check(filterBar && fState === "edges" && faceFiltered === null && /^Fillet/.test(edgeStill ?? "") && filterOff, `model 1.22: the selection filter limits picks to edges (${fState}, face → ${faceFiltered}, edge → ${edgeStill}, ${filterOff})`);
+    // 1.22: Select other: Alt+click on the top face picks the back face behind it (the ray leaves through y = 30), and the context bar follows.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const topO = await world([20, 10, 20]);
+    await mp.keyboard.down("Alt");
+    await mp.mouse.click(topO[0], topO[1]);
+    await mp.keyboard.up("Alt");
+    await mp.waitForTimeout(150);
+    const other = await mp.evaluate(() => { const s = window.__sv.state?.selection; return s?.face ? s.face.normal.map(v => Math.round(v)).join() : null; });
+    const otherBar = await cbar();
+    await mp.keyboard.press("Escape");
+    check(other === "0,1,0" && /^Sketch\|Normal to/.test(otherBar ?? ""), `model 1.22: Alt+click selects the face behind (normal ${other}, bar ${otherBar})`);
     // Box selection in a sketch: left to right takes only what is fully inside.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s9", type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1", -20, -10), P("q2", 0, -10), L("m1", "q1", "q2"), P("q3", -20, 10), P("q4", 40, 10), L("m2", "q3", "q4")] }); }); });
     await idle();
