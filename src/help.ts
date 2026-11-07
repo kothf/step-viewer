@@ -234,7 +234,8 @@ const EN: Tab[] = [
   <li>The view shows the result while you type; ✓ or <kbd>Enter</kbd> keeps it, ✕ or <kbd>Esc</kbd> cancels.</li>
   <li>Double-click a feature in the tree to edit it. Later features follow the faces and edges they were built on. A row's buttons suppress or delete it; deleting asks before taking dependent features too.</li>
   <li>Right-click a row (or Shift+F10) for more: edit, rename (F2), suppress, roll back. Drag the blue <b>rollback bar</b> (or focus it and use the arrow keys) to look at the part at an earlier step; new features go in at the bar.</li>
-  <li>Double-click the part name for its properties: part number, description, revision, material and colour. The mass panel then uses the material and lists the principal moments of inertia.</li>
+  <li>Double-click the part name for its properties: part number, description, revision, material and colour. The mass panel then uses the material and lists the principal moments of inertia. <b>Override mass properties</b> enters the real mass and centre of mass of a purchased part.</li>
+  <li><b>Snapshots</b>: every save keeps a snapshot of the part in this browser (the last 20). Open them from the ▾ next to Save to restore one or open it as a copy.</li>
 </ul>
 <h4>Files</h4>
 <ul>
@@ -442,7 +443,8 @@ const RU: Tab[] = [
   <li>Вид показывает результат во время ввода; ✓ или <kbd>Enter</kbd> применяет, ✕ или <kbd>Esc</kbd> отменяет.</li>
   <li>Двойной щелчок по элементу в дереве открывает его для правки. Следующие элементы следуют за гранями и рёбрами, на которых построены. Кнопки строки гасят или удаляют элемент; удаление спрашивает, прежде чем удалить зависимые элементы.</li>
   <li>Правый щелчок по строке (или Shift+F10) открывает меню: изменить, переименовать (F2), погасить, откатить. Перетащите синюю <b>полосу отката</b> (или выделите её и нажимайте стрелки), чтобы увидеть деталь на более раннем шаге; новые элементы вставляются у полосы.</li>
-  <li>Двойной щелчок по имени детали открывает её свойства: обозначение, описание, ревизию, материал и цвет. Панель массы берёт этот материал и показывает главные моменты инерции.</li>
+  <li>Двойной щелчок по имени детали открывает её свойства: обозначение, описание, ревизию, материал и цвет. Панель массы берёт этот материал и показывает главные моменты инерции. <b>Задать массовые характеристики вручную</b> позволяет ввести реальные массу и центр масс покупной детали.</li>
+  <li><b>Снимки</b>: каждое сохранение оставляет снимок детали в этом браузере (последние 20). Откройте их через ▾ рядом с «Сохранить», чтобы восстановить снимок или открыть его как копию.</li>
 </ul>
 <h4>Файлы</h4>
 <ul>

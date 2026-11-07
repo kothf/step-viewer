@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.44.0] - 2026-11-07
+
+### Added
+- **Snapshots** (FR-STO-005). Every save of a part outside a vault also keeps a snapshot in this browser, up to the last 20 per part. The new ▾ next to Save opens **Save as…** and **Snapshots…**. Snapshots… lists them by time and size, with **Restore**, which puts the part back to that save as one undoable step, and **Open as copy**. A vaulted part points you to its History instead.
+
+## [1.43.0] - 2026-11-07
+
+### Added
+- **Mass property override** (FR-MAT-004). Part properties has a new "Override mass properties" option for purchased or simplified parts. Enter the real mass in kg and, if you like, the centre of mass in mm. Mass properties then shows those values marked "(overridden)", and the centre-of-mass marker moves to the entered point. Any value left empty stays calculated. The override is saved in the part file.
+
 ## [1.42.0] - 2026-11-07
 
 ### Added
@@ -461,7 +471,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.42.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.44.0...HEAD
+[1.44.0]: https://github.com/kothf/step-viewer/compare/v1.43.0...v1.44.0
+[1.43.0]: https://github.com/kothf/step-viewer/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/kothf/step-viewer/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/kothf/step-viewer/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/kothf/step-viewer/compare/v1.39.0...v1.40.0

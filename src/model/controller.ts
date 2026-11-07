@@ -16,6 +16,7 @@ import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, 
 import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
+import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
@@ -41,7 +42,7 @@ import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
-import { confirmModal, toast } from "../ui";
+import { confirmModal, toast, trapFocus } from "../ui";
 import { onLangChange, t } from "../i18n";
 
 export interface ModelHost {
@@ -601,7 +602,7 @@ export class ModelController {
     if (m.kind === "props") {
       const dr = m.draft;
       this.mode = { kind: "none" };
-      this.store!.change("Properties", d => { d.name = dr.name; d.props = dr.props; d.material = dr.material; d.color = dr.color; if (!dr.material) delete d.material; if (!dr.color) delete d.color; });
+      this.store!.change("Properties", d => { d.name = dr.name; d.props = dr.props; d.material = dr.material; d.color = dr.color; if (!dr.material) delete d.material; if (!dr.color) delete d.color; if (dr.massOverride) d.massOverride = dr.massOverride; else delete d.massOverride; });
       this.renderAll();
       void this.rebuild();
       return;
@@ -911,7 +912,61 @@ export class ModelController {
     }
     this.store.markSaved();
     journalDrop(this.doc.id);
+    // Automatic snapshot of every save outside a vault (FR-STO-005).
+    void snapshotSave(this.doc.id, bytes);
     toast(t("Saved {name}", { name: this.fileName }), "success");
+  }
+
+  /** Snapshots of the open part (FR-STO-005): restore one, or open it as a copy. */
+  async showSnapshots() {
+    if (!this.store) return;
+    if (this.vault) { toast(t("This part is in a vault: its versions are in the Vault tab's History.")); return; }
+    const id = this.doc.id;
+    const list = await snapshotList(id);
+    let d = document.getElementById("mc-snaps") as HTMLDialogElement | null;
+    if (!d) {
+      d = document.createElement("dialog");
+      d.id = "mc-snaps";
+      d.className = "modal v-dlg";
+      d.setAttribute("aria-labelledby", "mc-snaps-title");
+      document.body.appendChild(d);
+      trapFocus(d, () => d!.open);
+    }
+    const dlg = d;
+    const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+    dlg.innerHTML = `<h3 id="mc-snaps-title">${esc(t("Snapshots"))}</h3>`
+      + `<p class="muted">${esc(t("Every save keeps a snapshot of the part in this browser (the last {n}).", { n: SNAPSHOT_KEEP }))}</p>`
+      + (list.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Saved"))}</th><th>${esc(t("Size"))}</th><th></th></tr></thead><tbody>${list.map((x, i) => `<tr><td>${esc(x.at.toLocaleString())}</td><td>${kb(x.size)}</td><td class="v-acts"><button class="btn small" data-snap-restore="${i}">${esc(t("Restore"))}</button><button class="btn small" data-snap-copy="${i}">${esc(t("Open as copy"))}</button></td></tr>`).join("")}</tbody></table></div>`
+        : `<p>${esc(t("No snapshots yet: they are kept each time you save the part."))}</p>`)
+      + `<div class="row end"><button class="btn" data-a="close">${esc(t("Close"))}</button></div>`;
+    const read = async (i: number) => {
+      const buf = await snapshotRead(id, list[i].name);
+      if (!buf) { toast(t("The snapshot could not be read."), true); return null; }
+      try { return await unpackPart(buf); } catch (err) { toast(t("Could not open {name}: {err}", { name: t("Snapshot"), err: t((err as Error).message) }), true); return null; }
+    };
+    dlg.querySelector("[data-a=close]")!.addEventListener("click", () => dlg.close());
+    dlg.querySelectorAll<HTMLElement>("[data-snap-restore]").forEach(b => b.addEventListener("click", async () => {
+      const snap = await read(+b.dataset.snapRestore!);
+      if (!snap || !this.store) return;
+      dlg.close();
+      this.exitMode(false);
+      // One undoable step: the whole document goes back to the snapshot.
+      this.store.change("Restore snapshot", doc => {
+        const keep = doc.id;
+        for (const k of Object.keys(doc)) delete (doc as unknown as Record<string, unknown>)[k];
+        Object.assign(doc, snap, { id: keep });
+      });
+      toast(t("Restored the snapshot of {time}", { time: list[+b.dataset.snapRestore!].at.toLocaleString() }), "success");
+    }));
+    dlg.querySelectorAll<HTMLElement>("[data-snap-copy]").forEach(b => b.addEventListener("click", async () => {
+      const snap = await read(+b.dataset.snapCopy!);
+      if (!snap) return;
+      dlg.close();
+      snap.id = uid("d_");
+      this.load(snap, `${snap.name} (copy)${PART_EXT}`, null);
+    }));
+    dlg.showModal();
+    dlg.querySelector<HTMLElement>("button")?.focus();
   }
 
   async exportStep() {
@@ -2146,7 +2201,7 @@ export class ModelController {
         + `</div><div class="mc-sep"></div><div class="mc-g">`
         + btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, busy || !this.store.canUndo) + btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, busy || !this.store.canRedo)
         + `</div><div class="mc-sep"></div><div class="mc-g">`
-        + btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)")) + btn("step", t("STEP"), t("Export the body as STEP"))
+        + `<span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP"))
         + `</div>`;
     }
     $("#mc-tools").innerHTML = html;
@@ -2157,6 +2212,12 @@ export class ModelController {
         const r = b.getBoundingClientRect();
         this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="pattern"]')?.focus());
+        return;
+      }
+      if (b.dataset.fly === "save") {
+        const r = b.getBoundingClientRect();
+        this.showMenu([[t("Save as…"), () => void this.save(true)], [t("Snapshots…"), () => void this.showSnapshots()]], r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="save"]')?.focus());
         return;
       }
       if (b.dataset.fly === "plane" && mm.kind !== "sketch") {
@@ -3236,6 +3297,11 @@ export class ModelController {
       + `<label class="pm-field"><span>${esc(t("Material"))}</span><select data-p="material"><option value="-2"${mi === -2 ? " selected" : ""}>${esc(t("Not specified"))}</option>${MATERIALS.map((x, i) => `<option value="${i}"${mi === i ? " selected" : ""}>${esc(t(x.name))} (${x.density})</option>`).join("")}<option value="-1"${mi === -1 ? " selected" : ""}>${esc(t("Custom…"))}</option></select></label>`
       + (mi === -1 ? text("matName", t("Material name"), d.material?.name) + `<label class="pm-field"><span>${esc(t("Density"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="density" value="${d.material?.density ?? ""}" /><span class="muted">g/cm³</span></span></label>` : "")
       + `<label class="pm-field"><span>${esc(t("Colour"))}</span><input type="color" data-p="color" value="${hex}" /></label>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Mass properties"))}</legend><label class="chk pm-chk"><input type="checkbox" data-p="ovr"${d.massOverride ? " checked" : ""} />${esc(t("Override mass properties"))}</label>`
+      + (d.massOverride ? `<label class="pm-field"><span>${esc(t("Mass"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrMass" value="${d.massOverride.mass ?? ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">kg</span></span></label>`
+        + (["x", "y", "z"] as const).map((a, i) => `<label class="pm-field"><span>${esc(t("Centre of mass"))} ${a.toUpperCase()}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrCom" data-i="${i}" value="${d.massOverride!.com ? trimNum(d.massOverride!.com[i], 6) : ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">mm</span></span></label>`).join("")
+        + `<p class="pm-help muted">${esc(t("For purchased parts: the entered values replace the calculated ones in Mass properties. Leave the centre of mass empty to keep it calculated."))}</p>` : "")
+      + `</fieldset>`
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("OK"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
     pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => el.addEventListener("change", () => {
       const k = el.dataset.p!, v = el.value;
@@ -3255,6 +3321,22 @@ export class ModelController {
       } else if (k === "color") {
         d.color = [1, 3, 5].map(i => parseInt(v.slice(i, i + 2), 16) / 255) as V3;
         void this.rebuild();
+      } else if (k === "ovr") {
+        if ((el as HTMLInputElement).checked) d.massOverride = {}; else delete d.massOverride;
+        this.renderPanel();
+      } else if (k === "ovrMass" || k === "ovrCom") {
+        const o = d.massOverride ??= {};
+        const x = parseFloat(v.replace(",", "."));
+        const blank = v.trim() === "";
+        if (!blank && (!isFinite(x) || (k === "ovrMass" && !(x > 0)))) { el.setAttribute("aria-invalid", "true"); toast(t(k === "ovrMass" ? "The mass must be a number greater than 0 kg." : "Enter a number in mm."), true); return; }
+        el.removeAttribute("aria-invalid");
+        if (k === "ovrMass") { if (blank) delete o.mass; else o.mass = x; }
+        else {
+          // The centre of mass is all three or none.
+          const ins = [...pm.querySelectorAll<HTMLInputElement>('[data-p="ovrCom"]')].map(i => i.value.trim());
+          if (ins.every(s => s === "")) delete o.com;
+          else if (ins.every(s => isFinite(parseFloat(s.replace(",", "."))))) o.com = ins.map(s => parseFloat(s.replace(",", "."))) as V3;
+        }
       } else {
         const p = d.props as Record<string, string | undefined>;
         if (v.trim()) p[k] = v.trim(); else delete p[k];
@@ -3369,6 +3451,9 @@ export class ModelController {
 
   /** Exact body properties from the last rebuild (density 1). */
   bodyProps() { return this.last?.props ?? null; }
+
+  /** The part's mass property override (FR-MAT-004), if any. */
+  massOverride() { return this.store?.doc.massOverride ?? null; }
 
   /** The open sketch's normal (Normal to). */
   sketchNormal(): V3 | null { const m = this.mode; return m.kind === "sketch" ? m.editor.frame.n : null; }

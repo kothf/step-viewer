@@ -333,6 +333,8 @@ export interface PartDoc {
   units: { length: "mm" | "cm" | "m" | "in" | "ft"; decimals: number };
   props: PartProps;
   material?: { name: string; density: number };
+  /** Mass property override (FR-MAT-004), e.g. for a purchased part: mass in kg, centre of mass in mm; each absent one is calculated. */
+  massOverride?: { mass?: number; com?: V3 };
   color?: V3;
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
