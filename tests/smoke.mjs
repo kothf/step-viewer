@@ -2363,6 +2363,23 @@ try {
     await idle();
     const stTh = await lastSt(), vTh1 = await vol();
     check(th.size === "M10" && th.internal === true && th.dia === 10 && th.drawn && stTh === "thread:ok" && Math.abs(vTh1 - vTh0) < 1e-6, `model 1.32: cosmetic thread on a Ø8 hole (${JSON.stringify(th)}, ${stTh}, ${(vTh1 - vTh0).toFixed(6)})`);
+    // 1.33: hole favourites (FR-FT-056): an M8 counterbore saved under a name, then applied to a simple hole.
+    await mp.click('#mc-tools [data-c="hole"]');
+    await mp.waitForSelector('#mc-pm select[data-k="kind"]');
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "cbore");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M8");
+    await idle();
+    await mp.fill('#mc-pm input[data-ui="favName"]', "M8 cbore");
+    await mp.click('#mc-pm [data-ui="favSave"]');
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "simple");
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M4");
+    await idle();
+    const favIdx = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-ui="fav"] option')].find(o => o.textContent === "M8 cbore")?.value);
+    await mp.selectOption('#mc-pm select[data-ui="fav"]', favIdx ?? "");
+    const favApplied = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { kind: d.kind, size: d.size, cb: d.cbDia?.v }; });
+    await mp.keyboard.press("Escape");
+    check(favIdx != null && favApplied.kind === "cbore" && favApplied.size === "M8" && favApplied.cb === 15, `model 1.33: a saved hole favourite applies type, size and counterbore (${favIdx}, ${JSON.stringify(favApplied)})`);
     await ctx.close();
   }
 

@@ -24,6 +24,13 @@ import type { FeatureFolder, ThreadFeature,
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, holeSize, type HoleSize } from "./holes";
 
+/** What a hole favourite keeps: the definition, not the placement. */
+const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch"] as const;
+interface HoleFav { name: string; def: Partial<HoleFeature> }
+function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
+function saveFavs(list: HoleFav[]) { try { localStorage.setItem("mc:holeFavs", JSON.stringify(list)); } catch { /* storage blocked: kept for this page only */ } }
+function holeTitle(f: HoleFeature) { return `${f.size ?? `Ø${trimNum(f.diameter.v, 2)}`} ${f.kind}`; }
+
 /** Nominal (major) diameter of an ISO metric size: "M6" → 6. */
 const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
@@ -2511,7 +2518,11 @@ export class ModelController {
       title = t("Hole");
       const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const hbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
-      body = group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["cbore", t("Counterbore")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")]], f.kind)
+      const favs = loadFavs();
+      body = group(t("Favourites"), `<label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
+          + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
+          + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div>`)
+        + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["cbore", t("Counterbore")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")]], f.kind)
           + sel("size", t("Size"), [["", t("Custom")], ...ISO_METRIC.map(h => [h.size, h.size] as [string, string])], f.size ?? "")
           + (f.kind !== "tapped" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
         + group(t("Hole specification"), numField("diameter", f.kind === "tapped" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
@@ -2714,6 +2725,32 @@ export class ModelController {
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { if (m.kind === "feature") { m.focus = b.dataset.focus as Focus; this.renderPanel(); this.drawDecor(); } }));
+    // Hole favourites (FR-FT-056): a saved definition (type, size, diameters, end) applied in one go; kept in this browser.
+    if (f.type === "hole") {
+      const favSel = pm.querySelector<HTMLSelectElement>("[data-ui=fav]");
+      favSel?.addEventListener("change", () => {
+        const fav = loadFavs()[+favSel.value];
+        if (!fav || favSel.value === "") return;
+        Object.assign(f, structuredClone(fav.def));
+        for (const k of HOLE_DEF_KEYS) if (!(k in fav.def)) delete (f as unknown as Record<string, unknown>)[k];
+        this.draftChanged();
+      });
+      pm.querySelector("[data-ui=favSave]")?.addEventListener("click", () => {
+        const name = pm.querySelector<HTMLInputElement>("[data-ui=favName]")?.value ?? "";
+        if (!name.trim()) { toast(t("Type a name for the favourite."), true); return; }
+        const def: Record<string, unknown> = {};
+        for (const k of HOLE_DEF_KEYS) if ((f as unknown as Record<string, unknown>)[k] !== undefined) def[k] = structuredClone((f as unknown as Record<string, unknown>)[k]);
+        saveFavs([...loadFavs().filter(x => x.name !== name.trim()), { name: name.trim(), def: def as Partial<HoleFeature> }]);
+        toast(t("Saved favourite {name}", { name: name.trim() }));
+        this.renderPanel();
+      });
+      pm.querySelector("[data-ui=favDel]")?.addEventListener("click", () => {
+        const i = favSel?.value ?? "";
+        if (i === "") { toast(t("Choose the favourite to delete first.")); return; }
+        saveFavs(loadFavs().filter((_x, k) => String(k) !== i));
+        this.renderPanel();
+      });
+    }
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft") { f.faces = []; this.draftChanged(); } });
     pm.querySelectorAll<HTMLInputElement>("input[data-int]").forEach(inp => {

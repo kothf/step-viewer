@@ -1202,4 +1202,11 @@ export const RU: Record<string, string> = {
   "Up to the end of the cylinder": "До конца цилиндра",
   "Pitch {p} mm": "Шаг {p} мм",
   "Thread": "Резьба",
+  "Favourites": "Избранное",
+  "Favourite": "Избранное отверстие",
+  "Save as favourite": "Сохранить в избранное",
+  "Delete favourite": "Удалить из избранного",
+  "Saved favourite {name}": "Сохранено в избранное: {name}",
+  "Choose the favourite to delete first.": "Сначала выберите, что удалить из избранного.",
+  "Type a name for the favourite.": "Введите имя для избранного.",
 };

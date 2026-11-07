@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-11-07
+
+### Added
+- **Hole favourites** (FR-FT-056): in the Hole panel, Save as favourite keeps the current definition under a name. That covers the type, size, fit, diameters, counterbore or countersink, thread depth and end condition. Choosing a favourite applies it in one step, and Delete favourite removes it. Favourites are kept in this browser and work across parts.
+
 ## [1.32.0] - 2026-11-07
 
 ### Added
@@ -393,7 +398,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.32.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.33.0...HEAD
+[1.33.0]: https://github.com/kothf/step-viewer/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/kothf/step-viewer/compare/v1.31.0...v1.32.0
 [1.31.0]: https://github.com/kothf/step-viewer/compare/v1.30.0...v1.31.0
 [1.30.0]: https://github.com/kothf/step-viewer/compare/v1.29.0...v1.30.0
