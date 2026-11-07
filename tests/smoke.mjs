@@ -2236,6 +2236,46 @@ try {
     await idle();
     const vDraftEx = await vol(), stDraftEx = await lastSt();
     check(thinUi.mode === "inside" && thinUi.t === "2" && stThin === "extrude:ok" && vThin - vBeforeDxf > 1000 && vThin - vBeforeDxf < gasket * 10 - 1000 && stDraftEx === "extrude:ok" && vDraftEx - vBeforeDxf < gasket * 10 - 100 && vDraftEx - vBeforeDxf > gasket * 10 * 0.8, `model 1.28: thin wall and draft on an extrude (${JSON.stringify(thinUi)}, ${stThin}, ${(vThin - vBeforeDxf).toFixed(0)}, ${stDraftEx}, ${(vDraftEx - vBeforeDxf).toFixed(0)} of ${(gasket * 10).toFixed(0)})`);
+    // 1.29: sketch patterns on Top: a Ø3 hole at (0,18) four times round the origin, one at (−35,−20) three times 10 mm apart in X; cut through all.
+    const vBeforePat = await vol();
+    await mp.click('[data-c="sketch"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await idle();
+    await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      e.sk.ents.push({ id: "pc1", t: "point", x: 0, y: 18 }, { id: "pcc", t: "circle", c: "pc1", r: 1.5 });
+      e.selection = new Set(["pcc"]);
+    });
+    await mp.click('#mc-tools [data-c="skcpat"]');
+    const patTitle = await mp.evaluate(() => document.querySelector("#mc-pm h3")?.textContent);
+    await mp.fill('#mc-pm input[data-p="n"]', "4");
+    await mp.press('#mc-pm input[data-p="n"]', "Tab");
+    await mp.click('#mc-pm [data-a="pok"]');
+    await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      e.sk.ents.push({ id: "pl1", t: "point", x: -35, y: -20 }, { id: "plc", t: "circle", c: "pl1", r: 1.5 });
+      e.selection = new Set(["plc"]);
+    });
+    await mp.click('#mc-tools [data-c="sklpat"]');
+    await mp.fill('#mc-pm input[data-p="d"]', "10");
+    await mp.press('#mc-pm input[data-p="d"]', "Tab");
+    await mp.click('#mc-pm [data-a="pok"]');
+    const pat = await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      const cs = e.sk.ents.filter(x => x.t === "circle" && x.r === 1.5).map(x => { const p = e.sk.ents.find(q => q.id === x.c); return `${Math.round(p.x)},${Math.round(p.y)}`; }).sort();
+      return { cs: cs.join(" "), eq: e.sk.rels.filter(r => r.t === "equal").length, st: e.info.status };
+    });
+    await mp.click("#mc-ok");
+    await idle();
+    await mp.click('#mc-tools [data-c="cut"]');
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "through");
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vPat = await vol(), stPat = await lastSt();
+    const holes7 = 7 * Math.PI * 2.25 * 10;
+    check(patTitle === "Circular sketch pattern" && pat.cs === "-15,-20 -18,0 -25,-20 -35,-20 0,-18 0,18 18,0" && pat.eq === 5 && pat.st === "ok" && stPat === "extrude:ok" && vBeforePat - vPat > holes7 - 1, `model 1.29: circular and linear sketch patterns, cut through the gasket (${patTitle}, ${pat.cs}, ${pat.eq} equal, ${pat.st}, ${stPat}, ${(vBeforePat - vPat).toFixed(1)} ≥ ${holes7.toFixed(1)})`);
     await ctx.close();
   }
 

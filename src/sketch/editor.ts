@@ -16,6 +16,17 @@ import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
 
+function arcPts(c: V2, r: number, a0: number, a1: number, n = 48): V2[] {
+  const out: V2[] = [];
+  for (let i = 0; i <= n; i++) { const tt = a0 + ((a1 - a0) * i) / n; out.push([c[0] + r * Math.cos(tt), c[1] + r * Math.sin(tt)]); }
+  return out;
+}
+
+/** Sketch pattern settings (FR-SK-038): spacing in mm, angles in radians. */
+export type SketchPattern =
+  | { kind: "linear"; n: number; d: number; angle: number; n2: number; d2: number; angle2: number }
+  | { kind: "circular"; n: number; total: number; c: V2; centre: string | null; equal: boolean };
+
 export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
 
 export interface SketchHost {
@@ -1147,6 +1158,127 @@ export class SketchEditor {
     return true;
   }
 
+  // ---------- linear and circular sketch patterns (FR-SK-038) ----------
+
+  /** The pattern being set up in the panel (null when none); the preview follows its values live. */
+  pattern: SketchPattern | null = null;
+
+  /** Seed entities of a pattern: the selection without a lone centre point. */
+  private patternSeed(): { items: SkEnt[]; centre: string | null } {
+    const sel = [...this.selection].map(id => this.ent(id)).filter((x): x is SkEnt => !!x);
+    const used = new Set<string>();
+    for (const e of sel) { if (e.t === "line") used.add(e.a).add(e.b); else if (e.t === "circle") used.add(e.c); else if (e.t === "arc") used.add(e.c).add(e.a).add(e.b); }
+    const lone = sel.filter(e => e.t === "point" && !used.has(e.id));
+    const centre = lone.length === 1 && sel.length > 1 ? lone[0].id : null;
+    return { items: sel.filter(e => e.id !== centre && e.id !== ORIGIN), centre };
+  }
+
+  /** Starts a pattern of the selection (Linear or Circular), with the panel's defaults. */
+  startPattern(kind: "linear" | "circular"): boolean {
+    const { items, centre } = this.patternSeed();
+    if (!items.length) { this.host.toast(t("Select the entities to pattern first, then click the pattern tool.")); return false; }
+    if (this.tool !== "select") this.setTool("select");
+    const c: V2 = centre ? this.pt(centre) : [0, 0];
+    this.pattern = kind === "linear"
+      ? { kind, n: 3, d: 20, angle: 0, n2: 1, d2: 20, angle2: Math.PI / 2 }
+      : { kind, n: 6, total: Math.PI * 2, c, centre, equal: true };
+    this.render();
+    return true;
+  }
+
+  cancelPattern() { this.pattern = null; this.render(); }
+
+  /** Rigid transforms of the instances (the seed itself left out). */
+  private patternMoves(): ((q: V2) => V2)[] {
+    const p = this.pattern;
+    if (!p) return [];
+    const out: ((q: V2) => V2)[] = [];
+    if (p.kind === "linear") {
+      const u: V2 = [Math.cos(p.angle), Math.sin(p.angle)], v: V2 = [Math.cos(p.angle2), Math.sin(p.angle2)];
+      for (let j = 0; j < Math.max(1, p.n2); j++) for (let i = 0; i < Math.max(1, p.n); i++) {
+        if (!i && !j) continue;
+        const dx = u[0] * p.d * i + v[0] * p.d2 * j, dy = u[1] * p.d * i + v[1] * p.d2 * j;
+        out.push(q => [q[0] + dx, q[1] + dy]);
+      }
+    } else {
+      const full = Math.abs(Math.abs(p.total) - Math.PI * 2) < 1e-9;
+      const step = p.equal ? p.total / (full ? p.n : Math.max(1, p.n - 1)) : p.total;
+      for (let i = 1; i < p.n; i++) {
+        const a = step * i, co = Math.cos(a), si = Math.sin(a), c = p.c;
+        out.push(q => [c[0] + (q[0] - c[0]) * co - (q[1] - c[1]) * si, c[1] + (q[0] - c[0]) * si + (q[1] - c[1]) * co]);
+      }
+    }
+    return out;
+  }
+
+  /** Preview polylines of the instances. */
+  private patternPreview(): V2[][] {
+    const { items } = this.patternSeed();
+    const out: V2[][] = [];
+    for (const mv of this.patternMoves()) {
+      for (const e of items) {
+        if (e.t === "point") { const q = mv(this.pt(e.id)), r = this.px(q) * 3; out.push(arcPts(q, r, 0, Math.PI * 2, 12)); }
+        else if (e.t === "line") out.push([mv(this.pt(e.a)), mv(this.pt(e.b))]);
+        else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r, 0, Math.PI * 2, 72));
+        else {
+          const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
+          const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+          let a1 = Math.atan2(b[1] - c[1], b[0] - c[0]);
+          while (a1 <= a0) a1 += Math.PI * 2;
+          out.push(arcPts(c, r, a0, a1).map(mv));
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Adds the pattern instances. Each copy keeps an equal relation to its seed (lines also stay
+   * parallel in a linear pattern), so changing the seed's size changes every instance.
+   */
+  applyPattern(): number {
+    const p = this.pattern;
+    const { items } = this.patternSeed();
+    const moves = this.patternMoves();
+    if (!p || !items.length || !moves.length) { this.cancelPattern(); return 0; }
+    const made: string[] = [];
+    for (const mv of moves) {
+      const map = new Map<string, string>();
+      const point = (id: string) => {
+        let got = map.get(id);
+        if (!got) { got = uid("p"); const q = mv(this.pt(id)); this.sk.ents.push({ id: got, t: "point", x: q[0], y: q[1] }); map.set(id, got); }
+        return got;
+      };
+      const cons = (e: SkEnt) => (e.cons ? { cons: true } : {});
+      for (const e of items) {
+        if (e.t === "point") { made.push(point(e.id)); continue; }
+        if (e.t === "line") {
+          const id = uid("l");
+          this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...cons(e) });
+          this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] });
+          if (p.kind === "linear") this.sk.rels.push({ id: uid("r"), t: "parallel", e: [e.id, id] });
+          made.push(id);
+        } else if (e.t === "circle") {
+          const id = uid("c");
+          this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...cons(e) });
+          this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] });
+          made.push(id);
+        } else {
+          const id = uid("a");
+          this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons(e) });
+          this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] });
+          made.push(id);
+        }
+      }
+    }
+    this.pattern = null;
+    this.selection = new Set(made);
+    this.commit(p.kind === "linear" ? "Linear sketch pattern" : "Circular sketch pattern");
+    this.render();
+    this.emitSel();
+    return moves.length;
+  }
+
   // ---------- DXF import (FR-SK-040) ----------
 
   /** Adds DXF shapes to the sketch (shared end points join, so closed outlines make regions). */
@@ -1241,6 +1373,7 @@ export class SketchEditor {
     const k = e.key.toLowerCase();
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (k === "escape") {
+      if (this.pattern) { this.cancelPattern(); this.host.onSelection?.([...this.selection]); return true; }
       if (this.draft.pts.length || this.dimDraft.picks.length) { this.setTool(this.tool); return true; }
       if (this.tool !== "select") { this.setTool("select"); return true; }
       if (this.selection.size) { this.selection.clear(); this.render(); this.emitSel(); return true; }
@@ -1328,11 +1461,6 @@ export class SketchEditor {
       const k = new THREE.Color(c);
       oc.push(k.r, k.g, k.b, k.r, k.g, k.b);
     };
-    const arcPts = (c: V2, r: number, a0: number, a1: number, n = 48) => {
-      const out: V2[] = [];
-      for (let i = 0; i <= n; i++) { const tt = a0 + ((a1 - a0) * i) / n; out.push([c[0] + r * Math.cos(tt), c[1] + r * Math.sin(tt)]); }
-      return out;
-    };
     const poly = (pts: V2[], c: number, out = segs, oc = cols) => { for (let i = 0; i + 1 < pts.length; i++) push(pts[i], pts[i + 1], c, out, oc); };
 
     // Sketch axes through the origin, short.
@@ -1389,6 +1517,7 @@ export class SketchEditor {
       }
     }
     for (const pl of this.offsetPreview) poly(pl, C.pre);
+    if (this.pattern) for (const pl of this.patternPreview()) poly(pl, C.pre);
     if (this.box) {
       const { a: p0, b: p1 } = this.box;
       poly([p0, [p1[0], p0[1]], p1, [p0[0], p1[1]], p0], C.sel, dimSegs, dimCols);

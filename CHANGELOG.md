@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-11-07
+
+### Added
+- **Linear and circular sketch patterns** (FR-SK-038): select sketch entities and click Linear pattern or Circular pattern in the sketch toolbar. A PropertyManager sets spacing, instances and angle for one or two directions, or the centre, instances and total angle (equal spacing or a fixed step); the green preview updates as you type. Each copy keeps an equal relation to its seed (lines in a linear pattern also stay parallel). A lone point selected with the entities is taken as the circular pattern's centre.
+
 ## [1.28.0] - 2026-11-07
 
 ### Added
@@ -366,7 +371,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.28.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.29.0...HEAD
+[1.29.0]: https://github.com/kothf/step-viewer/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/kothf/step-viewer/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/kothf/step-viewer/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/kothf/step-viewer/compare/v1.25.0...v1.26.0
