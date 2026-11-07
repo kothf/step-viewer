@@ -458,3 +458,45 @@ test("modelled thread cuts a helical groove into a hole (FR-FT-055)", async () =
   assert.ok(rs > perMm * 8 * 0.85 && rs < perMm * 9 * 1.15, `short ${rs}`);
   console.log(`thread: ${removed.toFixed(2)} mm³ in ${ms.toFixed(0)} ms`);
 });
+
+test("extrude: up to next, up to vertex and start from (FR-FT-012/013)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const pl: Feature = { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } };
+  const s2 = circle("s2", 0, 0, 5, { plane: "pl" });
+  const boss = (o: object): Feature => ({ id: "f2", type: "extrude", name: "Boss", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, ...o } as Feature);
+  // Up to next: from 50 down to the block's top at 20.
+  let r = run(m, doc([s1, ex, pl, s2, boss({ end: "next", flip: true })]));
+  close(r.props!.volume, 120000 + Math.PI * 25 * 30, 1e-6);
+  // Pointing away from the block: nothing in the way.
+  let bad = m.evaluate(doc([s1, ex, pl, s2, boss({ end: "next" })])).statuses.find(x => x.id === "f2")!;
+  assert.equal(bad.ok, false);
+  // Up to vertex: a bottom corner of the block (z = 0), toward it whatever the direction.
+  const corner = { edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] as [string, string] }, at: [50, -30, 0] as [number, number, number] };
+  r = run(m, doc([s1, ex, pl, s2, boss({ end: "vertex", upToVertex: corner })]));
+  close(r.props!.volume, 120000 + Math.PI * 25 * 30, 1e-6);
+  // The same through a reference point at that corner.
+  const pt: Feature = { id: "pt", type: "point", name: "Point1", mode: "vertex", edge: corner.edge, at: corner.at };
+  r = run(m, doc([s1, ex, pt, pl, s2, boss({ end: "vertex", upToVertex: { point: "pt" } })]));
+  close(r.props!.volume, 120000 + Math.PI * 25 * 30, 1e-6);
+  // Start from: offset 10 (z 10..30), a plane at 50 (50..70), the block's top vertex (20..40).
+  r = run(m, doc([s1, { ...ex, start: "offset", startOffset: { v: 10 } } as Feature]));
+  close(r.props!.volume, 120000, 1e-6); close(r.props!.com[2], 20, 1e-6);
+  r = run(m, doc([pl, s1, { ...ex, start: "surface", startRef: { plane: "pl" } } as Feature]));
+  close(r.props!.com[2], 60, 1e-6);
+  r = run(m, doc([s1, ex, rect("s3", 200, 0, 10, 10), { ...ex, id: "f3", sketch: "s3", start: "vertex", startVertex: { ...corner, at: [50, -30, 20] } } as Feature]));
+  close(r.props!.volume, 120000 + 2000, 1e-6);
+  // Up to next cut: a slab floating above the block; a cut from its top stops at its bottom.
+  const pt2: Feature = { id: "p2", type: "plane", name: "Plane2", base: { std: "XY" }, mode: "offset", offset: { v: 30 } };
+  const s4 = rect("s4", 0, 0, 100, 60, { plane: "p2" });
+  const slab: Feature = { id: "f4", type: "extrude", name: "Slab", sketch: "s4", op: "boss", end: "blind", depth: { v: 10 } };
+  const s5 = circle("s5", 0, 0, 5, { face: { name: "f4:end" } });
+  const cut: Feature = { id: "f5", type: "extrude", name: "Cut", sketch: "s5", op: "cut", end: "next", depth: { v: 1 } };
+  r = run(m, doc([s1, ex, pt2, s4, slab, s5, cut]));
+  close(r.props!.volume, 120000 + 60000 - Math.PI * 25 * 10, 1e-6);
+  // Starting inside the body: no gap up to the next face.
+  const s6 = circle("s6", 0, 0, 5, { plane: { std: "XY" } });
+  bad = m.evaluate(doc([s1, ex, s6, { id: "f6", type: "extrude", name: "B", sketch: "s6", op: "boss", end: "next", depth: { v: 1 } } as Feature])).statuses.find(x => x.id === "f6")!;
+  assert.equal(bad.ok, false);
+});

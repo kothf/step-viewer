@@ -401,7 +401,16 @@ export function fsaDir(h: FileSystemDirectoryHandle): VDir {
       try { return fsaDir(await h.getDirectoryHandle(n, { create })); } catch (e) { if ((e as Error).name === "NotFoundError" || (e as Error).name === "TypeMismatchError") return null; throw e; }
     },
     async read(n) {
-      try { return new Uint8Array(await (await (await h.getFileHandle(n)).getFile()).arrayBuffer()); } catch (e) { if ((e as Error).name === "NotFoundError" || (e as Error).name === "TypeMismatchError") return null; throw e; }
+      // A file being written at the same moment reads as NotReadableError: try again shortly.
+      for (let i = 0; ; i++) {
+        try { return new Uint8Array(await (await (await h.getFileHandle(n)).getFile()).arrayBuffer()); }
+        catch (e) {
+          const name = (e as Error).name;
+          if (name === "NotFoundError" || name === "TypeMismatchError") return null;
+          if (name !== "NotReadableError" || i >= 10) throw e;
+          await new Promise(r => setTimeout(r, 20 * (i + 1)));
+        }
+      }
     },
     async write(n, data) {
       const fh = await h.getFileHandle(n, { create: true });

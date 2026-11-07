@@ -2254,6 +2254,30 @@ try {
     await idle();
     const vDraftEx = await vol(), stDraftEx = await lastSt();
     check(thinUi.mode === "inside" && thinUi.t === "2" && stThin === "extrude:ok" && vThin - vBeforeDxf > 1000 && vThin - vBeforeDxf < gasket * 10 - 1000 && stDraftEx === "extrude:ok" && vDraftEx - vBeforeDxf < gasket * 10 - 100 && vDraftEx - vBeforeDxf > gasket * 10 * 0.8, `model 1.28: thin wall and draft on an extrude (${JSON.stringify(thinUi)}, ${stThin}, ${(vThin - vBeforeDxf).toFixed(0)}, ${stDraftEx}, ${(vDraftEx - vBeforeDxf).toFixed(0)} of ${(gasket * 10).toFixed(0)})`);
+    // 1.41: Start from offset on the gasket extrude, and the new end conditions in the panel (exact values in the unit tests).
+    await mp.dblclick(`#mc-tree .ft-row[data-id="${gid}"] .ft-name`);
+    await idle();
+    await mp.uncheck('#mc-pm input[data-k="draftOn"]');
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="start"]', "offset");
+    await idle();
+    const startUi = await mp.evaluate(() => ({ off: document.querySelector('#mc-pm input[data-num="startOffset"]')?.value, ends: [...document.querySelectorAll('#mc-pm select[data-k="end"] option')].map(o => o.value).join(",") }));
+    await mp.click("#mc-ok");
+    await idle();
+    const vStart = await vol(), stStart = await lastSt();
+    const startF = await mp.evaluate(id => { const f = window.__sv.model.store.doc.features.find(x => x.id === id); return `${f.start}:${f.startOffset?.v}`; }, gid);
+    await mp.dblclick(`#mc-tree .ft-row[data-id="${gid}"] .ft-name`);
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "vertex");
+    await idle();
+    const vtxUi = await mp.evaluate(() => document.querySelector('#mc-pm .pm-box.focus[data-focus="upto"]')?.textContent);
+    await mp.selectOption('#mc-pm select[data-k="end"]', "blind");
+    await mp.selectOption('#mc-pm select[data-k="start"]', "sketch");
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vBack = await vol();
+    check(startUi.off === "10" && startUi.ends.includes("next,vertex") && stStart === "extrude:ok" && startF === "offset:10" && Math.abs(vStart - vDxf) > 1 && /None|Нет/.test(vtxUi ?? "") && Math.abs(vBack - vDxf) < 1, `model 1.41: extrude Start from offset, Up to next/vertex in the panel (${JSON.stringify(startUi)}, ${stStart}, ${startF}, ${(vStart - vBeforeDxf).toFixed(1)}, ${vtxUi}, ${vBack.toFixed(1)} = ${vDxf.toFixed(1)})`);
     // 1.29: sketch patterns on Top: a Ø3 hole at (0,18) four times round the origin, one at (−35,−20) three times 10 mm apart in X; cut through all.
     const vBeforePat = await vol();
     await mp.click('[data-c="sketch"]');

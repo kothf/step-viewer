@@ -1,7 +1,7 @@
 // Document store: every change goes through `change()` (a command with a label),
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
-import { SCHEMA, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef } from "./types";
+import { SCHEMA, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -119,6 +119,12 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "extrude" || f.type === "revolve") features.push(f.sketch);
   if (f.type === "extrude" || f.type === "revolve") plane(f.upTo);
+  if (f.type === "extrude") {
+    const vtx = (v: VertexRef | undefined) => { if (v) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); } };
+    if (f.end === "vertex") vtx(f.upToVertex);
+    if (f.start === "surface") plane(f.startRef);
+    if (f.start === "vertex") vtx(f.startVertex);
+  }
   if (f.type === "thread" && f.edge) faces.push(...f.edge.faces);
   if (f.type === "sketch") plane(f.plane);
   if (f.type === "plane") { plane(f.base); if (f.axis) faces.push(...f.axis.faces); }
