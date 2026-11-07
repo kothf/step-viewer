@@ -1055,7 +1055,7 @@ try {
     const waitModel = () => pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     // Visible text and labels with English words left in Russian mode (file names, formats and units excepted).
     const untranslated = () => pg.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|IGES|BREP|SolidWorks|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
+      const OK = /^(MöbiusCAD|STEP|DXF|IGES|BREP|SolidWorks|Parasolid|sldprt|sldasm|Gerber|Excellon|PCB|PNG|SVG|CSV|JSON|PDF|STL|OBJ|MF|DXF|opencascade|glTF|GLB|HLR|AO|EN|RU|mm|cm|in|ft|mil|fps|PTH|NPTH|ANSI31|XY|YZ|XZ|Ctrl|Alt|Esc|Shift|Enter|Tab|Del|Backspace|macOS|OpenCASCADE|occt|import|js|WebAssembly|RS|X2|AP\d+|rep|B|size|vol|zip|F1|SMD|PMI|GD|T|ComponentPad|SMDPad|ViaPad|GND|ambient|occlusion|Delrin|ABS|PLA|PEEK|POM|PA6|Ti|Al|V|D\d+|J\d+)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1582,7 +1582,7 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(200);
     const leftRu = await mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
+      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1775,7 +1775,7 @@ try {
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
     const ax1 = await axe();
     const ruScan = () => mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
+      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -2187,6 +2187,35 @@ try {
     const vCfg2b = await vol();
     await mp.click('#mc-pm [data-a="ok"]');
     check(cfgRows === "Default,Config2" && Math.abs(vCfg1 - vMv) < 1 && vCfg2 < vCfg1 - 1000 && Math.abs(vCfg2b - vCfg2) < 1 && cfgLabel === "Configuration: Default", `model 1.26: configurations Default (25 mm) and Config2 (15 mm) switch the part (${cfgRows}, ${Math.round(vCfg1)} / ${Math.round(vCfg2)} / ${Math.round(vCfg2b)}, ${cfgLabel})`);
+    // 1.27: DXF into a sketch on Top (a gasket: bulge corners and two holes), a mirrored third hole, extruded 10 mm down.
+    const vBeforeDxf = await vol();
+    await mp.click('[data-c="sketch"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await idle();
+    const [dxfChooser] = await Promise.all([mp.waitForEvent("filechooser"), mp.click('#mc-tools [data-c="skdxf"]')]);
+    await dxfChooser.setFiles(resolve("tests/fixtures/dxf/gasket.dxf"));
+    await mp.waitForFunction(() => window.__sv.model.editor()?.sk.ents.filter(e => e.t === "circle").length === 2, null, { timeout: 10000 });
+    const dxfEnts = await mp.evaluate(() => { const e = window.__sv.model.editor(); return ["line", "arc", "circle"].map(k => e.sk.ents.filter(x => x.t === k && !x.cons).length).join(","); });
+    // A vertical construction line at x = −20 and the left hole selected: Mirror puts a hole at x = −10.
+    await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      e.sk.ents.push({ id: "mpa", t: "point", x: -20, y: -15 }, { id: "mpb", t: "point", x: -20, y: 15 }, { id: "mln", t: "line", a: "mpa", b: "mpb", cons: true });
+      const left = e.sk.ents.find(x => x.t === "circle" && e.sk.ents.find(p => p.id === x.c).x < 0);
+      e.selection = new Set([left.id, "mln"]);
+    });
+    await mp.click('#mc-tools [data-c="skmirror"]');
+    const mir = await mp.evaluate(() => { const e = window.__sv.model.editor(); const c = e.sk.ents.filter(x => x.t === "circle").map(x => { const p = e.sk.ents.find(q => q.id === x.c); return [Math.round(p.x * 1000) / 1000, x.r]; }); return { c: JSON.stringify(c), sym: e.sk.rels.filter(r => r.t === "symmetric").length }; });
+    await mp.click("#mc-ok");
+    await idle();
+    await mp.click('#mc-tools [data-c="extrude"]');
+    await idle();
+    await mp.check('#mc-pm input[data-k="flip"]');
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vDxf = await vol(), stDxf = await lastSt();
+    const gasket = 3900 - 23 * Math.PI;
+    check(dxfEnts === "4,4,2" && mir.c.includes("[-10,4]") && mir.sym === 1 && stDxf === "extrude:ok" && Math.abs(vDxf - vBeforeDxf - gasket * 10) < 1, `model 1.27: DXF gasket into a sketch, a mirrored hole, extruded 10 mm (${dxfEnts}, ${mir.c}, ${mir.sym}, ${stDxf}, ${(vDxf - vBeforeDxf).toFixed(1)} ≈ ${(gasket * 10).toFixed(1)})`);
     await ctx.close();
   }
 

@@ -13,6 +13,7 @@ import type { Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../
 import { ORIGIN, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
+import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
 
 export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
@@ -1093,6 +1094,82 @@ export class SketchEditor {
     this.offsetPreview = [];
     this.render();
     return [];
+  }
+
+  // ---------- mirror entities (FR-SK-037) ----------
+
+  /**
+   * Mirrors the selected entities about the selected line (a construction line if one is picked,
+   * otherwise the last line picked). Copies are tied to the originals by symmetric relations, so
+   * they follow when the originals change; points on the line are shared.
+   */
+  mirrorSelection(): boolean {
+    const sel = [...this.selection].map(id => this.ent(id)).filter((x): x is SkEnt => !!x);
+    const lines = sel.filter((x): x is Extract<SkEnt, { t: "line" }> => x.t === "line");
+    const axis = lines.find(l => l.cons) ?? lines.at(-1);
+    const items = sel.filter(x => x !== axis);
+    if (!axis || !items.length) { this.host.toast(t("Select the entities to mirror and the line to mirror about (Ctrl+click), then click Mirror.")); return false; }
+    const A = this.pt(axis.a), B = this.pt(axis.b);
+    const d: V2 = [B[0] - A[0], B[1] - A[1]];
+    const L = Math.hypot(d[0], d[1]);
+    if (!(L > 1e-9)) return false;
+    const u: V2 = [d[0] / L, d[1] / L];
+    const reflect = (q: V2): V2 => {
+      const w: V2 = [q[0] - A[0], q[1] - A[1]];
+      const k = w[0] * u[0] + w[1] * u[1];
+      return [2 * (A[0] + u[0] * k) - q[0], 2 * (A[1] + u[1] * k) - q[1]];
+    };
+    const map = new Map<string, string>();
+    const point = (id: string) => {
+      if (id === axis.a || id === axis.b) return id;
+      const got = map.get(id);
+      if (got) return got;
+      const q = this.pt(id), r = reflect(q);
+      if (Math.hypot(r[0] - q[0], r[1] - q[1]) < 1e-9) { map.set(id, id); return id; }
+      const nid = uid("p");
+      this.sk.ents.push({ id: nid, t: "point", x: r[0], y: r[1] });
+      this.sk.rels.push({ id: uid("r"), t: "symmetric", e: [id, nid, axis.id] });
+      map.set(id, nid);
+      return nid;
+    };
+    const made: string[] = [];
+    for (const e of items) {
+      if (e.t === "point") { if (e.id !== ORIGIN) made.push(point(e.id)); }
+      else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+      else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...(e.cons ? { cons: true } : {}) }); this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] }); made.push(id); }
+      // A mirror image runs the other way round: the ends swap.
+      else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+    }
+    this.selection = new Set(made);
+    this.commit("Mirror entities");
+    this.render();
+    this.emitSel();
+    return true;
+  }
+
+  // ---------- DXF import (FR-SK-040) ----------
+
+  /** Adds DXF shapes to the sketch (shared end points join, so closed outlines make regions). */
+  importShapes(shapes: DxfShape[]): number {
+    const ptAt = new Map<string, string>();
+    const point = (q: [number, number]) => {
+      const key = `${Math.round(q[0] * 1e4)},${Math.round(q[1] * 1e4)}`;
+      let id = ptAt.get(key);
+      if (!id) { id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); ptAt.set(key, id); }
+      return id;
+    };
+    let n = 0;
+    for (const s of shapes) {
+      if (s.t === "line") { this.sk.ents.push({ id: uid("l"), t: "line", a: point(s.a), b: point(s.b) }); n++; }
+      else if (s.t === "circle") { this.sk.ents.push({ id: uid("c"), t: "circle", c: point(s.c), r: s.r }); n++; }
+      else {
+        const at = (a: number): [number, number] => [s.c[0] + s.r * Math.cos(a), s.c[1] + s.r * Math.sin(a)];
+        this.sk.ents.push({ id: uid("a"), t: "arc", c: point(s.c), a: point(at(s.a0)), b: point(at(s.a1)) });
+        n++;
+      }
+    }
+    if (n) { this.commit("Import DXF"); this.render(); }
+    return n;
   }
 
   // ---------- convert entities (FR-SK-035) ----------
