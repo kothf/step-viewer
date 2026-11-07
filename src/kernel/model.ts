@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -1333,6 +1333,58 @@ export class Modeller {
     return out;
   }
 
+  /** Imported body (FR-FT-130): read the BREP text; with `heal`, sew and fix it (FR-FT-131). A body already there stays: this is another body. */
+  private importBody(f: ImportFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!f.brep) throw new FeatureError("E-IMP-EMPTY", "The imported body has no geometry.");
+    const path = `/imp-${f.id}.brep`;
+    oc.FS.writeFile(path, f.brep);
+    let shape = new oc.TopoDS_Shape();
+    const ok = oc.BRepTools.Read_2(shape, path, new oc.BRep_Builder(), new oc.Message_ProgressRange_1());
+    oc.FS.unlink(path);
+    if (!ok || shape.IsNull()) throw new FeatureError("E-IMP-READ", "The imported body could not be read.");
+    if (f.heal) {
+      const tol = f.tol?.v ?? 0.1;
+      if (!(tol > 0)) throw new FeatureError("E-FT-ZERO", "The tolerance must be more than 0.");
+      const before = this.freeEdges(shape, 1e-6);
+      const valid0 = new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2();
+      const sew = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
+      sew.Add(shape);
+      sew.Perform(new oc.Message_ProgressRange_1());
+      let healed = sew.SewedShape();
+      const fix = new oc.ShapeFix_Shape_2(healed);
+      fix.Perform(new oc.Message_ProgressRange_1());
+      healed = fix.Shape();
+      // Closed shells outside solids become solids.
+      const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      bb.MakeCompound(comp);
+      for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) bb.Add(comp, ex.Current());
+      for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SOLID); ex.More(); ex.Next()) {
+        const sh = oc.TopoDS.Shell_1(ex.Current());
+        if (oc.BRep_Tool.IsClosed_1(sh)) {
+          let solid = new oc.ShapeFix_Solid_1().SolidFromShell(sh);
+          if (this.volume(solid) < 0) solid = solid.Reversed();
+          bb.Add(comp, solid);
+        } else bb.Add(comp, sh);
+      }
+      shape = comp;
+      const after = this.freeEdges(shape, 1e-6);
+      const valid1 = new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2();
+      this.warning = `Check and heal: ${before} free edges before, ${after} after; ${valid0 ? "valid" : "not valid"} before, ${valid1 ? "valid" : "not valid"} after; ${this.solids(shape)} solid bodies.`;
+    }
+    const faces = this.sub(shape, "FACE");
+    const mine: Named = { shape, faces, names: faces.map((_, i) => `${f.id}:f${i}`) };
+    return prev ? this.compoundOf([prev, mine]) : mine;
+  }
+
+  /** Edges on one face only (gaps and open boundaries), counted by a sewing pass that joins nothing new. */
+  private freeEdges(shape: any, tol: number): number {
+    const sew = new this.oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
+    sew.Add(shape);
+    sew.Perform(new this.oc.Message_ProgressRange_1());
+    return sew.NbFreeEdges();
+  }
+
   // ---------- multibody (FRS 9.10) ----------
 
   /** The solids of a body, each with the body's face names. */
@@ -1700,6 +1752,7 @@ export class Modeller {
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
+          else if (f.type === "import") body = this.importBody(f, body);
           else if (f.type === "combine") body = this.combine(f, body);
           else if (f.type === "bsplit") body = this.splitBody(f, body, frames);
           else if (f.type === "delbody") body = this.deleteBodies(f, body);

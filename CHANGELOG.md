@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Insert body** (FR-FT-130/131, AT-P3-4), in the **Sweep ▾** menu: a STEP, IGES or BREP file goes into the part as an **Imported** feature (kept in the part file, so it opens without the original). **Check and heal** sews faces whose edges are closer than the tolerance, fixes the shape and closes shells into solids, and reports free edges and validity before and after. A file with faces but no solids is healed from the start. The imported body joins the part as its own body.
+
 ## [1.57.0] - 2026-11-07
 
 ### Added

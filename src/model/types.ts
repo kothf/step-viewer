@@ -437,10 +437,23 @@ export interface MoveBodyFeature {
   angle?: Num;
 }
 
+/**
+ * Imported body (FR-FT-130, FR-BODY-005): the exact B-rep of a STEP/IGES/BREP file, kept as BREP text
+ * in the document. Faces are named `<id>:f<i>` in the file's order. `heal` (FR-FT-131) sews the faces
+ * with `tol` and fixes the result into solids; the rebuild reports the check before and after.
+ */
+export interface ImportFeature {
+  id: string; type: "import"; name: string; suppressed?: boolean;
+  file: string;
+  brep: string;
+  heal?: boolean;
+  tol?: Num;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
-  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature;
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

@@ -23,7 +23,8 @@ export type KernelRequest =
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
-  | { id: number; type: "modelStep"; name: string; color: [number, number, number] };
+  | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
+  | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string };
 
 let parasolid: Promise<ParasolidReader> | null = null;
 /** The Parasolid reader (600 kB of WASM), loaded at the first SolidWorks file. */
@@ -116,6 +117,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         preview = { position, status };
       }
       post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: res.body?.names ?? [], props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+    } else if (r.type === "importBody") {
+      kernel.load(new Uint8Array(r.buffer), r.name);
+      post({ id: r.id, ok: true, ...kernel.brepText() });
     } else if (r.type === "modelStep") {
       if (!lastBody) throw new Error("There is no body to export yet.");
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];

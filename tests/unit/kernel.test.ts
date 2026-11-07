@@ -759,3 +759,40 @@ test("variable radius fillet: an edge going from 1 to 4 mm (FR-FT-032)", async (
   // Constant 1 and 4 bound it.
   assert.ok(up > (1 - Math.PI / 4) * 10 && up < (1 - Math.PI / 4) * 160);
 });
+
+test("imported body with a gap: check and heal reports it and closes it (FR-FT-130/131, AT-P3-4)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  // A 10 mm cube as six loose faces, the top one 0.02 mm too high: a shell with a gap.
+  const P = (x: number, y: number, z: number) => new oc.gp_Pnt_3(x, y, z);
+  const quad = (a: number[][]) => {
+    const w = new oc.BRepBuilderAPI_MakePolygon_4(P(a[0][0], a[0][1], a[0][2]), P(a[1][0], a[1][1], a[1][2]), P(a[2][0], a[2][1], a[2][2]), P(a[3][0], a[3][1], a[3][2]), true).Wire();
+    return new oc.BRepBuilderAPI_MakeFace_15(w, true).Face();
+  };
+  const z1 = 10.02;
+  const quads = [
+    [[0, 0, 0], [0, 10, 0], [10, 10, 0], [10, 0, 0]], [[0, 0, z1], [10, 0, z1], [10, 10, z1], [0, 10, z1]],
+    [[0, 0, 0], [10, 0, 0], [10, 0, 10], [0, 0, 10]], [[0, 10, 0], [0, 10, 10], [10, 10, 10], [10, 10, 0]],
+    [[0, 0, 0], [0, 0, 10], [0, 10, 10], [0, 10, 0]], [[10, 0, 0], [10, 10, 0], [10, 10, 10], [10, 0, 10]],
+  ];
+  const comp = new oc.TopoDS_Compound(), b = new oc.BRep_Builder();
+  b.MakeCompound(comp);
+  for (const q of quads) b.Add(comp, quad(q));
+  oc.BRepTools.Write_4(comp, "/gap.brep", false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+  const brep = oc.FS.readFile("/gap.brep", { encoding: "utf8" });
+  const imp = (heal: boolean): Feature => ({ id: "i", type: "import", name: "Imported1", file: "gap.brep", brep, heal, tol: { v: 0.1 } });
+  // As read: faces only, no volume.
+  const raw = m.evaluate(doc([imp(false)]));
+  assert.equal(raw.body!.faces.length, 6);
+  // Healed: the report names the gap, then one closed valid solid of ~1000 mm³.
+  const r = m.evaluate(doc([imp(true)]));
+  const st = r.statuses.find(s => s.id === "i")!;
+  assert.equal(st.code, "warning");
+  const mm = st.warning!.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
+  assert.ok(mm, st.warning);
+  assert.ok(+mm![1] > 0 && +mm![2] === 0 && mm![4] === "valid" && mm![5] === "1", st.warning);
+  close(m.props(r.body!).volume, 1000, 0.01);
+  // A cut on the healed body works.
+  const cut = run(m, doc([imp(true), circle("k", 5, 5, 2, { std: "XY" }), { id: "c", type: "extrude", name: "Cut1", sketch: "k", op: "cut", end: "through", depth: { v: 1 }, flip: true }]));
+  assert.ok(cut.props!.volume < 1000 - Math.PI * 4 * 9);
+});

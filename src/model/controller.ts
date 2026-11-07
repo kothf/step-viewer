@@ -20,7 +20,7 @@ import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snaps
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -123,8 +123,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy"];
+const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -140,6 +140,8 @@ function statusText(s: FeatureStatus) {
   if (s.code === "warning" && s.warning) {
     const m = s.warning.match(/^(\d+) of (\d+) edges/);
     if (m) return t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] });
+    const h = s.warning.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
+    if (h) return t("Check and heal: {a} free edges before, {b} after; {v0} before, {v1} after; {n} solid bodies.", { a: h[1], b: h[2], v0: t(h[3]), v1: t(h[4]), n: h[5] });
     const c = s.warning.match(/^(\d+) of (\d+) copies fall outside the body and were skipped: (.*)\.$/);
     return c ? t("{n} of {m} copies fall outside the body and were skipped (instances {list}).", { n: c[1], m: c[2], list: c[3] }) : t(s.warning);
   }
@@ -938,6 +940,36 @@ export class ModelController {
     const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = ".dxf";
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
+  /**
+   * Insert body (FR-FT-130, FR-BODY-005): a STEP, IGES or BREP file read by the kernel into BREP text,
+   * kept in the document as an Imported feature at the rollback bar, then opened for Check and heal.
+   */
+  importBodyFile(file?: File) {
+    if (!this.store) return;
+    const run = async (f: File) => {
+      if (f.size > 100 * 1024 * 1024) { toast(t("The file is too large to import (over 100 MB)."), true); return; }
+      if (this.mode.kind !== "none") this.exitMode(false);
+      this.setBusy(1);
+      let r: { brep: string; solids: number; faces: number };
+      try { r = await this.kernel.importBody(await f.arrayBuffer(), f.name); }
+      catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return; }
+      finally { this.setBusy(-1); }
+      if (!r.faces) { toast(t("No faces or solids were found in the file."), true); return; }
+      const id = uid("f_");
+      const name = nextName(this.doc, "import");
+      // Faces without solids (a surface model or a broken file): heal it from the start.
+      const feat: ImportFeature = { id, type: "import", name, file: f.name, brep: r.brep, tol: { v: 0.1 }, ...(r.solids ? {} : { heal: true }) };
+      this.store!.change(`Add ${name}`, d => { const at = d.rollback ?? d.features.length; d.features.splice(at, 0, feat); if (d.rollback != null) d.rollback++; });
+      this.editFeature(id);
+    };
+    if (file) { void run(file); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".step,.stp,.iges,.igs,.brep";
     inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
     inp.click();
   }
@@ -2747,6 +2779,7 @@ export class ModelController {
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": this.startFeature(c); break;
+      case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -3316,6 +3349,14 @@ export class ModelController {
     }
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
+    if (f.type === "import") {
+      const st = this.last?.statuses.find(x => x.id === f.id);
+      title = t("Imported body");
+      body = group(t("File"), `<p class="pm-count" translate="no">${esc(f.file)}</p>`)
+        + group(t("Check and heal"), chk("heal", f.heal, t("Check and heal (sew gaps into solids)")) + (f.heal ? numField("tol", t("Tolerance"), f.tol ?? { v: 0.1 }, "length") : "")
+          + (st?.code === "warning" && st.warning ? `<p class="pm-help" role="status" data-heal>${esc(statusText(st))}</p>` : "")
+          + `<p class="pm-help muted">${esc(t("Healing sews faces whose edges are closer than the tolerance and closes the result into solids."))}</p>`);
+    }
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
@@ -4097,6 +4138,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
   ["rib", t("Rib"), t("Rib: a thin wall from an open sketch line to the body")],
   ["split", t("Split Line"), t("Split line: project a sketch onto faces to split them")],
+  ["import", t("Insert body"), t("Insert body: a STEP, IGES or BREP file into this part, with check and heal")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
@@ -4108,6 +4150,7 @@ const ICON_SVG: Record<string, string> = {
   sweepcut: S('<path d="M2 6h12v8H2z"/><path d="M4 12c2-4 5-5 8-5" stroke-dasharray="2 1.5"/>'),
   loft: S('<path d="M3 13h6v-2H3zM9 4h4v3H9z"/><path d="M3 11l6-7M9 11l4-4"/>'),
   loftcut: S('<path d="M2 6h12v8H2z"/><path d="M5 12h3l3-4H9z" fill="currentColor" fill-opacity=".3"/>'),
+  import: S('<path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 11v3h10v-3"/>'),
   combine: S('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
   bsplit: S('<path d="M2 4h12v9H2z"/><path d="M9 2l-2 13"/>'),
   movebody: S('<path d="M2 9h6v5H2z"/><path d="M8 9l3-3h3v5l-3 3M9 3h5v5"/>'),

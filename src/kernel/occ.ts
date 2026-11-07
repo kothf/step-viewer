@@ -86,6 +86,20 @@ export class Kernel {
   // ---------- reading ----------
 
   /** Reads a STEP, IGES or BREP file and lists its meshes like occt-import-js. Returns the face count per mesh. */
+  /** Everything the last `load` read, as BREP text without triangles (an imported body, FR-FT-130). */
+  brepText(): { brep: string; solids: number; faces: number } {
+    const oc = this.oc;
+    const comp = new oc.TopoDS_Compound(), b = new oc.BRep_Builder();
+    b.MakeCompound(comp);
+    let solids = 0, faces = 0;
+    for (const m of this.meshes) { b.Add(comp, m.shape); if (m.solid) solids++; faces += m.faces.length; }
+    const path = `/out${++this.seq}.brep`;
+    oc.BRepTools.Write_4(comp, path, false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+    const brep = oc.FS.readFile(path, { encoding: "utf8" }) as string;
+    oc.FS.unlink(path);
+    return { brep, solids, faces };
+  }
+
   load(bytes: Uint8Array, name: string): number[] {
     const oc = this.oc;
     this.dispose();
