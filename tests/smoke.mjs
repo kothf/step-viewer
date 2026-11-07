@@ -2452,6 +2452,49 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 30 × 20 block with two Ø10 holes through it.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -15), P("b", 20, -15), P("c", 20, 15), P("d", -20, 15), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a"), P("h1", -10, 0), P("h2", 10, 0), { id: "k1", t: "circle", c: "h1", r: 5 }, { id: "k2", t: "circle", c: "h2", r: 5 }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }); }); });
+    await idle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await mp.click('#mc-tools [data-c="fillet"]');
+    await mp.waitForFunction(() => window.__sv.model.mode().draft?.type === "fillet");
+    // Right-click the top front edge: Select loop takes the four edges round its face.
+    const [ex, ey] = await world([0, -15, 20]);
+    await mp.mouse.click(ex, ey, { button: "right" });
+    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(1)");
+    const nLoop = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
+    await idle();
+    await mp.waitForTimeout(300);
+    // Right-click a hole's top edge: the same-radius helper adds the other hole's circles too (4 in all).
+    // The view may still be easing: wait for the camera to settle before aiming.
+    await mp.waitForFunction(() => { const p = window.__sv.viewer.camera.position.toArray().join(); const same = window.__camLast === p; window.__camLast = p; return same; }, null, { polling: 250, timeout: 10000 });
+    // A point on the rim away from vertices and quadrant points (those snap as points, not the edge).
+    const [hx, hy] = await world([-10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
+    await mp.mouse.click(hx, hy, { button: "right" });
+    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    const nSame = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
+    await mp.keyboard.press("Escape");
+    check(items === "Select loop|Select tangency|Select straight edges of the same length" && nLoop === 4 && /same radius/.test(items2) && nSame === 8, `model 1.36: fillet edge helpers, select loop and same radius (${items}, ${nLoop}, ${items2}, ${nSame})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

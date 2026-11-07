@@ -1218,4 +1218,8 @@ export const RU: Record<string, string> = {
   "Spline": "Сплайн",
   "Spline: click points it passes through; double-click ends it": "Сплайн: щёлкайте точки, через которые он проходит; двойной щелчок завершает",
   "Click points the spline passes through; double-click ends it, clicking the first point closes it": "Щёлкайте точки, через которые проходит сплайн; двойной щелчок завершает его, щелчок по первой точке замыкает",
+  "Select loop": "Выбрать контур",
+  "Select tangency": "Выбрать касательные",
+  "Select round edges of the same radius": "Выбрать круглые кромки того же радиуса",
+  "Select straight edges of the same length": "Выбрать прямые кромки той же длины",
 };
