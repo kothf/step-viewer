@@ -116,9 +116,12 @@ export class VaultPanel {
   async refresh() {
     const v = this.vault;
     if (v) {
-      this.files = await v.files();
-      this.state.clear();
-      for (const f of this.files) this.state.set(f.id, await v.status(f));
+      // Files and their status are swapped in together: a render while this runs sees the old pair, never a mix.
+      const files = await v.files();
+      const state = new Map<string, Awaited<ReturnType<Vault["status"]>>>();
+      for (const f of files) state.set(f.id, await v.status(f));
+      this.files = files;
+      this.state = state;
       // The open part follows its file's lock and version.
       if (this.openId) { const f = this.files.find(x => x.id === this.openId); if (f) this.tieOpen(f); }
       this.conflicts = this.sel ? [...new Set((await v.lockConflicts(this.sel)).map(c => c.user))] : [];
@@ -864,7 +867,7 @@ export class VaultPanel {
       const sel = this.sel ? this.files.find(f => f.id === this.sel) ?? null : null;
       const st = sel ? this.state.get(sel.id) : undefined;
       const row = (f: FileRec) => {
-        const s = this.state.get(f.id)!;
+        const s = this.state.get(f.id) ?? { mine: false, by: null, modified: false, missing: false };
         const lock = f.checkout ? `<span class="v-lock${s.mine ? " mine" : ""}" title="${esc(t("Checked out by {user}", { user: f.checkout.user }))}">🔒 <span translate="no">${esc(f.checkout.user)}</span></span>` : "";
         const color = v.stateOf(f.state).color;
         const pn = f.card?.[PART_NUMBER];
