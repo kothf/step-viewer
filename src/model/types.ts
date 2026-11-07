@@ -95,6 +95,8 @@ export interface ExtrudeFeature {
   id: string; type: "extrude"; name: string; suppressed?: boolean;
   sketch: string;
   op: "boss" | "cut";
+  /** Boss only: false makes a new body instead of joining the ones it touches (FR-FT-006). */
+  merge?: boolean;
   end: EndKind;
   depth: Num;
   /** Second direction depth (blind only); 0 or absent: one direction. */
@@ -128,6 +130,8 @@ export interface RevolveFeature {
   id: string; type: "revolve"; name: string; suppressed?: boolean;
   sketch: string;
   op: "boss" | "cut";
+  /** Boss only: false makes a new body (FR-FT-006). */
+  merge?: boolean;
   /** A line of the sketch (usually construction) used as the axis. */
   axis: string;
   angle: Num;
@@ -145,8 +149,13 @@ export interface RevolveFeature {
 export interface FilletFeature {
   id: string; type: "fillet"; name: string; suppressed?: boolean;
   radius: Num;
-  /** With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). */
-  edges: (EdgeRef & { r?: number })[];
+  /**
+   * With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). With `variable`, `r` is
+   * the radius at the end nearer `at` (world mm; the edge's first vertex when unset) and `r2` at the other.
+   */
+  edges: (EdgeRef & { r?: number; r2?: number; at?: V3 })[];
+  /** Variable radius fillet (FR-FT-032): each edge goes from `r` to `r2`. */
+  variable?: boolean;
   /** Multiple radius fillet: each edge can have its own radius. */
   multi?: boolean;
   /** Keep features that fit: skip edges that cannot be rounded, with a warning. */
@@ -395,9 +404,43 @@ export interface SplitFeature {
   faces: FaceRef[];
 }
 
+/*
+ * Multibody (FRS 9.10). A body is named by any face on it (a FaceRef): the solid that holds that
+ * face, so body picks follow the persistent face names.
+ */
+/** Combine (FR-BODY-002): add, subtract the tools from the main body, or keep what they share. */
+export interface CombineFeature {
+  id: string; type: "combine"; name: string; suppressed?: boolean;
+  op: "add" | "subtract" | "common";
+  main?: FaceRef;
+  tools: FaceRef[];
+}
+/** Split body (FR-BODY-003, AT-P3-3): cut the bodies (all it crosses, or the picked ones) by a plane into separate bodies. */
+export interface SplitBodyFeature {
+  id: string; type: "bsplit"; name: string; suppressed?: boolean;
+  plane?: PlaneRef;
+  bodies: FaceRef[];
+}
+/** Delete/Keep bodies (FR-BODY-001): remove the picked bodies, or keep only them. */
+export interface DeleteBodyFeature {
+  id: string; type: "delbody"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  keep?: boolean;
+}
+/** Move/Copy body (FR-BODY-004): rotate about an axis, then translate; `copy` adds the moved copies. */
+export interface MoveBodyFeature {
+  id: string; type: "movebody"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  copy?: boolean;
+  dx: Num; dy: Num; dz: Num;
+  axis?: LineRef;
+  angle?: Num;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature;
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
@@ -463,6 +506,7 @@ export interface PartDoc {
 export interface FeatureStatus { id: string; ok: boolean; code?: string; message?: string; warning?: string }
 
 /** Mass properties of the body for density 1 (mm units): volume, area, centre of mass, principal moments (mm⁵) and axes. */
-export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3] }
+/** `bodies`: how many solid bodies the part has (FRS 9.10). */
+export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number }
 
 export const SCHEMA = 1;

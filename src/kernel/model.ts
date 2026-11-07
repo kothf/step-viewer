@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -530,6 +530,7 @@ export class Modeller {
     let tool = tools[0];
     for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
+    if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
@@ -702,14 +703,23 @@ export class Modeller {
     const edges = f.edges.map(r => this.resolveEdge(prev, r));
     // Multiple radius fillet (FR-FT-031): an edge's own radius, else the feature's.
     const rad = (i: number) => (f.type === "fillet" && f.multi ? f.edges[i].r ?? size : size);
-    if (f.edges.some((_e, i) => !(rad(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    const vari = f.type === "fillet" && !!f.variable;
+    const rad2 = (i: number) => (vari ? (f as FilletFeature).edges[i].r2 ?? rad(i) : rad(i));
+    const radV = (i: number) => (vari ? (f as FilletFeature).edges[i].r ?? size : rad(i));
+    if (f.edges.some((_e, i) => !(radV(i) > 1e-6) || !(rad2(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
     const make = (list: number[]) => {
       const mk = f.type === "fillet"
         ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
         : new oc.BRepFilletAPI_MakeChamfer(prev.shape);
       for (const i of list) {
         const e = edges[i];
-        if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
+        if (vari) {
+          // Variable radius: r at the end nearer `at` (else the edge's first vertex), r2 at the other.
+          const at = (f as FilletFeature).edges[i].at;
+          const p0 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.FirstVertex(e, true))), p1 = this.xyz(oc.BRep_Tool.Pnt(oc.TopExp.LastVertex(e, true)));
+          const swap = !!at && d3(p1, at) < d3(p0, at);
+          (mk as any).Add_3(swap ? rad2(i) : radV(i), swap ? radV(i) : rad2(i), e);
+        } else if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
         else {
           const r = f.edges[i];
           const face = this.faceOfEdge(prev, e, r.faces[f.type === "chamfer" && f.flip ? 1 : 0]);
@@ -1323,6 +1333,125 @@ export class Modeller {
     return out;
   }
 
+  // ---------- multibody (FRS 9.10) ----------
+
+  /** The solids of a body, each with the body's face names. */
+  private bodyList(body: Named): Named[] {
+    const oc = this.oc, out: Named[] = [];
+    for (const ex = new oc.TopExp_Explorer_2(body.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const solid = oc.TopoDS.Solid_1(ex.Current());
+      const faces = this.sub(solid, "FACE");
+      out.push({ shape: solid, faces, names: faces.map((x, i) => { const j = body.faces.findIndex(g => g.IsSame(x)); return j >= 0 ? body.names[j] : `?:${i}`; }) });
+    }
+    return out;
+  }
+
+  /** Bodies back into one shape: a compound when there are several. */
+  private compoundOf(parts: Named[]): Named {
+    if (parts.length === 1) return parts[0];
+    const oc = this.oc, bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+    bb.MakeCompound(comp);
+    for (const p of parts) bb.Add(comp, p.shape);
+    return { shape: comp, faces: parts.flatMap(p => p.faces), names: parts.flatMap(p => p.names) };
+  }
+
+  /** Which body holds the face a body pick names. */
+  private bodyIndex(list: Named[], body: Named, ref: FaceRef): number {
+    const face = this.resolveFace(body, ref);
+    const i = list.findIndex(b => b.faces.some(x => x.IsSame(face)));
+    if (i < 0) throw new FeatureError("E-TN-LOST", `Reference lost: face ${ref.name}`);
+    return i;
+  }
+
+  private pickedBodies(list: Named[], body: Named, refs: FaceRef[]): number[] {
+    return [...new Set(refs.map(r => this.bodyIndex(list, body, r)))];
+  }
+
+  /** Combine (FR-BODY-002). */
+  private combine(f: CombineFeature, prev: Named | null): Named {
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const list = this.bodyList(prev);
+    if (!f.main) throw new FeatureError("E-CMB-BODIES", "Pick the main body and at least one other body.");
+    const mi = this.bodyIndex(list, prev, f.main);
+    const ti = this.pickedBodies(list, prev, f.tools).filter(i => i !== mi);
+    if (!ti.length) throw new FeatureError("E-CMB-BODIES", "Pick the main body and at least one other body.");
+    let out = list[mi];
+    for (const i of ti) out = this.bool(f.op === "add" ? "fuse" : f.op === "subtract" ? "cut" : "common", out, list[i], f.id);
+    if (f.op !== "subtract" && this.volume(out.shape) < 1e-9) throw new FeatureError("E-CMB-EMPTY", "The bodies share no material.");
+    return this.compoundOf([...list.filter((_, i) => i !== mi && !ti.includes(i)), ...this.bodyList(out)]);
+  }
+
+  /** Split body (FR-BODY-003): the bodies the plane crosses (or the picked ones) become separate pieces. */
+  private splitBody(f: SplitBodyFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.plane) throw new FeatureError("E-BSP-PLANE", "Pick a plane or a flat face to split with.");
+    const fr = this.planeFrame(f.plane, prev, frames);
+    const list = this.bodyList(prev);
+    const picked = f.bodies.length ? this.pickedBodies(list, prev, f.bodies) : list.map((_, i) => i);
+    const big = this.size(prev.shape) * 2 + 100;
+    const face = new oc.BRepBuilderAPI_MakeFace_9(new oc.gp_Pln_2(new oc.gp_Ax3_3(this.P(fr.o), this.D(fr.n), this.D(fr.x))), -big, big, -big, big).Face();
+    const out: Named[] = [];
+    let cut = false;
+    list.forEach((b, i) => {
+      if (!picked.includes(i)) { out.push(b); return; }
+      const mk = new oc.BRepAlgoAPI_Splitter_1();
+      const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+      args.Append_1(b.shape);
+      tools.Append_1(face);
+      mk.SetArguments(args);
+      mk.SetTools(tools);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-BSP-FAIL", "The body could not be split.");
+      const pieces = this.bodyList(this.carry(mk, [b], mk.Shape(), f.id));
+      if (pieces.length > 1) cut = true;
+      out.push(...pieces);
+    });
+    if (!cut) throw new FeatureError("E-BSP-MISS", "The plane does not cut the bodies.");
+    return this.compoundOf(out);
+  }
+
+  /** Delete/Keep bodies (FR-BODY-001). */
+  private deleteBodies(f: DeleteBodyFeature, prev: Named | null): Named {
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.bodies.length) throw new FeatureError("E-BDY-PICK", "Pick the bodies.");
+    const list = this.bodyList(prev);
+    const picked = this.pickedBodies(list, prev, f.bodies);
+    const rest = list.filter((_, i) => picked.includes(i) === !!f.keep);
+    if (!rest.length) throw new FeatureError("E-BDY-NONE", "Nothing would be left: keep at least one body.");
+    return this.compoundOf(rest);
+  }
+
+  /** Move/Copy body (FR-BODY-004): rotation about the axis, then the translation. Moved faces keep their names. */
+  private moveBodies(f: MoveBodyFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.bodies.length) throw new FeatureError("E-BDY-PICK", "Pick the bodies.");
+    const list = this.bodyList(prev);
+    const picked = this.pickedBodies(list, prev, f.bodies);
+    const trsf = new oc.gp_Trsf_1();
+    if (f.axis && f.angle && Math.abs(f.angle.v) > 1e-12) {
+      const ax = this.lineOf(f.axis, prev, frames, "an axis");
+      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), f.angle.v);
+    }
+    const tr = new oc.gp_Trsf_1();
+    tr.SetTranslation_1(this.V([f.dx.v, f.dy.v, f.dz.v]));
+    const all = tr.Multiplied(trsf);
+    if (all.Form() === oc.gp_TrsfForm.gp_Identity && !f.copy) throw new FeatureError("E-BDY-NOMOVE", "Give a distance or an angle.");
+    const out: Named[] = [];
+    list.forEach((b, i) => {
+      if (!picked.includes(i)) { out.push(b); return; }
+      const t = this.transformed({ shape: b, op: "fuse" }, all, f.id, "c").shape;
+      if (f.copy) { out.push(b, t); return; }
+      // A move keeps the names: the body is the same one, somewhere else.
+      const mk = new oc.BRepBuilderAPI_Transform_2(b.shape, all, true);
+      const faces = this.sub(mk.Shape(), "FACE");
+      const names = faces.map((x, k) => { const j = b.faces.findIndex(g => this.list(mk.Modified(g)).some(m => m.IsSame(x))); return j >= 0 ? b.names[j] : `${f.id}:new:${k}`; });
+      out.push({ shape: mk.Shape(), faces, names });
+    });
+    return this.compoundOf(out);
+  }
+
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
   private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
     let tool = tools[0];
@@ -1571,6 +1700,10 @@ export class Modeller {
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
+          else if (f.type === "combine") body = this.combine(f, body);
+          else if (f.type === "bsplit") body = this.splitBody(f, body, frames);
+          else if (f.type === "delbody") body = this.deleteBodies(f, body);
+          else if (f.type === "movebody") body = this.moveBodies(f, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           else if (f.type === "thread") {
@@ -1647,7 +1780,7 @@ export class Modeller {
     const m = vp.MatrixOfInertia();
     const I = [0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1)));
     const { values, vectors } = eigenSym3(I);
-    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3] };
+    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape) };
   }
 
   /** Drops cached shapes (a new document). */

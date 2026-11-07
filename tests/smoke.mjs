@@ -3290,6 +3290,79 @@ try {
     await ctx.close();
   }
 
+  // --- 1.57: multibody (FRS 9.10, AT-P3-3): split a body by a plane and combine it back, a boss that does not merge ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 5 } });
+    }));
+    await settle();
+    const menu = async label => { await mp.click('#mc-tools [data-fly="sweep"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${label}$`) }).click(); await settle(); };
+    // Split: the plane picked (as a click on it would), previewed as two bodies.
+    await menu("Split");
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.plane = { plane: "p" }; m.focus = "bodies"; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const sp0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, bodies: window.__sv.model.last().props.bodies, status: [...document.querySelectorAll("#mc-pm .pm-help")].map(e => e.textContent).find(x => /The part has/.test(x)) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sp = await mp.evaluate(() => window.__sv.model.last().props);
+    // Combine (add) the two pieces back into one body: AT-P3-3, volume kept.
+    await menu("Combine");
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.main = { name: "x:side:l4" }; m.draft.tools = [{ name: "x:side:l2" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cb = await mp.evaluate(() => ({ ...window.__sv.model.last().props, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(sp0.title === "Split" && sp0.bodies === 2 && sp0.status === "The part has 2 bodies" && sp.bodies === 2 && Math.abs(sp.volume - 8000) < 1e-6 && cb.bodies === 1 && Math.abs(cb.volume - 8000) < 1e-6 && !cb.bad && /Split1,Combine1/.test(cb.names),
+      `model 1.57: Split a body by a plane into two and Combine them back, volume kept (AT-P3-3) (${JSON.stringify(sp0)}, ${sp.bodies}/${sp.volume}, ${JSON.stringify(cb)})`);
+    // Extrude panel: Merge result, on by default; off makes a second body.
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 4 }] }); }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.command("extrude"));
+    await settle();
+    const on = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="merge"]')?.checked);
+    await mp.click('#mc-pm input[data-k="merge"]');
+    await settle();
+    const mb = await mp.evaluate(() => ({ merge: window.__sv.model.mode().draft?.merge, bodies: window.__sv.model.last().props.bodies }));
+    await mp.click("#mc-ok");
+    await settle();
+    check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // Variable radius fillet on a corner edge: callouts at both ends, the end radius typed in the list.
+    const v1 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.evaluate(() => window.__sv.modeller.command("fillet"));
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.edges = [{ faces: ["x:side:l1", "x:side:l2"] }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click('#mc-pm input[data-k="variable"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-er2="0"]', "4");
+    await mp.press('#mc-pm input[data-er2="0"]', "Enter");
+    await settle();
+    const vf = await mp.evaluate(() => ({ calls: [...document.querySelectorAll("#mc-layer .mc-callout")].map(e => e.textContent), d: window.__sv.model.mode().draft, v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    await mp.click("#mc-ok");
+    await settle();
+    vf.v = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    const removed = v1 - vf.v, want = (1 - Math.PI / 4) * 10 * (4 + 8 + 16) / 3;
+    check(vf.d.variable && vf.d.edges[0].r2 === 4 && vf.d.edges[0].at && vf.calls.length === 2 && /^R1a: 2/.test(vf.calls[0]) && /^R1b: 4/.test(vf.calls[1]) && !vf.bad && Math.abs(removed - want) / want < 0.03,
+      `model 1.57: Variable radius fillet from 2 to 4 mm, callouts at both ends (FR-FT-032) (${JSON.stringify(vf.calls)}, ${removed.toFixed(3)} vs ${want.toFixed(3)})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
