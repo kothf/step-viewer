@@ -673,6 +673,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-tools { display: none; gap: 2px; }
 .ft-row:hover .ft-tools, .ft-row.sel .ft-tools, .ft-row:focus-within .ft-tools { display: inline-flex; }
 .ft-tools .icon { width: 22px; height: 20px; font-size: 11px; }
+.ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 .pm-head h3 { margin: 2px 0 4px; font-size: 15px; }
 .pm-help { margin: 0 0 8px; font-size: 12px; }
@@ -709,7 +710,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-row.child { margin-left: 16px; }
 .ft-row.infolder { margin-left: 14px; }
 .ft-row.infolder.child { margin-left: 30px; }
-.ft-row.ft-folder .ft-ico { font-size: 12px; width: 14px; text-align: center; }
+.ft-row.ft-folder .ft-ico, .ft-row.ft-bodies .ft-ico { font-size: 12px; width: 14px; text-align: center; }
 .ft-row.ft-folder .ft-count { font-size: 11px; margin-left: auto; padding: 0 4px; }
 .ft-freeze { display: flex; align-items: center; gap: 6px; margin: 2px 6px; font-size: 11px; color: var(--accent-text); }
 .ft-freeze::before, .ft-freeze::after { content: ""; flex: 1; height: 2px; background: #4dabf7; border-radius: 1px; }

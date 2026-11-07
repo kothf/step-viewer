@@ -6,7 +6,7 @@
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
-import type { BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -17,6 +17,8 @@ export interface Rebuild {
   curves?: Record<string, V3[]>;
   data: PartData | null;
   faceNames: string[];
+  /** The part's solid bodies, shown or hidden (FR-BODY-001). */
+  bodies?: { key: string; ref: FaceRef; volume: number }[];
   props: BodyProps | null;
   /** Faces made by the previewed feature, and its status (fillet and chamfer previews). */
   preview?: { position: number[]; status?: FeatureStatus } | null;

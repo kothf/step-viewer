@@ -83,15 +83,30 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const t1 = performance.now();
       let data = null, props = null;
       lastBody = res.body;
-      if (res.body) {
-        const mesh = modeller.mesh(res.body, r.doc.name, r.color, r.quality);
+      // The Bodies folder (FR-BODY-001): hidden bodies leave the view, coloured ones get their colour.
+      const info = res.body ? modeller.bodyInfo(res.body, r.doc) : [];
+      const state = r.doc.bodies ?? {};
+      const vis = info.filter(b => !state[b.key]?.hidden);
+      const split = info.length > 1 || vis.length < info.length || info.some(b => state[b.key]?.color);
+      const shown = !res.body ? null : !split || !info.length ? res.body : vis.length ? modeller.shownBodies(vis.map(b => b.part)) : null;
+      if (shown) {
+        const mesh = modeller.mesh(shown, r.doc.name, r.color, r.quality);
+        if (split) {
+          let at = 0;
+          for (const b of vis) {
+            const c = state[b.key]?.color;
+            if (c) for (let i = at; i < at + b.part.faces.length; i++) if (mesh.brep_faces[i]) mesh.brep_faces[i].color = c;
+            at += b.part.faces.length;
+          }
+        }
         data = analyzeMesh(mesh);
         data.name = r.doc.name;
         data.color = r.color;
-        kernel.meshes = [{ shape: res.body.shape, faces: res.body.faces, name: r.doc.name, color: r.color, solid: true }];
+        kernel.meshes = [{ shape: shown.shape, faces: shown.faces, name: r.doc.name, color: r.color, solid: true }];
         applyPatch(data, kernel.exact(0, probe(data)));
-        props = modeller.props(res.body);
       }
+      if (res.body) props = modeller.props(res.body);
+      const bodies = info.map(b => ({ key: b.key, ref: b.ref, volume: b.volume }));
       // Preview of the feature at `previewAt` (fillet, chamfer) while its edges are picked on the body before it:
       // only the faces it makes, as a plain triangle list.
       let preview: { position: number[]; status: unknown } | null = null;
@@ -116,7 +131,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         }
         preview = { position, status };
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: res.body?.names ?? [], props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "importBody") {
       kernel.load(new Uint8Array(r.buffer), r.name);
       post({ id: r.id, ok: true, ...kernel.brepText() });
