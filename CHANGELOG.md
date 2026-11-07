@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.60.0] - 2026-11-07
+
 ### Added
 - **Solid Bodies folder** (FR-BODY-001) at the top of the Features tree: every body of the part with **show/hide**, **colour** and **delete** (which adds a Body-Delete/Keep feature); double-click to rename. Bodies are named after the feature that made them and keep their settings through later features. Hidden bodies leave the view but still count in the mass properties.
 
@@ -577,7 +579,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.59.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.60.0...HEAD
+[1.60.0]: https://github.com/kothf/step-viewer/compare/v1.59.0...v1.60.0
 [1.59.0]: https://github.com/kothf/step-viewer/compare/v1.58.0...v1.59.0
 [1.58.0]: https://github.com/kothf/step-viewer/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/kothf/step-viewer/compare/v1.56.0...v1.57.0
