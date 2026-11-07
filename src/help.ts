@@ -42,9 +42,9 @@ function about(l: Lang) {
   <div class="about-links">${ext(blog, ru ? "Статья в блоге" : "Blog post")} · ${ext(REPO, ru ? "Исходный код на <span translate=\"no\">GitHub</span>" : "Source on GitHub")} · ${ext(`${REPO}/blob/main/CHANGELOG.md`, ru ? "Что нового" : "What's new")}</div></div>
 </div>
 ${ru
-    ? `<p>Модели STEP, IGES, BREP и SolidWorks, сетки STL, OBJ и 3MF и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер.</p>
+    ? `<p>Модели STEP, IGES, BREP и SolidWorks, сетки STL, OBJ и 3MF и печатные платы Gerber / Excellon в браузере. Файлы не покидают ваш компьютер. После первого открытия приложение запускается и без сети.</p>
 <p>Геометрия читается с помощью OpenCASCADE (occt-import-js, WebAssembly). Грани и рёбра восстанавливаются из триангуляции B-rep, поэтому плоскости, цилиндры, окружности и дуги распознаются аналитически; затем полное ядро (opencascade.js) в фоне заменяет объёмы, площади, длины, радиусы и кривизну точными значениями B-rep. Расстояния на поверхностях свободной формы измеряются по сетке. Внутренние единицы: миллиметры; единицы и число знаков меняют только отображение значений.</p>`
-    : `<p>STEP, IGES, BREP and SolidWorks models, STL, OBJ and 3MF meshes and Gerber / Excellon PCBs in the browser. Files never leave your computer.</p>
+    : `<p>STEP, IGES, BREP and SolidWorks models, STL, OBJ and 3MF meshes and Gerber / Excellon PCBs in the browser. Files never leave your computer. After the first visit it also starts offline.</p>
 <p>Geometry is read with OpenCASCADE (occt-import-js, WebAssembly). Faces and edges are rebuilt from the B-rep tessellation, so planes, cylinders, circles and arcs are recognised analytically; then the full kernel (opencascade.js) replaces volumes, areas, lengths, radii and curvature with exact B-rep values in the background. Distances on freeform surfaces are measured on the mesh. Internal units are millimetres; units and decimals only change how values are shown.</p>`}
 <h4>${ru ? "Создано с помощью" : "Built with"}</h4>
 <ul class="credits-main" data-credits-main><li>${ru ? "Загрузка…" : "Loading…"}</li></ul>

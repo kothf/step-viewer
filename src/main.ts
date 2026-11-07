@@ -94,6 +94,20 @@ const modeller = new ModelController({
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 $("#app-version").textContent = `v${__APP_VERSION__}`;
+// Offline start (FR-STO-030): the service worker keeps this version's app files. Not in dev, and not
+// under test automation unless the page asks for it (?sw), so tests see the network as it is.
+{
+  const qs = new URLSearchParams(location.search);
+  if (!import.meta.env.DEV && "serviceWorker" in navigator && location.protocol.startsWith("http") && (!navigator.webdriver || qs.has("sw")) && !qs.has("nosw")) {
+    addEventListener("load", () => {
+      const first = !navigator.serviceWorker.controller;
+      navigator.serviceWorker.register("./sw.js").then(reg => {
+        const w = reg.installing;
+        if (first && w) w.addEventListener("statechange", () => { if (w.state === "activated") toast(t("MöbiusCAD now also starts offline in this browser.")); });
+      }).catch(() => { /* offline start is a bonus */ });
+    });
+  }
+}
 $(".brand").title = `MöbiusCAD v${__APP_VERSION__}`;
 
 // ---------- state ----------

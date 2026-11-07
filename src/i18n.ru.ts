@@ -1394,4 +1394,5 @@ export const RU: Record<string, string> = {
   "The X and Z directions are parallel.": "Направления X и Z параллельны.",
   "Pick the Z direction: an edge, a face or an axis.": "Выберите направление Z: ребро, грань или ось.",
   "Pick the X direction: an edge, a face or an axis.": "Выберите направление X: ребро, грань или ось.",
+  "MöbiusCAD now also starts offline in this browser.": "Теперь MöbiusCAD запускается в этом браузере и без сети.",
 };
