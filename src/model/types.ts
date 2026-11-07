@@ -127,7 +127,28 @@ export interface PlaneFeature {
   hidden?: boolean;
 }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature;
+/** Reference axis (FR-REF-003): along a straight edge, the axis of a round face, or where two planes meet. */
+export interface AxisFeature {
+  id: string; type: "axis"; name: string; suppressed?: boolean;
+  mode: "edge" | "cylinder" | "planes";
+  edge?: EdgeRef;
+  face?: FaceRef;
+  planes?: PlaneRef[];
+  hidden?: boolean;
+}
+
+/** Reference point (FR-REF-004): a vertex, the centre of a round edge, a face's centre, or an edge's midpoint. */
+export interface PointFeature {
+  id: string; type: "point"; name: string; suppressed?: boolean;
+  mode: "vertex" | "centre" | "face" | "mid";
+  edge?: EdgeRef;
+  /** Vertex mode: near which end of the edge. */
+  at?: V3;
+  face?: FaceRef;
+  hidden?: boolean;
+}
+
+export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

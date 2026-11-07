@@ -161,3 +161,38 @@ test("chamfer modes, fillet keep features that fit, principal moments", async ()
   r.props!.moments!.forEach((v, i) => close(v, mom[i], 1e-6));
   assert.ok(Math.abs(Math.abs(r.props!.axes![0][0]) - 1) < 1e-9);
 });
+
+test("reference axes and points (FR-REF-003, FR-REF-004)", async () => {
+  const m = new Modeller(await occ());
+  // 100 × 60 × 20 block centred on the origin, with a Ø10 hole at (20, 10) through it.
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 20, 10, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 10 } };
+  const feats: Feature[] = [s1, ex, s2, cut,
+    // Axis along the edge between the +x side and the top: direction ±Y, at x = 50, z = 20.
+    { id: "a1", type: "axis", name: "Axis1", mode: "edge", edge: { faces: ["f1:side:s1l2", "f1:end"] } },
+    // The hole's axis.
+    { id: "a2", type: "axis", name: "Axis2", mode: "cylinder", face: { name: "f2:side:s2k" } },
+    // Top (XY) and Right (YZ) meet along Y through the origin.
+    { id: "a3", type: "axis", name: "Axis3", mode: "planes", planes: [{ std: "XY" }, { std: "YZ" }] },
+    { id: "p1", type: "point", name: "Point1", mode: "centre", edge: { faces: ["f2:side:s2k", "f1:end"] } },
+    { id: "p2", type: "point", name: "Point2", mode: "face", face: { name: "f1:end" } },
+    { id: "p3", type: "point", name: "Point3", mode: "vertex", edge: { faces: ["f1:side:s1l2", "f1:end"] }, at: [50, 30, 20] },
+    { id: "p4", type: "point", name: "Point4", mode: "mid", edge: { faces: ["f1:side:s1l2", "f1:end"] } },
+  ];
+  const r = run(m, doc(feats));
+  const F = r.frames;
+  const par = (d: number[], e: number[]) => close(Math.abs(d[0] * e[0] + d[1] * e[1] + d[2] * e[2]), 1);
+  par(F.a1.n, [0, 1, 0]); close(F.a1.o[0], 50); close(F.a1.o[2], 20);
+  par(F.a2.n, [0, 0, 1]); close(F.a2.o[0], 20); close(F.a2.o[1], 10);
+  par(F.a3.n, [0, 1, 0]); assert.ok(Math.hypot(F.a3.o[0], F.a3.o[2]) < 1e-9);
+  assert.deepEqual(F.p1.o.map(v => Math.round(v * 1e6) / 1e6), [20, 10, 20]);
+  // The top face minus the hole: its centre shifts away from the hole.
+  close(F.p2.o[2], 20); assert.ok(F.p2.o[0] < 0 && F.p2.o[1] < 0);
+  assert.deepEqual(F.p3.o.map(v => Math.round(v * 1e6) / 1e6), [50, 30, 20]);
+  assert.deepEqual(F.p4.o.map(v => Math.round(v * 1e6) / 1e6), [50, 0, 20]);
+  // Parallel planes do not meet.
+  const bad = m.evaluate(doc([...feats, { id: "a4", type: "axis", name: "Axis4", mode: "planes", planes: [{ std: "XY" }, { plane: "a1x" }] } as Feature]));
+  assert.equal(bad.statuses.at(-1)!.ok, false);
+});

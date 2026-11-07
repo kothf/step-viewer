@@ -16,8 +16,8 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type {
-  ChamferFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, Num, PartDoc, PlaneFeature, PlaneRef,
-  RevolveFeature, SketchFeature, V3,
+  AxisFeature, ChamferFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, Num, PartDoc, PlaneFeature, PlaneRef,
+  PointFeature, RevolveFeature, SketchFeature, V3,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { STD_FRAMES } from "../kernel/model";
@@ -58,8 +58,8 @@ type Mode =
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane"];
+const ICONS: Record<string, string> = { sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -353,7 +353,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -362,6 +362,9 @@ export class ModelController {
     const selEdge = (type === "fillet" || type === "chamfer") ? this.host.selectedEdge?.() ?? null : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.host.selectedFace() : null;
+    // Axis and point take a picked edge or face too.
+    const refEdge = type === "axis" || type === "point" ? this.host.selectedEdge?.() ?? null : null;
+    const refFace = type === "axis" || type === "point" ? this.host.selectedFace() : null;
     this.exitMode(false);
     const d = this.doc;
     const end = d.rollback ?? d.features.length;
@@ -383,6 +386,17 @@ export class ModelController {
       const selPlane = this.selected?.startsWith("std:") ? { std: this.selected.slice(4) as "XY" } : this.selected && this.store.feature(this.selected)?.type === "plane" ? { plane: this.selected } : null;
       const base: PlaneRef = (preFace != null ? this.planeOfFace(preFace) : null) ?? selPlane ?? { std: "XY" };
       draft = { id, type: "plane", name: nextName(d, "plane"), base, mode: "offset", offset: { v: 10 } } satisfies PlaneFeature;
+    } else if (type === "axis") {
+      const a: AxisFeature = { id, type: "axis", name: nextName(d, "axis"), mode: "edge" };
+      const fr = refFace != null ? this.faceRef(refFace) : null;
+      if (refEdge?.type === "line") a.edge = this.refOfEdge(refEdge) ?? undefined;
+      else if (fr && this.host.viewer.parts[0]?.data.faces[refFace!]?.type === "cylinder") { a.mode = "cylinder"; a.face = fr; }
+      draft = a;
+    } else if (type === "point") {
+      const pt: PointFeature = { id, type: "point", name: nextName(d, "point"), mode: "vertex" };
+      if (refEdge) { pt.edge = this.refOfEdge(refEdge) ?? undefined; pt.mode = refEdge.type === "circle" || refEdge.type === "arc" ? "centre" : "mid"; }
+      else if (refFace != null) { const fr = this.faceRef(refFace); if (fr) { pt.mode = "face"; pt.face = fr; } }
+      draft = pt;
     } else {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       draft = type === "fillet"
@@ -435,6 +449,8 @@ export class ModelController {
     if (f.type === "revolve" && !f.axis) { toast(t("Pick a line of the sketch as the axis."), true); return; }
     if (f.type === "extrude" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
+    if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
+    if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -496,9 +512,9 @@ export class ModelController {
 
   toggleHidden(id: string) {
     const f = this.store?.feature(id);
-    if (f?.type !== "plane") return;
+    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point") return;
     this.store!.change(f.hidden ? `Show ${f.name}` : `Hide ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id) as PlaneFeature;
+      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature;
       if (g.hidden) delete g.hidden; else g.hidden = true;
     });
   }
@@ -616,6 +632,7 @@ export class ModelController {
         this.startArrowDrag(e);
       }
     }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; }, true);
     vp.addEventListener("pointermove", e => {
       if (this.arrowDrag) { e.stopPropagation(); this.moveArrow(e); return; }
       if (!onCanvas(e)) return;
@@ -640,7 +657,7 @@ export class ModelController {
       } else if (m.kind === "feature" && m.draft.type === "extrude" && m.draft.end === "upto") {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
-      }
+      } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
     }, true);
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
@@ -672,7 +689,10 @@ export class ModelController {
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
     if (mod || e.altKey) return;
+    if (k === "escape" && document.getElementById("mc-sbar")) { stop(); this.hideShortcutBar(); return; }
     const m = this.mode;
+    // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
+    if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
       if (m.editor.key(e)) { stop(); this.renderBar(); return; }
@@ -760,6 +780,47 @@ export class ModelController {
     void this.rebuild();
   }
 
+  /** A persistent reference to a shown face. */
+  private faceRef(faceId: number): { name: string; hint?: V3 } | null {
+    const name = this.last?.faceNames[faceId];
+    const face = this.host.viewer.parts[0]?.data.faces[faceId];
+    return name && face ? { name, hint: face.centroid } : null;
+  }
+
+  /** Axis and point: a click in the view fills the selection for the chosen type. */
+  private pickRefGeometry(e: PointerEvent, f: AxisFeature | PointFeature) {
+    if (f.type === "axis" && f.mode === "planes") {
+      const r = this.pickRef(e);
+      if (!r) return;
+      // Two planes: a third pick replaces the older one.
+      f.planes = [...(f.planes ?? []), r].slice(-2);
+      this.draftChanged();
+      return;
+    }
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    const wantsFace = (f.type === "axis" && f.mode === "cylinder") || (f.type === "point" && f.mode === "face");
+    if (wantsFace) {
+      const fr = hit?.faceId != null ? this.faceRef(hit.faceId) : null;
+      if (!fr) { toast(t("Pick a face.")); return; }
+      f.face = fr;
+    } else {
+      const ed = hit?.edge;
+      if (!ed) { toast(t("Pick an edge.")); return; }
+      if (f.type === "axis" && ed.type !== "line") { toast(t("The axis needs a straight edge."), true); return; }
+      if (f.type === "point" && f.mode === "centre" && ed.type !== "circle" && ed.type !== "arc") { toast(t("The centre needs a circle or an arc."), true); return; }
+      const ref = this.refOfEdge(ed);
+      if (!ref) return;
+      f.edge = ref;
+      if (f.type === "point" && f.mode === "vertex") {
+        // The end nearer the click on screen.
+        const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+        const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return Math.hypot(r.left + ((q.x + 1) / 2) * r.width - e.clientX, r.top + ((1 - q.y) / 2) * r.height - e.clientY); };
+        f.at = scr(ed.start) <= scr(ed.end) ? ed.start : ed.end;
+      }
+    }
+    this.draftChanged();
+  }
+
   /** A persistent reference to a shown edge (between two named faces). */
   private refOfEdge(ed: EdgeInfo): EdgeRef | null {
     const names = this.last?.faceNames ?? [];
@@ -834,6 +895,10 @@ export class ModelController {
       this.drawRoundPreview(m.draft);
     }
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.draft.op === "cut") this.drawCutPreview();
+    if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point") && m.draft.edge) {
+      const ed = this.edgeOf(m.draft.edge);
+      if (ed) { const pos: number[] = []; pushEdge(pos, ed); this.lines(pos, 0xf08c00, 4); }
+    }
     if (m.kind === "feature" && m.draft.type === "plane" && m.draft.axis) {
       const ed = this.edgeOf(m.draft.axis);
       if (ed) { const pos: number[] = []; pushEdge(pos, ed); this.lines(pos, 0xf08c00, 4); }
@@ -881,6 +946,27 @@ export class ModelController {
       if (fr) square(fr, this.selected === f.id ? 0xf08c00 : 0x7c8594, { plane: f.id }, this.selected === f.id ? 0.16 : 0.08, true, onPlane(fr));
     });
     if (draftId) { const fr = this.last?.frames[draftId]; if (fr) square(fr, 0xf08c00, { plane: draftId }, 0.18, false, onPlane(fr)); }
+    // Reference axes (dash-dot lines through the model) and points (small crosses).
+    const open = m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point") ? m.draft.id : null;
+    const list = this.doc.features.slice(0, end).filter(f => (f.type === "axis" || f.type === "point") && !f.suppressed && !f.hidden && f.id !== open);
+    if (open) list.push(m.kind === "feature" ? m.draft : list[0]);
+    for (const f of list) {
+      const fr = this.last?.frames[f.id];
+      if (!fr) continue;
+      const col = f.id === open || this.selected === f.id ? 0xf08c00 : 0x7c8594;
+      const o = new THREE.Vector3(...fr.o);
+      if (f.type === "axis") {
+        const n = new THREE.Vector3(...fr.n);
+        const c = o.clone().addScaledVector(n, centre.clone().sub(o).dot(n));
+        const a = c.clone().addScaledVector(n, -s * 1.1), z = c.clone().addScaledVector(n, s * 1.1);
+        this.lines([...a.toArray(), ...z.toArray()], col, f.id === open ? 2.4 : 1.6, true);
+      } else {
+        const k = this.host.viewer.pxWorld(o) * 7;
+        const pos: number[] = [];
+        for (const d of [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) pos.push(...o.clone().addScaledVector(new THREE.Vector3(...d), -k).toArray(), ...o.clone().addScaledVector(new THREE.Vector3(...d), k).toArray());
+        this.lines(pos, col, 2.2);
+      }
+    }
   }
 
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
@@ -1242,7 +1328,7 @@ export class ModelController {
     if (m.kind === "sketch") {
       const tool = m.editor.tool;
       const tools: [SkTool, string, string][] = [
-        ["select", t("Select"), t("Select and drag (S)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
+        ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
         ["crect", t("Centre rect"), t("Centre rectangle")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")], ["point", t("Point"), t("Point (P)")],
@@ -1255,7 +1341,7 @@ export class ModelController {
       const groups: SkTool[][] = [["select"], ["dim"], ["line"], ["rect", "crect"], ["circle", "circle3"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
-        const cur = g.includes(tool) ? tool : this.flyLast.get(g[0]) ?? g[0];
+        const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
         const [id, l, ti] = info.get(cur)!;
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
@@ -1272,7 +1358,13 @@ export class ModelController {
         + btn("revolve", t("Revolve"), t("Revolve a sketch around a line"), m.kind === "feature" && m.draft.type === "revolve")
         + btn("fillet", t("Fillet"), t("Round edges"), m.kind === "feature" && m.draft.type === "fillet")
         + btn("chamfer", t("Chamfer"), t("Bevel edges"), m.kind === "feature" && m.draft.type === "chamfer")
-        + btn("plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge"), m.kind === "feature" && m.draft.type === "plane")
+        + (() => {
+          // Reference geometry flyout: Plane ▾ Axis, Point.
+          const refs: [string, string, string][] = [["plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")], ["axis", t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")], ["point", t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")]];
+          const open = m.kind === "feature" ? m.draft.type : null;
+          const cur = refs.find(r => r[0] === open) ?? refs.find(r => r[0] === this.flyLast.get("plane")) ?? refs[0];
+          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="plane" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
+        })()
         + `</div><div class="mc-sep"></div><div class="mc-g">`
         + btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, busy || !this.store.canUndo) + btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, busy || !this.store.canRedo)
         + `</div><div class="mc-sep"></div><div class="mc-g">`
@@ -1283,6 +1375,12 @@ export class ModelController {
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
       const mm = this.mode;
+      if (b.dataset.fly === "plane" && mm.kind !== "sketch") {
+        const r = b.getBoundingClientRect();
+        this.showMenu(([["plane", t("Plane")], ["axis", t("Axis")], ["point", t("Point")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("plane", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="plane"]')?.focus());
+        return;
+      }
       if (mm.kind !== "sketch") return;
       const g = ({ rect: ["rect", "crect"], circle: ["circle", "circle3"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert"] } as Record<string, SkTool[]>)[b.dataset.fly!];
       const label: Record<string, string> = { rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities") };
@@ -1292,8 +1390,57 @@ export class ModelController {
     }));
   }
 
+  /** Last pointer position over the view (where the shortcut bar opens). */
+  private pointer: { x: number; y: number } | null = null;
+
+  /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
+  showShortcutBar() {
+    const m = this.mode;
+    this.hideShortcutBar();
+    const items: [string, string][] = m.kind === "sketch"
+      ? [["sk:line", t("Line")], ["sk:rect", t("Rectangle")], ["sk:circle", t("Circle")], ["sk:arc", t("Arc")], ["sk:slot", t("Slot")], ["sk:trim", t("Trim")], ["sk:offset", t("Offset")], ["sk:fillet", t("Fillet")], ["sk:dim", t("Dimension")], ["sk:select", t("Select")]]
+      : [["sketch", t("Sketch")], ["extrude", t("Extrude")], ["cut", t("Cut")], ["revolve", t("Revolve")], ["fillet", t("Fillet")], ["chamfer", t("Chamfer")], ["plane", t("Plane")]];
+    const bar = document.createElement("div");
+    bar.id = "mc-sbar";
+    bar.className = "mc-sbar";
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", t("Shortcut bar"));
+    bar.innerHTML = items.map(([id, label]) => `<button data-c="${id}" title="${esc(label)}" aria-label="${esc(label)}"><span aria-hidden="true">${ICON_SVG[id] ?? ""}</span></button>`).join("");
+    document.body.appendChild(bar);
+    const vr = this.host.vp.getBoundingClientRect();
+    const at = this.pointer ?? { x: vr.left + vr.width / 2, y: vr.top + vr.height / 2 };
+    const r = bar.getBoundingClientRect();
+    bar.style.left = `${Math.max(4, Math.min(at.x - r.width / 2, innerWidth - r.width - 4))}px`;
+    bar.style.top = `${Math.max(4, Math.min(at.y - r.height - 12, innerHeight - r.height - 4))}px`;
+    const btns = [...bar.querySelectorAll<HTMLButtonElement>("button")];
+    btns.forEach(b => b.addEventListener("click", () => { this.hideShortcutBar(); this.command(b.dataset.c!); }));
+    bar.addEventListener("keydown", e => {
+      const k = btns.indexOf(document.activeElement as HTMLButtonElement);
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); btns[(k + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length].focus(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.hideShortcutBar(); }
+    });
+    // It goes when the pointer moves well away from it, or on a click elsewhere.
+    const away = (e: PointerEvent) => {
+      const b = bar.getBoundingClientRect();
+      const dx = Math.max(b.left - e.clientX, 0, e.clientX - b.right), dy = Math.max(b.top - e.clientY, 0, e.clientY - b.bottom);
+      if (Math.hypot(dx, dy) > 160) this.hideShortcutBar();
+    };
+    const outside = (e: PointerEvent) => { if (!bar.contains(e.target as Node)) this.hideShortcutBar(); };
+    window.addEventListener("pointermove", away);
+    window.addEventListener("pointerdown", outside, true);
+    this.sbarOff = () => { window.removeEventListener("pointermove", away); window.removeEventListener("pointerdown", outside, true); };
+    btns[0]?.focus({ preventScroll: true });
+  }
+
+  private sbarOff: (() => void) | null = null;
+  hideShortcutBar() {
+    this.sbarOff?.();
+    this.sbarOff = null;
+    document.getElementById("mc-sbar")?.remove();
+  }
+
   /** The tool each sketch flyout shows (the last one picked from it). */
-  private flyLast = new Map<SkTool, SkTool>();
+  private flyLast = new Map<string, string>();
 
   private command(c: string) {
     const m = this.mode;
@@ -1302,7 +1449,7 @@ export class ModelController {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -1383,6 +1530,7 @@ export class ModelController {
         const asRef: PlaneRef | null = id.startsWith("std:") ? { std: id.slice(4) as "XY" } : this.store!.feature(id)?.type === "plane" ? { plane: id } : null;
         if (mm.kind === "feature" && asRef && mm.draft.type === "plane" && mm.focus !== "axis" && mm.draft.id !== id) { mm.draft.base = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
+        if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
         if (mm.kind === "feature" && (mm.draft.type === "extrude" || mm.draft.type === "revolve") && this.store!.feature(id)?.type === "sketch") {
           mm.draft.sketch = id;
           if (mm.draft.type === "revolve") { const sk = this.store!.feature(id) as SketchFeature; const ls = sk.ents.filter(x => x.t === "line"); mm.draft.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }
@@ -1465,7 +1613,7 @@ export class ModelController {
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
-      if (f.type === "plane") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
+      if (f.type === "plane" || f.type === "axis" || f.type === "point") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       items.push(null);
       items.push([t("Roll back to here"), () => this.setRollback(i)]);
       if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
@@ -1592,6 +1740,21 @@ export class ModelController {
         + group(f.type === "fillet" ? t("Fillet parameters") : t("Chamfer parameters"), sizes)
         + (f.type === "fillet" ? group(t("Fillet options"), chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)"))) : "");
     }
+    if (f.type === "axis" || f.type === "point") {
+      title = f.type === "axis" ? t("Axis") : t("Point");
+      const opts: [string, string][] = f.type === "axis"
+        ? [["edge", t("Straight edge")], ["cylinder", t("Cylindrical or conical face")], ["planes", t("Two planes")]]
+        : [["vertex", t("Vertex")], ["centre", t("Arc centre")], ["face", t("Centre of face")], ["mid", t("Midpoint of edge")]];
+      const picked = f.type === "axis" && f.mode === "planes" ? (f.planes ?? []).map(p => this.refLabel(p)).join(", ") || t("None")
+        : (f.type === "axis" && f.mode === "cylinder") || (f.type === "point" && f.mode === "face") ? (f.face ? t("Face picked") : t("None"))
+        : f.edge ? t("Edge picked") : t("None");
+      const help = f.type === "axis" && f.mode === "planes" ? t("Click two planes or flat faces in the view or the tree.")
+        : (f.type === "axis" && f.mode === "cylinder") || (f.type === "point" && f.mode === "face") ? t("Click a face of the model.")
+        : f.type === "point" && f.mode === "vertex" ? t("Click an edge near the end you want.") : t("Click an edge of the model.");
+      body = group(t("Selections"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode">${opts.map(([v, l]) => `<option value="${v}"${f.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`
+        + `<div class="pm-field"><span>${esc(t("Reference"))}</span><button class="pm-box focus" data-k="focus-ref" translate="no">${esc(picked)}</button></div>`)
+        + `<p class="pm-help muted">${esc(help)}</p>`;
+    }
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
@@ -1653,6 +1816,7 @@ export class ModelController {
         const val = el instanceof HTMLInputElement && el.type === "checkbox" ? el.checked : el.value;
         const g = f as unknown as Record<string, unknown>;
         if (k === "name") { const s = String(val).trim(); if (s) f.name = s === featureLabel(f.name) ? f.name : s; this.renderPanel(); return; }
+        if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as "equal" | "two" | "angle"; if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
@@ -1853,6 +2017,8 @@ const ICON_SVG: Record<string, string> = {
   "sk:circle": S('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r=".9" fill="currentColor"/>'),
   "sk:arc": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="8" cy="11" r=".9" fill="currentColor"/>'),
   "sk:point": S('<circle cx="8" cy="8" r="2" fill="currentColor"/>'),
+  axis: S('<path d="M2 14 14 2" stroke-dasharray="4 1.5 1 1.5"/>'),
+  point: S('<path d="M8 3v10M3 8h10M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
   plane: S('<path d="M1.5 11 5 4h9.5L11 11z"/><path d="M8 7.5v-6M6.5 3 8 1.5 9.5 3" />'),
   "sk:circle3": S('<circle cx="8" cy="8" r="5.5"/><circle cx="2.5" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="4.3" r="1.1" fill="currentColor"/><circle cx="11" cy="12.6" r="1.1" fill="currentColor"/>'),
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),

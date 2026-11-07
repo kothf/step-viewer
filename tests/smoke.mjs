@@ -1932,6 +1932,74 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -50, -30), P("b", 50, -30), P("c", 50, 30), P("d", -50, 30), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } }); }); });
+    await idle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    // Reference geometry flyout → Axis, where Top and Right meet.
+    await mp.click('#mc-tools [data-fly="plane"]');
+    const refMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.selectOption('#mc-pm select[data-k="mode"]', "planes");
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const ax = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); const fr = window.__sv.model.last().frames[f.id]; return { type: f.type, name: f.name, n: fr?.n.map(v => Math.round(Math.abs(v) * 1e6) / 1e6), row: !!document.querySelector(`#mc-tree .ft-row[data-id="${f.id}"]`) }; });
+    check(refMenu.join("|") === "Plane|Axis|Point" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
+    // Point at the centre of the top face, picked in the view.
+    await mp.click('#mc-tools [data-fly="plane"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.selectOption('#mc-pm select[data-k="mode"]', "face");
+    const top = await world([-20, -10, 20]);
+    await mp.mouse.click(top[0], top[1]);
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const pt = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, o: window.__sv.model.last().frames[f.id]?.o.map(v => Math.round(v * 1e6) / 1e6) }; });
+    check(pt.type === "point" && pt.o?.join(",") === "0,0,20", `model 1.21: Point at the centre of a picked face (${JSON.stringify(pt)})`);
+    // S: the shortcut bar at the cursor; Esc closes it.
+    const mid = await world([0, 0, 10]);
+    await mp.mouse.move(mid[0], mid[1]);
+    await mp.keyboard.press("s");
+    const sbar = await mp.evaluate(() => { const b = document.querySelector("#mc-sbar"); return b ? { n: b.querySelectorAll("button").length, labels: [...b.querySelectorAll("button")].map(x => x.getAttribute("aria-label")).join("|") } : null; });
+    await mp.keyboard.press("Escape");
+    const sbarGone = await mp.evaluate(() => !document.querySelector("#mc-sbar"));
+    check(sbar?.n === 7 && /^Sketch\|Extrude/.test(sbar.labels) && sbarGone, `model 1.21: S shows the shortcut bar with the part commands, Esc hides it (${JSON.stringify(sbar)})`);
+    // Box selection in a sketch: left to right takes only what is fully inside.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s9", type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1", -20, -10), P("q2", 0, -10), L("m1", "q1", "q2"), P("q3", -20, 10), P("q4", 40, 10), L("m2", "q3", "q4")] }); }); });
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s9"));
+    await mp.waitForTimeout(1200);
+    await idle();
+    const sk = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const drag = async (a, b) => { const p0 = await sk(a), p1 = await sk(b); await mp.mouse.move(p0[0], p0[1]); await mp.mouse.down(); for (let i = 1; i <= 5; i++) { await mp.mouse.move(p0[0] + ((p1[0] - p0[0]) * i) / 5, p0[1] + ((p1[1] - p0[1]) * i) / 5); await mp.waitForTimeout(20); } await mp.mouse.up(); await mp.waitForTimeout(80); };
+    await drag([-25, -15], [10, 15]);
+    const win = await mp.evaluate(() => [...window.__sv.model.editor().selection].filter(id => id.startsWith("m")).sort());
+    await mp.keyboard.press("Escape");
+    await drag([10, 15], [-25, -15]);
+    const cross = await mp.evaluate(() => [...window.__sv.model.editor().selection].filter(id => id.startsWith("m")).sort());
+    check(win.join() === "m1" && cross.join() === "m1,m2", `model 1.21: sketch box selection, window then crossing (${win.join()} / ${cross.join()})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

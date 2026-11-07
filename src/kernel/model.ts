@@ -10,7 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { BodyProps, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, PartDoc, PlaneFeature, PlaneRef, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, PartDoc, PlaneFeature, PlaneRef, PointFeature, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -207,6 +207,57 @@ export class Modeller {
     const x = rot(base.x);
     // Through the edge: the origin is the world origin's projection onto the turned plane.
     return frameFrom(mul(n, dot(p, n)), x, n);
+  }
+
+  /** A reference axis as a frame: `o` a point on it, `n` its direction. */
+  private refAxis(f: AxisFeature, body: Named | null, frames: Record<string, Frame>): Frame {
+    const oc = this.oc;
+    const line = (o: V3, d: V3) => frameFrom(o, Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], unit(d));
+    if (f.mode === "edge") {
+      if (!f.edge) throw new FeatureError("E-REF-PICK", "Pick a straight edge.");
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, f.edge));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new FeatureError("E-REF-PICK", "The axis needs a straight edge.");
+      return line(this.xyz(ad.Line().Location()), this.xyz(ad.Line().Direction()));
+    }
+    if (f.mode === "cylinder") {
+      if (!f.face) throw new FeatureError("E-REF-PICK", "Pick a cylindrical or conical face.");
+      const ad = new oc.BRepAdaptor_Surface_2(this.resolveFace(body, f.face), true);
+      const ty = ad.GetType();
+      const ax = ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder ? ad.Cylinder().Axis() : ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone ? ad.Cone().Axis() : null;
+      if (!ax) throw new FeatureError("E-REF-PICK", "The axis needs a cylindrical or conical face.");
+      return line(this.xyz(ax.Location()), this.xyz(ax.Direction()));
+    }
+    const [a, b] = (f.planes ?? []).map(p => this.planeFrame(p, body, frames));
+    if (!a || !b) throw new FeatureError("E-REF-PICK", "Pick two planes or flat faces.");
+    const d = cross(a.n, b.n);
+    const s = Math.hypot(...d);
+    if (s < 1e-9) throw new FeatureError("E-REF-PARALLEL", "The two planes are parallel: they do not meet.");
+    // The point on both planes nearest the origin.
+    const da = dot(a.o, a.n), db = dot(b.o, b.n);
+    const o = mul(add(mul(cross(b.n, d), da), mul(cross(d, a.n), db)), 1 / (s * s));
+    return line(o, d);
+  }
+
+  /** A reference point as a frame at the point. */
+  private refPoint(f: PointFeature, body: Named | null): Frame {
+    const oc = this.oc;
+    const at = (o: V3): Frame => ({ o, x: [1, 0, 0], y: [0, 1, 0], n: [0, 0, 1] });
+    if (f.mode === "face") {
+      if (!f.face) throw new FeatureError("E-REF-PICK", "Pick a face.");
+      return at(this.centroid(this.resolveFace(body, f.face)));
+    }
+    if (!f.edge) throw new FeatureError("E-REF-PICK", "Pick an edge.");
+    const e = this.resolveEdge(body, f.edge);
+    if (f.mode === "mid") return at(this.edgeMid(e));
+    const ad = new oc.BRepAdaptor_Curve_2(e);
+    if (f.mode === "centre") {
+      const ty = ad.GetType();
+      if (ty !== oc.GeomAbs_CurveType.GeomAbs_Circle) throw new FeatureError("E-REF-PICK", "The centre needs a circle or an arc.");
+      return at(this.xyz(ad.Circle().Location()));
+    }
+    const p0 = this.xyz(ad.Value(ad.FirstParameter())), p1 = this.xyz(ad.Value(ad.LastParameter()));
+    const hint = f.at ?? f.edge.hint ?? p0;
+    return at(d3(p0, hint) <= d3(p1, hint) ? p0 : p1);
   }
 
   // ---------- profiles ----------
@@ -531,6 +582,8 @@ export class Modeller {
           this.warning = "";
           if (f.type === "sketch") { frame = this.frameOf(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "plane") { frame = this.refPlane(f, body, frames); frames[f.id] = frame; }
+          else if (f.type === "axis") { frame = this.refAxis(f, body, frames); frames[f.id] = frame; }
+          else if (f.type === "point") { frame = this.refPoint(f, body); frames[f.id] = frame; }
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
