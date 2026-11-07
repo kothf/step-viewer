@@ -198,6 +198,7 @@ const EN: Tab[] = [
 <ul>
   <li><b>Sketch</b>, then pick <b>Top (XY)</b>, <b>Front (XZ)</b>, <b>Right (YZ)</b> or a flat face of the part (a face picked with Smart measure is used at once). The view turns to face the sketch.</li>
   <li>Draw with <b>Line</b>, <b>Rectangle</b>, <b>Centre rectangle</b>, <b>Circle</b>, <b>3-point circle</b>, <b>Arc</b>, <b>3-point arc</b>, <b>Polygon</b> (sides in the panel) and <b>Point</b>. <b>Trim</b> (T) removes the clicked piece of a curve up to where it crosses others; <b>Fillet</b> (F) rounds the corner of two lines with the radius set in the panel. Points snap to ends, centres, curves and the origin; horizontal, vertical and coincident relations are added as you draw.</li>
+  <li>Tools with a <b>▾</b> hold related ones (Rectangle, Circle, Arc, Trim, Fillet, Offset); the button keeps the last one you picked. <b>Slot</b> (W): click both centres, then the width. <b>Extend</b> (E) lengthens a line or arc to the next curve; <b>Split</b> cuts it in two where you click; sketch <b>Chamfer</b> bevels the corner of two lines. <b>Offset entities</b> (O): move to the side to offset to and click a curve; a chain of joined lines and arcs is offset as a whole, corners re-joined. <b>Convert entities</b> copies the model edges you click (or all edges of a face) into the sketch, fixed in place.</li>
   <li><b>Dimension</b>: click a line, circle or arc (or two items), then where the value goes, and type it. Values accept units and arithmetic, such as <code>25.4 mm</code>, <code>1in</code>, <code>100/3</code> or <code>30deg</code>. Double-click a dimension to change it.</li>
   <li>Select items (Ctrl+click for more) to add relations in the panel: parallel, perpendicular, equal, tangent, concentric, midpoint, symmetric, fix. <b>Construction</b> (Q) turns lines into reference geometry, for example a revolve axis.</li>
   <li>The panel lists the sketch's relations: click one to select it, ✕ deletes it.</li>
@@ -242,6 +243,7 @@ ${table([
 ${table([
   ["S L R C A P D", "Sketch: select, line, rectangle, circle, arc, point, dimension"],
   ["G T F", "Sketch: polygon, trim, fillet"],
+  ["E O W", "Sketch: extend, offset entities, slot"],
   ["F2", "Rename the selected feature"],
   ["Ctrl+B / Ctrl+Q", "Rebuild / force rebuild of all features"],
   ["Ctrl+1 … Ctrl+7", "Front, back, left, right, top, bottom, isometric view"],
@@ -382,6 +384,7 @@ const RU: Tab[] = [
 <ul>
   <li><b>Эскиз</b>, затем выберите <b>Сверху (XY)</b>, <b>Спереди (XZ)</b>, <b>Справа (YZ)</b> или плоскую грань детали (грань, выбранная умным измерением, берётся сразу). Вид поворачивается к эскизу.</li>
   <li>Рисуйте инструментами <b>Отрезок</b>, <b>Прямоугольник</b>, <b>Прямоугольник от центра</b>, <b>Окружность</b>, <b>Окружность по 3 точкам</b>, <b>Дуга</b>, <b>Дуга по 3 точкам</b>, <b>Многоугольник</b> (число сторон на панели) и <b>Точка</b>. <b>Отсечь</b> (T) удаляет щёлкнутый участок кривой до пересечений с другими; <b>Скругление</b> (F) скругляет угол двух отрезков радиусом с панели. Точки привязываются к концам, центрам, кривым и началу координат; взаимосвязи горизонтальности, вертикальности и совпадения добавляются при рисовании.</li>
+  <li>Кнопки со значком <b>▾</b> объединяют родственные инструменты (прямоугольник, окружность, дуга, отсечение, скругление, смещение); на кнопке остаётся последний выбранный. <b>Паз</b> (W): щёлкните оба центра, затем ширину. <b>Удлинить</b> (E) продлевает отрезок или дугу до следующей кривой; <b>Разбить</b> делит её на две в месте щелчка; <b>Фаска</b> в эскизе срезает угол двух отрезков. <b>Смещение объектов</b> (O): наведите курсор на нужную сторону и щёлкните кривую; цепочка соединённых отрезков и дуг смещается целиком, углы сопрягаются заново. <b>Преобразование объектов</b> копирует щёлкнутые рёбра модели (или все рёбра грани) в эскиз и фиксирует их.</li>
   <li><b>Размер</b>: щёлкните отрезок, окружность или дугу (или два элемента), затем место для значения и введите его. Можно писать единицы и арифметику: <code>25,4 мм</code>, <code>1 дюйм</code> как <code translate="no">1in</code>, <code>100/3</code>, <code>30°</code>. Двойной щелчок по размеру меняет его.</li>
   <li>Выберите элементы (Ctrl+щелчок добавляет), чтобы добавить взаимосвязи на панели: параллельность, перпендикулярность, равенство, касательность, концентричность, середина, симметричность, фиксация. <b>Вспомогательная</b> (Q) делает отрезки справочной геометрией, например осью вращения.</li>
   <li>Панель перечисляет взаимосвязи эскиза: щелчок выбирает, ✕ удаляет.</li>
@@ -426,6 +429,7 @@ ${table([
 ${table([
   ["S L R C A P D", "Эскиз: выбор, отрезок, прямоугольник, окружность, дуга, точка, размер"],
   ["G T F", "Эскиз: многоугольник, отсечь, скругление"],
+  ["E O W", "Эскиз: удлинить, смещение объектов, паз"],
   ["F2", "Переименовать выбранный элемент"],
   ["Ctrl+B / Ctrl+Q", "Перестроить / перестроить все элементы заново"],
   ["Ctrl+1 … Ctrl+7", "Вид спереди, сзади, слева, справа, сверху, снизу, изометрия"],
