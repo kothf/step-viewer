@@ -137,6 +137,43 @@ export class ModelController {
   private mode: Mode = { kind: "none" };
   private fileName = "";
   private handle: FileSystemFileHandle | null = null;
+  /**
+   * The open part came from a vault (FR-PDM-010/081): saving writes the working copy there, only while it is
+   * checked out here; the title shows the version and a read-only bar offers Check out.
+   */
+  vault: { label: string; readOnly: boolean; save(bytes: Uint8Array): Promise<void>; checkOut(): Promise<void> } | null = null;
+
+  /** Ties (or unties) the open part to a vault file and refreshes the title and read-only bar. */
+  setVault(v: ModelController["vault"]) {
+    this.vault = v;
+    if (this.store) this.host.setDoc(this.docLabel());
+    this.renderVaultBar();
+  }
+
+  private renderVaultBar() {
+    let bar = document.getElementById("mc-ro");
+    const show = !!this.store && !!this.vault?.readOnly;
+    if (!show) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mc-ro";
+      bar.className = "mc-ro";
+      bar.setAttribute("role", "status");
+      document.getElementById("tab-features")!.prepend(bar);
+    }
+    bar.innerHTML = `<span>${esc(t("Read-only: check out to edit"))}</span><button class="btn small primary" data-a="co">${esc(t("Check out"))}</button>`;
+    bar.querySelector("button")!.addEventListener("click", () => { void this.vault?.checkOut(); });
+  }
+
+  /** The bytes of the open part, as saved (for the vault). */
+  async partBytes() {
+    if (!this.store) return null;
+    if (this.mode.kind === "sketch") this.ok();
+    return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+  }
+
+  /** Marks the open part saved (the vault wrote it). */
+  markSaved() { if (!this.store) return; this.store.markSaved(); journalDrop(this.doc.id); }
   private selected: string | null = null;
   private journalTimer = 0;
   private shownOnce = false;
@@ -204,6 +241,8 @@ export class ModelController {
 
   private load(doc: PartDoc, fileName: string, handle: FileSystemFileHandle | null) {
     this.exitMode(false);
+    this.vault = null;
+    this.renderVaultBar();
     this.fileName = fileName;
     this.handle = handle;
     this.selected = null;
@@ -239,6 +278,8 @@ export class ModelController {
     this.exitMode(false);
     if (this.store.dirty) journalSave(this.doc, this.fileName);
     this.store = null;
+    this.vault = null;
+    this.renderVaultBar();
     this.last = null;
     this.clearDecor();
     this.kernel.stop();
@@ -248,6 +289,9 @@ export class ModelController {
     this.host.selectLeftTab("tree");
     this.renderRecovery();
   }
+
+  /** The open part's file name ("" when none is open). */
+  get partName() { return this.store ? this.displayName() : ""; }
 
   private displayName() { return this.fileName || `${this.store?.doc.name ?? ""}${PART_EXT}`; }
 
@@ -275,7 +319,7 @@ export class ModelController {
     }
   }
 
-  private docLabel() { return `${this.displayName()}${this.store?.dirty ? " •" : ""}`; }
+  private docLabel() { return `${this.displayName()}${this.vault ? ` · ${this.vault.label}` : ""}${this.store?.dirty ? " •" : ""}`; }
 
   /** The document as shown: with the open command's draft, rolled back while a sketch or a pick is open. */
   private displayDoc(): PartDoc {
@@ -831,6 +875,17 @@ export class ModelController {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
     const bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    if (this.vault && !as) {
+      // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
+      if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
+      try { await this.vault.save(bytes); }
+      catch (err) { toast(t("Could not save: {err}", { err: t((err as Error).message) }), true); return; }
+      this.store.markSaved();
+      journalDrop(this.doc.id);
+      toast(t("Saved {name}", { name: this.fileName }), "success");
+      return;
+    }
+    if (as && this.vault) this.setVault(null);
     const blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
