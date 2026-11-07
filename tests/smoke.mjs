@@ -3223,6 +3223,79 @@ try {
     await ctx.close();
   }
 
+  // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "c0", r: 10 }] }); }));
+    await settle();
+    // Helix from the flyout: on the circle sketch, drawn in the view while the panel is open.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Helix/Spiral")');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="pitch"]', "5");
+    await mp.press('#mc-pm input[data-num="pitch"]', "Tab");
+    await mp.fill('#mc-pm input[data-num="revs"]', "10");
+    await mp.press('#mc-pm input[data-num="revs"]', "Tab");
+    await settle();
+    const hx = await mp.evaluate(() => { const m = window.__sv.model.mode(), c = window.__sv.model.last().curves ?? {}; const pts = Object.values(c)[0] ?? []; return { kind: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, title: document.querySelector("#mc-pm h3")?.textContent, n: pts.length, top: pts.at(-1)?.[2], drawn: window.__sv.modeller.decor.children.length }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(hx.type === "helix" && hx.sketch === "s1" && hx.title === "Helix/Spiral" && hx.n > 100 && Math.abs(hx.top - 50) < 1e-6 && hx.drawn > 0, `model 1.55: Helix/Spiral on a sketch circle, previewed in the view (FR-FT-083) (${JSON.stringify(hx)})`);
+    // Sweep: along the helix with a circular profile Ø2 (a spring, AT-P3-1).
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Sweep")');
+    await settle();
+    const sw0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { path: m.draft?.path, circ: m.draft?.circular?.v }; });
+    await mp.fill('#mc-pm input[data-num="circular"]', "2");
+    await mp.press('#mc-pm input[data-num="circular"]', "Tab");
+    await settle();
+    const live = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.click("#mc-ok");
+    await settle();
+    const L = 10 * Math.hypot(2 * Math.PI * 10, 5);
+    const spring = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(sw0.path?.helix && Math.abs(spring.v - Math.PI * L) / (Math.PI * L) < 1e-4 && Math.abs(live - spring.v) < 1e-6 && !spring.bad && /Sweep1/.test(spring.names), `model 1.55: Sweep with a circular profile along the helix makes a spring, previewed live (AT-P3-1) (${JSON.stringify(sw0)}, ${live}, ${JSON.stringify(spring)} vs ${(Math.PI * L).toFixed(2)})`);
+    // Loft between a square and a circle 50 mm apart (AT-P3-2), picked by default as the last two unused sketches.
+    await mp.evaluate(() => window.__sv.model.store.change("Profiles", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push(
+        { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "sq", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 40, -20), P("b", 80, -20), P("c", 80, 20), P("d", 40, 20), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "ci", type: "sketch", name: "Sketch3", plane: { plane: "p1" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 60, y: 0 }, { id: "k", t: "circle", c: "o", r: 15 }] });
+    }));
+    await settle();
+    const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Loft")');
+    await settle();
+    const lp = await mp.evaluate(() => ({ profiles: window.__sv.model.mode().draft?.profiles, rows: document.querySelectorAll('#mc-pm select[data-k^="lp"]').length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const loft = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    const lv = loft.v - v0;
+    check(JSON.stringify(lp.profiles) === '["sq","ci"]' && lp.rows === 3 && !loft.bad && lv > Math.PI * 225 * 50 && lv < 1600 * 50, `model 1.55: Loft through a square and a circle (AT-P3-2) (${JSON.stringify(lp)}, ${lv.toFixed(1)})`);
+    // In Russian: the panel and the flyout.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "helix").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, legends: [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Спираль" && !/[A-Za-z]{2}/.test(ru.legends), `model 1.55: helix panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

@@ -18,10 +18,10 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
-  const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
+  const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
   let n = 1;
   const names = new Set(doc.features.map(f => f.name));
   while (names.has(`${base}${n}`)) n++;
@@ -152,6 +152,9 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
+  if (f.type === "helix") features.push(f.sketch);
+  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push("sketch" in f.path ? f.path.sketch : f.path.helix); }
+  if (f.type === "loft") features.push(...f.profiles);
   return { faces, features };
 }
 
