@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.64.0] - 2026-11-07
+
 ### Added
 
 - Sub-assemblies: a saved assembly inserted as a component moves as one rigid piece, with its parts listed under it in the tree, and counts in mass properties, interference and STEP export (FR-ASM-001/006).
@@ -609,7 +611,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.63.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.64.0...HEAD
+[1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/kothf/step-viewer/compare/v1.60.0...v1.61.0
