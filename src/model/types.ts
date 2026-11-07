@@ -220,6 +220,24 @@ export interface CircularPatternFeature {
   skip?: string[];
 }
 
+/**
+ * Cosmetic thread (FR-FT-054): thread data on a round edge of a cylinder, drawn as dashed circles;
+ * the geometry is unchanged. Internal threads show the major diameter, external ones the minor.
+ */
+export interface ThreadFeature {
+  id: string; type: "thread"; name: string; suppressed?: boolean;
+  edge?: EdgeRef;
+  /** ISO size ("M6") the values came from; absent: custom. */
+  size?: string;
+  /** Diameter of the dashed circle. */
+  diameter: Num;
+  length: Num;
+  /** Up to the end of the cylinder instead of a length. */
+  upToEnd?: boolean;
+  pitch?: number;
+  internal?: boolean;
+}
+
 /** Hole wizard (FR-FT-050..053): holes of one kind at points on a flat face or plane. */
 export interface HoleFeature {
   id: string; type: "hole"; name: string; suppressed?: boolean;
@@ -246,7 +264,7 @@ export interface HoleFeature {
 }
 
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature
-  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature;
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

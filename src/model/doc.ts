@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
@@ -118,7 +118,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     else if ("plane" in p) features.push(p.plane);
   };
   if (f.type === "extrude" || f.type === "revolve") features.push(f.sketch);
-  if (f.type === "extrude") plane(f.upTo);
+  if (f.type === "extrude" || f.type === "revolve") plane(f.upTo);
+  if (f.type === "thread" && f.edge) faces.push(...f.edge.faces);
   if (f.type === "sketch") plane(f.plane);
   if (f.type === "plane") { plane(f.base); if (f.axis) faces.push(...f.axis.faces); }
   if (f.type === "axis" || f.type === "point") { if (f.edge) faces.push(...f.edge.faces); if (f.face) faces.push(f.face.name); }

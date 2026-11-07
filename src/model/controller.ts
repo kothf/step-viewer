@@ -17,12 +17,15 @@ import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from 
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import type { FeatureFolder,
+import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
-import { ISO_METRIC, holeSize } from "./holes";
+import { ISO_METRIC, holeSize, type HoleSize } from "./holes";
+
+/** Nominal (major) diameter of an ISO metric size: "M6" → 6. */
+const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
@@ -91,8 +94,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole"];
+const ICONS: Record<string, string> = { thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -405,13 +408,14 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
     if (fromSketch) { this.ok(); this.selected = fromSketch; }
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
+    const threadEdge = type === "thread" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -458,6 +462,11 @@ export class ModelController {
       const face = fid != null ? this.host.viewer.parts[0]?.data.faces[fid] : undefined;
       if (fid != null && face?.type === "plane") { const pr = this.planeOfFace(fid); if (pr) h.plane = pr; }
       draft = h;
+    } else if (type === "thread") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
+      if (threadEdge) this.setThreadEdge(th, threadEdge);
+      draft = th;
     } else if (type === "draft") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
@@ -550,6 +559,7 @@ export class ModelController {
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
+    if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
     if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
     if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
     if ((f.type === "lpattern" || f.type === "cpattern") && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
@@ -894,6 +904,11 @@ export class ModelController {
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "thread") {
+        const hit = this.host.edgeAt(e.clientX, e.clientY);
+        if (hit?.edge && this.setThreadEdge(m.draft, hit.edge)) this.draftChanged();
+        else toast(t("Pick a round edge of a cylinder."));
+      }
     }, true);
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
@@ -1251,6 +1266,7 @@ export class ModelController {
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
+    this.drawThreads();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
       for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
@@ -1273,6 +1289,72 @@ export class ModelController {
 
   /** Standard planes (when picking one) and the reference planes, as see-through squares. */
   /** Cosmetic threads (FR-FT-053): a dashed circle of the thread's major diameter on each tapped hole; the hole being placed gets crosses. */
+  /** The cylinder a round edge bounds, with the thread's direction along it and whether it is a hole. */
+  private threadGeom(ed: EdgeInfo) {
+    const data = this.host.viewer.parts[0]?.data;
+    if (!data || !ed.center || !ed.axis || !ed.radius || (ed.type !== "circle" && ed.type !== "arc")) return null;
+    const cyl = ed.faces.map(i => data.faces[i]).find(f => f && (f.type === "cylinder" || f.surface === "cylinder"));
+    if (!cyl) return null;
+    const a = ed.axis, c = ed.center;
+    const w = [cyl.center[0] - c[0], cyl.center[1] - c[1], cyl.center[2] - c[2]];
+    const along = w[0] * a[0] + w[1] * a[1] + w[2] * a[2];
+    const dir: V3 = along < 0 ? [-a[0], -a[1], -a[2]] : [a[0], a[1], a[2]];
+    // A hole's surface normals point at the axis.
+    const k = data.index[cyl.triStart * 3];
+    const p = [data.positions[k * 3], data.positions[k * 3 + 1], data.positions[k * 3 + 2]];
+    const nrm = [data.normals[k * 3], data.normals[k * 3 + 1], data.normals[k * 3 + 2]];
+    const q = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+    const t0 = q[0] * a[0] + q[1] * a[1] + q[2] * a[2];
+    const rad = [q[0] - a[0] * t0, q[1] - a[1] * t0, q[2] - a[2] * t0];
+    const internal = rad[0] * nrm[0] + rad[1] * nrm[1] + rad[2] * nrm[2] < 0;
+    return { c, dir, r: ed.radius, internal, full: Math.abs(along) * 2 };
+  }
+
+  /** Takes a picked round edge for a cosmetic thread: the nearest ISO size fills in the values. */
+  private setThreadEdge(f: ThreadFeature, ed: EdgeInfo) {
+    const g = this.threadGeom(ed);
+    const ref = this.refOfEdge(ed);
+    if (!g || !ref) return false;
+    f.edge = ref;
+    f.internal = g.internal;
+    const d = g.r * 2;
+    const best = ISO_METRIC.reduce((b, h) => (Math.abs((g.internal ? h.tap : majorOf(h)) - d) < Math.abs((g.internal ? b.tap : majorOf(b)) - d) ? h : b));
+    this.applyThreadSize(f, best.size);
+    if (!f.upToEnd) f.length = { v: Math.min(f.length.v, g.full) };
+    return true;
+  }
+
+  private applyThreadSize(f: ThreadFeature, size: string | undefined) {
+    const h = holeSize(size);
+    if (!h) { delete f.size; delete f.pitch; return; }
+    f.size = h.size;
+    f.pitch = h.pitch;
+    // Internal: the major diameter; external: the minor one (ISO 68-1, d1 = d − 1.0825 P).
+    f.diameter = { v: f.internal ? majorOf(h) : Math.round((majorOf(h) - 1.0825 * h.pitch) * 1000) / 1000 };
+  }
+
+  /** Cosmetic threads (FR-FT-054): dashed circles at both ends and four lines along the cylinder. */
+  private drawThreads() {
+    const m = this.mode;
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const list = this.doc.features.slice(0, end).filter((f): f is ThreadFeature => f.type === "thread" && !f.suppressed);
+    if (m.kind === "feature" && m.draft.type === "thread") { const i = list.findIndex(x => x.id === m.draft.id); if (i >= 0) list[i] = m.draft; else list.push(m.draft); }
+    const segs: number[] = [];
+    for (const f of list) {
+      const ed = f.edge ? this.edgeOf(f.edge) : null;
+      const g = ed ? this.threadGeom(ed) : null;
+      if (!g) continue;
+      const L = f.upToEnd ? g.full : Math.min(f.length.v, g.full), r = f.diameter.v / 2;
+      const n = g.dir, ref: V3 = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      const u = (() => { const x: V3 = [n[1] * ref[2] - n[2] * ref[1], n[2] * ref[0] - n[0] * ref[2], n[0] * ref[1] - n[1] * ref[0]]; const l = Math.hypot(...x); return [x[0] / l, x[1] / l, x[2] / l] as V3; })();
+      const v: V3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+      const at = (a: number, s: number) => [0, 1, 2].map(i => g.c[i] + n[i] * s + r * (u[i] * Math.cos(a) + v[i] * Math.sin(a)));
+      for (const s of [0, L]) for (let k = 0; k < 48; k++) segs.push(...at((k / 48) * Math.PI * 2, s), ...at(((k + 1) / 48) * Math.PI * 2, s));
+      for (let k = 0; k < 4; k++) segs.push(...at((k * Math.PI) / 2, 0), ...at((k * Math.PI) / 2, L));
+    }
+    if (segs.length) { const before = this.decor.children.length; this.lines(segs, 0x2b8a3e, 1.6, true); for (const o of this.decor.children.slice(before)) o.userData.thread = true; }
+  }
+
   private drawHoles() {
     const m = this.mode;
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -1752,6 +1834,7 @@ export class ModelController {
         + btn("fillet", t("Fillet"), t("Round edges"), m.kind === "feature" && m.draft.type === "fillet")
         + btn("chamfer", t("Chamfer"), t("Bevel edges"), m.kind === "feature" && m.draft.type === "chamfer")
         + btn("hole", t("Hole"), t("Hole wizard: simple, counterbore, countersink and tapped holes at points on a face"), m.kind === "feature" && m.draft.type === "hole")
+        + btn("thread", t("Cosmetic thread"), t("Cosmetic thread: thread data on a round edge of a cylinder, drawn as dashed circles"), m.kind === "feature" && m.draft.type === "thread")
         + btn("shell", t("Shell"), t("Shell: hollow the body, leaving picked faces open"), m.kind === "feature" && m.draft.type === "shell")
         + btn("draft", t("Draft"), t("Draft: taper faces by an angle about a neutral plane"), m.kind === "feature" && m.draft.type === "draft")
         + (() => {
@@ -1966,7 +2049,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -2413,6 +2496,17 @@ export class ModelController {
         + `<div class="pm-field"><span>${esc(t("Reference"))}</span><button class="pm-box focus" data-k="focus-ref" translate="no">${esc(picked)}</button></div>`)
         + `<p class="pm-help muted">${esc(help)}</p>`;
     }
+    if (f.type === "thread") {
+      title = t("Cosmetic thread");
+      const sizes: [string, string][] = [["", t("Custom")], ...ISO_METRIC.map(h => [h.size, h.size] as [string, string])];
+      body = group(t("Thread settings"), `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box focus" translate="no">${esc(f.edge ? t("Edge picked") : t("None"))}</button></div>`
+          + `<p class="pm-help muted">${esc(f.edge ? (f.internal ? t("Internal thread (in a hole)") : t("External thread (on a shaft)")) : t("Click a round edge of a cylinder."))}</p>`
+          + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-k="size">${sizes.map(([v, l]) => `<option value="${v}"${(f.size ?? "") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`
+          + numField("diameter", f.internal ? t("Major diameter") : t("Minor diameter"), f.diameter, "length")
+          + chk("upToEnd", f.upToEnd, t("Up to the end of the cylinder"))
+          + (f.upToEnd ? "" : numField("length", t("Length"), f.length, "length"))
+          + (f.pitch ? `<p class="pm-help muted">${esc(t("Pitch {p} mm", { p: trimNum(f.pitch, 3) }))}</p>` : ""));
+    }
     if (f.type === "hole") {
       title = t("Hole");
       const sel = (k: string, label: string, opts: [string, string][], cur: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
@@ -2516,7 +2610,8 @@ export class ModelController {
           (host as Record<string, Num>)[k1 ?? k0] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
-        }, f.type === "hole");
+          if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
+        }, f.type === "hole" || f.type === "thread");
       };
       inp.addEventListener("change", apply);
       inp.addEventListener("keydown", e => {
@@ -2542,6 +2637,7 @@ export class ModelController {
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as "equal" | "two" | "angle"; if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
+        if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
           upd(() => {
             if (k === "kind") f.kind = val as HoleFeature["kind"];
@@ -2957,6 +3053,7 @@ const ICON_SVG: Record<string, string> = {
   normal: S('<path d="M1.5 12 4.5 7h10l-3 5z"/><path d="M8 9.5V1.5M6 3.5l2-2 2 2"/>'),
   edit: S('<path d="M2.5 2.5h7v4"/><path d="M2.5 2.5v11h5"/><path d="m8.5 13.5.5-2.5 4.5-4.5 2 2-4.5 4.5z"/>'),
   editsk: S('<path d="M2 12.5h7M2 12.5 6 5"/><path d="m9 13.5.5-2.5 4-4 2 2-4 4z"/>'),
+  thread: S('<path d="M4 2.5h8M4 13.5h8M4 2.5v11M12 2.5v11"/><path d="M4 5.5l8-1.5M4 8.5l8-1.5M4 11.5l8-1.5" stroke-dasharray="1.6 1.2"/>'),
   hole: S('<ellipse cx="8" cy="4.5" rx="5" ry="2"/><path d="M3 4.5v7M13 4.5v7"/><path d="M3 11.5a5 2 0 0 0 10 0"/><ellipse cx="8" cy="4.5" rx="2.2" ry=".9" fill="currentColor"/>'),
   shell: S('<path d="M2.5 5 8 2l5.5 3v6L8 14l-5.5-3z"/><path d="M5 6.3 8 4.6l3 1.7v3.4L8 11.4 5 9.7z" fill="currentColor" fill-opacity=".3"/>'),
   draft: S('<path d="M3 13.5h10"/><path d="M4.5 13.5 6.5 3h4l1 10.5" fill="currentColor" fill-opacity=".3"/><path d="M8 2.5v4" stroke-dasharray="1.5 1.2"/>'),
