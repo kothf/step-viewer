@@ -3,6 +3,7 @@
 // autosave journal in the browser, for crash recovery (FR-STO-003).
 import { SCHEMA, type PartDoc } from "./types";
 import { unzipLimited, zip } from "./zip";
+import { FEATURE_TYPES } from "./doc";
 
 export const PART_EXT = ".mcadprt";
 export const FORMAT = "mobiuscad";
@@ -53,7 +54,7 @@ export function validate(d: Record<string, unknown>): PartDoc {
   doc.units ??= { length: "mm", decimals: 2 };
   doc.props ??= {};
   doc.rollback ??= null;
-  const known = new Set(["sketch", "extrude", "revolve", "fillet", "chamfer"]);
+  const known = new Set(FEATURE_TYPES);
   for (const f of doc.features) if (!known.has(f.type)) throw new FileError(`Unknown feature type "${f.type}". Update the app to open this file.`);
   return doc;
 }

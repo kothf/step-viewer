@@ -960,7 +960,10 @@ export class ModelController {
       if (this.mode.kind !== "none") this.exitMode(false);
       this.setBusy(1);
       let r: { brep: string; solids: number; faces: number };
-      try { r = await this.kernel.importBody(await f.arrayBuffer(), f.name); }
+      try {
+        // Insert part (FR-BODY-005): a MöbiusCAD part's result, evaluated on its own.
+        r = f.name.toLowerCase().endsWith(PART_EXT) ? await this.kernel.partBody(await unpackPart(await f.arrayBuffer())) : await this.kernel.importBody(await f.arrayBuffer(), f.name);
+      }
       catch (err) { toast(t("The file could not be read: {msg}", { msg: (err as Error).message }), true); return; }
       finally { this.setBusy(-1); }
       if (!r.faces) { toast(t("No faces or solids were found in the file."), true); return; }
@@ -974,7 +977,7 @@ export class ModelController {
     if (file) { void run(file); return; }
     const inp = document.createElement("input");
     inp.type = "file";
-    inp.accept = ".step,.stp,.iges,.igs,.brep";
+    inp.accept = `.step,.stp,.iges,.igs,.brep,${PART_EXT}`;
     inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
     inp.click();
   }
@@ -4275,7 +4278,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
   ["rib", t("Rib"), t("Rib: a thin wall from an open sketch line to the body")],
   ["split", t("Split Line"), t("Split line: project a sketch onto faces to split them")],
-  ["import", t("Insert body"), t("Insert body: a STEP, IGES or BREP file into this part, with check and heal")],
+  ["import", t("Insert body"), t("Insert body: a part, STEP, IGES or BREP file into this part, with check and heal")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],

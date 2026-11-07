@@ -1536,6 +1536,16 @@ export class Modeller {
   /** The bodies that are shown, back into one shape for the view. */
   shownBodies(parts: Named[]): Named { return this.compoundOf(parts); }
 
+  /** A body as BREP text (Insert part, FR-BODY-005: another part's result kept in this one). */
+  brepText(body: Named): { brep: string; solids: number; faces: number } {
+    const oc = this.oc as any;
+    const path = `/part${Date.now()}${Math.floor(Math.random() * 1e6)}.brep`;
+    oc.BRepTools.Write_4(body.shape, path, false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+    const brep = oc.FS.readFile(path, { encoding: "utf8" }) as string;
+    oc.FS.unlink(path);
+    return { brep, solids: this.solids(body.shape), faces: body.faces.length };
+  }
+
   /** Bodies back into one shape: a compound when there are several. */
   private compoundOf(parts: Named[]): Named {
     if (parts.length === 1) return parts[0];

@@ -45,3 +45,17 @@ test("refuses foreign and newer files", async () => {
   const evil = await zip([{ name: "../x", data: "1" }]);
   await assert.rejects(unpackPart(evil.buffer as ArrayBuffer), /unsafe path/);
 });
+
+test("save and open keep every feature type (planes, holes, bodies, imports…)", async () => {
+  const s = new DocStore(newPart("All"));
+  s.change("Add", d => {
+    d.features.push({ id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 5 } } as never);
+    d.features.push({ id: "d", type: "delbody", name: "Body-Delete/Keep1", bodies: [] } as never);
+    d.features.push({ id: "i", type: "import", name: "Imported1", file: "a.step", brep: "x" } as never);
+    d.features.push({ id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 2 } } as never);
+  });
+  const back = await unpackPart((await packPart(s.doc, "test")).buffer as ArrayBuffer);
+  assert.deepEqual(back.features.map(f => f.type), ["plane", "delbody", "import", "scale"]);
+  const odd = await packPart({ ...s.doc, features: [{ id: "z", type: "warp", name: "Warp1" } as never] }, "test");
+  await assert.rejects(unpackPart(odd.buffer as ArrayBuffer), /Unknown feature type "warp"/);
+});

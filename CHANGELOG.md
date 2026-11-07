@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.61.0] - 2026-11-07
+
+### Added
+- **Insert part** (FR-BODY-005): **Insert body** also takes a MöbiusCAD part (`.mcadprt`). The part is rebuilt on its own and its result goes in as a body, kept in this part's file (a broken link, as in SolidWorks), with Check and heal available.
+
+### Fixed
+- Parts that use reference geometry, holes, patterns, sweeps, body features or any feature beyond sketches, extrudes, revolves, fillets and chamfers can be opened again from `.mcadprt` files. Before this, opening them stopped with "Unknown feature type".
+
 ## [1.60.0] - 2026-11-07
 
 ### Added
@@ -579,7 +587,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.60.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.61.0...HEAD
+[1.61.0]: https://github.com/kothf/step-viewer/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/kothf/step-viewer/compare/v1.59.0...v1.60.0
 [1.59.0]: https://github.com/kothf/step-viewer/compare/v1.58.0...v1.59.0
 [1.58.0]: https://github.com/kothf/step-viewer/compare/v1.57.0...v1.58.0

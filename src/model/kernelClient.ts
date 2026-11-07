@@ -122,6 +122,12 @@ export class ModelKernel {
     return this.call<{ brep: string; solids: number; faces: number }>({ type: "importBody", buffer, name });
   }
 
+  /** Evaluates another part document into BREP text for an inserted part (FR-BODY-005). */
+  async partBody(doc: PartDoc): Promise<{ brep: string; solids: number; faces: number }> {
+    await this.start();
+    return this.call<{ brep: string; solids: number; faces: number }>({ type: "partBody", doc });
+  }
+
   async step(name: string, color: V3): Promise<Uint8Array> {
     await this.start();
     const r = await this.call<{ bytes: Uint8Array }>({ type: "modelStep", name, color });
