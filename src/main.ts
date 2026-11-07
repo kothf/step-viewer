@@ -110,6 +110,7 @@ const asm = new AsmController({
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { ++loadToken; modeller.close(); },
+  editPart: (doc, file, label, back) => modeller.editIn(doc, file, { label, back }),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 $("#app-version").textContent = `v${__APP_VERSION__}`;

@@ -197,6 +197,45 @@ export class ModelController {
     return packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
   }
 
+  /** Edit part in place (FR-ASM-007): the assembly the part came from, and how to go back to it with the edited part. */
+  returnTo: { label: string; back(doc: PartDoc): void } | null = null;
+
+  /** Opens a component's part for editing; Return to assembly hands the edited part back. */
+  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }) {
+    this.load(doc, fileName, null);
+    this.store!.markSaved();
+    this.returnTo = ret;
+    this.renderReturnBar();
+  }
+
+  /** Back to the assembly with the part as it is now. */
+  returnToAssembly() {
+    const r = this.returnTo;
+    if (!r || !this.store) return;
+    if (this.mode.kind === "sketch") this.ok();
+    else if (this.mode.kind !== "none") this.exitMode(false);
+    const doc = JSON.parse(JSON.stringify(this.doc)) as PartDoc;
+    // The assembly keeps the edit; the recovery journal does not need it.
+    this.store.markSaved();
+    journalDrop(this.doc.id);
+    this.returnTo = null;
+    r.back(doc);
+  }
+
+  private renderReturnBar() {
+    let bar = document.getElementById("mc-ret");
+    if (!this.store || !this.returnTo) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mc-ret";
+      bar.className = "mc-ro";
+      bar.setAttribute("role", "status");
+      document.getElementById("tab-features")!.prepend(bar);
+    }
+    bar.innerHTML = `<span>${esc(t("Editing a part of {asm}", { asm: this.returnTo.label }))}</span><button class="btn small primary" data-a="ret">${esc(t("Return to assembly"))}</button>`;
+    bar.querySelector("button")!.addEventListener("click", () => this.returnToAssembly());
+  }
+
   /** Marks the open part saved (the vault wrote it). */
   markSaved() { if (!this.store) return; this.store.markSaved(); journalDrop(this.doc.id); }
   private selected: string | null = null;
@@ -269,6 +308,8 @@ export class ModelController {
     this.exitMode(false);
     this.vault = null;
     this.renderVaultBar();
+    this.returnTo = null;
+    this.renderReturnBar();
     this.fileName = fileName;
     this.handle = handle;
     this.selected = null;
@@ -307,6 +348,8 @@ export class ModelController {
     this.store = null;
     this.vault = null;
     this.renderVaultBar();
+    this.returnTo = null;
+    this.renderReturnBar();
     this.last = null;
     this.clearDecor();
     this.kernel.stop();

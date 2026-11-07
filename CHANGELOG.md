@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.65.0] - 2026-11-07
+
+### Added
+
+- Advanced mates: limit distance and limit angle (a range, so they keep the freedom inside it), symmetric (two faces or axes mirrored in a plane) and width (a tab centred in a slot, between two faces or on a cylinder's axis), in the Mate panel's Advanced mates group (FR-MATE-004).
+- Display states: named sets of visibility, colour and transparency per component, added from the assembly's right-click menu and switched in the tree's Display states folder (FR-ASM-025).
+- Component transparency from the right-click menu.
+- Open part from an assembly component: the part opens in the modeller with a Return to assembly bar, and the edit comes back to the assembly as one undo step, with its mates kept (FR-ASM-007).
+- Sub-assemblies: a saved assembly inserted as a component moves as one rigid piece, with its parts listed under it in the tree, and counts in mass properties, interference and STEP export (FR-ASM-001/006).
+- Replace component with another part, assembly or STEP/IGES/BREP model; mates keep the faces they find by name and a warning counts the ones that could not (FR-ASM-008).
+- Suppress and unsuppress components, and per-component colour, from the tree's right-click menu.
+- BOM as top-level items or parts only; parts only counts parts inside sub-assemblies together with the same parts at the top (FR-ASM-024).
+
 ## [1.64.0] - 2026-11-07
 
 ### Added
@@ -15,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Sheets**: A4–A0 and ANSI A–E, landscape or portrait, first angle (ISO) or third angle (ANSI), with a frame, zone marks and an ISO 7200 or ANSI title block. The title block fills itself from the part (title, part number, revision, author, material, mass from the part's material) and from the sheet (scale, size, sheet n/m); every field can be typed over. Double-click the title block to edit it. More sheets go in tabs below the sheet.
 - A drawing of a modelled part is associative: change the part and the views update.
 - **Save** (Ctrl+S) writes a `.mcaddrw` file that holds the model too, so it opens on its own. **Export**: PDF of all sheets at their real size (vector, with an embedded DejaVu Sans font, so Cyrillic text works), SVG or DXF R12 of a sheet (millimetres, one layer per line type with HIDDEN and CENTER linetypes), and printing at 1:1 through the browser (Ctrl+P). Undo and redo cover every change.
+
 ## [1.63.0] - 2026-11-07
 
 ### Added
@@ -612,7 +626,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.64.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.65.0...HEAD
+[1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
