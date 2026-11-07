@@ -531,6 +531,8 @@ export interface PartDoc {
   config?: string;
   /** Standard planes hidden in the view (they are shown by default). */
   stdHidden?: ("XY" | "XZ" | "YZ")[];
+  /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
+  bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
 }
 
 // ---------- kernel results ----------

@@ -835,3 +835,21 @@ test("scale: uniform about the origin, per axis about the centroid (FR-BODY-006)
   const z = m.evaluate( doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 0 } } as Feature]));
   assert.equal(z.statuses[2].code, "E-BDY-SCALE");
 });
+
+test("bodies folder: keys by the feature that made each body, stable through later features (FR-BODY-001)", async () => {
+  const m = new Modeller(await occ());
+  const base: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+    circle("k", 40, 0, 5, { std: "XY" }), { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false }];
+  const d = doc(base);
+  const a = m.evaluate(d);
+  const info = m.bodyInfo(a.body!, d);
+  assert.deepEqual(info.map(b => b.key), ["x", "e"]);
+  close(info[0].volume, 8000);
+  close(info[1].volume, Math.PI * 250, 1e-4);
+  // A fillet on the box keeps its key; a copy of the cylinder is a body made by the Move/Copy.
+  const more = doc([...base, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [{ faces: ["x:side:sl1", "x:side:sl2"] }] } as Feature,
+    { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "e:side:kk" }], copy: true, dx: { v: 0 }, dy: { v: 30 }, dz: { v: 0 } } as Feature]);
+  const b = m.evaluate(more);
+  assert.deepEqual(b.statuses.filter(s => !s.ok), []);
+  assert.deepEqual(m.bodyInfo(b.body!, more).map(x => x.key), ["x", "e", "mv"]);
+});

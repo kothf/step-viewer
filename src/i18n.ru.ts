@@ -1835,4 +1835,11 @@ export const RU: Record<string, string> = {
   "The centre faces must be flat and square to the side faces.": "Центральные грани должны быть плоскими и перпендикулярными боковым.",
   "The full round could not be made for these faces.": "Не удалось построить полное скругление для этих граней.",
   "The scale factor must be more than 0.": "Коэффициент масштаба должен быть больше 0.",
+  // ---------- bodies folder (1.60.0) ----------
+  "Solid Bodies ({n})": "Твёрдые тела ({n})",
+  "Show body": "Показать тело",
+  "Hide body": "Скрыть тело",
+  "Body colour": "Цвет тела",
+  "Delete body": "Удалить тело",
+  "Reset colour": "Сбросить цвет",
 };

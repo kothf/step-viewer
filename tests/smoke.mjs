@@ -3441,6 +3441,55 @@ try {
     await ctx.close();
   }
 
+  // --- 1.60: Solid Bodies folder (FR-BODY-001): list, hide, colour, rename, delete ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Two bodies", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 40, y: 0 }, { id: "cc", t: "circle", c: "c0", r: 5 }] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+    }));
+    await settle();
+    const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
+    // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
+    await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
+    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
+    await settle();
+    const hid = await mp.evaluate(() => ({ faces: window.__sv.model.last().faceNames, v: window.__sv.model.last().props.volume, cls: document.querySelector('#mc-tree .ft-row[data-id="body:e"]').className }));
+    // Colour the box, rename it by double-click.
+    await mp.evaluate(() => window.__sv.modeller.setBody("x", { color: [1, 0, 0] }));
+    await settle();
+    const red = await mp.evaluate(() => window.__sv.viewer.parts[0].data.faces.filter(f => f.color && f.color[0] === 1 && f.color[1] === 0).length);
+    await mp.dblclick('#mc-tree .ft-row[data-id="body:x"] .ft-name');
+    await mp.keyboard.press("ControlOrMeta+a");
+    await mp.keyboard.type("Base plate");
+    await mp.keyboard.press("Enter");
+    await settle();
+    const nm = await mp.evaluate(() => [window.__sv.model.store.doc.bodies?.x?.name, document.querySelector('#mc-tree .ft-row[data-id="body:x"] .ft-name')?.textContent]);
+    // Delete the cylinder: a Body-Delete/Keep feature, one body left.
+    await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
+    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bdel"]');
+    await settle();
+    const del = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, f: window.__sv.model.store.doc.features.map(f => f.name).join(","), bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(t0.folder === "Solid Bodies (2)" && t0.rows.join() === "Extrude1,Extrude2" && t0.faces === 9 && hid.faces.length === 6 && !hid.faces.some(n => n.startsWith("e:")) && Math.abs(hid.v - (8000 + Math.PI * 250)) < 0.1 && / sup/.test(hid.cls)
+      && red === 6 && nm[0] === "Base plate" && nm[1] === "Base plate" && del.n === 1 && /Body-Delete\/Keep1/.test(del.f) && !del.bad,
+      `model 1.60: Solid Bodies folder lists, hides, colours, renames and deletes bodies (FR-BODY-001) (${JSON.stringify({ t0, hid: { n: hid.faces.length, v: hid.v, cls: hid.cls }, red, nm, del })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

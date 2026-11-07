@@ -873,6 +873,7 @@ export class ModelController {
   }
 
   rename(id: string, name: string) {
+    if (id.startsWith("body:")) { const key = id.slice(5), v = name.trim(); if (v && v !== this.bodyName(key)) this.setBody(key, { name: v }); return; }
     if (id.startsWith("folder:")) {
       const g = this.doc.folders?.find(x => `folder:${x.id}` === id), v = name.trim();
       if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.folders!.find(x => x.id === g.id)!.name = v; });
@@ -2854,6 +2855,7 @@ export class ModelController {
     html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
+    html += this.bodiesRows(row);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -2948,12 +2950,25 @@ export class ModelController {
         if (to >= 0) this.moveFeature(from, to);
       });
     });
+    box.querySelectorAll<HTMLInputElement>("input[data-bcolor]").forEach(inp => inp.addEventListener("change", () => {
+      const key = inp.closest<HTMLElement>(".ft-row")!.dataset.id!.slice(5), h = inp.value;
+      this.setBody(key, { color: [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255) as V3 });
+    }));
     box.querySelectorAll<HTMLElement>(".ft-row").forEach(r => {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         if (a === "sup") { this.toggleSuppress(id); return; }
         if (a === "del") { void this.deleteFeature(id); return; }
+        if (id.startsWith("body:")) {
+          const key = id.slice(5);
+          if (a === "bhide") { this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden }); return; }
+          if (a === "bdel") { this.deleteBody(key); return; }
+          if ((e.target as HTMLElement).matches("input")) return;
+          this.selected = id;
+          this.renderTree();
+          return;
+        }
         if ((e.target as HTMLElement).matches("input")) return;
         const mm = this.mode;
         if (mm.kind === "plane" && id.startsWith("std:")) { this.planePicked({ std: id.slice(4) as "XY" }); return; }
@@ -3005,7 +3020,8 @@ export class ModelController {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
-        if (id.startsWith("folder:")) { this.toggleFolder(id.slice(7)); this.startRename(id); return; }
+        if (id === "folder:bodies") return;
+        if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -3083,7 +3099,14 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const items: ([string, () => void] | null)[] = [];
     if (id === "part" || id === "material") items.push([t("Properties…"), () => this.editProps()]);
-    if (id.startsWith("folder:")) {
+    if (id.startsWith("body:")) {
+      const key = id.slice(5);
+      items.push([this.doc.bodies?.[key]?.hidden ? t("Show body") : t("Hide body"), () => this.setBody(key, { hidden: !this.doc.bodies?.[key]?.hidden })]);
+      items.push([t("Rename"), () => this.startRename(id)]);
+      if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
+      items.push([t("Delete body"), () => this.deleteBody(key)]);
+    }
+    if (id.startsWith("folder:") && id !== "folder:bodies") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
@@ -3142,6 +3165,60 @@ export class ModelController {
   private closeMenu() { const m = document.getElementById("mc-menu"); if (m && !m.hidden) { m.hidden = true; m.innerHTML = ""; } }
 
   /** Rename in place (F2, or the menu). */
+  /** A body's name in the Bodies folder: the user's, else the feature that made it (with [k] for its later bodies). */
+  bodyName(key: string): string {
+    const own = this.doc.bodies?.[key]?.name;
+    if (own) return own;
+    const [id, k] = key.split("#");
+    const f = this.store?.feature(id);
+    return `${f ? featureLabel(f.name) : t("Body")}${k ? `[${k}]` : ""}`;
+  }
+
+  /** The Solid Bodies folder (FR-BODY-001): one row per body with show/hide, colour and delete. */
+  private bodiesRows(row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string): string {
+    const list = this.last?.bodies ?? [];
+    if (!list.length) return "";
+    const open = !this.closedFolders.has("bodies");
+    let html = row("folder:bodies", open ? "▾" : "▸", t("Solid Bodies ({n})", { n: list.length }), "", " ft-bodies", ` aria-expanded="${open}"`);
+    if (!open) return html;
+    const st = this.doc.bodies ?? {};
+    const hex = (c?: V3) => "#" + (c ?? this.doc.color ?? DEFAULT_COLOR).map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, "0")).join("");
+    for (const b of list) {
+      const hidden = !!st[b.key]?.hidden, name = this.bodyName(b.key);
+      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? "◌" : "◉"}</button>`
+        + `<input type="color" class="ft-color" tabindex="-1" data-bcolor value="${hex(st[b.key]?.color)}" title="${esc(t("Body colour"))}" aria-label="${esc(t("Body colour"))}: ${esc(name)}" />`
+        + `<button class="icon" tabindex="-1" data-a="bdel" title="${esc(t("Delete body"))}" aria-label="${esc(t("Delete body"))}: ${esc(name)}">✕</button></span>`;
+      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup" : ""}`);
+    }
+    return html;
+  }
+
+  /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
+  setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
+    if (!this.store) return;
+    this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
+      const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
+      if (!cur.hidden) delete cur.hidden;
+      if (!cur.name) delete cur.name;
+      if (!cur.color) delete cur.color;
+      d.bodies = { ...(d.bodies ?? {}), [key]: cur };
+      if (!Object.keys(cur).length) delete d.bodies[key];
+      if (!Object.keys(d.bodies).length) delete d.bodies;
+    });
+    this.renderTree();
+    void this.rebuild();
+  }
+
+  deleteBody(key: string) {
+    const b = this.last?.bodies?.find(x => x.key === key);
+    if (!this.store || !b) return;
+    const d = this.doc, id = uid("f_"), name = nextName(d, "delbody");
+    const feat: DeleteBodyFeature = { id, type: "delbody", name, bodies: [b.ref] };
+    this.store.change(`Add ${name}`, x => { const at = x.rollback ?? x.features.length; x.features.splice(at, 0, feat); if (x.rollback != null) x.rollback++; });
+    this.renderAll();
+    void this.rebuild();
+  }
+
   private toggleFolder(fid: string) {
     if (this.closedFolders.has(fid)) this.closedFolders.delete(fid); else this.closedFolders.add(fid);
     this.selected = `folder:${fid}`;
@@ -3150,13 +3227,14 @@ export class ModelController {
 
   startRename(id: string) {
     const folder = id.startsWith("folder:") ? this.doc.folders?.find(g => `folder:${g.id}` === id) : undefined;
+    const body = id.startsWith("body:") ? id.slice(5) : null;
     const f = this.store?.feature(id);
     const row = $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`);
     const name = row?.querySelector<HTMLElement>(".ft-name");
-    if ((!f && !folder) || !row || !name) return;
+    if ((!f && !folder && !body) || !row || !name) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
-    inp.value = folder ? folder.name : featureLabel(f!.name);
+    inp.value = folder ? folder.name : body ? this.bodyName(body) : featureLabel(f!.name);
     inp.setAttribute("aria-label", t("New name"));
     inp.setAttribute("translate", "no");
     name.replaceWith(inp);

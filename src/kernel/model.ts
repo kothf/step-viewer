@@ -1511,6 +1511,31 @@ export class Modeller {
     return out;
   }
 
+  /**
+   * The Bodies folder (FR-BODY-001): each solid with a stable key (the id of the earliest feature that
+   * named one of its faces, `#k` for later bodies of the same feature), a face to name it by, and its
+   * volume. One solid is the whole body as it is (no face matching needed).
+   */
+  bodyInfo(body: Named, doc: PartDoc): { key: string; ref: FaceRef; volume: number; part: Named }[] {
+    const n = this.solids(body.shape);
+    if (!n) return [];
+    const parts = n === 1 ? [body] : this.bodyList(body);
+    const order = new Map(doc.features.map((f, i) => [f.id, i]));
+    const seen = new Map<string, number>();
+    return parts.map(part => {
+      let best = "", bi = Infinity;
+      for (const nm of part.names) { const id = nm.split(":")[0], i = order.get(id) ?? Infinity; if (i < bi) { bi = i; best = id; } }
+      const k = seen.get(best) ?? 0;
+      seen.set(best, k + 1);
+      const j = part.names.findIndex(x => x.startsWith(`${best}:`));
+      const face = part.faces[Math.max(0, j)];
+      return { key: k ? `${best}#${k + 1}` : best, ref: { name: part.names[Math.max(0, j)], hint: this.centroid(face) }, volume: this.volume(part.shape), part };
+    });
+  }
+
+  /** The bodies that are shown, back into one shape for the view. */
+  shownBodies(parts: Named[]): Named { return this.compoundOf(parts); }
+
   /** Bodies back into one shape: a compound when there are several. */
   private compoundOf(parts: Named[]): Named {
     if (parts.length === 1) return parts[0];

@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Solid Bodies folder** (FR-BODY-001) at the top of the Features tree: every body of the part with **show/hide**, **colour** and **delete** (which adds a Body-Delete/Keep feature); double-click to rename. Bodies are named after the feature that made them and keep their settings through later features. Hidden bodies leave the view but still count in the mass properties.
+
 ## [1.59.0] - 2026-11-07
 
 ### Added
