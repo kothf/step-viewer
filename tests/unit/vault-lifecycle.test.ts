@@ -1,0 +1,185 @@
+// Vault P4 (FRS 12.5.3-12.5.6): references, where-used, rename/move, delete, copy tree, revisions and lifecycle,
+// data cards, numbering, search, version compare and BOMs.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { fmtMsg, memDir, Vault } from "../../src/pdm/vault";
+import { zip } from "../../src/model/zip";
+import { docRefs, readProps, relPath, resolveRel } from "../../src/pdm/codec";
+import { formatNumber, revLabel, preLabel, defaultWorkflow } from "../../src/pdm/workflow";
+
+const enc = new TextEncoder();
+/** A MöbiusCAD document: manifest with references, document with properties and features. */
+const doc = (kind: string, refs: { path: string; qty?: number }[] = [], props: Record<string, unknown> = {}, features: unknown[] = []) =>
+  zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 1, kind, references: refs }) }, { name: "document.json", data: JSON.stringify({ kind, props, features }) }]);
+
+test("workflow: revision schemes and numbering (FR-PDM-030/041)", () => {
+  assert.deepEqual([0, 1, 7, 8, 25].map(n => revLabel({ kind: "letters" }, n)), ["A", "B", "H", "I", "Z"]);
+  // ASME Y14.35 skip: no I, O, Q, S, X, Z; then two letters.
+  const skip = Array.from({ length: 22 }, (_, n) => revLabel({ kind: "letters", skip: true }, n));
+  assert.equal(skip.join(""), "ABCDEFGHJKLMNPRTUVWYAAAB");
+  assert.deepEqual([0, 9].map(n => revLabel({ kind: "numbers" }, n)), ["01", "10"]);
+  assert.deepEqual([0, 3].map(n => revLabel({ kind: "eskd" }, n)), ["О", "А"]);
+  assert.deepEqual([0, 1].map(n => preLabel({ kind: "letters", pre: "x" }, n)), ["X1", "X2"]);
+  assert.equal(formatNumber("MC-{YYYY}-{0000}", 7, {}, new Date(2026, 0, 1)), "MC-2026-0007");
+  assert.equal(formatNumber("{Project}-{000}", 12, { Project: "Drone arm" }), "DRONE-ARM-012");
+  assert.equal(defaultWorkflow().transitions.length, 6);
+  assert.equal(resolveRel("asm/top.mcadasm", "../parts/a.mcadprt"), "parts/a.mcadprt");
+  assert.equal(relPath("asm/top.mcadasm", "parts/a.mcadprt"), "../parts/a.mcadprt");
+  assert.equal(relPath("a.mcadasm", "b.mcadprt"), "b.mcadprt");
+});
+
+test("vault: references, where-used, BOM, rename/move and delete (FR-PDM-020..025, 052)", async () => {
+  const v = await Vault.create(memDir("R"), "R", "Andrey", "pc1");
+  const bolt = await v.add("parts/Bolt.mcadprt", await doc("part"));
+  const plate = await v.add("parts/Plate.mcadprt", await doc("part"));
+  const sub = await v.add("asm/Sub.mcadasm", await doc("assembly", [{ path: "../parts/Bolt.mcadprt", qty: 4 }, { path: "../parts/Plate.mcadprt" }]));
+  const top = await v.add("asm/Top.mcadasm", await doc("assembly", [{ path: "Sub.mcadasm", qty: 2 }, { path: "../parts/Bolt.mcadprt", qty: 1 }]));
+  assert.deepEqual(v.latest(top).refs!.map(r => [r.id, r.version, r.qty]), [[sub.id, 1, 2], [bolt.id, 1, 1]]);
+  // Contains with quantities, and where-used up to the top.
+  const tree = await v.contains(top.id);
+  assert.deepEqual(tree.children.map(c => [c.path, c.qty, c.children.length]), [["asm/Sub.mcadasm", 2, 2], ["parts/Bolt.mcadprt", 1, 0]]);
+  const wu = await v.whereUsed(bolt.id);
+  assert.deepEqual(wu.map(n => [n.path, n.qty, n.children.map(c => c.path)]), [["asm/Sub.mcadasm", 4, ["asm/Top.mcadasm"]], ["asm/Top.mcadasm", 1, []]]);
+  const bom = await v.bom(top.id);
+  assert.deepEqual(bom.map(r => [r.path, r.qty]), [["asm/Sub.mcadasm", 2], ["parts/Bolt.mcadprt", 9], ["parts/Plate.mcadprt", 2]]);
+  // A newer Bolt: "as checked in" keeps v1, "latest" takes v2.
+  await v.checkOut(bolt.id);
+  await v.saveWorking(bolt.id, await doc("part", [], { description: "M6 bolt" }));
+  await v.checkIn(bolt.id, "M6");
+  assert.equal((await v.contains(top.id, undefined, "built")).children[1].version, 1);
+  assert.equal((await v.contains(top.id, undefined, "latest")).children[1].version, 2);
+  // Rename and move: users get a new version with the reference redirected.
+  await v.rename(plate.id, "parts/Base plate.mcadprt");
+  let s2 = await v.file(sub.id);
+  assert.equal(v.latest(s2).n, 2);
+  assert.match(v.latest(s2).comment, /renamed/);
+  assert.deepEqual((await docRefs("x.mcadasm", (await v.working("asm/Sub.mcadasm"))!)).map(r => r.path), ["../parts/Bolt.mcadprt", "../parts/Base plate.mcadprt"]);
+  assert.equal(v.latest(s2).refs![1].id, plate.id);
+  assert.equal(await v.working("parts/Plate.mcadprt"), null);
+  await v.rename(sub.id, "Sub.mcadasm");
+  s2 = await v.file(sub.id);
+  // Moving the assembly itself rewrites its own relative references.
+  assert.deepEqual((await docRefs("x.mcadasm", (await v.working("Sub.mcadasm"))!)).map(r => r.path), ["parts/Bolt.mcadprt", "parts/Base plate.mcadprt"]);
+  assert.deepEqual((await docRefs("x.mcadasm", (await v.working("asm/Top.mcadasm"))!)).map(r => r.path), ["../Sub.mcadasm", "../parts/Bolt.mcadprt"]);
+  assert.deepEqual((await v.verify()).broken, []);
+  // Delete: refused while used; a free file goes to the recycle bin and comes back.
+  await assert.rejects(v.remove(bolt.id), /Used by/);
+  const loose = await v.add("loose.txt", enc.encode("x"));
+  await v.remove(loose.id);
+  assert.equal((await v.files()).some(f => f.id === loose.id), false);
+  assert.equal((await v.recycleBin()).length, 1);
+  await v.restore(loose.id);
+  assert.equal(new TextDecoder().decode((await v.working("loose.txt"))!), "x");
+  // BOM compare between Top v1 and a Top that drops the loose Bolt.
+  await v.checkOut(top.id);
+  await v.saveWorking(top.id, await doc("assembly", [{ path: "../Sub.mcadasm", qty: 3 }]));
+  await v.checkIn(top.id, "three subs");
+  const diff = await v.bomCompare(top.id, 2, 3);
+  assert.deepEqual(diff.map(d => [d.path, d.change]).sort(), [["Sub.mcadasm", "quantity"], ["parts/Base plate.mcadprt", "quantity"], ["parts/Bolt.mcadprt", "quantity"]].sort());
+});
+
+test("vault: copy tree with renaming and new numbers (FR-PDM-024)", async () => {
+  const v = await Vault.create(memDir("C"), "C", "Andrey", "pc1");
+  await v.saveSettings({ numbering: { pattern: "BR-{000}", onAdd: true } });
+  const arm = await v.add("Arm.mcadprt", await doc("part"));
+  assert.equal(arm.card!["Part number"], "BR-001");
+  assert.equal((await readProps("Arm.mcadprt", (await v.working("Arm.mcadprt"))!))!.partNumber, "BR-001");
+  const std = await v.add("Screw.mcadprt", await doc("part"));
+  const top = await v.add("Frame.mcadasm", await doc("assembly", [{ path: "Arm.mcadprt", qty: 2 }, { path: "Screw.mcadprt", qty: 8 }]));
+  const copies = await v.copyTree(top.id, { ids: [arm.id], folder: "v2", suffix: "-B", renumber: true });
+  assert.deepEqual([...copies.values()].map(f => [f.path, f.card!["Part number"], f.versions.length]).sort(), [["v2/Arm-B.mcadprt", "BR-004", 1], ["v2/Frame-B.mcadasm", "BR-005", 1]]);
+  const nf = copies.get(top.id)!;
+  // The copied arm is used; the screw that was not copied is still the original.
+  assert.deepEqual((await docRefs("v2/Frame-B.mcadasm", (await v.working("v2/Frame-B.mcadasm"))!)).map(r => r.path), ["Arm-B.mcadprt", "../Screw.mcadprt"]);
+  assert.deepEqual(v.latest(nf).refs!.map(r => r.id), [copies.get(arm.id)!.id, std.id]);
+  await assert.rejects(v.copyTree(top.id, { ids: [arm.id], folder: "v2", suffix: "-B" }), /already in the vault/);
+});
+
+test("vault: lifecycle, revisions, data cards, search and compare (FR-PDM-031..042, 050)", async () => {
+  const v = await Vault.create(memDir("L"), "L", "Andrey", "pc1");
+  await v.saveSettings({ revScheme: { kind: "letters", skip: true, pre: "x" }, cards: { "*": [{ name: "Part number", type: "text", prop: "partNumber", required: true }, { name: "Description", type: "text", prop: "description" }, { name: "Material", type: "list", options: ["Steel", "Aluminium 6061"], prop: "Material" }, { name: "Mass", type: "number" }] } });
+  const p = await v.add("Bracket.mcadprt", await doc("part", [], { description: "Bracket" }, [{ id: "f1", type: "extrude", depth: { expr: "10 mm", value: 10 } }]));
+  assert.equal(p.card!.Description, "Bracket");
+  const asm = await v.add("Unit.mcadasm", await doc("assembly", [{ path: "Bracket.mcadprt", qty: 2 }]));
+  // Data card: only while checked out; values are checked; mapped fields reach the document.
+  await assert.rejects(v.setCard(p.id, { Mass: "1" }), /Check the file out/);
+  await v.checkOut(p.id);
+  await assert.rejects(v.setCard(p.id, { Mass: "heavy" }), /must be a number/);
+  await assert.rejects(v.setCard(p.id, { Material: "Wood" }), /must be one of/);
+  await v.setCard(p.id, { Material: "Aluminium 6061", Mass: "0.2" });
+  assert.equal((await readProps("Bracket.mcadprt", (await v.working("Bracket.mcadprt"))!))!.Material, "Aluminium 6061");
+  await v.saveWorking(p.id, await doc("part", [], { description: "Bracket, long", custom: { Material: "Aluminium 6061" } }, [{ id: "f1", type: "extrude", depth: { expr: "20 mm", value: 20 } }, { id: "f2", type: "fillet" }]));
+  await v.checkIn(p.id, "longer");
+  // Properties edited in the document come back into the card.
+  assert.equal((await v.file(p.id)).card!.Description, "Bracket, long");
+  // Submit gives a pre-release label; Approve needs the required field, and the assembly waits for its part.
+  await v.transition([p.id], "Submit for review");
+  assert.equal((await v.file(p.id)).revision, "X1");
+  await assert.rejects(v.checkOut(p.id), /cannot be checked out/);
+  const chk = await v.checkTransition([p.id], "Approve");
+  assert.deepEqual(chk[0].problems, [{ key: "Fill in {field} first.", p: { field: "Part number" } }]);
+  await v.transition([p.id], "Reject", "needs a number");
+  await v.checkOut(p.id);
+  const num = await v.assignNumber(p.id);
+  assert.equal(num, `MC-${new Date().getFullYear()}-0001`);
+  await v.checkIn(p.id, "numbered");
+  await v.checkOut(asm.id);
+  await v.setCard(asm.id, { "Part number": "U-1" });
+  await v.checkIn(asm.id, "numbered");
+  await v.transition([asm.id], "Submit for review");
+  await v.transition([p.id], "Submit for review");
+  assert.equal((await v.file(p.id)).revision, "X2");
+  const blocked = await v.checkTransition([asm.id], "Approve");
+  assert.match(blocked[0].problems.map(fmtMsg).join(), /Bracket.mcadprt is In review, not released/);
+  // Releasing both together is fine; the part's properties get the revision (a new version).
+  const labels = await v.transition([asm.id, p.id], "Approve");
+  assert.equal(labels[p.id], "A");
+  const rel = await v.file(p.id);
+  assert.equal(rel.state, "Released");
+  assert.equal(v.latest(rel).rev, "A");
+  assert.equal(v.latest(rel).comment, "Revision A");
+  const props = (await readProps("Bracket.mcadprt", (await v.working("Bracket.mcadprt"))!))!;
+  assert.deepEqual([props.revision, props.State, props["Approved by"]], ["A", "Released", "Andrey"]);
+  // Change → Change pending; the released revision stays what "latest released" resolves to.
+  await v.transition([p.id], "Change");
+  await v.checkOut(p.id);
+  await v.saveWorking(p.id, await doc("part", [], { description: "Bracket, long", partNumber: num, custom: { Material: "Steel" }, revision: "A" }));
+  await v.checkIn(p.id, "steel");
+  assert.equal(v.released(await v.file(p.id))!.rev, "A");
+  await v.transition([p.id], "Submit change");
+  await v.transition([p.id], "Approve");
+  assert.equal((await v.file(p.id)).revision, "B");
+  // Search by text, card field, state, revision and "contains material".
+  assert.deepEqual((await v.search({ text: "long" })).map(f => f.path), ["Bracket.mcadprt"]);
+  assert.deepEqual((await v.search({ state: "Released", revision: "b" })).map(f => f.path), ["Bracket.mcadprt"]);
+  assert.deepEqual((await v.search({ fields: { Material: "steel" } })).map(f => f.path), ["Bracket.mcadprt"]);
+  assert.deepEqual((await v.search({ contains: { field: "Material", value: "Steel" } })).map(f => f.path), ["Unit.mcadasm"]);
+  assert.deepEqual(await v.search({ kind: "drawing" }), []);
+  // Compare v1 and v2: card and feature-tree differences.
+  const cmp = await v.compare(p.id, 1, 2);
+  assert.deepEqual(cmp.card.map(c => c.field).sort(), ["Description", "Mass", "Material"]);
+  assert.ok(cmp.card.some(c => c.field === "Description" && c.from === "Bracket" && c.to === "Bracket, long"));
+  assert.deepEqual(cmp.features!.added, ["fillet"]);
+  assert.deepEqual(cmp.features!.changed.filter(c => c.feature === "extrude").map(c => [c.param, c.from, c.to]), [["depth", "10 mm", "20 mm"]]);
+  // Purge keeps released revisions.
+  await v.purge(1);
+  const after = await v.file(p.id);
+  assert.deepEqual(after.versions.filter(x => !x.purged).map(x => x.rev), ["A", "B"]);
+  // Obsolete; the audit trail has every transition.
+  await v.transition([p.id], "Make obsolete", "replaced");
+  assert.equal((await v.auditTrail(p.id)).filter(e => e.action === "transition").length, 8);
+});
+
+test("vault: roles in a shared vault (FR-PDM-037)", async () => {
+  const root = memDir("S");
+  const v = await Vault.create(root, "S", "Andrey", "pc1");
+  await v.saveSettings({ shared: true, roles: { Olga: ["Designer", "Checker"] } });
+  const f = await v.add("a.txt", enc.encode("a"));
+  await v.transition([f.id], "Submit for review");
+  const o = await Vault.open(root, "Olga", "pc2");
+  assert.deepEqual(o.rolesOf(), ["Designer", "Checker"]);
+  assert.deepEqual((await o.checkTransition([f.id], "Approve"))[0].problems.map(fmtMsg), ["Needs the role Approver."]);
+  await assert.rejects(o.saveSettings({ shared: false }), /Only an Admin/);
+  await o.transition([f.id], "Reject", "no");
+  assert.equal((await v.file(f.id)).state, "Work in progress");
+});

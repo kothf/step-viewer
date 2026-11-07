@@ -2897,7 +2897,7 @@ try {
     const vBack = await vol();
     const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).join(","));
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
-    check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
+    check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
     await ctx.close();
   }
@@ -2953,6 +2953,169 @@ try {
     const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|")) + ` [${toasts}]`;
     check(name === "Backup test.mcadvault.zip" && imported.root === "Backup test (2)" && imported.n === 2 && imported.v1 === "v1" && imported.ok, `vault 1.40: export to ZIP and import as a new vault (${name}, ${JSON.stringify(imported)})`);
     check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after.startsWith("note.txt:1/3:2|spec.pdf:1/1:4 "), `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
+    await ctx.close();
+  }
+
+  // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
+    await mp.fill("#v-name", "Lifecycle test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Lifecycle test") await mp.fill("#v-name", "Lifecycle test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="settings"]');
+    await mp.evaluate(async () => { await window.__sv.vault.addFiles([new File(["bracket"], "bracket.txt"), new File(["spare"], "spare.txt")]); });
+    const rowText = n => mp.evaluate(i => document.querySelectorAll("#vault-panel .v-row")[i]?.textContent.replace(/\s+/g, " ").trim() ?? "", n);
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
+    const row0 = await rowText(0);
+    // Data card: check out, fill the part number, check in.
+    await mp.click("#vault-panel .v-row >> nth=0");
+    await mp.click('#vault-panel [data-a="co"]');
+    await mp.waitForSelector('#vault-panel [data-a="ci"]');
+    await mp.click('#vault-panel [data-a="card"]');
+    await mp.fill('#vault-dlg [name="c:Part number"]', "BR-001");
+    await mp.fill('#vault-dlg [name="c:Description"]', "Bracket");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /BR-001/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    await mp.click('#vault-panel [data-a="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "numbered");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForSelector('#vault-panel [data-a="co"]');
+    // Submit for review, then Approve: revision A, Released, no check-out any more.
+    await mp.click('#vault-panel [data-tr="Submit for review"]');
+    await mp.waitForSelector("#vault-dlg .v-check li");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForSelector('#vault-panel [data-tr="Approve"]');
+    const checks = await mp.evaluate(() => { document.querySelector('#vault-panel [data-tr="Approve"]').click(); return true; });
+    await mp.waitForSelector("#vault-dlg .v-check li");
+    const dlgTitle = await mp.textContent("#vault-dlg-title");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /Rev A/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    const row1 = await rowText(0);
+    const canCheckOut = await mp.$('#vault-panel [data-a="co"]') !== null;
+    // Search by part number.
+    await mp.fill("#v-q", "br-001");
+    await mp.press("#v-q", "Enter");
+    await mp.waitForSelector("#vault-panel .v-found");
+    const found = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row .v-name")].map(x => x.textContent).join("|"));
+    await mp.click('#vault-panel [data-a="clearq"]');
+    // Rename / move into a folder.
+    await mp.click("#vault-panel .v-row >> nth=0");
+    await mp.click('#vault-panel [data-a="rename"]');
+    await mp.fill('#vault-dlg [name="path"]', "parts/bracket.txt");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "parts/bracket.txt"));
+    // Delete the spare file to the recycle bin and restore it.
+    await mp.click('#vault-panel .v-row:has-text("spare.txt")');
+    await mp.click('#vault-panel [data-a="del"]');
+    await mp.waitForSelector("#confirm[open]");
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 1);
+    await mp.click('#vault-panel [data-a="bin"]');
+    await mp.waitForSelector("#vault-dlg [data-restore]");
+    await mp.click("#vault-dlg [data-restore]");
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
+    const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).filter(a => /transition|data card|move|rename|delete|restore/.test(a)).join(","));
+    // Russian: state and revision are translated.
+    await mp.click("#lang-btn");
+    await mp.waitForFunction(() => /Выпущен/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+    const ruRow = await rowText(0);
+    await mp.click("#lang-btn");
+    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
+    check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
+    await ctx.close();
+  }
+
+  // --- PDM vault thread (FRS 12.5 P5): change order, release package, workflow editor, notifications ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
+    await mp.fill("#v-name", "Team test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Team test") await mp.fill("#v-name", "Team test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="changes"]');
+    // Two released files (one transition on both: a release package).
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      await p.addFiles([new File(["arm"], "arm.txt"), new File(["pin"], "pin.txt")]);
+      const ids = (await v.files()).map(f => f.id);
+      await v.transition(ids, "Submit for review");
+      await v.transition(ids, "Approve");
+      await p.refresh();
+    });
+    // Request a change on arm.txt from the tab, approve it, then close it.
+    await mp.click('#vault-panel .v-row:has-text("arm.txt")');
+    await mp.click('#vault-panel [data-a="eco"]');
+    await mp.fill('#vault-dlg [name="title"]', "Longer arm");
+    await mp.fill('#vault-dlg [name="reason"]', "Clash");
+    await mp.click('#vault-dlg button[value="ok"]');
+    // Waits for an async condition in the page (waitForFunction treats a promise as truthy).
+    const until = async (fn, ms = 10000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; await mp.waitForTimeout(100)) if (await mp.evaluate(fn)) return true; return false; };
+    await until(async () => (await window.__sv.vault.vault.changes()).length === 1);
+    await mp.click('#vault-panel [data-a="changes"]');
+    await mp.waitForSelector("#vault-dlg [data-eco-ok]");
+    await mp.click("#vault-dlg [data-eco-ok]");
+    await mp.waitForSelector("#vault-dlg [data-eco-close]");
+    const pending = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}`).join("|"));
+    await mp.click("#vault-dlg [data-eco-close]");
+    await until(async () => (await window.__sv.vault.vault.changes())[0].state === "Closed");
+    // The list reopens once the order is closed.
+    await mp.waitForSelector("#vault-dlg[open] [data-eco-ok], #vault-dlg[open] tbody tr", { timeout: 10000 }).catch(() => {});
+    await mp.waitForTimeout(300);
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}:${f.revision}`).join("|"));
+    await mp.evaluate(() => document.querySelector("#vault-dlg")?.open && document.querySelector("#vault-dlg").close());
+    // Release packages: two (the joint release and the change order), exported as a ZIP.
+    await mp.click('#vault-panel [data-a="packages"]');
+    await mp.waitForSelector("#vault-dlg [data-zip]");
+    const pkgs = await mp.$$eval("#vault-dlg [data-zip]", x => x.length);
+    const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click("#vault-dlg [data-zip] >> nth=0")]);
+    const zipName = dl.suggestedFilename();
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Workflow editor: add a state, save; it is in the settings.
+    await mp.click('#vault-panel [data-a="workflow"]');
+    await mp.waitForSelector("#vault-dlg [data-add-s]");
+    await mp.click("#vault-dlg [data-add-s]");
+    await mp.waitForSelector('#vault-dlg [data-s="5"]');
+    await mp.fill('#vault-dlg [data-s="5"] [name="name"]', "Archived");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault.info.workflow?.states.some(s => s.name === "Archived"), null, { timeout: 5000 }).catch(() => {});
+    const states = await mp.evaluate(() => window.__sv.vault.vault.info.workflow?.states.map(s => s.name).join(",") ?? "");
+    // Notifications: another user's check-in shows up with a count.
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      v.user = "Olga";
+      const f = (await v.files()).find(x => x.path === "arm.txt");
+      await v.transition([f.id], "Change");
+      v.user = "Andrey";
+      await p.refresh();
+    });
+    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="notes"] .v-badge')?.textContent ?? "");
+    await mp.click('#vault-panel [data-a="notes"]');
+    await mp.waitForSelector("#vault-dlg .v-log li");
+    const note = await mp.textContent("#vault-dlg .v-log li");
+    check(/arm\.txt:Change pending/.test(pending) && /pin\.txt:Released/.test(pending) && after === "arm.txt:Released:B|pin.txt:Released:A", `vault P5: change request, approve, close and release (${pending} → ${after})`);
+    check(pkgs === 2 && /\.zip$/.test(zipName) && /Archived/.test(states) && badge === "1" && /Olga/.test(note), `vault P5: release packages, workflow editor and notifications (${pkgs}, ${zipName}, ${states}, ${badge}, ${note})`);
     await ctx.close();
   }
 

@@ -5,6 +5,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.54.0] - 2026-11-07
+
+### Added
+- **Converted edges follow the model** (FR-SK-064). Convert entities now adds an **On edge** relation: the copied lines, arcs and circles move with their model edge whenever the part rebuilds, and features made from the sketch follow. When the edge is gone, the relation turns **dangling**: the curve keeps its place and is drawn in olive, the sketch gets a warning in the tree, and the sketch panel offers **Re-attach** (click the new edge, or drag the dangling glyph onto it) or **Delete dangling relations** to keep the curves free.
+- **Dimension names** (FR-SK-065). Hovering a dimension shows its full name, such as `D1@Sketch2`, as equations use it. Select one dimension to rename it in the sketch panel; expressions that use it follow, and so do expressions using a renamed sketch. **Show dimension names** puts the names next to the values.
+- **Draggable dimension text** (FR-SK-066). Drag a dimension's value to move it; the position is stored with the sketch. Ordinate values move with their row.
+- **Edit sketch plane** (FR-SK-007). Right-click a sketch in the tree: pick another plane or flat face, the sketch shows there live in orange, and ✓ moves it. On edge curves on the new plane follow their edges again, or dangle if they no longer resolve.
+
+## [1.53.0] - 2026-11-07
+
+### Added
+- **Shared vault on a synced folder** (FR-PDM-070/071). Locks are written as their own records, so two people checking out the same file over a slow sync never overwrite each other. The earlier check-out wins and the later one is shown to both. A check-in over a version someone else checked in meanwhile is refused, and you can **save your work as a new file** or **discard** it. An Admin can **break a lock** (logged with a reason). Shared vaults also keep every file record, so a sync conflict loses nothing.
+- **Change requests and change orders** (FR-PDM-053). **Request change…** on a file records a title, the reason, the affected files and who to notify. **Change orders** lists them. **Approve** moves the released files to Change pending, **Reject** needs a comment, and **Close and release** takes every file through review to its next revision together and writes the order number on the released versions.
+- **Release packages** (FR-PDM-054). Files released together, or by a change order, are recorded as a package. **Export ZIP** saves those exact versions as `name_revB.ext` files with a list.
+- **Notifications** (FR-PDM-061). The **Notifications** button counts what others did since your last visit (check-ins, releases, change orders) and what was addressed to you or your role.
+- **Workflow editor** (FR-PDM-035). Edit the states (colour, can be checked out, released, obsolete) and the transitions (next revision, role, comment, released references, required fields), export and import the workflow as JSON, or reset it to the default.
+
+## [1.52.0] - 2026-11-07
+
+### Added
+- **Revisions and lifecycle in the vault** (FR-PDM-030..034, 037). Every vault file now has a state: Work in progress, In review, Released, Change pending or Obsolete, shown with a coloured dot in the Vault tab. **Change state** moves a file: Submit for review, Approve, Reject, Change, Submit change and Make obsolete. Approve gives the next revision (A, B, C …) and writes the revision, state, approver and date into a part's properties as a new version. The dialog lists the file and the files it uses in the same state, with what blocks the change and what only warns, before anything is written, so an assembly and its parts can be released together. Only files in Work in progress or Change pending can be checked out. The title shows `v12 · Rev B · Released`.
+- **Data cards and numbering** (FR-PDM-040/041). **Data card** edits the part number, description, material, project and any other fields while the file is checked out. Fields can be text, number, date, list, checkbox or user, can be required for release, and map to the part's properties both ways. **New number** takes the next number from the vault's pattern (for example `MC-{YYYY}-{0000}`), and numbers are never reused. New files can be numbered as they are added.
+- **References, Contains and Where used** (FR-PDM-020..022, 052). The vault records which files an assembly or drawing uses, and the version each was checked in against. **Contains** shows the tree with quantities, as checked in, latest or latest released, with a bill of materials you can save as CSV. **Where used** shows every file above it.
+- **Rename / move, Copy tree and Recycle bin** (FR-PDM-023..025). Renaming or moving a file updates the files that use it, each with a new version. **Copy tree** copies an assembly with the parts you choose into a folder, with a prefix, suffix or find/replace and new part numbers, and points the copies at each other. **Delete** moves a file to the **Recycle bin**, which restores it, and a file still in use cannot be deleted.
+- **Search and compare** (FR-PDM-042, 050). Search the vault by name, any data card field, state, revision, who has it checked out, kind, date, or "contains a file with Material = Aluminium 6061", and save searches. **History** compares two versions: data card, added and removed features, changed parameters (old → new), references and BOM changes.
+- **Vault settings**: revision scheme (letters with or without I, O, Q, S, X, Z, numbers, ESKD letters or your own list, with optional pre-release revisions X1, X2 …), numbering pattern, data card fields, and user roles for a shared vault (Designer, Checker, Approver, Admin).
+
 ## [1.51.0] - 2026-11-07
 
 ### Added
@@ -511,7 +538,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.51.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.54.0...HEAD
+[1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
+[1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
+[1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
