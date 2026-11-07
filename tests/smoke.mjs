@@ -1681,7 +1681,7 @@ try {
     const onTop = await mp.evaluate(() => ({ kind: window.__sv.model.mode().kind, plane: window.__sv.model.store.doc.features[0]?.plane, empty: document.querySelector("#mc-empty").hidden }));
     check(rows0.startsWith("Part1|Material <not specified>|Configuration: Default|Equations|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
     // Polygon: six equal sides on a construction circle.
-    await mp.click('[data-c="sk:polygon"]');
+    await mp.keyboard.press("g");
     await click([0, 0]);
     { const [x, y] = await toPage([30, 0], true); await mp.mouse.move(x, y); await mp.waitForTimeout(60); }
     const cursorTxt = await mp.evaluate(() => document.querySelector("#sk-layer .sk-cursor")?.textContent);
@@ -1729,6 +1729,27 @@ try {
       return res;
     });
     check(merge.btn && merge.gone && merge.a === "m1" && merge.status === "ok" && merge.inter, `model 1.50: Merge points joins two points into one; a point and two lines offer Intersection (${JSON.stringify(merge)})`);
+    // 1.51: ordinate dimensions from a base, and a diameter about a centerline (FR-SK-063).
+    const ordDia = await mp.evaluate(async () => {
+      const m = window.__sv.model, ed = m.editor(), orig = structuredClone(ed.sk);
+      const next = structuredClone(ed.sk);
+      next.ents.push({ id: "o1", t: "point", x: 130, y: 50 }, { id: "o2", t: "point", x: 160, y: 70 }, { id: "o3", t: "point", x: 175, y: 45 },
+        { id: "c1", t: "point", x: 220, y: 0 }, { id: "c2", t: "point", x: 220, y: 30 }, { id: "cl", t: "line", a: "c1", b: "c2", cons: true }, { id: "dp", t: "point", x: 232, y: 15 });
+      ed.setSketch(next, ed.frame);
+      const tick = () => new Promise(r => setTimeout(r, 30));
+      ed.setTool("hord");
+      ed.ordClick([130, 50]); ed.ordClick([145, 30]); ed.ordClick([160, 70]); await tick(); ed.closeInput(false); ed.ordClick([175, 45]); await tick(); ed.closeInput(false);
+      const ords = ed.sk.dims.filter(d => d.ord).map(d => `${d.t}:${d.e.join("-")}:${Math.round(d.val.v)}:${Math.round(d.pos[1])}`);
+      const zero = [...document.querySelectorAll(".sk-dim.ord0")].map(e => e.textContent);
+      ed.setTool("dim");
+      ed.dimClick([232, 15], {}); ed.dimClick([220, 20], {}); ed.dimClick([205, 15], {}); await tick(); ed.closeInput(false);
+      const dd = ed.sk.dims.find(d => d.e.includes("dp"));
+      const dia = { e: dd?.e.join("-"), dia: !!dd?.dia, v: dd && Math.round(dd.val.v), label: [...document.querySelectorAll(".sk-dim")].find(e => e.dataset.id === dd?.id)?.textContent };
+      ed.setTool("select");
+      ed.setSketch(orig, ed.frame); ed.commit("Restore"); m.panel();
+      return { ords, zero, dia };
+    });
+    check(ordDia.ords.join() === "hdistance:o1-o2:30:30,hdistance:o1-o3:45:30" && ordDia.zero.join() === "0" && ordDia.dia.e === "cl-dp" && ordDia.dia.dia && ordDia.dia.v === 24 && ordDia.dia.label === "⌀24", `model 1.51: horizontal ordinate dimensions from a base, and a ⌀ dimension about a centerline (${JSON.stringify(ordDia)})`);
     // Ctrl+8: normal to the sketch.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); });
     await mp.keyboard.press("Control+8");

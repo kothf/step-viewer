@@ -44,7 +44,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -109,6 +109,8 @@ export class SketchEditor {
   /** In-progress entity: its points so far, and the live cursor point. */
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
+  /** Ordinate dimensioning: the base picked first, then the row the values go on. */
+  private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
   /** Box selection in progress (sketch coordinates), started at screen x0. */
   private box: { a: V2; b: V2; x0: number; base: Set<string> } | null = null;
   private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature } | null = null;
@@ -159,6 +161,7 @@ export class SketchEditor {
     this.tool = tool;
     this.draft = { pts: [], ids: [], cursor: null, snap: null };
     this.dimDraft = { picks: [], dim: null };
+    this.ordDraft = { base: null, row: null };
     if (tool !== "select" && tool !== "dim") this.selection.clear();
     this.render();
     this.statusHint();
@@ -274,6 +277,7 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim") { this.dimClick(p, e); return true; }
+    if (this.tool === "hord" || this.tool === "vord") { this.ordClick(p); return true; }
     if (this.tool === "trim") { this.trimAt(p); return true; }
     if (this.tool === "fillet") { this.filletAt(p); return true; }
     if (this.tool === "chamfer") { this.chamferAt(p); return true; }
@@ -612,6 +616,40 @@ export class SketchEditor {
     void e;
   }
 
+  /**
+   * Ordinate dimensions (FR-SK-063): click the base (a point, circle or the origin), then where the row of
+   * values goes, then each point to measure from the base along X (hord) or Y (vord).
+   */
+  private ordClick(p: V2) {
+    const od = this.ordDraft;
+    const h = this.hits(p).find(x => x.kind === "point" || x.kind === "origin" || x.kind === "circle" || x.kind === "arc");
+    const ax = this.tool === "hord" ? 1 : 0;
+    if (!od.base) {
+      if (!h) return;
+      od.base = h.id;
+      this.selection = new Set([h.id]);
+      this.render();
+      return;
+    }
+    if (!h || h.id === od.base) {
+      // An empty click (or the base again) sets the row of values.
+      od.row = p[ax];
+      this.render();
+      return;
+    }
+    const base = this.centreOf(od.base), q = this.centreOf(h.id);
+    if (od.row === null) od.row = base[ax] + (q[ax] >= base[ax] ? -1 : 1) * this.px(base) * 30;
+    const pos: V2 = ax === 1 ? [q[0], od.row] : [od.row, q[1]];
+    const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: this.tool === "hord" ? "hdistance" : "vdistance", e: [od.base, h.id], val: { v: 0 }, pos, ord: true };
+    this.selection = new Set([od.base]);
+    this.addDimension(dim);
+  }
+
+  private centreOf(id: string): V2 {
+    const e = id === ORIGIN ? undefined : this.ent(id);
+    return e && (e.t === "circle" || e.t === "arc") ? this.pt(e.c) : this.pt(id);
+  }
+
   private parallel(l1: string, l2: string) {
     const a = this.ent(l1), b = this.ent(l2);
     if (a?.t !== "line" || b?.t !== "line") return false;
@@ -623,13 +661,14 @@ export class SketchEditor {
   private placeDimDraft(p: V2) {
     const dim = this.dimDraft.dim!;
     dim.pos = p;
+    this.diaSide(dim, p);
     const pts = this.dimPoints(dim);
     if ((dim.t === "distance" || dim.t === "hdistance" || dim.t === "vdistance") && pts) {
       const [a, b] = pts;
       const inX = p[0] > Math.min(a[0], b[0]) && p[0] < Math.max(a[0], b[0]);
       const inY = p[1] > Math.min(a[1], b[1]) && p[1] < Math.max(a[1], b[1]);
       const lineLen = dim.e.length === 1 || this.ent(dim.e[0])?.t === "line" && this.ent(dim.e[1] ?? "")?.t === "line";
-      if (!lineLen || dim.e.length === 1) {
+      if (!dim.dia && (!lineLen || dim.e.length === 1)) {
         const span = (x: number) => Math.abs(x) > 1e-9;
         if (inX && !inY && span(b[0] - a[0]) && span(b[1] - a[1])) dim.t = "hdistance";
         else if (inY && !inX && span(b[0] - a[0]) && span(b[1] - a[1])) dim.t = "vdistance";
@@ -645,6 +684,26 @@ export class SketchEditor {
       }
     }
     dim.val.v = measureDim(this.sk, dim);
+  }
+
+  /**
+   * A distance from a centerline (construction line) to a point or a parallel line becomes a diameter when
+   * the text is placed on the far side of the centerline, as for a revolve profile (FR-SK-063).
+   */
+  private diaSide(dim: SkDim, p: V2) {
+    delete dim.dia;
+    if (dim.e.length !== 2 || (dim.t !== "distance" && dim.t !== "hdistance" && dim.t !== "vdistance")) return;
+    const isCl = (id: string) => { const e = id === ORIGIN ? undefined : this.ent(id); return e?.t === "line" && !!e.cons; };
+    if (!isCl(dim.e[0]) && isCl(dim.e[1])) dim.e.reverse();
+    if (!isCl(dim.e[0])) return;
+    const o = this.ent(dim.e[1]);
+    if (o?.t === "line" && !this.parallel(dim.e[0], dim.e[1])) return;
+    if (o && o.t !== "line" && o.t !== "point" && o.t !== "circle" && o.t !== "arc") return;
+    const l = this.ent(dim.e[0]) as SkEnt & { t: "line" };
+    const a = this.pt(l.a), u = sub2(this.pt(l.b), a);
+    const q = o?.t === "line" ? this.pt(o.a) : this.centreOf(dim.e[1]);
+    const side = (x: V2) => u[0] * (x[1] - a[1]) - u[1] * (x[0] - a[0]);
+    if (side(q) * side(p) < 0) { dim.dia = true; dim.t = "distance"; }
   }
 
   private nextDimName() {
@@ -1670,6 +1729,8 @@ export class SketchEditor {
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
       dim: "Click one or two items, then click where the dimension goes",
+      hord: "Click the base point, then where the values go, then each point to dimension along X",
+      vord: "Click the base point, then where the values go, then each point to dimension along Y",
     };
     this.host.status(`${def} · ${t(hints[this.tool])}`);
   }
@@ -1697,7 +1758,9 @@ export class SketchEditor {
       const other = d.e[1 - li];
       const p = kind(other) === "line" ? this.pt((this.ent(other) as SkEnt & { t: "line" }).a) : centreOf(other);
       const a = this.pt(l.a), b = this.pt(l.b), u = sub2(b, a), l2 = dot2(u, u) || 1, tt = dot2(sub2(p, a), u) / l2;
-      return [[a[0] + u[0] * tt, a[1] + u[1] * tt], p];
+      const foot: V2 = [a[0] + u[0] * tt, a[1] + u[1] * tt];
+      // A diameter about a centerline spans from the mirror image of the point to the point.
+      return [d.dia ? [2 * foot[0] - p[0], 2 * foot[1] - p[1]] : foot, p];
     }
     return null;
   }
@@ -1855,7 +1918,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));
@@ -1917,6 +1980,12 @@ export class SketchEditor {
     const pts = this.dimPoints(dm);
     if (!pts) return;
     const [a, b] = pts;
+    if (dm.ord) {
+      // Ordinate: leaders from the base and the point to the row of values, no dimension line.
+      const ax = dm.t === "hdistance" ? 1 : 0;
+      for (const q of [a, b]) line(q, ax === 1 ? [q[0], pos[1]] : [pos[0], q[1]]);
+      return;
+    }
     let dir: V2 = dm.t === "hdistance" ? [1, 0] : dm.t === "vdistance" ? [0, 1] : norm2(sub2(b, a));
     if (Math.hypot(...dir) < 1e-12) dir = [1, 0];
     const nrm: V2 = [-dir[1], dir[0]];
@@ -1962,11 +2031,25 @@ export class SketchEditor {
       const el = mk(d.id, "sk-dim");
       const v = d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 2)}°` : `${d.t === "diameter" ? "⌀" : d.t === "radius" ? "R" : ""}${trimNum((d.driven ? measureDim(this.sk, d) : d.val.v) / u.mm, u.decimals)}`;
       el.textContent = d.driven ? `(${v})` : v;
+      if (d.dia && !d.driven) el.textContent = `⌀${v}`;
+      else if (d.dia) el.textContent = `(⌀${v})`;
       el.title = `${d.name}${d.val.expr ? ` = ${d.val.expr}` : ""}${d.driven ? ` · ${t("reference")}` : ""}`;
       el.classList.toggle("sel", this.selection.has(d.id));
       el.classList.toggle("driven", !!d.driven);
       el.classList.toggle("draft", d === this.dimDraft.dim);
-      el.dataset.pos = JSON.stringify(d.pos ?? [0, 0]);
+      el.dataset.pos = JSON.stringify(this.labelPos(d));
+    }
+    // Ordinate dimensions: a 0 at the base of each row.
+    for (const d of dims) {
+      if (!d.ord || !d.pos) continue;
+      const pts = this.dimPoints(d);
+      if (!pts) continue;
+      const key = `ord0:${d.e[0]}:${d.t}:${Math.round(d.t === "hdistance" ? d.pos[1] : d.pos[0])}`;
+      if (seen.has(key)) continue;
+      const el = mk(key, "sk-dim ord0");
+      el.textContent = "0";
+      el.title = t("Base of the ordinate dimensions");
+      el.dataset.pos = JSON.stringify(d.t === "hdistance" ? [pts[0][0], d.pos[1]] : [d.pos[0], pts[0][1]]);
     }
     // Relation glyphs next to the first entity of each relation (points: beside the point).
     const per = new Map<string, number>();
@@ -1996,6 +2079,15 @@ export class SketchEditor {
     if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
     if (e.t === "spline") { const l = this.splineLine(e); return l[Math.floor(l.length / 2)]; }
     return this.pt(e.a);
+  }
+
+  /** Where a dimension's value is drawn: ordinate values follow their point along the row. */
+  private labelPos(d: SkDim): V2 {
+    const pos = d.pos ?? [0, 0];
+    if (!d.ord) return pos;
+    const q = this.dimPoints(d)?.[1];
+    if (!q) return pos;
+    return d.t === "hdistance" ? [q[0], pos[1]] : [pos[0], q[1]];
   }
 
   private placeLabels() {

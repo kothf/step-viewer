@@ -185,3 +185,18 @@ test("intersection relation: a point where two curves cross (FR-SK-051)", () => 
   near(x, 5 / Math.SQRT2, 1e-6); near(y, 5 / Math.SQRT2, 1e-6);
   assert.ok(r.defined.has("p"));
 });
+
+test("diameter about a centerline and ordinate dimensions (FR-SK-063)", () => {
+  // Centerline on the Y axis; a diameter of 16 puts the point 8 from it.
+  const s = sk([pt("a", 0, 0), pt("b", 0, 10), { id: "cl", t: "line", a: "a", b: "b", cons: true }, pt("p", 5, 3)], [rel("fix", "cl")]);
+  const d: SkDim = { ...dim("distance", 0, "cl", "p"), dia: true };
+  near(measureDim(s, d), 10);
+  d.val.v = 16;
+  s.dims.push(d);
+  assert.equal(solve(s).status, "ok");
+  near(P(s, "p")![0], 8, 1e-6);
+  // Ordinate: horizontal distances from the origin to two points.
+  const o = sk([pt("q", 3, 1), pt("r", 7, -2)], [], [{ ...dim("hdistance", 20, ORIGIN, "q"), ord: true }, { ...dim("hdistance", 35, ORIGIN, "r"), ord: true }]);
+  assert.equal(solve(o).status, "ok");
+  near(P(o, "q")![0], 20, 1e-6); near(P(o, "r")![0], 35, 1e-6);
+});
