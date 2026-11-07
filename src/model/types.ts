@@ -148,7 +148,56 @@ export interface PointFeature {
   hidden?: boolean;
 }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature;
+/** A direction or axis: a straight or round edge, a flat or round face, or a reference axis. */
+export interface LineRef { edge?: EdgeRef; face?: FaceRef; axis?: string }
+
+/** Shell (FR-FT-060): hollows the body to a wall thickness, leaving the picked faces open. */
+export interface ShellFeature {
+  id: string; type: "shell"; name: string; suppressed?: boolean;
+  thickness: Num;
+  faces: FaceRef[];
+  /** Grow the wall outward instead of inward. */
+  outward?: boolean;
+}
+
+/** Mirror (FR-FT-072): copies of features (or of the whole body, with none picked) about a plane. */
+export interface MirrorFeature {
+  id: string; type: "mirror"; name: string; suppressed?: boolean;
+  plane?: PlaneRef;
+  features: string[];
+}
+
+/** Linear pattern (FR-FT-070): copies of features along one or two directions. */
+export interface LinearPatternFeature {
+  id: string; type: "lpattern"; name: string; suppressed?: boolean;
+  features: string[];
+  dir?: LineRef;
+  spacing: Num;
+  count: number;
+  flip?: boolean;
+  dir2?: LineRef;
+  spacing2?: Num;
+  count2?: number;
+  flip2?: boolean;
+  /** Instances left out, as "i" or "i,j" (0-based; the seed is 0 / 0,0). */
+  skip?: string[];
+}
+
+/** Circular pattern (FR-FT-071): copies of features about an axis. */
+export interface CircularPatternFeature {
+  id: string; type: "cpattern"; name: string; suppressed?: boolean;
+  features: string[];
+  axis?: LineRef;
+  count: number;
+  /** Total angle with equal spacing, or the angle between instances. */
+  angle: Num;
+  equal: boolean;
+  flip?: boolean;
+  skip?: string[];
+}
+
+export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature
+  | ShellFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

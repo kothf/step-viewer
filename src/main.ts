@@ -1064,6 +1064,16 @@ function fitToolbar() {
   for (const c of ["tb-icons", "tb-nodisp", "tb-nobrand", "tb-wrap"]) if (full()) top.classList.add(c);
 }
 new ResizeObserver(() => fitToolbar()).observe($(".topbar"));
+// Text that changes inside the header (the open file, its status, the kernel's state) can overflow it
+// without resizing the bar itself, so fit again after such changes too.
+{
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; fitToolbar(); });
+  }).observe($(".topbar"), { childList: true, characterData: true, subtree: true });
+}
 new MutationObserver(() => fitToolbar()).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
 onLangChange(() => requestAnimationFrame(fitToolbar));
 const PLANE3_INFO = { title: "Section plane", picks: 3, hint: "Pick three points on the plane" };

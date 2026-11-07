@@ -196,3 +196,43 @@ test("reference axes and points (FR-REF-003, FR-REF-004)", async () => {
   const bad = m.evaluate(doc([...feats, { id: "a4", type: "axis", name: "Axis4", mode: "planes", planes: [{ std: "XY" }, { plane: "a1x" }] } as Feature]));
   assert.equal(bad.statuses.at(-1)!.ok, false);
 });
+
+test("shell, mirror, linear and circular patterns (FR-FT-060, 070-072, 075)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Shell 2 mm, open at the top: 120000 − 96·56·18.
+  const sh: Feature = { id: "f2", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "f1:end" }] };
+  let r = run(m, doc([s1, ex, sh]));
+  close(r.props!.volume, 120000 - 96 * 56 * 18, 1e-6);
+  assert.ok(r.body!.names.some(n => n.startsWith("f2:off:")), r.body!.names.join());
+
+  // A hole near a corner, patterned 4 × along X at 20 mm and 2 × along Y at 30 mm.
+  const s2 = circle("s2", -40, -15, 4, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f3", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  const hole = 16 * Math.PI * 20;
+  const lp: Feature = { id: "f4", type: "lpattern", name: "LPattern1", features: ["f3"], dir: { edge: { faces: ["f1:side:s1l1", "f1:end"] } }, spacing: { v: 20 }, count: 4, dir2: { edge: { faces: ["f1:side:s1l2", "f1:end"] } }, spacing2: { v: 30 }, count2: 2 };
+  r = run(m, doc([s1, ex, s2, cut, lp]));
+  close(r.props!.volume, 120000 - 8 * hole, 1e-6);
+  // Skip one; one more column falls off the part (warning, not an error).
+  r = run(m, doc([s1, ex, s2, cut, { ...lp, skip: ["1,1"], count: 6 } as Feature]));
+  close(r.props!.volume, 120000 - 9 * hole, 1e-6);
+  assert.equal(r.statuses.at(-1)!.code, "warning");
+
+  // Mirror the hole about the YZ plane, then the whole body about its end face (a 40 mm tall block).
+  const mi: Feature = { id: "f5", type: "mirror", name: "Mirror1", plane: { std: "YZ" }, features: ["f3"] };
+  r = run(m, doc([s1, ex, s2, cut, mi]));
+  close(r.props!.volume, 120000 - 2 * hole, 1e-6);
+  const mb: Feature = { id: "f6", type: "mirror", name: "Mirror2", plane: { face: { name: "f1:end" } }, features: [] };
+  r = run(m, doc([s1, ex, mb]));
+  close(r.props!.volume, 240000, 1e-6);
+
+  // Circular pattern: 6 holes on a 20 mm radius around a central boss's axis.
+  const s3 = circle("s3", 0, 0, 30, { std: "XY" });
+  const disc: Feature = { id: "g1", type: "extrude", name: "Extrude1", sketch: "s3", op: "boss", end: "blind", depth: { v: 10 } };
+  const s4 = circle("s4", 20, 0, 3, { face: { name: "g1:end" } });
+  const c2: Feature = { id: "g2", type: "extrude", name: "Cut1", sketch: "s4", op: "cut", end: "through", depth: { v: 0 } };
+  const cp: Feature = { id: "g3", type: "cpattern", name: "CirPattern1", features: ["g2"], axis: { face: { name: "g1:side:s3k" } }, count: 6, angle: { v: 2 * Math.PI }, equal: true };
+  r = run(m, doc([s3, disc, s4, c2, cp]));
+  close(r.props!.volume, 900 * Math.PI * 10 - 6 * 9 * Math.PI * 10, 1e-6);
+});
