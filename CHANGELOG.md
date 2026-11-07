@@ -14,6 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Mirror** (FR-FT-072): mirrors the picked features, or the whole body when none are picked, about a plane or flat face.
 - Copies that miss the body, or land where material is already gone, are skipped with a warning listing them (FR-FT-075). Pick the features to copy by clicking their faces or their rows in the tree; the pattern tools share a ▾ button on the feature bar.
 
+### Fixed
+- The header refits its tools when the text inside it changes (the open file or its status), not only when the window is resized, so it no longer overflows at 1280–1366 px.
+
 ## [1.22.0] - 2026-11-07
 
 ### Added
