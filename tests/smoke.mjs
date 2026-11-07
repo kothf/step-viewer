@@ -2102,6 +2102,33 @@ try {
     await mp.evaluate(() => window.__sv.modeller.useCsys(null));
     const csOff = await mp.evaluate(() => document.querySelector("#csys-reset").hidden);
     check(csOn.shown && /Coordinate system1/.test(csOn.txt) && Math.abs(csZ - 30) < 1e-6 && csOff, `model 1.46: Use for measurements makes it the active CSYS and it follows rebuilds (${JSON.stringify(csOn)}, z ${csZ}, off ${csOff})`);
+    // 1.49: intersection curve (FR-SK-036): a sketch on Front (y = 0) cut against the top face and the +X side.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "sx", type: "sketch", name: "SketchX", plane: { std: "XZ" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("sx"));
+    await idle();
+    // Opening the sketch turns the view normal to it (animated): wait, then look from the side so the cut faces show.
+    await mp.waitForTimeout(900);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    await mp.waitForTimeout(200);
+    const cutTop = await world([10, 0, 20]), cutSide = await world([50, -5, 10]);
+    const icut = await mp.evaluate(([a, b]) => {
+      const ed = window.__sv.model.editor();
+      ed.setTool("intersect");
+      ed.intersectAt({ clientX: a[0], clientY: a[1] });
+      ed.intersectAt({ clientX: b[0], clientY: b[1] });
+      const P = id => ed.sk.ents.find(e => e.id === id);
+      const lens = ed.sk.ents.filter(e => e.t === "line").map(l => Math.round(Math.hypot(P(l.a).x - P(l.b).x, P(l.a).y - P(l.b).y) * 1000) / 1000).sort((x, y) => x - y);
+      return { lens, fixed: ed.sk.rels.filter(r => r.t === "fix").length, status: ed.info.status };
+    }, [cutTop, cutSide]);
+    await mp.click('#mc-pm [data-a="ok"]');
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Drop", d => { d.features = d.features.filter(f => f.id !== "sx"); }));
+    await idle();
+    await mp.waitForTimeout(900);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    check(icut.lens.join(",") === "20,100" && icut.fixed === 2 && icut.status === "ok", `model 1.49: Intersection curve adds the fixed lines where Front cuts the top and a side face (${JSON.stringify(icut)})`);
     // S: the shortcut bar at the cursor; Esc closes it.
     const mid = await world([0, 0, 10]);
     await mp.mouse.move(mid[0], mid[1]);

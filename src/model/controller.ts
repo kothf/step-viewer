@@ -454,6 +454,18 @@ export class ModelController {
         if (!hit || !data) return null;
         return hit.edge ? [hit.edge] : hit.faceId != null ? data.edges.filter(x => x.faces.includes(hit.faceId!)) : null;
       },
+      modelFace: e => {
+        const hit = this.host.faceAt(e.clientX, e.clientY);
+        const data = this.host.viewer.parts[0]?.data;
+        const face = hit && data ? data.faces[hit.faceId] : undefined;
+        if (!face || !data) return null;
+        const tri = new Float32Array(face.triCount * 9);
+        for (let t = 0; t < face.triCount; t++) for (let k = 0; k < 3; k++) {
+          const v = data.index[(face.triStart + t) * 3 + k] * 3;
+          tri.set([data.positions[v], data.positions[v + 1], data.positions[v + 2]], t * 9 + k * 3);
+        }
+        return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
+      },
     }, sk, this.frameOf(sk));
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
@@ -2224,11 +2236,11 @@ export class ModelController {
         ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["point", t("Point"), t("Point (P)")],
         ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
-        ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")],
+        ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
         ["dim", t("Dimension"), t("Smart dimension (D)")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim"], ["line", "spline"], ["rect", "crect"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert"]];
+      const groups: SkTool[][] = [["select"], ["dim"], ["line", "spline"], ["rect", "crect"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -2298,8 +2310,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline"], rect: ["rect", "crect"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert"] } as Record<string, SkTool[]>)[b.dataset.fly!];
-      const label: Record<string, string> = { line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities") };
+      const g = ({ line: ["line", "spline"], rect: ["rect", "crect"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"] } as Record<string, SkTool[]>)[b.dataset.fly!];
+      const label: Record<string, string> = { line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -3696,6 +3708,7 @@ const ICON_SVG: Record<string, string> = {
   "sk:split": S('<path d="M2 12 7 7M9 5l5-5"/><circle cx="8" cy="6" r="1.4"/>'),
   "sk:chamfer": S('<path d="M2.5 13.5V7l4.5-4.5h6.5"/>'),
   "sk:offset": S('<path d="M2.5 13.5V5.5a3 3 0 0 1 3-3h8"/><path d="M6 13.5V8a2 2 0 0 1 2-2h5.5" stroke-dasharray="1.5 1.5"/>'),
+  "sk:intersect": S('<path d="M2 11.5 8 8.5l6 3" opacity=".5"/><path d="M2 6h12" /><path d="M4.5 3.5v5M11.5 3.5v5" opacity=".5"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="11.5" cy="6" r="1.2" fill="currentColor"/>'),
   "sk:convert": S('<path d="M3 11 8 3l5 8z" opacity=".5"/><path d="M3 13.5h10"/><path d="M8 7v4m-2-2 2 2 2-2"/>'),
   "sk:fillet": S('<path d="M2.5 13.5V8a5.5 5.5 0 0 1 5.5-5.5h5.5"/><path d="M2.5 2.5h3M2.5 2.5v3" stroke-dasharray="1.5 1.5"/>'),
   "sk:dim": S('<path d="M2.5 4v8M13.5 4v8M2.5 8h11M5 6 2.5 8 5 10M11 6l2.5 2L11 10"/>'),

@@ -12,6 +12,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
 import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
+import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
@@ -43,7 +44,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -59,6 +60,8 @@ export interface SketchHost {
   onSelection?(ids: string[]): void;
   /** Convert entities: the model edges under the pointer (an edge, or every edge of a face), in world coordinates. */
   modelEdges?(e: PointerEvent): ModelEdge[] | null;
+  /** The model face under the pointer: its triangles (9 numbers each, world mm) and kind (intersection curve). */
+  modelFace?(e: PointerEvent): { tri: ArrayLike<number>; type: string; axis?: [number, number, number]; center?: [number, number, number]; radius?: number } | null;
 }
 
 /** A model edge for Convert entities, in world millimetres. */
@@ -278,6 +281,7 @@ export class SketchEditor {
     if (this.tool === "split") { this.splitAt(p); return true; }
     if (this.tool === "offset") { this.offsetAt(p, true); return true; }
     if (this.tool === "convert") { this.convertAt(e); return true; }
+    if (this.tool === "intersect") { this.intersectAt(e); return true; }
     this.drawClick(p, e);
     return true;
   }
@@ -305,7 +309,7 @@ export class SketchEditor {
     }
     if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
     const pick = ["trim", "extend", "split", "offset"].includes(this.tool);
-    const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert"].includes(this.tool));
+    const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert", "intersect"].includes(this.tool));
     this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
       : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
@@ -1510,6 +1514,64 @@ export class SketchEditor {
     this.render();
   }
 
+  // ---------- intersection curve (FR-SK-036) ----------
+
+  /** Where the sketch plane cuts the clicked face: lines on flat faces, arcs/circles on round faces square to the sketch, else splines; fixed, like converted edges. */
+  private intersectAt(e: PointerEvent) {
+    const face = this.host.modelFace?.(e);
+    if (!face) { this.host.toast(t("Click a face of the model where the sketch plane cuts it.")); return; }
+    const f = this.frame;
+    const chains = cutTriangles(face.tri, f);
+    if (!chains.length) { this.host.toast(t("The sketch plane does not cut that face."), "warn"); return; }
+    const uv = (w: [number, number, number]): V2 => {
+      const q = [w[0] - f.o[0], w[1] - f.o[1], w[2] - f.o[2]];
+      return [q[0] * f.x[0] + q[1] * f.x[1] + q[2] * f.x[2], q[0] * f.y[0] + q[1] * f.y[1] + q[2] * f.y[2]];
+    };
+    const point = (q: V2) => {
+      let id = this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-6)?.id;
+      if (!id) { id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); }
+      return id;
+    };
+    const along = face.axis ? Math.abs(face.axis[0] * f.n[0] + face.axis[1] * f.n[1] + face.axis[2] * f.n[2]) : 0;
+    const straight = face.type === "plane" || (face.type === "cylinder" && along < 1e-6);
+    const round = face.type === "cylinder" && face.center && face.radius && along > 1 - 1e-6;
+    const made: string[] = [];
+    for (const c of chains) {
+      const p = c.pts, a = p[0], b = p[p.length - 1];
+      if (straight && !c.closed) {
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) continue;
+        const id = uid("l");
+        this.sk.ents.push({ id, t: "line", a: point(a), b: point(b) });
+        made.push(id);
+      } else if (round && c.closed) {
+        const id = uid("c");
+        this.sk.ents.push({ id, t: "circle", c: point(uv(face.center!)), r: face.radius! });
+        made.push(id);
+      } else if (round) {
+        const ctr = uv(face.center!), m = p[Math.floor(p.length / 2)];
+        const ang = (q: V2) => Math.atan2(q[1] - ctr[1], q[0] - ctr[0]);
+        const sw = (x: number, y: number) => { let k = y - x; while (k <= 0) k += Math.PI * 2; return k; };
+        const ccw = sw(ang(a), ang(m)) < sw(ang(a), ang(b));
+        // Ends exactly on the radius.
+        const onR = (q: V2): V2 => { const t0 = ang(q); return [ctr[0] + face.radius! * Math.cos(t0), ctr[1] + face.radius! * Math.sin(t0)]; };
+        const id = uid("a");
+        this.sk.ents.push({ id, t: "arc", c: point(ctr), a: point(onR(ccw ? a : b)), b: point(onR(ccw ? b : a)) });
+        made.push(id);
+      } else {
+        const pts = thin(c);
+        if (pts.length < (c.closed ? 3 : 2)) continue;
+        const id = uid("s");
+        this.sk.ents.push({ id, t: "spline", pts: pts.map(point), ...(c.closed ? { closed: true } : {}) });
+        made.push(id);
+      }
+    }
+    if (!made.length) { this.host.toast(t("The sketch plane does not cut that face."), "warn"); return; }
+    for (const id of made) this.sk.rels.push({ id: uid("r"), t: "fix", e: [id] });
+    this.info = solve(this.sk);
+    this.commit("Intersection curve");
+    this.render();
+  }
+
   /** The sketch as last handed to the host. */
   private lastCommitted: SketchFeature;
 
@@ -1562,6 +1624,7 @@ export class SketchEditor {
       split: "Click a line or arc where it should be split in two",
       offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
+      intersect: "Click model faces: the curves where the sketch plane cuts them are added",
       slot: "Click the two centres, then the width",
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
@@ -1752,7 +1815,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));

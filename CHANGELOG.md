@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.49.0] - 2026-11-07
+
+### Added
+- **Intersection curve** in the sketcher (FR-SK-036), in the Offset ▾ menu. Click model faces, and the curves where the sketch plane cuts them are added to the sketch, fixed in place like converted edges. Flat faces give lines, and round faces square to the sketch give circles or arcs on their exact radius. Any other face gives a spline through the cut.
+
 ## [1.48.0] - 2026-11-07
 
 ### Added
@@ -492,7 +497,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.48.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.49.0...HEAD
+[1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/kothf/step-viewer/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/kothf/step-viewer/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/kothf/step-viewer/compare/v1.45.0...v1.46.0

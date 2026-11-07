@@ -1399,4 +1399,9 @@ export const RU: Record<string, string> = {
   "The sketch is over-defined. Deleting one of these makes it solve again:": "Эскиз переопределён. Удалите одно из этого, и он снова решится:",
   "No single relation or dimension fixes it. Delete the ones marked conflicting until the sketch solves.": "Ни одна взаимосвязь или размер по отдельности это не исправит. Удаляйте отмеченные как конфликтующие, пока эскиз не решится.",
   "The sketch solves again.": "Эскиз снова решается.",
+  "Intersection curve": "Кривая пересечения",
+  "Intersection curve: where the sketch plane cuts model faces": "Кривая пересечения: где плоскость эскиза пересекает грани модели",
+  "Click a face of the model where the sketch plane cuts it.": "Щёлкните грань модели, которую пересекает плоскость эскиза.",
+  "The sketch plane does not cut that face.": "Плоскость эскиза не пересекает эту грань.",
+  "Click model faces: the curves where the sketch plane cuts them are added": "Щёлкайте грани модели: добавляются кривые, по которым их пересекает плоскость эскиза",
 };
