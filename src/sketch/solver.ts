@@ -238,14 +238,14 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
 }
 
 /** Current value of a dimension (for driven ones, and to start new ones). */
-export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip">): number {
+export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip" | "dia">): number {
   const sys = build({ ...sk, rels: [], dims: [] });
   const ents = new Map(sk.ents.map(e => [e.id, e] as const));
   const f = dimFn(sys, ents, d);
   return f ? f(sys.x) : NaN;
 }
 
-function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip">): Sc | null {
+function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia">): Sc | null {
   const kind = (i: number) => (d.e[i] === ORIGIN ? "point" : ents.get(d.e[i])?.t);
   const mk = (parts: { vars: number[] }[], f: (x: Float64Array) => number) => { const g = f as Sc; g.vars = [...new Set(parts.flatMap(p => p.vars))]; return g; };
   switch (d.t) {
@@ -264,11 +264,13 @@ function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" |
       else if (d.t === "distance" && kind(0) === "line" && kind(1) === "line") {
         // Between parallel lines: from the second line's start to the first line.
         const [a, b] = ends(sys, ents, d.e[0]), [c] = ends(sys, ents, d.e[1]);
-        return mk([a, b, c], x => Math.abs(lineDist(c(x), a(x), b(x))));
+        const k = d.dia ? 2 : 1;
+        return mk([a, b, c], x => k * Math.abs(lineDist(c(x), a(x), b(x))));
       } else if (d.t === "distance" && (kind(0) === "line" || kind(1) === "line")) {
         const li = kind(0) === "line" ? 0 : 1;
         const [a, b] = ends(sys, ents, d.e[li]), p = center(sys, ents, d.e[1 - li]);
-        return mk([a, b, p], x => Math.abs(lineDist(p(x), a(x), b(x))));
+        const k = d.dia ? 2 : 1;
+        return mk([a, b, p], x => k * Math.abs(lineDist(p(x), a(x), b(x))));
       } else { A = center(sys, ents, d.e[0]); B = center(sys, ents, d.e[1]); }
       if (d.t === "hdistance") return mk([A, B], x => Math.abs(B(x)[0] - A(x)[0]));
       if (d.t === "vdistance") return mk([A, B], x => Math.abs(B(x)[1] - A(x)[1]));
