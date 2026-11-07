@@ -11,7 +11,8 @@ import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
-import type { AsmComponentStatus, AsmDoc, Component, Mate, MateRef, MateType, Tf } from "./types";
+import { autoExplode, expandPatterns, explodeOffsets, patternSteps, type Expanded } from "./patterns";
+import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
@@ -71,6 +72,15 @@ export class AsmController {
   /** Interference detection results while its panel is open (FR-ASM-020). */
   interfere: { touch: boolean; pairs: { a: string; b: string; volume: number; position: number[] }[] | null; sel: number } | null = null;
   private overlay = new THREE.Group();
+  /** The pattern being made or edited (FR-ASM-022). */
+  patterning: (Omit<CompPattern, "id" | "name"> & { edit?: string; focus: "seeds" | "dir" }) | null = null;
+  /** The exploded view being made or edited, and the one shown (FR-ASM-023). */
+  exploding: { edit?: string; name: string; steps: ExplodeStep[]; sel: string[]; axis: string; dist: number } | null = null;
+  exploded: string | null = null;
+  private explodeT = 0;
+  private explodeAnim = 0;
+  /** The last expansion of the patterns (derived instances). */
+  expanded: Expanded | null = null;
   /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
   private volumes = new Map<string, number>();
   private mateDown: { x: number; y: number } | null = null;
@@ -87,7 +97,14 @@ export class AsmController {
 
   get active() { return !!this.doc; }
   /** Clicks in the view pick mate faces (Smart measure leaves them alone). */
-  get picking() { return !!this.mating; }
+  get picking() { return !!this.mating || !!this.patterning || !!this.exploding; }
+
+  /** The document with pattern instances added (what the kernel builds and the BOM counts). */
+  private expand(doc: AsmDoc): Expanded {
+    const e = expandPatterns(doc, ref => { const c = doc.components.find(x => x.id === ref.comp), g = c && this.geo.get(c.part)?.get(ref.face); return c && g ? placeGeo(g, c.tf) : null; });
+    if (doc === this.doc) this.expanded = e;
+    return e;
+  }
   get dirty() { return !!this.doc && JSON.stringify(this.doc) !== this.savedAt; }
   isAsmName(name: string) { return name.toLowerCase().endsWith(ASM_EXT); }
 
@@ -116,6 +133,10 @@ export class AsmController {
     this.moving = null;
     this.mating = null;
     this.interfere = null;
+    this.patterning = null;
+    this.exploding = null;
+    this.exploded = null;
+    this.expanded = null;
     this.clearOverlay();
     this.solved = null;
     this.geo.clear();
@@ -137,6 +158,9 @@ export class AsmController {
     this.drag = null;
     this.mating = null;
     this.interfere = null;
+    this.patterning = null;
+    this.exploding = null;
+    this.exploded = null;
     this.clearOverlay();
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("asm");
@@ -193,12 +217,13 @@ export class AsmController {
         if (!doc) break;
         $("#asm-busy").hidden = false;
         try {
-          const r = await this.kernel.assembly(doc);
+          const ex = this.expand(doc);
+          const r = await this.kernel.assembly(ex.doc);
           if (this.doc !== doc && this.again) continue;
           this.statuses = r.statuses;
           this.props = r.props;
           this.shownIds = r.parts.map(p => p.id);
-          this.learn(doc, r.parts);
+          this.learn(ex.doc, r.parts);
           const tree: TreeNode = { name: doc.name, parts: [], children: r.parts.map((p, i) => ({ name: p.data.name, parts: [i], children: [] })) };
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
@@ -212,9 +237,14 @@ export class AsmController {
         this.solved = r;
         if (r.ok && r.moved) { for (const c of this.doc.components) c.tf = r.tfs[c.id]; this.renderTree(); this.rebuild(); return; }
       }
+      // Patterns whose direction was learnt only now: build again with their instances.
+      const before = this.expanded?.bad.length ?? 0;
+      if (this.doc?.patterns?.length && before && this.expand(this.doc).bad.length < before) { this.rebuild(); return; }
       this.renderTree();
       this.renderBar();
-      if (this.mating) this.drawPicks();
+      if (this.mating || this.patterning || this.exploding) this.drawPicks();
+      if (this.patterning) this.drawPatternPreview();
+      if (this.exploded || this.exploding) this.applyExplode();
     })();
   }
 
@@ -223,13 +253,12 @@ export class AsmController {
   /** Interference detection: every overlapping pair with its volume; the overlaps are drawn red. */
   async runInterference(touch = this.interfere?.touch ?? false) {
     if (!this.doc) return;
-    if (this.mating) this.cancelMate();
-    this.moving = null;
+    if (!this.interfere) this.closeTools();
     this.interfere = { touch, pairs: null, sel: -1 };
     this.renderAll();
     $("#asm-busy").hidden = false;
     try {
-      const pairs = await this.kernel.interference(this.doc, touch);
+      const pairs = await this.kernel.interference(this.expand(this.doc).doc, touch);
       if (!this.interfere) return;
       this.interfere.pairs = pairs;
       this.drawOverlay();
@@ -260,7 +289,9 @@ export class AsmController {
   }
 
   private clearOverlay() {
-    for (const o of [...this.overlay.children]) { this.overlay.remove(o); (o as THREE.Mesh).geometry.dispose(); }
+    const geoms = new Set<THREE.BufferGeometry>();
+    for (const o of [...this.overlay.children]) { this.overlay.remove(o); geoms.add((o as THREE.Mesh).geometry); }
+    for (const g of geoms) g.dispose();
     this.host.viewer.invalidate();
   }
 
@@ -289,7 +320,7 @@ export class AsmController {
     if (!this.doc) return [];
     const rows: { item: number; part: string; number: string; description: string; material: string; qty: number; mass: number | null }[] = [];
     const at = new Map<string, number>();
-    for (const c of this.doc.components) {
+    for (const c of this.expand(this.doc).doc.components) {
       if (c.suppressed) continue;
       let i = at.get(c.part);
       if (i === undefined) {
@@ -335,7 +366,7 @@ export class AsmController {
     if (!this.doc) return;
     $("#asm-busy").hidden = false;
     try {
-      const bytes = await this.kernel.assemblyStep(this.doc);
+      const bytes = await this.kernel.assemblyStep(this.expand(this.doc).doc);
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "model/step" }));
       a.download = `${this.doc.name}.step`;
@@ -347,7 +378,241 @@ export class AsmController {
   }
 
   /** The STEP bytes, for tests. */
-  stepBytes() { return this.doc ? this.kernel.assemblyStep(this.doc) : null; }
+  stepBytes() { return this.doc ? this.kernel.assemblyStep(this.expand(this.doc).doc) : null; }
+
+  // ---------- component patterns and exploded views (FR-ASM-022/023) ----------
+
+  /** Closes whichever tool panel is open (mate, pattern, explode, interference, move). */
+  closeTools() {
+    if (this.mating) this.cancelMate();
+    if (this.patterning) { this.patterning = null; this.clearOverlay(); this.clearPicks(); }
+    if (this.exploding) { this.exploding = null; this.clearPicks(); this.applyExplode(); }
+    if (this.interfere) { this.interfere = null; this.clearOverlay(); }
+    this.moving = null;
+    this.renderAll();
+  }
+
+  startPattern(edit?: CompPattern) {
+    if (!this.doc) return;
+    this.closeTools();
+    const sel = this.comp(this.selected);
+    this.patterning = edit ? { edit: edit.id, kind: edit.kind, seeds: [...edit.seeds], dir: edit.dir ? { ...edit.dir } : null, count: edit.count, spacing: edit.spacing, equal: edit.equal, flip: edit.flip, focus: "dir" }
+      : { kind: "linear", seeds: sel ? [sel.id] : [], dir: null, count: 3, spacing: 20, focus: sel ? "dir" : "seeds" };
+    this.renderAll();
+    this.drawPicks();
+    this.drawPatternPreview();
+  }
+
+  private pickPattern(x: number, y: number) {
+    const p = this.patterning, hit = this.host.partAt(x, y);
+    if (!p || !hit) return;
+    const id = this.shownIds[hit.idx], c = this.comp(id), face = this.faceNames[hit.idx]?.[hit.face];
+    if (!c) return;
+    if (p.focus === "seeds") {
+      p.seeds = p.seeds.includes(id) ? p.seeds.filter(s => s !== id) : [...p.seeds, id];
+      if (p.seeds.length && !p.dir) p.focus = "dir";
+    } else {
+      const g = face && this.geo.get(c.part)?.get(face);
+      if (!g || (p.kind === "circular" && g.k !== "axis")) { toast(p.kind === "circular" ? t("Pick a cylindrical face for the axis.") : t("Pick a flat or cylindrical face."), true); return; }
+      p.dir = { comp: id, face: face! };
+      if (!p.seeds.length) p.focus = "seeds";
+    }
+    this.drawPicks();
+    this.drawPatternPreview();
+    this.renderPanel();
+  }
+
+  /** See-through copies of the seeds where the instances will go (before ✓). */
+  private drawPatternPreview() {
+    this.clearOverlay();
+    const p = this.patterning, doc = this.doc;
+    if (!p || !doc || !p.dir || !p.seeds.length) return;
+    const c = this.comp(p.dir.comp), g0 = c && this.geo.get(c.part)?.get(p.dir.face);
+    if (!g0) return;
+    const steps = patternSteps({ id: "", name: "", ...p }, placeGeo(g0, c!.tf));
+    for (const sid of p.seeds) {
+      const i = this.shownIds.indexOf(sid), part = this.host.viewer.parts[i];
+      if (!part) continue;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute("position", new THREE.BufferAttribute(part.data.positions, 3));
+      geom.setIndex(new THREE.BufferAttribute(part.data.index, 1));
+      const mat = new THREE.MeshBasicMaterial({ color: 0xf2b705, transparent: true, opacity: 0.4, depthWrite: false });
+      for (const st of steps) {
+        const M = compose(st, compose(this.comp(sid)!.tf, invert(this.shownTf[sid] ?? this.comp(sid)!.tf)));
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.set(M[0], M[1], M[2], M[3], M[4], M[5], M[6], M[7], M[8], M[9], M[10], M[11], 0, 0, 0, 1);
+        mesh.userData.keepGeom = true;
+        this.overlay.add(mesh);
+      }
+    }
+    this.host.viewer.invalidate();
+  }
+
+  okPattern() {
+    const p = this.patterning;
+    if (!p || !this.doc) return;
+    if (!p.seeds.length || !p.dir) { toast(t("Pick the components to pattern and a direction."), true); return; }
+    const kind = p.kind, n = (this.doc.patterns ?? []).filter(x => x.kind === kind).length + 1;
+    const old = p.edit ? this.doc.patterns?.find(x => x.id === p.edit) : undefined;
+    const pat: CompPattern = { id: p.edit ?? uid("cp_"), name: old && old.kind === kind ? old.name : kind === "circular" ? `CircPattern${n}` : `LinearPattern${n}`, kind, seeds: p.seeds, dir: p.dir, count: Math.max(2, Math.round(p.count)), spacing: p.spacing };
+    if (p.equal) pat.equal = true;
+    if (p.flip) pat.flip = true;
+    if (old?.suppressed) pat.suppressed = true;
+    this.patterning = null;
+    this.clearOverlay();
+    this.clearPicks();
+    this.change(d => { d.patterns ??= []; const i = d.patterns.findIndex(x => x.id === pat.id); if (i >= 0) d.patterns[i] = pat; else d.patterns.push(pat); });
+    this.renderAll();
+  }
+
+  deletePattern(id: string) {
+    this.change(d => { d.patterns = (d.patterns ?? []).filter(x => x.id !== id); if (!d.patterns.length) delete d.patterns; });
+  }
+
+  private renderPatternPanel() {
+    const pm = $("#asm-pm"), p = this.patterning!;
+    pm.hidden = false;
+    pm.dataset.id = "pattern";
+    const circ = p.kind === "circular";
+    const dirText = p.dir ? this.refText(p.dir) : t("Click a face");
+    const seeds = p.seeds.map(id => this.comp(id)?.name ?? "?").join(", ") || t("Click components in the view");
+    const num = (k: string, label: string, v: number, unit: string) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" data-pn="${k}" value="${esc(String(Math.round(v * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">${unit}</span></span></label>`;
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(circ ? t("Circular component pattern") : t("Linear component pattern"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Pattern type"))}</legend><div class="pm-mates"><button class="btn small${circ ? "" : " on"}" data-pk="linear" aria-pressed="${!circ}">${esc(t("Linear"))}</button><button class="btn small${circ ? " on" : ""}" data-pk="circular" aria-pressed="${circ}">${esc(t("Circular"))}</button></div></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(circ ? t("Axis") : t("Direction"))}</legend><div class="pm-field"><span>${esc(circ ? t("Axis") : t("Direction"))}</span><button class="pm-box${p.focus === "dir" ? " focus" : ""}" data-focus="dir" translate="no">${esc(dirText)}</button></div>`
+      + `<p class="pm-help muted">${esc(circ ? t("Click a cylindrical face: the pattern turns about its axis.") : t("Click a flat face (along its normal) or a cylindrical face (along its axis)."))}</p>`
+      + `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${p.flip ? " checked" : ""} /> ${esc(t("Reverse direction"))}</label>`
+      + (circ ? num("spacing", p.equal ? t("Total angle") : t("Angle"), (p.spacing * 180) / Math.PI, "°") + `<label class="pm-field pm-check"><input type="checkbox" data-a="equal"${p.equal ? " checked" : ""} /> ${esc(t("Equal spacing"))}</label>` : num("spacing", t("Spacing"), p.spacing, "mm"))
+      + num("count", t("Instances"), p.count, "") + `</fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Components to pattern"))}</legend><div class="pm-field"><span>${esc(t("Seeds"))}</span><button class="pm-box${p.focus === "seeds" ? " focus" : ""}" data-focus="seeds" translate="no">${esc(seeds)}</button></div></fieldset>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okPattern());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
+    pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { p.focus = b.dataset.focus as "seeds" | "dir"; this.renderPanel(); }));
+    pm.querySelectorAll<HTMLElement>("[data-pk]").forEach(b => b.addEventListener("click", () => {
+      const k = b.dataset.pk as "linear" | "circular";
+      if (k === p.kind) return;
+      p.kind = k;
+      if (k === "circular") { p.spacing = 2 * Math.PI; p.equal = true; p.count = 4; const c = p.dir && this.comp(p.dir.comp); if (p.dir && this.geo.get(c?.part ?? "")?.get(p.dir.face)?.k !== "axis") p.dir = null; }
+      else { p.spacing = 20; delete p.equal; }
+      this.drawPicks();
+      this.drawPatternPreview();
+      this.renderPanel();
+    }));
+    pm.querySelector<HTMLInputElement>("[data-a=flip]")!.addEventListener("change", e => { p.flip = (e.target as HTMLInputElement).checked; this.drawPatternPreview(); });
+    pm.querySelector<HTMLInputElement>("[data-a=equal]")?.addEventListener("change", e => { p.equal = (e.target as HTMLInputElement).checked; p.spacing = p.equal ? 2 * Math.PI : Math.PI / 2; this.drawPatternPreview(); this.renderPanel(); });
+    pm.querySelectorAll<HTMLInputElement>("[data-pn]").forEach(i => i.addEventListener("change", () => {
+      const v = Number(i.value.replace(",", "."));
+      if (!Number.isFinite(v) || v <= 0) { i.setAttribute("aria-invalid", "true"); return; }
+      if (i.dataset.pn === "count") p.count = Math.max(2, Math.min(500, Math.round(v)));
+      else p.spacing = circ ? (v * Math.PI) / 180 : v;
+      this.drawPatternPreview();
+    }));
+  }
+
+  startExplode(edit?: ExplodeView) {
+    if (!this.doc) return;
+    this.closeTools();
+    const n = (this.doc.explodes?.length ?? 0) + 1;
+    this.exploding = edit ? { edit: edit.id, name: edit.name, steps: edit.steps.map(s => ({ ...s, comps: [...s.comps] })), sel: [], axis: "z", dist: 20 } : { name: `Exploded${n}`, steps: [], sel: [], axis: "z", dist: Math.round(Math.max(10, this.host.viewer.modelSize * 0.3)) };
+    this.renderAll();
+    this.applyExplode();
+  }
+
+  private pickExplode(x: number, y: number) {
+    const ex = this.exploding, hit = this.host.partAt(x, y);
+    if (!ex || !hit) return;
+    const id = this.shownIds[hit.idx];
+    if (!id) return;
+    ex.sel = ex.sel.includes(id) ? ex.sel.filter(s => s !== id) : [...ex.sel, id];
+    this.drawPicks();
+    this.renderPanel();
+  }
+
+  private axisVec(a: string): V3 { const s = a.startsWith("-") ? -1 : 1, k = a.replace("-", ""); return [k === "x" ? s : 0, k === "y" ? s : 0, k === "z" ? s : 0]; }
+
+  /** Moves the shown components to the exploded positions (the view being edited, else the shown one), animated. */
+  private applyExplode(animate = false) {
+    const doc = this.doc;
+    if (!doc) return;
+    const view = this.exploding ? { id: "", name: "", steps: [...this.exploding.steps, ...(this.exploding.sel.length ? [{ comps: this.exploding.sel, dir: this.axisVec(this.exploding.axis), dist: this.exploding.dist }] : [])] } : doc.explodes?.find(v => v.id === this.exploded);
+    const off = view ? explodeOffsets(view) : new Map<string, V3>();
+    const target = view ? 1 : 0;
+    const draw = (k: number) => {
+      this.explodeT = k;
+      const tfs: Record<string, Tf> = {};
+      for (const id of this.shownIds) {
+        const base = this.anyComp(id)?.tf ?? this.shownTf[id], o = off.get(id) ?? [0, 0, 0];
+        if (base) tfs[id] = compose(translation([o[0] * k, o[1] * k, o[2] * k]), base);
+      }
+      this.previewTfs(tfs);
+    };
+    cancelAnimationFrame(this.explodeAnim);
+    if (!animate) { draw(target); return; }
+    const from = this.explodeT, t0 = performance.now(), ms = 500;
+    if (!view) { const last = this.lastOffsets; if (last) for (const [k, v] of last) off.set(k, v); }
+    const step = () => {
+      const u = Math.min(1, (performance.now() - t0) / ms), e = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+      draw(view ? from + (1 - from) * e : from * (1 - e));
+      if (u < 1) this.explodeAnim = requestAnimationFrame(step);
+    };
+    step();
+    if (view) this.lastOffsets = off;
+  }
+  private lastOffsets: Map<string, V3> | null = null;
+
+  toggleExplode(id: string) {
+    this.exploded = this.exploded === id ? null : id;
+    this.applyExplode(true);
+    this.renderTree();
+  }
+
+  okExplode() {
+    const ex = this.exploding;
+    if (!ex || !this.doc) return;
+    if (ex.sel.length) { ex.steps.push({ comps: ex.sel, dir: this.axisVec(ex.axis), dist: ex.dist }); ex.sel = []; }
+    if (!ex.steps.length) { this.closeTools(); return; }
+    const view: ExplodeView = { id: ex.edit ?? uid("x_"), name: ex.name, steps: ex.steps };
+    this.exploding = null;
+    this.clearPicks();
+    this.exploded = view.id;
+    this.change(d => { d.explodes ??= []; const i = d.explodes.findIndex(v => v.id === view.id); if (i >= 0) d.explodes[i] = view; else d.explodes.push(view); });
+    this.applyExplode();
+  }
+
+  deleteExplode(id: string) {
+    if (this.exploded === id) { this.exploded = null; this.applyExplode(); }
+    this.change(d => { d.explodes = (d.explodes ?? []).filter(v => v.id !== id); if (!d.explodes.length) delete d.explodes; });
+  }
+
+  private renderExplodePanel() {
+    const pm = $("#asm-pm"), ex = this.exploding!;
+    pm.hidden = false;
+    pm.dataset.id = "explode";
+    const name = (id: string) => this.anyComp(id)?.name ?? "?";
+    const AX: [string, string][] = [["x", "X"], ["y", "Y"], ["z", "Z"], ["-x", "−X"], ["-y", "−Y"], ["-z", "−Z"]];
+    const dirName = (d: V3) => AX.find(([k]) => { const v = this.axisVec(k); return v[0] === d[0] && v[1] === d[1] && v[2] === d[2]; })?.[1] ?? d.map(v => v.toFixed(2)).join(", ");
+    const steps = ex.steps.map((s, i) => `<div class="pm-field"><span>${esc(t("Step {n}", { n: i + 1 }))}</span><span class="pm-in" translate="no">${esc(s.comps.map(name).join(", "))} · ${esc(dirName(s.dir))} ${esc(String(s.dist))} mm<button class="icon" data-delstep="${i}" title="${esc(t("Delete step"))}" aria-label="${esc(t("Delete step"))}">✕</button></span></div>`).join("");
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Explode"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Explode steps"))}</legend>${steps || `<p class="pm-help muted">${esc(t("No steps yet."))}</p>`}<button class="btn small" data-a="auto">${esc(t("Auto explode"))}</button></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Add step"))}</legend><div class="pm-field"><span>${esc(t("Components"))}</span><button class="pm-box focus" translate="no">${esc(ex.sel.map(name).join(", ") || t("Click components in the view"))}</button></div>`
+      + `<label class="pm-field"><span>${esc(t("Direction"))}</span><select data-a="axis">${AX.map(([k, l]) => `<option value="${k}"${ex.axis === k ? " selected" : ""}>${l}</option>`).join("")}</select></label>`
+      + `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-a="dist" value="${esc(String(ex.dist))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
+      + `<button class="btn small" data-a="add"${ex.sel.length ? "" : " disabled"}>${esc(t("Add step"))}</button></fieldset>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okExplode());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
+    pm.querySelector("[data-a=auto]")!.addEventListener("click", () => {
+      const comps = this.shownIds.map((id, i) => { const d = this.host.viewer.parts[i].data, c = this.anyComp(id); const ctr: V3 = [(d.bboxMin[0] + d.bboxMax[0]) / 2, (d.bboxMin[1] + d.bboxMax[1]) / 2, (d.bboxMin[2] + d.bboxMax[2]) / 2]; return { id, centre: ctr, fixed: !!c?.fixed && !this.expanded?.instances.has(id) }; });
+      ex.steps = autoExplode(comps, this.host.viewer.modelSize);
+      this.applyExplode();
+      this.renderPanel();
+    });
+    pm.querySelector("[data-a=add]")!.addEventListener("click", () => { ex.steps.push({ comps: ex.sel, dir: this.axisVec(ex.axis), dist: ex.dist }); ex.sel = []; this.drawPicks(); this.applyExplode(); this.renderPanel(); });
+    pm.querySelector<HTMLSelectElement>("[data-a=axis]")!.addEventListener("change", e => { ex.axis = (e.target as HTMLSelectElement).value; this.applyExplode(); });
+    const di = pm.querySelector<HTMLInputElement>("[data-a=dist]")!;
+    di.addEventListener("change", () => { const v = Number(di.value.replace(",", ".")); if (!Number.isFinite(v)) { di.setAttribute("aria-invalid", "true"); return; } ex.dist = v; this.applyExplode(); });
+    pm.querySelectorAll<HTMLElement>("[data-delstep]").forEach(b => b.addEventListener("click", () => { ex.steps.splice(Number(b.dataset.delstep), 1); this.applyExplode(); this.renderPanel(); }));
+  }
 
   // ---------- mates (FR-MATE-003/008) ----------
 
@@ -410,8 +675,7 @@ export class AsmController {
   /** Mate (FR-MATE-003/006): pick two faces, the likely mate type is chosen and previewed. */
   startMate(edit?: Mate) {
     if (!this.doc) return;
-    this.moving = null;
-    if (this.interfere) this.closeInterference();
+    this.closeTools();
     this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, type: edit.type, align: edit.align, value: edit.value, flip: edit.flip } : {};
     this.renderAll();
     this.drawPicks();
@@ -516,8 +780,19 @@ export class AsmController {
   /** Coloured faces for the picked references (on the parts' groups, so they follow previews). */
   private drawPicks() {
     this.clearPicks();
-    const m = this.mating;
-    if (!m) return;
+    const whole = this.patterning?.seeds ?? this.exploding?.sel ?? [];
+    for (const id of whole) {
+      const part = this.host.viewer.parts[this.shownIds.indexOf(id)];
+      if (!part) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(part.data.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(part.data.index, 1));
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x1f78ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthWrite: false }));
+      mesh.userData.matePick = true;
+      part.group.add(mesh);
+    }
+    const m = this.mating ?? (this.patterning?.dir ? { a: undefined, b: this.patterning.dir } : null);
+    if (!m) { this.host.viewer.invalidate(); return; }
     ([[m.a, 0x1f78ff], [m.b, 0xa23cff]] as [MateRef | undefined, number][]).forEach(([ref, color]) => {
       if (!ref) return;
       const i = this.shownIds.indexOf(ref.comp), part = this.host.viewer.parts[i];
@@ -600,6 +875,8 @@ export class AsmController {
   }
 
   private comp(id: string | null) { return id ? this.doc?.components.find(c => c.id === id) ?? null : null; }
+  /** A component or a pattern instance. */
+  private anyComp(id: string | null) { return id ? this.comp(id) ?? this.expanded?.doc.components.find(c => c.id === id) ?? null : null; }
 
   setFixed(id: string, fixed: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (fixed) c.fixed = true; else delete c.fixed; } }); }
   setHidden(id: string, hidden: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } }); }
@@ -610,6 +887,8 @@ export class AsmController {
     this.change(d => {
       d.components = d.components.filter(x => x.id !== id);
       if (d.mates) { d.mates = d.mates.filter(m => m.a.comp !== id && m.b.comp !== id); if (!d.mates.length) delete d.mates; }
+      if (d.patterns) { for (const p of d.patterns) { p.seeds = p.seeds.filter(x => x !== id); if (p.dir?.comp === id) p.dir = null; } d.patterns = d.patterns.filter(p => p.seeds.length); if (!d.patterns.length) delete d.patterns; }
+      if (d.explodes) for (const v of d.explodes) { for (const st of v.steps) st.comps = st.comps.filter(x => x !== id && !x.includes(`~${id}~`)); v.steps = v.steps.filter(st => st.comps.length); }
       // A part no component uses any more leaves the file.
       for (const k of Object.keys(d.parts)) if (!d.components.some(x => x.part === k)) delete d.parts[k];
     });
@@ -678,15 +957,15 @@ export class AsmController {
     document.getElementById("new-asm")?.addEventListener("click", () => { shut(); this.newAssembly(); });
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
-      if (this.doc && this.mating && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
-        if (e.key === "Enter") { e.preventDefault(); this.okMate(); return; }
-        if (e.key === "Escape") { e.preventDefault(); this.cancelMate(); return; }
+      if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
+        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else this.okExplode(); return; }
+        if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
       const tg = e.target as HTMLElement;
       if (tg.closest("input, textarea, select, [contenteditable=true], dialog[open]")) return;
       const k = e.key.toLowerCase();
-      if (this.mating && !(e.ctrlKey || e.metaKey)) return;
+      if (this.picking && !(e.ctrlKey || e.metaKey)) return;
       if (k === "z" && !e.shiftKey) { e.preventDefault(); this.undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); this.redo(); }
       else if (k === "s") { e.preventDefault(); void this.save(e.shiftKey); }
@@ -702,7 +981,7 @@ export class AsmController {
     vp.addEventListener("pointerdown", e => {
       if (!this.doc || e.button !== 0 || e.target !== canvas()) return;
       // The Mate panel picks faces on a click (the view still orbits on a drag).
-      if (this.mating) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
+      if (this.picking) { this.mateDown = { x: e.clientX, y: e.clientY }; return; }
       const hit = this.host.partAt(e.clientX, e.clientY);
       if (!hit) return;
       const id = this.shownIds[hit.idx], c = this.comp(id);
@@ -737,7 +1016,12 @@ export class AsmController {
     vp.addEventListener("pointerup", e => {
       const md = this.mateDown;
       this.mateDown = null;
-      if (this.mating && md && e.button === 0 && e.target === canvas() && Math.hypot(e.clientX - md.x, e.clientY - md.y) <= 4) { this.pickMateFace(e.clientX, e.clientY); return; }
+      if (this.picking && md && e.button === 0 && e.target === canvas() && Math.hypot(e.clientX - md.x, e.clientY - md.y) <= 4) {
+        if (this.mating) this.pickMateFace(e.clientX, e.clientY);
+        else if (this.patterning) this.pickPattern(e.clientX, e.clientY);
+        else if (this.exploding) this.pickExplode(e.clientX, e.clientY);
+        return;
+      }
       const d = this.drag;
       if (!d) return;
       e.stopPropagation();
@@ -767,6 +1051,8 @@ export class AsmController {
     const b = (c: string, label: string, title: string, dis = false) => `<button class="mc-b" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}><span class="mc-l">${esc(label)}</span></button>`;
     $("#asm-tools").innerHTML = b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
       + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
+      + b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !this.doc.components.length)
+      + b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !this.doc.components.length)
       + b("interfere", t("Interference"), t("Interference detection: components whose solids overlap"), this.doc.components.length < 2)
       + b("bom", t("BOM"), t("Bill of materials: parts and quantities, CSV export"), !this.doc.components.length)
       + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !this.doc.components.length)
@@ -791,6 +1077,8 @@ export class AsmController {
     const sel = this.comp(this.selected);
     if (c === "insert") this.insertComponent();
     else if (c === "mate") { if (this.mating) this.cancelMate(); else this.startMate(); }
+    else if (c === "pattern") { if (this.patterning) this.closeTools(); else this.startPattern(); }
+    else if (c === "explode") { if (this.exploding) this.closeTools(); else this.startExplode(); }
     else if (c === "interfere") { if (this.interfere) this.closeInterference(); else void this.runInterference(); }
     else if (c === "bom") this.showBom();
     else if (c === "step") void this.exportStep();
@@ -832,13 +1120,31 @@ export class AsmController {
       }
       html += `</div>`;
     }
+    if (doc.patterns?.length) {
+      const bad = new Set(this.expanded?.bad ?? []);
+      for (const p of doc.patterns) {
+        const err = bad.has(p.id) ? `<span class="ft-err" title="${esc(t("The pattern direction is missing or does not fit."))}" role="img" aria-label="${esc(t("Error"))}">⚠</span>` : "";
+        const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
+        html += row(p.id, p.kind === "circular" ? "✺" : "⁂", p.name, `${p.suppressed ? " sup" : ""} ft-pattern`, err + tools);
+        const inst = [...(this.expanded?.instances ?? [])].filter(([, v]) => v.pattern === p.id).map(([id]) => this.anyComp(id)).filter((c): c is Component => !!c);
+        if (inst.length) html += `<div class="ft-group" role="group">${inst.map(c => row(c.id, "▣", c.name, " ft-inst")).join("")}</div>`;
+      }
+    }
+    if (doc.explodes?.length) {
+      html += row("folder:explodes", "⇱", t("Exploded views"), " ft-mates");
+      html += `<div class="ft-group" role="group">${doc.explodes.map(v => row(v.id, "⇱", v.name, ` ft-explode${this.exploded === v.id ? " on" : ""}`, `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="xp" title="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}" aria-label="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}">${this.exploded === v.id ? "⇲" : "⇱"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`)).join("")}</div>`;
+    }
     if (!this.doc.components.length) html += `<p class="pm-help muted pad">${esc(t("Insert a part or a STEP model to start."))}</p>`;
     box.innerHTML = html;
     box.querySelectorAll<HTMLElement>(".ft-row").forEach(r => {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
-        const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id);
+        const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        if (pt && a === "del") { this.deletePattern(id); return; }
+        if (xv && a === "del") { this.deleteExplode(id); return; }
+        if (xv && a === "xp") { this.toggleExplode(id); return; }
+        if (pt || xv || this.anyComp(id)) { this.selected = id; this.renderTree(); this.renderBar(); if (!c) return; }
         if (mt && a === "del") { void this.deleteMate(id); return; }
         if (mt) { this.selected = id; this.renderTree(); this.renderBar(); return; }
         if (c && a === "hide") { this.setHidden(id, !c.hidden); return; }
@@ -847,11 +1153,17 @@ export class AsmController {
         this.renderTree();
         this.renderBar();
       });
-      r.addEventListener("dblclick", () => { const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id); if (mt) this.startMate(mt); else if (c && !c.fixed) this.moveComponent(id); });
+      r.addEventListener("dblclick", () => {
+        const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        if (mt) this.startMate(mt); else if (pt) this.startPattern(pt); else if (xv) this.toggleExplode(id); else if (c && !c.fixed) this.moveComponent(id);
+      });
       r.addEventListener("contextmenu", e => {
         e.preventDefault();
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id);
         if (c) this.menu(c, e.clientX, e.clientY);
+        const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
+        else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
         else if (mt) this.popup([
           [t("Edit mate"), () => this.startMate(mt)],
           ...(mt.align ? [[t("Flip mate alignment"), () => this.setMate(mt.id, { align: mt.align === "aligned" ? "anti" : "aligned" })] as [string, () => void]] : []),
@@ -888,6 +1200,8 @@ export class AsmController {
 
   private renderPanel() {
     if (this.mating) { this.renderMatePanel(); return; }
+    if (this.patterning) { this.renderPatternPanel(); return; }
+    if (this.exploding) { this.renderExplodePanel(); return; }
     if (this.interfere) { this.renderInterference(); return; }
     const pm = $("#asm-pm");
     if (pm.dataset.id === "mate") delete pm.dataset.id;

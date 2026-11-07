@@ -8,7 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - **Interference detection** (FR-ASM-020, AT-P4-4) in the assembly bar: every pair of shown components whose solids overlap, with the overlap volume, listed in the panel and drawn red in the view (click a pair to pick it out). Option to treat touching faces as interference.
 - **Bill of materials** (FR-ASM-024, AT-P4-5): one row per part with item number, part number, description, material, quantity and mass, and CSV export.
-- **Assembly STEP export** (AT-P4-6): one named, coloured part per shown component, in place; it reopens in the viewer with the same names and placements.
+- **Assembly STEP export** (AT-P4-6): a STEP assembly with each part once and one named instance per shown component, in place; it reopens in the viewer with the same placements.
+- **Component patterns** (FR-ASM-022): **Pattern** makes linear copies of components along a flat face's normal or a cylinder's axis, or circular copies about a cylinder's axis (count, spacing or total angle with equal spacing, reverse). The copies are previewed see-through before ✓, follow their seeds, are listed under the pattern in the tree and counted in the BOM.
+- **Exploded views** (FR-ASM-023): **Explode** builds a named view in steps (components, direction, distance), with **Auto explode** to start from; the view explodes and collapses animated from the Exploded views folder in the tree, and is saved in the assembly.
 
 ## [1.62.0] - 2026-11-07
 
