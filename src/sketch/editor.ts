@@ -15,7 +15,7 @@ import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain } from "../model/expr";
 import { t } from "../i18n";
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "point" | "trim" | "fillet" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -27,7 +27,12 @@ export interface SketchHost {
   /** Display unit factor (mm per unit) and name, decimals. */
   unit(): { mm: number; name: string; decimals: number };
   onSelection?(ids: string[]): void;
+  /** Convert entities: the model edges under the pointer (an edge, or every edge of a face), in world coordinates. */
+  modelEdges?(e: PointerEvent): ModelEdge[] | null;
 }
+
+/** A model edge for Convert entities, in world millimetres. */
+export interface ModelEdge { type: string; start: [number, number, number]; end: [number, number, number]; mid: [number, number, number]; closed: boolean; center?: [number, number, number]; axis?: [number, number, number]; radius?: number }
 
 const SNAP_PX = 9;
 const HV_TOL = (3 * Math.PI) / 180;
@@ -55,6 +60,11 @@ export class SketchEditor {
   /** Polygon sides (3–64) and the sketch fillet radius (mm), set in the panel. */
   polySides = 6;
   filletRadius = 2;
+  /** Sketch chamfer distance and offset distance (mm), set in the panel. */
+  chamferDist = 2;
+  offsetDist = 5;
+  /** Offset preview under the cursor (polylines in sketch coordinates). */
+  private offsetPreview: V2[][] = [];
   selection = new Set<string>();
   info: SolveResult;
   private group = new THREE.Group();
@@ -210,6 +220,11 @@ export class SketchEditor {
     if (this.tool === "dim") { this.dimClick(p, e); return true; }
     if (this.tool === "trim") { this.trimAt(p); return true; }
     if (this.tool === "fillet") { this.filletAt(p); return true; }
+    if (this.tool === "chamfer") { this.chamferAt(p); return true; }
+    if (this.tool === "extend") { this.extendAt(p); return true; }
+    if (this.tool === "split") { this.splitAt(p); return true; }
+    if (this.tool === "offset") { this.offsetAt(p, true); return true; }
+    if (this.tool === "convert") { this.convertAt(e); return true; }
     this.drawClick(p, e);
     return true;
   }
@@ -230,9 +245,11 @@ export class SketchEditor {
       return true;
     }
     if (this.tool === "dim" && this.dimDraft.dim) { this.placeDimDraft(p); this.render(); return true; }
-    const snap = this.snapPoint(p, this.tool !== "select" && this.tool !== "trim" && this.tool !== "fillet");
-    this.hover = this.tool === "select" || this.tool === "dim" || this.tool === "trim" ? this.hits(p, { points: this.tool !== "trim" })[0] ?? null
-      : this.tool === "fillet" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
+    const pick = ["trim", "extend", "split", "offset"].includes(this.tool);
+    const snap = this.snapPoint(p, !pick && !["select", "fillet", "chamfer", "convert"].includes(this.tool));
+    this.hover = this.tool === "select" || this.tool === "dim" || pick ? this.hits(p, { points: !pick })[0] ?? null
+      : this.tool === "fillet" || this.tool === "chamfer" ? this.hits(p, { curves: false }).find(h => h.kind === "point") ?? null : null;
+    this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     this.draft.snap = snap.id;
     this.render();
@@ -384,6 +401,20 @@ export class SketchEditor {
         this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: ccw ? aId : bId, b: ccw ? bId : aId });
         finish("Add arc");
       }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "slot") {
+      if (d.pts.length < 2) {
+        if (d.pts.length && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < this.px(p) * 3) return;
+        d.pts.push(p); d.ids.push(s.id); this.render(); return;
+      }
+      const [c1, c2] = d.pts;
+      const w = Math.abs(lineSide(c1, c2, p));
+      if (w < this.px(p) * 2) return;
+      this.addSlot(c1, c2, w, d.ids[0], d.ids[1], rels);
+      finish("Add slot");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -809,6 +840,276 @@ export class SketchEditor {
     this.render();
   }
 
+  // ---------- slot (FR-SK-017) ----------
+
+  /** Straight slot: two centres, half-width w; two lines and two end arcs, tangent, on a construction centre line. */
+  private addSlot(c1: V2, c2: V2, w: number, id1: string | null, id2: string | null, rels: SkRel[]) {
+    const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]];
+    const P = (c: V2, k: number): V2 => [c[0] + n[0] * w * k, c[1] + n[1] * w * k];
+    const c1Id = this.usePoint(c1, id1, null, rels), c2Id = this.usePoint(c2, id2, null, rels);
+    const [a1, a2, b2, b1] = [P(c1, 1), P(c2, 1), P(c2, -1), P(c1, -1)].map(q => this.usePoint(q, null, null, rels));
+    const axis = uid("l"), top = uid("l"), bottom = uid("l"), cap2 = uid("a"), cap1 = uid("a");
+    this.sk.ents.push(
+      { id: axis, t: "line", a: c1Id, b: c2Id, cons: true },
+      { id: top, t: "line", a: a1, b: a2 }, { id: bottom, t: "line", a: b2, b: b1 },
+      // Counter-clockwise arcs: round the far end from the lower side to the upper, round the near end the other way.
+      { id: cap2, t: "arc", c: c2Id, a: b2, b: a2 }, { id: cap1, t: "arc", c: c1Id, a: a1, b: b1 },
+    );
+    rels.push(
+      { id: uid("r"), t: "tangent", e: [top, cap2] }, { id: uid("r"), t: "tangent", e: [bottom, cap2] },
+      { id: uid("r"), t: "tangent", e: [top, cap1] }, { id: uid("r"), t: "tangent", e: [bottom, cap1] },
+      { id: uid("r"), t: "equal", e: [cap1, cap2] }, { id: uid("r"), t: "parallel", e: [top, axis] },
+    );
+    if (Math.abs(u[1]) < 1e-9) rels.push({ id: uid("r"), t: "horizontal", e: [axis] });
+    else if (Math.abs(u[0]) < 1e-9) rels.push({ id: uid("r"), t: "vertical", e: [axis] });
+  }
+
+  // ---------- extend, split, chamfer (FR-SK-031, 032, 033) ----------
+
+  /** Curves using a point as an end (or centre). */
+  private usersOf(id: string) {
+    return this.sk.ents.filter(o => (o.t === "line" && (o.a === id || o.b === id)) || (o.t === "arc" && (o.a === id || o.b === id || o.c === id)) || (o.t === "circle" && o.c === id));
+  }
+
+  private extendAt(p: V2) {
+    const h = this.hits(p, { points: false })[0];
+    const e = h && this.ent(h.id);
+    if (!e || (e.t !== "line" && e.t !== "arc")) { this.host.toast(t("Click a line or an arc near the end to extend.")); return; }
+    const me = curveOf(e, q => this.pt(q))!;
+    const u = paramOf(me, this.project(p, e.id));
+    const span = me.kind === "line" ? 1 : (me as { sweep: number }).sweep;
+    const atEnd = me.kind === "line" ? u > 0.5 : u > span / 2 && u < span / 2 + Math.PI;
+    const endId = atEnd ? e.b : e.a;
+    if (this.usersOf(endId).length > 1) { this.host.toast(t("That end is joined to another curve."), "warn"); return; }
+    // Crossings of this curve's carrier beyond the chosen end, on the other curves.
+    let best: { p: V2; other: string; k: number } | null = null;
+    for (const o of this.sk.ents) {
+      if (o.id === e.id || o.t === "point" || o.cons) continue;
+      const og = curveOf(o, q => this.pt(q));
+      if (!og) continue;
+      for (const q of intersectCurves(me, og)) {
+        if (!onCurve(og, q)) continue;
+        const v = paramOf(me, q);
+        // How far past the end along the curve (line: in units of its length; arc: radians).
+        const k = me.kind === "line" ? (atEnd ? v - 1 : -v) : atEnd ? v - span : Math.PI * 2 - v;
+        if (k > 1e-7 && (me.kind === "line" || v > span + 1e-7) && (!best || k < best.k)) best = { p: q, other: o.id, k };
+      }
+    }
+    if (!best) { this.host.toast(t("Nothing to extend to in that direction."), "warn"); return; }
+    const pt = this.ent(endId) as SkEnt & { t: "point" };
+    pt.x = best.p[0]; pt.y = best.p[1];
+    this.sk.rels.push({ id: uid("r"), t: "onCurve", e: [endId, best.other] });
+    if (e.t === "line") this.sk.dims = this.sk.dims.filter(d => !(d.e.length === 1 && d.e[0] === e.id));
+    this.commit("Extend");
+    this.render();
+  }
+
+  private splitAt(p: V2) {
+    const h = this.hits(p, { points: false })[0];
+    const e = h && this.ent(h.id);
+    if (!e || (e.t !== "line" && e.t !== "arc")) { this.host.toast(t("Click a line or an arc to split.")); return; }
+    const q = this.project(p, e.id);
+    const ends = [this.pt(e.a), this.pt(e.b)];
+    if (ends.some(x => Math.hypot(x[0] - q[0], x[1] - q[1]) < this.px(q) * 3)) { this.host.toast(t("Click away from the ends to split."), "warn"); return; }
+    const id = uid("p");
+    this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] });
+    const oldEnd = e.b;
+    e.b = id;
+    const nid = uid(e.t === "line" ? "l" : "a");
+    this.sk.ents.push(e.t === "line" ? { id: nid, t: "line", a: id, b: oldEnd, ...(e.cons ? { cons: true } : {}) } : { id: nid, t: "arc", c: e.c, a: id, b: oldEnd, ...(e.cons ? { cons: true } : {}) });
+    if (e.t === "line") {
+      this.sk.rels.push({ id: uid("r"), t: "collinear", e: [e.id, nid] });
+      for (const r of [...this.sk.rels]) if (r.e.length === 1 && r.e[0] === e.id && (r.t === "horizontal" || r.t === "vertical" || r.t === "fix")) this.sk.rels.push({ id: uid("r"), t: r.t, e: [nid] });
+      this.sk.dims = this.sk.dims.filter(d => !(d.e.length === 1 && d.e[0] === e.id));
+    }
+    this.selection = new Set([id]);
+    this.commit("Split entity");
+    this.render();
+    this.emitSel();
+  }
+
+  private chamferAt(p: V2) {
+    const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
+    if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
+    const V = h.id;
+    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    if (lines.length !== 2 || this.usersOf(V).length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
+    const v = this.pt(V), dist = this.chamferDist;
+    const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
+    const len = far.map(q => Math.hypot(q[0] - v[0], q[1] - v[1]));
+    if (Math.abs(cross2(norm2(sub2(far[0], v)), norm2(sub2(far[1], v)))) < 1e-9) { this.host.toast(t("The lines are in line: there is no corner to round."), "warn"); return; }
+    if (dist >= len[0] - 1e-9 || dist >= len[1] - 1e-9) { this.host.toast(t("The distance is too large for these lines."), "error"); return; }
+    const T = far.map(q => { const w = norm2(sub2(q, v)); return [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2; });
+    const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+    lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
+    this.sk.ents.push({ id: uid("l"), t: "line", a: tIds[0], b: tIds[1] });
+    this.dropLoosePoints(new Set([V]));
+    this.commit("Sketch chamfer");
+    this.render();
+  }
+
+  // ---------- offset entities (FR-SK-034) ----------
+
+  /** The chain of lines and arcs joined end to end through the clicked curve, in order, and whether it closes. */
+  private chainOf(id: string): { segs: { id: string; rev: boolean }[]; closed: boolean } {
+    const curves = this.sk.ents.filter(o => (o.t === "line" || o.t === "arc") && !o.cons) as (SkEnt & { t: "line" | "arc" })[];
+    const deg = (pid: string) => curves.filter(o => o.a === pid || o.b === pid).length;
+    const get = (cid: string) => curves.find(o => o.id === cid)!;
+    const startOf = (sg: { id: string; rev: boolean }) => (sg.rev ? get(sg.id).b : get(sg.id).a);
+    const endOf = (sg: { id: string; rev: boolean }) => (sg.rev ? get(sg.id).a : get(sg.id).b);
+    const segs = [{ id, rev: false }];
+    const seen = new Set([id]);
+    let closed = false;
+    for (;;) {
+      const end = endOf(segs.at(-1)!);
+      if (deg(end) !== 2) break;
+      const nx = curves.find(o => !seen.has(o.id) && (o.a === end || o.b === end));
+      if (!nx) { closed = end === startOf(segs[0]) && segs.length > 1; break; }
+      seen.add(nx.id);
+      segs.push({ id: nx.id, rev: nx.b === end });
+    }
+    if (!closed) for (;;) {
+      const st = startOf(segs[0]);
+      if (deg(st) !== 2) break;
+      const pv = curves.find(o => !seen.has(o.id) && (o.a === st || o.b === st));
+      if (!pv) break;
+      seen.add(pv.id);
+      segs.unshift({ id: pv.id, rev: pv.a === st });
+    }
+    return { segs, closed };
+  }
+
+  /**
+   * Offsets the clicked circle, or the chain of lines and arcs through the clicked curve, by `offsetDist` to the cursor's side.
+   * Corners are re-joined where the offset curves meet; arcs keep their centres (concentric). Static copy (P1).
+   * With apply false it only returns the preview polylines.
+   */
+  private offsetAt(p: V2, apply: boolean): V2[][] {
+    const h = this.hits(p, { points: false })[0];
+    const e = h && this.ent(h.id);
+    if (!e || (e.t !== "line" && e.t !== "arc" && e.t !== "circle")) {
+      if (apply) this.host.toast(t("Click a line, arc or circle to offset."));
+      return [];
+    }
+    const d = this.offsetDist;
+    if (e.t === "circle") {
+      const c = this.pt(e.c), r = e.r + (Math.hypot(p[0] - c[0], p[1] - c[1]) < e.r ? -d : d);
+      if (!(r > 1e-9)) { if (apply) this.host.toast(t("The offset is larger than the radius."), "error"); return []; }
+      if (!apply) return [Array.from({ length: 73 }, (_, i) => [c[0] + r * Math.cos((i * Math.PI) / 36), c[1] + r * Math.sin((i * Math.PI) / 36)] as V2)];
+      this.sk.ents.push({ id: uid("c"), t: "circle", c: e.c, r });
+      this.commit("Offset entities");
+      this.render();
+      return [];
+    }
+    const { segs, closed } = this.chainOf(e.id);
+    // Side: +1 to the left of the clicked curve as the chain runs (it runs forward on the clicked curve).
+    let side: number;
+    if (e.t === "line") side = Math.sign(cross2(sub2(this.pt(e.b), this.pt(e.a)), sub2(p, this.pt(e.a)))) || 1;
+    else { const c = this.pt(e.c); side = Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]) ? 1 : -1; }
+    type Off = { g: Curve; at: (x: V2) => V2; sg: { id: string; rev: boolean }; s: V2; e: V2 };
+    const offs: Off[] = [];
+    for (const sg of segs) {
+      const o = this.ent(sg.id) as SkEnt & { t: "line" | "arc" };
+      const s0 = this.pt(sg.rev ? o.b : o.a), e0 = this.pt(sg.rev ? o.a : o.b);
+      if (o.t === "line") {
+        const u = norm2(sub2(e0, s0)), n: V2 = [-u[1] * side * d, u[0] * side * d];
+        const at = (x: V2): V2 => [x[0] + n[0], x[1] + n[1]];
+        offs.push({ g: { kind: "line", a: at(s0), b: at(e0) }, at, sg, s: s0, e: e0 });
+      } else {
+        const c = this.pt(o.c), r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
+        // Forward (counter-clockwise) the left side is the inside.
+        const r2 = r + (sg.rev ? side : -side) * d;
+        if (!(r2 > 1e-9)) { if (apply) this.host.toast(t("The offset is larger than the radius."), "error"); return []; }
+        const at = (x: V2): V2 => [c[0] + ((x[0] - c[0]) * r2) / r, c[1] + ((x[1] - c[1]) * r2) / r];
+        offs.push({ g: { kind: "circle", c, r: r2 }, at, sg, s: s0, e: e0 });
+      }
+    }
+    // Joint points: the start of each offset curve, the end of the last one when open.
+    const joint = (i: number, j: number): V2 => {
+      const a = offs[i].at(offs[i].e), b = offs[j].at(offs[j].s);
+      if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) return a;
+      const m: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const xs = intersectCurves(offs[i].g, offs[j].g);
+      if (!xs.length) return a;
+      return xs.reduce((best, q) => (Math.hypot(q[0] - m[0], q[1] - m[1]) < Math.hypot(best[0] - m[0], best[1] - m[1]) ? q : best));
+    };
+    const n = offs.length;
+    const starts: V2[] = offs.map((_, i) => (i === 0 && !closed ? offs[0].at(offs[0].s) : joint((i - 1 + n) % n, i)));
+    const ends: V2[] = offs.map((_, i) => (i === n - 1 && !closed ? offs[i].at(offs[i].e) : starts[(i + 1) % n]));
+    if (!apply) {
+      return offs.map((o, i) => {
+        if (o.g.kind === "line") return [starts[i], ends[i]];
+        const c = o.g.c, r = o.g.r;
+        const a0 = Math.atan2(starts[i][1] - c[1], starts[i][0] - c[0]);
+        let sw = Math.atan2(ends[i][1] - c[1], ends[i][0] - c[0]) - a0;
+        if (o.sg.rev) { while (sw >= 0) sw -= Math.PI * 2; } else { while (sw <= 0) sw += Math.PI * 2; }
+        return Array.from({ length: 49 }, (_, k) => [c[0] + r * Math.cos(a0 + (sw * k) / 48), c[1] + r * Math.sin(a0 + (sw * k) / 48)] as V2);
+      });
+    }
+    const ptIds = starts.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+    const endIds = closed ? ptIds.map((_, i) => ptIds[(i + 1) % n]) : [...ptIds.slice(1), (() => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: ends[n - 1][0], y: ends[n - 1][1] }); return id; })()];
+    offs.forEach((o, i) => {
+      const src = this.ent(o.sg.id) as SkEnt & { t: "line" | "arc" };
+      if (src.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: ptIds[i], b: endIds[i] }); this.sk.rels.push({ id: uid("r"), t: "parallel", e: [src.id, id] }); }
+      else this.sk.ents.push({ id: uid("a"), t: "arc", c: src.c, a: o.sg.rev ? endIds[i] : ptIds[i], b: o.sg.rev ? ptIds[i] : endIds[i] });
+    });
+    this.commit("Offset entities");
+    this.offsetPreview = [];
+    this.render();
+    return [];
+  }
+
+  // ---------- convert entities (FR-SK-035) ----------
+
+  /** Copies the model edges under the pointer into the sketch, projected onto its plane and fixed there (static in P1). */
+  private convertAt(e: PointerEvent) {
+    const edges = this.host.modelEdges?.(e);
+    if (!edges?.length) { this.host.toast(t("Click a model edge or face to convert.")); return; }
+    const f = this.frame;
+    const uv = (w: [number, number, number]): V2 => {
+      const q = [w[0] - f.o[0], w[1] - f.o[1], w[2] - f.o[2]];
+      return [q[0] * f.x[0] + q[1] * f.x[1] + q[2] * f.x[2], q[0] * f.y[0] + q[1] * f.y[1] + q[2] * f.y[2]];
+    };
+    const ptAt = new Map<string, string>();
+    const point = (q: V2) => {
+      const key = `${q[0].toFixed(6)},${q[1].toFixed(6)}`;
+      let id = ptAt.get(key) ?? this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-6)?.id;
+      if (!id) { id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); }
+      ptAt.set(key, id);
+      return id;
+    };
+    const fixed: string[] = [];
+    let skipped = 0;
+    for (const ed of edges) {
+      const round = (ed.type === "circle" || ed.type === "arc") && ed.center && ed.radius && ed.axis;
+      const normal = round && Math.abs(ed.axis![0] * f.n[0] + ed.axis![1] * f.n[1] + ed.axis![2] * f.n[2]) > 1 - 1e-6;
+      if (ed.type === "line") {
+        const a = uv(ed.start), b = uv(ed.end);
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) { skipped++; continue; }
+        const id = uid("l");
+        this.sk.ents.push({ id, t: "line", a: point(a), b: point(b) });
+        fixed.push(id);
+      } else if (round && normal && ed.closed) {
+        const id = uid("c");
+        this.sk.ents.push({ id, t: "circle", c: point(uv(ed.center!)), r: ed.radius! });
+        fixed.push(id);
+      } else if (round && normal) {
+        const c = uv(ed.center!), a = uv(ed.start), b = uv(ed.end), m = uv(ed.mid);
+        const ang = (q: V2) => Math.atan2(q[1] - c[1], q[0] - c[0]);
+        const sw = (x: number, y: number) => { let k = y - x; while (k <= 0) k += Math.PI * 2; return k; };
+        const ccw = sw(ang(a), ang(m)) < sw(ang(a), ang(b));
+        const id = uid("a");
+        this.sk.ents.push({ id, t: "arc", c: point(c), a: point(ccw ? a : b), b: point(ccw ? b : a) });
+        fixed.push(id);
+      } else skipped++;
+    }
+    if (!fixed.length) { this.host.toast(t("Only straight edges and circles square to the sketch can be converted."), "warn"); return; }
+    for (const id of fixed) this.sk.rels.push({ id: uid("r"), t: "fix", e: [id] });
+    if (skipped) this.host.toast(t("{n} edges were not converted (curves not square to the sketch).", { n: skipped }), "warn");
+    this.commit("Convert entities");
+    this.render();
+  }
+
   /** The sketch as last handed to the host. */
   private lastCommitted: SketchFeature;
 
@@ -833,7 +1134,7 @@ export class SketchEditor {
       return false;
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
-    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", s: "select", t: "trim", g: "polygon", f: "fillet" };
+    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", s: "select", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
     return false;
@@ -855,6 +1156,12 @@ export class SketchEditor {
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
       fillet: "Click a corner where two lines meet; set the radius in the panel",
+      chamfer: "Click a corner where two lines meet; set the distance in the panel",
+      extend: "Click a line or arc near the end to extend it to the next curve",
+      split: "Click a line or arc where it should be split in two",
+      offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
+      convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
+      slot: "Click the two centres, then the width",
       dim: "Click one or two items, then click where the dimension goes",
     };
     this.host.status(`${def} · ${t(hints[this.tool])}`);
@@ -968,6 +1275,12 @@ export class SketchEditor {
         }
       }
     }
+    for (const pl of this.offsetPreview) poly(pl, C.pre);
+    if (this.tool === "slot" && d.pts.length && d.cursor) {
+      const [c1, c2] = d.pts.length === 1 ? [d.pts[0], d.cursor] : [d.pts[0], d.pts[1]];
+      const w = d.pts.length === 1 ? this.px(c1) * 12 : Math.abs(lineSide(c1, c2, d.cursor));
+      for (const pl of slotOutline(c1, c2, w)) poly(pl, C.pre);
+    }
     // Dimension lines.
     const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
     for (const dm of dims) this.dimGeometry(dm, (a, b) => push(a, b, this.selection.has(dm.id) ? C.sel : C.dim, dimSegs, dimCols));
@@ -993,7 +1306,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "trim", "fillet"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));
@@ -1247,4 +1560,19 @@ function circleCircle(c1: V2, r1: number, c2: V2, r2: number): V2[] {
   if (h < 1e-12) return [m];
   const ox = (-(c2[1] - c1[1]) * h) / d, oy = ((c2[0] - c1[0]) * h) / d;
   return [[m[0] + ox, m[1] + oy], [m[0] - ox, m[1] - oy]];
+}
+
+function cross2(a: V2, b: V2) { return a[0] * b[1] - a[1] * b[0]; }
+
+/** Signed distance of p from the line through a and b (left positive). */
+function lineSide(a: V2, b: V2, p: V2) { const u = norm2(sub2(b, a)); return cross2(u, sub2(p, a)); }
+
+/** Outline of a straight slot round the centres c1, c2 with half-width w, as polylines. */
+function slotOutline(c1: V2, c2: V2, w: number): V2[][] {
+  const len = Math.hypot(c2[0] - c1[0], c2[1] - c1[1]);
+  if (len < 1e-9) return [];
+  const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]], a = Math.atan2(n[1], n[0]);
+  const P = (c: V2, k: number): V2 => [c[0] + n[0] * w * k, c[1] + n[1] * w * k];
+  const arc = (c: V2, a0: number) => Array.from({ length: 25 }, (_, i) => [c[0] + w * Math.cos(a0 + (Math.PI * i) / 24), c[1] + w * Math.sin(a0 + (Math.PI * i) / 24)] as V2);
+  return [[P(c1, 1), P(c2, 1)], [P(c1, -1), P(c2, -1)], arc(c2, a - Math.PI), arc(c1, a), [c1, c2]];
 }

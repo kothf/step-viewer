@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-07
+
+### Added
+- Sketch **Slot** (W, FR-SK-017): two centres, then the width; two lines and two end arcs, tangent and equal, on a construction centre line.
+- Sketch **Extend** (E, FR-SK-031) lengthens a line or arc to the next curve, and **Split** (FR-SK-032) cuts it in two where you click.
+- Sketch **Chamfer** (FR-SK-033): bevels the corner of two lines by the distance set in the panel.
+- **Offset entities** (O, FR-SK-034): offsets a circle, or a whole chain of joined lines and arcs, to the cursor's side with a live preview; corners are re-joined and arcs stay concentric.
+- **Convert entities** (FR-SK-035): copies the model edges you click, or all edges of a face, into the sketch as fixed lines, circles and arcs.
+
+### Changed
+- The sketch toolbar groups related tools behind a ▾ flyout, as in SolidWorks (Rectangle, Circle, Arc, Trim/Extend/Split, Fillet/Chamfer, Offset/Convert); each button shows the last tool picked from it, and Dimension sits next to Select. The bar wraps instead of running under the view cube.
+
 ## [1.19.4] - 2026-11-07
 
 ### Added
@@ -282,7 +294,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.4...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.20.0...HEAD
+[1.20.0]: https://github.com/kothf/step-viewer/compare/v1.19.4...v1.20.0
 [1.19.4]: https://github.com/kothf/step-viewer/compare/v1.19.3...v1.19.4
 [1.19.3]: https://github.com/kothf/step-viewer/compare/v1.19.2...v1.19.3
 [1.19.2]: https://github.com/kothf/step-viewer/compare/v1.19.1...v1.19.2

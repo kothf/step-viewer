@@ -1758,7 +1758,9 @@ try {
     await click([5, 10]);
     const trimmed = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const P = id => sk.ents.find(e => e.id === id); const h = sk.ents.filter(e => e.t === "line").find(l => Math.abs(P(l.a).y - P(l.b).y) < 1e-6); return h ? Math.max(P(h.a).x, P(h.b).x) : null; });
     check(trimmed !== null && near(trimmed, -10, 0.01), `model 1.19: Trim cuts the line back to the crossing (end at x = ${trimmed})`);
-    await mp.click('[data-c="sk:circle3"]');
+    // 3-point circle sits in the Circle flyout.
+    await mp.click('#mc-tools [data-fly="circle"]');
+    await mp.click("#mc-menu button:nth-child(2)");
     await click([15, 5]); await click([35, 5]); await click([25, 15]);
     const c3 = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const c = sk.ents.find(e => e.t === "circle"); const P = sk.ents.find(e => e.id === c?.c); return c && [c.r, P.x, P.y]; });
     check(c3 && near(c3[0], 10, 0.3) && near(c3[1], 25, 0.3) && near(c3[2], 5, 0.3), `model 1.19: 3-point circle through three clicks (${c3})`);
@@ -1858,6 +1860,75 @@ try {
     const cp = await mp.evaluate(() => { const l = window.__sv.model.last(); const P = l.preview?.position ?? []; let vol = 0; for (let i = 0; i < P.length; i += 9) { const [ax, ay, az, bx, by, bz, cx, cy, cz] = P.slice(i, i + 9); vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6; } return { tris: P.length / 9, vol: Math.abs(vol), drawn: window.__sv.modeller.decor.children.some(c => c.userData.cutPreview) }; });
     check(cp.drawn && near(cp.vol, Math.PI * 9 * 4, 0.05 * Math.PI * 9 * 4), `model 1.19.4: an open cut previews the material it removes (${JSON.stringify(cp)} vs ${(Math.PI * 36).toFixed(2)} mm³)`);
     await mp.keyboard.press("Escape");
+    await ctx.close();
+  }
+
+  // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    const tool = t => mp.evaluate(t => window.__sv.model.editor().setTool(t), t);
+    const lines = () => mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const P = id => sk.ents.find(e => e.id === id); return sk.ents.filter(e => e.t === "line").map(e => [P(e.a).x, P(e.a).y, P(e.b).x, P(e.b).y].map(x => Math.round(x * 1000) / 1000).join(" ")); });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 10, 10), P("b", 50, 10), P("c", 50, 30), P("d", 10, 30), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a"), P("e", 60, 10), P("f", 60, 20), L("v", "e", "f"), P("g", 55, 40), P("h", 70, 40), L("hz", "g", "h")] }); }); });
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await idle();
+    // Flyout: Trim ▾ → Extend.
+    await mp.click('#mc-tools [data-fly="trim"]');
+    const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click("#mc-menu button:nth-child(2)");
+    const flyTool = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, shown: document.querySelector('#mc-tools [data-c^="sk:"][data-c="sk:extend"]')?.textContent?.trim() }));
+    check(fly.join("|") === "Trim|Extend|Split" && flyTool.tool === "extend" && flyTool.shown === "Extend", `model 1.20: the sketch bar groups Trim, Extend and Split in a flyout (${fly.join("|")}, ${JSON.stringify(flyTool)})`);
+    // Offset the rectangle 5 mm inwards: a closed chain of four parallel lines.
+    await tool("offset");
+    await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 5; });
+    await click([30, 10.4]);
+    const off = await lines();
+    check(["15 15 45 15", "45 15 45 25", "45 25 15 25", "15 25 15 15"].every(l => off.includes(l)), `model 1.20: Offset entities insets the rectangle's chain by 5 mm (${off.slice(-4).join(", ")})`);
+    // Extend the vertical line up to the horizontal one; split the top edge; chamfer a corner.
+    await tool("extend");
+    await click([60, 19]);
+    const ext = await lines();
+    await tool("split");
+    await click([20, 30]);
+    const nSplit = (await lines()).length;
+    await tool("chamfer");
+    await mp.evaluate(() => { window.__sv.model.editor().chamferDist = 3; });
+    await click([50, 10]);
+    const ch = await lines();
+    check(ext.includes("60 10 60 40") && nSplit === ext.length + 1 && ch.includes("47 10 50 13"), `model 1.20: Extend reaches the next line, Split makes two, sketch chamfer cuts the corner 3 mm (${ext[4]}, ${nSplit}, ${ch.at(-1)})`);
+    // Slot: two centres 20 apart, half-width 4.
+    await tool("slot");
+    await click([80, 0]); await click([100, 0]); await click([90, 4]);
+    const slot = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const arcs = sk.ents.filter(e => e.t === "arc"); const P = id => sk.ents.find(e => e.id === id); return { arcs: arcs.length, r: arcs.map(a => Math.hypot(P(a.a).x - P(a.c).x, P(a.a).y - P(a.c).y)), tan: sk.rels.filter(r => r.t === "tangent").length, ok: window.__sv.model.editor().info.status }; });
+    check(slot.arcs === 2 && slot.r.every(r => near(r, 4, 0.01)) && slot.tan === 4 && slot.ok === "ok", `model 1.20: Slot makes two lines and two R4 end arcs, tangent (${JSON.stringify(slot)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    // Convert entities: the top face of a block into a sketch on it, four fixed lines.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a2", 0, -60), P("b2", 40, -60), P("c2", 40, -30), P("d2", 0, -30), { id: "m1", t: "line", a: "a2", b: "b2" }, { id: "m2", t: "line", a: "b2", b: "c2" }, { id: "m3", t: "line", a: "c2", b: "d2" }, { id: "m4", t: "line", a: "d2", b: "a2" }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }, { id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [20, -45, 10] } }, rels: [], dims: [], ents: [] }); }); });
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForTimeout(1200);
+    await idle();
+    await tool("convert");
+    await click([20, -45]);
+    const conv = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { lines: sk.ents.filter(e => e.t === "line").length, fix: sk.rels.filter(r => r.t === "fix").length, dof: window.__sv.model.editor().info.dof }; });
+    check(conv.lines === 4 && conv.fix === 4 && conv.dof === 0, `model 1.20: Convert entities copies the face's 4 edges into the sketch, fixed (${JSON.stringify(conv)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     await ctx.close();
   }
 

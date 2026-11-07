@@ -332,6 +332,12 @@ export class ModelController {
       toast: (msg, kind) => toast(msg, kind ?? "info"),
       unit: () => ({ mm: 1 / UNITS[units.current].f, name: units.current, decimals: units.decimals ?? this.doc.units.decimals }),
       onSelection: () => this.renderPanel(),
+      modelEdges: e => {
+        const hit = this.host.edgeAt(e.clientX, e.clientY);
+        const data = this.host.viewer.parts[0]?.data;
+        if (!hit || !data) return null;
+        return hit.edge ? [hit.edge] : hit.faceId != null ? data.edges.filter(x => x.faces.includes(hit.faceId!)) : null;
+      },
     }, sk, this.frameOf(sk));
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
@@ -1239,11 +1245,21 @@ export class ModelController {
         ["select", t("Select"), t("Select and drag (S)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
         ["crect", t("Centre rect"), t("Centre rectangle")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
-        ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["point", t("Point"), t("Point (P)")],
-        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")],
+        ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")], ["point", t("Point"), t("Point (P)")],
+        ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
+        ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
+        ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")],
         ["dim", t("Dimension"), t("Smart dimension (D)")],
       ];
-      html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${tools.map(([id, l, ti]) => btn(`sk:${id}`, l, ti, tool === id)).join("")}</div>`
+      // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
+      const groups: SkTool[][] = [["select"], ["dim"], ["line"], ["rect", "crect"], ["circle", "circle3"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert"]];
+      const info = new Map(tools.map(x => [x[0], x]));
+      html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
+        const cur = g.includes(tool) ? tool : this.flyLast.get(g[0]) ?? g[0];
+        const [id, l, ti] = info.get(cur)!;
+        if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
+        return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
+      }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, !this.store.canUndo)}${btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, !this.store.canRedo)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
@@ -1265,7 +1281,19 @@ export class ModelController {
     }
     $("#mc-tools").innerHTML = html;
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
+    $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
+      const mm = this.mode;
+      if (mm.kind !== "sketch") return;
+      const g = ({ rect: ["rect", "crect"], circle: ["circle", "circle3"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert"] } as Record<string, SkTool[]>)[b.dataset.fly!];
+      const label: Record<string, string> = { rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities") };
+      const r = b.getBoundingClientRect();
+      this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+        () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
+    }));
   }
+
+  /** The tool each sketch flyout shows (the last one picked from it). */
+  private flyLast = new Map<SkTool, SkTool>();
 
   private command(c: string) {
     const m = this.mode;
@@ -1426,7 +1454,6 @@ export class ModelController {
 
   private openMenu(id: string, x: number, y: number) {
     if (!this.store) return;
-    const menu = $("#mc-menu");
     const f = this.store.feature(id);
     const i = this.doc.features.findIndex(g => g.id === id);
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -1447,7 +1474,13 @@ export class ModelController {
       items.push([t("Delete"), () => void this.deleteFeature(f.id)]);
     }
     if (!items.length) return;
-    menu.innerHTML = items.map((it, k) => (it ? `<button role="menuitem" tabindex="-1" data-k="${k}">${esc(it[0])}</button>` : `<hr role="separator" />`)).join("");
+    this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus());
+  }
+
+  /** A pop-up menu at x, y; Esc or Tab closes it and calls `back` (focus returns there). */
+  private showMenu(items: ([string, () => void, string?] | null)[], x: number, y: number, back: () => void) {
+    const menu = $("#mc-menu");
+    menu.innerHTML = items.map((it, k) => (it ? `<button role="menuitem" tabindex="-1" data-k="${k}">${it[2] ? `<span class="mc-i" aria-hidden="true">${it[2]}</span>` : ""}${esc(it[0])}</button>` : `<hr role="separator" />`)).join("");
     menu.hidden = false;
     const r = menu.getBoundingClientRect();
     menu.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
@@ -1457,7 +1490,7 @@ export class ModelController {
     menu.onkeydown = e => {
       const k = btns.indexOf(document.activeElement as HTMLButtonElement);
       if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); btns[(k + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length].focus(); }
-      else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); this.closeMenu(); $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus(); }
+      else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); this.closeMenu(); back(); }
     };
     btns[0]?.focus();
   }
@@ -1705,6 +1738,8 @@ export class ModelController {
       + `</div>`
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
       + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
@@ -1718,10 +1753,12 @@ export class ModelController {
       const n = Math.round(+(e.target as HTMLInputElement).value);
       if (n >= 3 && n <= 64) ed.polySides = n; else { toast(t("A polygon has 3 to 64 sides."), true); (e.target as HTMLInputElement).value = String(ed.polySides); }
     });
-    pm.querySelector<HTMLInputElement>("[data-a=fr]")?.addEventListener("change", e => {
-      try { const v = evaluate((e.target as HTMLInputElement).value, "length", units.current); if (v > 0) ed.filletRadius = v; else throw new ExprError("The value must be more than 0."); }
-      catch (err) { toast(t((err as Error).message), true); }
-    });
+    for (const [k, set] of [["fr", (v: number) => { ed.filletRadius = v; }], ["cd", (v: number) => { ed.chamferDist = v; }], ["od", (v: number) => { ed.offsetDist = v; }]] as const) {
+      pm.querySelector<HTMLInputElement>(`[data-a=${k}]`)?.addEventListener("change", e => {
+        try { const v = evaluate((e.target as HTMLInputElement).value, "length", units.current); if (v > 0) set(v); else throw new ExprError("The value must be more than 0."); }
+        catch (err) { toast(t((err as Error).message), true); }
+      });
+    }
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
   }
@@ -1821,6 +1858,12 @@ const ICON_SVG: Record<string, string> = {
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),
   "sk:polygon": S('<path d="M8 2 13.7 6.1 11.5 12.9h-7L2.3 6.1z"/>'),
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
+  "sk:slot": S('<path d="M5 4.5h6a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7z"/><path d="M5 8h6" stroke-dasharray="1.5 1.5"/>'),
+  "sk:extend": S('<path d="M2 12 9 5"/><path d="M9 5l3.5-3.5" stroke-dasharray="1.5 1.5"/><path d="M10 14 14 2"/>'),
+  "sk:split": S('<path d="M2 12 7 7M9 5l5-5"/><circle cx="8" cy="6" r="1.4"/>'),
+  "sk:chamfer": S('<path d="M2.5 13.5V7l4.5-4.5h6.5"/>'),
+  "sk:offset": S('<path d="M2.5 13.5V5.5a3 3 0 0 1 3-3h8"/><path d="M6 13.5V8a2 2 0 0 1 2-2h5.5" stroke-dasharray="1.5 1.5"/>'),
+  "sk:convert": S('<path d="M3 11 8 3l5 8z" opacity=".5"/><path d="M3 13.5h10"/><path d="M8 7v4m-2-2 2 2 2-2"/>'),
   "sk:fillet": S('<path d="M2.5 13.5V8a5.5 5.5 0 0 1 5.5-5.5h5.5"/><path d="M2.5 2.5h3M2.5 2.5v3" stroke-dasharray="1.5 1.5"/>'),
   "sk:dim": S('<path d="M2.5 4v8M13.5 4v8M2.5 8h11M5 6 2.5 8 5 10M11 6l2.5 2L11 10"/>'),
 };
