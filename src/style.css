@@ -828,3 +828,8 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .v-found { margin: 0; }
 .v-cmp { align-items: center; gap: 6px; margin-bottom: 8px; }
 @media (max-width: 768px) { .v-form { grid-template-columns: 1fr; } }
+/* Vault P5: change orders, workflow editor, notifications */
+.v-badge { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 11px; line-height: 16px; text-align: center; }
+.v-wf input:not([type="checkbox"]), .v-wf select { width: 100%; min-width: 70px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); font: inherit; }
+.v-wf input[type="color"] { min-width: 36px; padding: 0; height: 24px; }
+.v-pick { display: flex; flex-direction: column; gap: 2px; max-height: 30vh; }

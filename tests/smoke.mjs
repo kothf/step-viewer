@@ -3004,6 +3004,88 @@ try {
     await ctx.close();
   }
 
+  // --- PDM vault thread (FRS 12.5 P5): change order, release package, workflow editor, notifications ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
+    await mp.fill("#v-name", "Team test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Team test") await mp.fill("#v-name", "Team test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="changes"]');
+    // Two released files (one transition on both: a release package).
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      await p.addFiles([new File(["arm"], "arm.txt"), new File(["pin"], "pin.txt")]);
+      const ids = (await v.files()).map(f => f.id);
+      await v.transition(ids, "Submit for review");
+      await v.transition(ids, "Approve");
+      await p.refresh();
+    });
+    // Request a change on arm.txt from the tab, approve it, then close it.
+    await mp.click('#vault-panel .v-row:has-text("arm.txt")');
+    await mp.click('#vault-panel [data-a="eco"]');
+    await mp.fill('#vault-dlg [name="title"]', "Longer arm");
+    await mp.fill('#vault-dlg [name="reason"]', "Clash");
+    await mp.click('#vault-dlg button[value="ok"]');
+    // Waits for an async condition in the page (waitForFunction treats a promise as truthy).
+    const until = async (fn, ms = 10000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; await mp.waitForTimeout(100)) if (await mp.evaluate(fn)) return true; return false; };
+    await until(async () => (await window.__sv.vault.vault.changes()).length === 1);
+    await mp.click('#vault-panel [data-a="changes"]');
+    await mp.waitForSelector("#vault-dlg [data-eco-ok]");
+    await mp.click("#vault-dlg [data-eco-ok]");
+    await mp.waitForSelector("#vault-dlg [data-eco-close]");
+    const pending = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}`).join("|"));
+    await mp.click("#vault-dlg [data-eco-close]");
+    await until(async () => (await window.__sv.vault.vault.changes())[0].state === "Closed");
+    // The list reopens once the order is closed.
+    await mp.waitForSelector("#vault-dlg[open] [data-eco-ok], #vault-dlg[open] tbody tr", { timeout: 10000 }).catch(() => {});
+    await mp.waitForTimeout(300);
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}:${f.revision}`).join("|"));
+    await mp.evaluate(() => document.querySelector("#vault-dlg")?.open && document.querySelector("#vault-dlg").close());
+    // Release packages: two (the joint release and the change order), exported as a ZIP.
+    await mp.click('#vault-panel [data-a="packages"]');
+    await mp.waitForSelector("#vault-dlg [data-zip]");
+    const pkgs = await mp.$$eval("#vault-dlg [data-zip]", x => x.length);
+    const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click("#vault-dlg [data-zip] >> nth=0")]);
+    const zipName = dl.suggestedFilename();
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Workflow editor: add a state, save; it is in the settings.
+    await mp.click('#vault-panel [data-a="workflow"]');
+    await mp.waitForSelector("#vault-dlg [data-add-s]");
+    await mp.click("#vault-dlg [data-add-s]");
+    await mp.waitForSelector('#vault-dlg [data-s="5"]');
+    await mp.fill('#vault-dlg [data-s="5"] [name="name"]', "Archived");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault.info.workflow?.states.some(s => s.name === "Archived"), null, { timeout: 5000 }).catch(() => {});
+    const states = await mp.evaluate(() => window.__sv.vault.vault.info.workflow?.states.map(s => s.name).join(",") ?? "");
+    // Notifications: another user's check-in shows up with a count.
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      v.user = "Olga";
+      const f = (await v.files()).find(x => x.path === "arm.txt");
+      await v.transition([f.id], "Change");
+      v.user = "Andrey";
+      await p.refresh();
+    });
+    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="notes"] .v-badge')?.textContent ?? "");
+    await mp.click('#vault-panel [data-a="notes"]');
+    await mp.waitForSelector("#vault-dlg .v-log li");
+    const note = await mp.textContent("#vault-dlg .v-log li");
+    check(/arm\.txt:Change pending/.test(pending) && /pin\.txt:Released/.test(pending) && after === "arm.txt:Released:B|pin.txt:Released:A", `vault P5: change request, approve, close and release (${pending} → ${after})`);
+    check(pkgs === 2 && /\.zip$/.test(zipName) && /Archived/.test(states) && badge === "1" && /Olga/.test(note), `vault P5: release packages, workflow editor and notifications (${pkgs}, ${zipName}, ${states}, ${badge}, ${note})`);
+    await ctx.close();
+  }
+
   // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
   {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

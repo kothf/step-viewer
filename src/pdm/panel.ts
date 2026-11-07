@@ -4,8 +4,8 @@
 import { onLangChange, t } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
 import { unzipLimited, zip } from "../model/zip";
-import { fsaDir, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
-import { PART_NUMBER, ROLES, type CardField, type Role } from "./workflow";
+import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
+import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
 
 export interface VaultHost {
   /** Opens bytes as a document (a part, or any file the viewer reads). */
@@ -52,6 +52,10 @@ export class VaultPanel {
   private openId: string | null = null;
   /** Search results shown instead of all files (FR-PDM-042), with what was searched. */
   private found: { ids: Set<string>; label: string } | null = null;
+  /** Users whose check-out of the selected file lost to an earlier one (FR-PDM-071). */
+  private conflicts: string[] = [];
+  /** Notifications since the last visit (FR-PDM-061). */
+  private unseen = 0;
 
   constructor(private host: HTMLElement, private app: VaultHost) {
     void this.render();
@@ -117,6 +121,8 @@ export class VaultPanel {
       for (const f of this.files) this.state.set(f.id, await v.status(f));
       // The open part follows its file's lock and version.
       if (this.openId) { const f = this.files.find(x => x.id === this.openId); if (f) this.tieOpen(f); }
+      this.conflicts = this.sel ? [...new Set((await v.lockConflicts(this.sel)).map(c => c.user))] : [];
+      this.unseen = (await v.notifications(this.seenAt)).length;
     }
     await this.render();
   }
@@ -191,10 +197,34 @@ export class VaultPanel {
     }
     // Unsaved edits of the open part go into the working copy first.
     if (this.openId === id) { const p = this.app.part(); const b = p && await p.bytes(); if (b) { await v.saveWorking(id, b); this.app.markSaved(); } }
-    await this.run(async () => {
+    try {
       const n = await v.checkIn(id, comment!, keep);
       toast(n ? t("Checked in as version {n}", { n }) : t("No changes: no new version"), "success");
-    });
+    } catch (e) {
+      if (e instanceof VaultError && e.key === MOVED_ON) await this.movedOn(id, e);
+      else toast(errText(e), true);
+    }
+    await this.refresh();
+  }
+
+  private async loadConflicts() {
+    const v = this.vault, id = this.sel;
+    if (!v || !id) return;
+    const c = [...new Set((await v.lockConflicts(id)).map(x => x.user))];
+    if (c.length && this.sel === id) { this.conflicts = c; await this.render(); }
+  }
+
+  /** A refused check-in in a shared vault (FR-PDM-070): save the work as a new file, or discard it. */
+  private async movedOn(id: string, e: VaultError) {
+    const v = this.vault!, f = this.rec(id);
+    const dot = f.path.lastIndexOf(".");
+    const sug = `${dot > 0 ? f.path.slice(0, dot) : f.path}-${v.user}${dot > 0 ? f.path.slice(dot) : ""}`;
+    const d = this.dialog(t("Check-in refused"), `<p>${esc(t(e.key, e.params))}</p><label class="v-lbl">${esc(t("New file"))}<input name="path" value="${esc(sug)}" maxlength="240" translate="no" /></label>`, [[t("Cancel"), "cancel"], [t("Discard my changes"), "discard"], [t("Save as new file"), "new"]]);
+    const a = await d.done;
+    const path = d.el.querySelector<HTMLInputElement>('[name="path"]')!.value.trim();
+    if (a === "new") await this.run(async () => { const nf = await v.saveAsNew(id, path); this.sel = nf.id; toast(t("Saved as {name}", { name: path }), "success"); });
+    else if (a === "discard") await this.run(() => v.undoCheckOut(id));
+    if (this.openId === id) await this.openFile(id);
   }
 
   async undoCheckOut(id: string) {
@@ -234,8 +264,8 @@ export class VaultPanel {
     d.el.querySelector<HTMLElement>("[data-cmp]")?.addEventListener("click", e => {
       e.preventDefault();
       const a = +d.el.querySelector<HTMLSelectElement>('[name="ca"]')!.value, b = +d.el.querySelector<HTMLSelectElement>('[name="cb"]')!.value;
+      void d.done.then(() => this.compareDlg(id, Math.min(a, b), Math.max(a, b)));
       d.el.close();
-      void this.compareDlg(id, Math.min(a, b), Math.max(a, b));
     });
   }
 
@@ -334,7 +364,7 @@ export class VaultPanel {
    * Change state (FR-PDM-082): lists the file and its referenced files that can take the same transition, with
    * problems and warnings, before anything is written.
    */
-  async transitionDlg(id: string, name: string, comment?: string, withRefs?: string[]) {
+  async transitionDlg(id: string, name: string, comment?: string, withRefs?: string[], notify = "") {
     const v = this.vault;
     if (!v) return;
     const f = this.rec(id);
@@ -353,7 +383,8 @@ export class VaultPanel {
       const d = this.dialog(t("{name}: {from} → {to}", { name: tn(name), from: tn(tr.from), to: tn(tr.to) }), `
         ${refs.length ? `<p>${esc(t("Referenced files in the same state:"))}</p>${refs.map(r => `<label class="chk" translate="no"><input type="checkbox" name="ref" value="${r.id}" checked /> ${esc(r.path)}</label>`).join("")}` : ""}
         <ul class="v-log v-check">${await render([id, ...refs.map(r => r.id)])}</ul>
-        <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"></textarea></label>`, [[t("Cancel"), "cancel"], [tn(name), "ok"]]);
+        <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"></textarea></label>
+        ${v.info.shared ? `<label class="v-lbl">${esc(t("Notify"))}<select name="to"><option value=""></option>${[...v.info.users, ...ROLES].map(u => `<option value="${esc(u)}">${esc(ROLES.includes(u as Role) ? tn(u) : u)}</option>`).join("")}</select></label>` : ""}`, [[t("Cancel"), "cancel"], [tn(name), "ok"]]);
       d.el.querySelectorAll<HTMLInputElement>('[name="ref"]').forEach(c => c.addEventListener("change", async () => {
         const ids = [id, ...[...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value)];
         d.el.querySelector(".v-check")!.innerHTML = await render(ids);
@@ -361,10 +392,11 @@ export class VaultPanel {
       if (await d.done !== "ok") return;
       comment = d.el.querySelector<HTMLTextAreaElement>('[name="comment"]')!.value;
       withRefs = [...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value);
+      notify = d.el.querySelector<HTMLSelectElement>('[name="to"]')?.value ?? "";
     }
     const ids = [id, ...(withRefs ?? [])];
     await this.run(async () => {
-      const labels = await v.transition(ids, name, comment!);
+      const labels = await v.transition(ids, name, comment!, notify);
       const rev = labels[id];
       toast(rev ? t("{name}: {state}, revision {rev}", { name: f.path, state: tn(tr.to), rev }) : t("{name}: {state}", { name: f.path, state: tn(tr.to) }), "success");
     });
@@ -425,7 +457,11 @@ export class VaultPanel {
       ${tree.children.length ? `<div class="v-scroll">${this.treeHtml(tree)}</div>
       <h4>${esc(t("Bill of materials"))}</h4><div class="v-scroll"><table class="v-table v-bom"><thead><tr><th>${esc(t("File"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Revision"))}</th><th>${esc(t("Qty"))}</th></tr></thead><tbody>${bom.map(r => `<tr translate="no"><td>${esc(r.path)}</td><td>${esc(r.partNumber)}</td><td>${esc(r.description)}</td><td>${esc(r.rev ?? "")} v${r.version}</td><td>${r.qty}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${esc(t("This file references no other files."))}</p>`}`,
       bom.length ? [[t("Export BOM CSV"), "csv"], [t("Close"), "cancel"]] : [[t("Close"), "cancel"]]);
-    const again = () => { d.el.close(); void this.containsDlg(id, +d.el.querySelector<HTMLSelectElement>('[name="ver"]')!.value, d.el.querySelector<HTMLSelectElement>('[name="mode"]')!.value as Resolve); };
+    const again = () => {
+      const ver = +d.el.querySelector<HTMLSelectElement>('[name="ver"]')!.value, md = d.el.querySelector<HTMLSelectElement>('[name="mode"]')!.value as Resolve;
+      void d.done.then(() => this.containsDlg(id, ver, md));
+      d.el.close();
+    };
     d.el.querySelectorAll("select").forEach(s => s.addEventListener("change", again));
     if (await d.done === "csv") download(`${f.path.split("/").pop()}-v${tree.version}-bom.csv`, csvOf([["path", "part number", "description", "revision", "version", "qty"], ...bom.map(r => [r.path, r.partNumber, r.description, r.rev ?? "", r.version, r.qty])]), "text/csv");
   }
@@ -620,6 +656,159 @@ export class VaultPanel {
     });
   }
 
+  // ---------- shared vault, notifications (FR-PDM-061/070) ----------
+
+  private get seenKey() { return `mc:vaultSeen:${this.vault?.info.name ?? ""}:${this.user}`; }
+  /** When this user last opened the notifications of this vault (a new user starts from now). */
+  private get seenAt() {
+    let s = storage.get(this.seenKey);
+    if (!s) { s = new Date().toISOString(); storage.set(this.seenKey, s); }
+    return s;
+  }
+
+  async notificationsDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const list = (await v.notifications(this.seenAt)).reverse();
+    storage.set(this.seenKey, new Date().toISOString());
+    this.unseen = 0;
+    await this.render();
+    this.dialog(t("Notifications"), list.length ? `<ul class="v-log">${list.map(e => `<li>${esc(fmtDate(e.at))} · <span translate="no">${esc(e.user)}</span> · ${esc(t(e.action))}${e.path ? ` · <span translate="no">${esc(e.path)}</span>` : ""}${e.version ? ` v${e.version}` : ""}${e.details ? ` · <span translate="no">${esc(e.details)}</span>` : ""}${e.to ? ` → <b translate="no">${esc(ROLES.includes(e.to as Role) ? tn(e.to) : e.to)}</b>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(t("Nothing new since your last visit."))}</p>`, [[t("Close"), "cancel"]]);
+  }
+
+  async breakLock(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const r = await this.form(t("Break lock"), `<p>${esc(t("{user} has had {name} checked out since {date}. Their changes that are not checked in stay on their computer, but they can no longer check them in.", { user: f.checkout?.user ?? "", name: f.path, date: f.checkout ? fmtDate(f.checkout.at) : "" }))}</p><label class="v-lbl">${esc(t("Reason"))}<input name="reason" maxlength="200" /></label>`, t("Break lock"));
+    if (!r) return;
+    await this.run(() => v.breakLock(id, r.reason as string));
+  }
+
+  // ---------- change orders and release packages (FR-PDM-053/054) ----------
+
+  async newChange(ids: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const body = `<div class="v-form"><label><span>${esc(t("Title"))}</span><input name="title" maxlength="120" autofocus /></label>
+      <label><span>${esc(t("Notify"))}</span><select name="to">${["Approver", ...v.info.users].map(u => `<option value="${esc(u)}">${esc(ROLES.includes(u as Role) ? tn(u) : u)}</option>`).join("")}</select></label></div>
+      <label class="v-lbl">${esc(t("Reason"))}<textarea name="reason" rows="3" maxlength="1000"></textarea></label>
+      <p>${esc(t("Affected files"))}</p><div class="v-scroll v-pick">${this.files.map(f => `<label class="chk" translate="no"><input type="checkbox" name="f:${f.id}"${ids.includes(f.id) ? " checked" : ""} /> ${esc(f.path)} · ${esc(f.revision ?? "")}</label>`).join("")}</div>`;
+    const r = await this.form(t("Change request"), body, t("Request"));
+    if (!r) return;
+    await this.run(async () => {
+      const c = await v.requestChange(r.title as string, r.reason as string, this.files.filter(f => r[`f:${f.id}`]).map(f => f.id), r.to as string);
+      toast(t("{n} requested", { n: c.number }), "success");
+    });
+  }
+
+  async changesDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const list = (await v.changes()).reverse();
+    const all = await v.files(true);
+    const name = (id: string) => all.find(f => f.id === id)?.path ?? id;
+    const approver = v.has("Approver");
+    const rows = list.map(c => `<tr><td translate="no"><b>${esc(c.number)}</b></td><td translate="no">${esc(c.title)}<div class="muted">${esc(c.reason)}</div><div class="muted">${c.files.map(f => esc(name(f))).join(", ")}</div></td><td>${esc(t(c.state))}</td><td translate="no">${esc(c.requester)}</td><td class="v-acts">${approver && c.state === "Requested" ? `<button class="btn small" data-eco-ok="${c.id}">${esc(t("Approve"))}</button><button class="btn small" data-eco-no="${c.id}">${esc(t("Reject"))}</button>` : ""}${approver && c.state === "Approved" ? `<button class="btn small" data-eco-close="${c.id}">${esc(t("Close and release"))}</button>` : ""}</td></tr>`).join("");
+    const d = this.dialog(t("Change orders"), `<p class="muted">${esc(t("A request lists the files to change and why. Approving it moves released files to Change pending; closing it releases them together with new revisions and records a release package."))}</p>${list.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Number"))}</th><th>${esc(t("Title"))}</th><th>${esc(t("State"))}</th><th>${esc(t("User"))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t("No change requests yet."))}</p>`}`, [[t("Close"), "cancel"], [t("New request…"), "new"]]);
+    const act = (sel: string, fn: (id: string) => Promise<unknown>) => d.el.querySelectorAll<HTMLElement>(`[${sel}]`).forEach(b => b.addEventListener("click", async e => {
+      e.preventDefault();
+      d.el.close();
+      await this.run(() => fn(b.getAttribute(sel)!));
+      void this.changesDlg();
+    }));
+    act("data-eco-ok", id => v.approveChange(id));
+    act("data-eco-close", async id => { const c = await v.closeChange(id); toast(t("{n} closed: files released", { n: c.number }), "success"); });
+    d.el.querySelectorAll<HTMLElement>("[data-eco-no]").forEach(b => b.addEventListener("click", async e => {
+      e.preventDefault();
+      d.el.close();
+      const r = await this.form(t("Reject"), `<label class="v-lbl">${esc(t("Comment (required)"))}<textarea name="comment" rows="2" maxlength="500" autofocus></textarea></label>`, t("Reject"));
+      if (r) await this.run(() => v.rejectChange(b.dataset.ecoNo!, r.comment as string));
+      void this.changesDlg();
+    }));
+    if (await d.done === "new") await this.newChange(this.sel ? [this.sel] : []);
+  }
+
+  async packagesDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const list = await v.baselines();
+    const d = this.dialog(t("Release packages"), list.length ? `<div class="v-scroll"><table class="v-table"><tbody>${list.map(b => `<tr><td translate="no"><b>${esc(b.name)}</b><div class="muted">${b.files.map(f => `${esc(f.path)}${f.rev ? ` ${esc(f.rev)}` : ""}`).join(", ")}</div></td><td>${esc(fmtDate(b.at))}</td><td class="v-acts"><button class="btn small" data-zip="${b.id}">${esc(t("Export ZIP"))}</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${esc(t("Files released together, or by a change order, are recorded here."))}</p>`, [[t("Close"), "cancel"]]);
+    d.el.querySelectorAll<HTMLElement>("[data-zip]").forEach(b => b.addEventListener("click", async e => {
+      e.preventDefault();
+      try {
+        const bl = list.find(x => x.id === b.dataset.zip)!;
+        download(`${bl.name.replace(/[\\/:*?"<>|]/g, "_")}.zip`, (await zip(await v.baselineEntries(bl.id))) as BlobPart, "application/zip");
+      } catch (er) { toast(errText(er), true); }
+    }));
+  }
+
+  // ---------- workflow editor (FR-PDM-035) ----------
+
+  async workflowDlg(wf?: Workflow) {
+    const v = this.vault;
+    if (!v) return;
+    const w: Workflow = wf ?? structuredClone(v.workflow);
+    const admin = v.has("Admin"), dis = admin ? "" : " disabled";
+    const opts = (sel: string) => w.states.map(s => `<option${s.name === sel ? " selected" : ""}>${esc(s.name)}</option>`).join("");
+    const states = w.states.map((s, i) => `<tr data-s="${i}"><td><input name="name" value="${esc(s.name)}" maxlength="40" aria-label="${esc(t("State"))}" translate="no"${dis} /></td><td><input type="color" name="color" value="${esc(s.color)}" aria-label="${esc(t("Colour"))}"${dis} /></td><td><input type="checkbox" name="checkout"${s.checkout ? " checked" : ""} aria-label="${esc(t("Can be checked out"))}"${dis} /></td><td><input type="checkbox" name="released"${s.released ? " checked" : ""} aria-label="${esc(t("Released"))}"${dis} /></td><td><input type="checkbox" name="obsolete"${s.obsolete ? " checked" : ""} aria-label="${esc(t("Obsolete"))}"${dis} /></td><td>${admin ? `<button class="btn small" data-del-s="${i}" aria-label="${esc(t("Delete"))}">✕</button>` : ""}</td></tr>`).join("");
+    const trs = w.transitions.map((x, i) => `<tr data-t="${i}"><td><input name="name" value="${esc(x.name)}" maxlength="40" aria-label="${esc(t("Transition"))}" translate="no"${dis} /></td><td><select name="from" aria-label="${esc(t("From"))}" translate="no"${dis}>${opts(x.from)}</select></td><td><select name="to" aria-label="${esc(t("To"))}" translate="no"${dis}>${opts(x.to)}</select></td>
+      <td><select name="revision" aria-label="${esc(t("Revision"))}"${dis}><option value=""></option><option value="release"${x.revision === "release" ? " selected" : ""}>${esc(t("Next revision"))}</option><option value="pre"${x.revision === "pre" ? " selected" : ""}>${esc(t("Pre-release"))}</option></select></td>
+      <td><select name="role" aria-label="${esc(t("Role"))}"${dis}><option value=""></option>${ROLES.map(r => `<option value="${r}"${x.role === r ? " selected" : ""}>${esc(tn(r))}</option>`).join("")}</select></td>
+      <td><input type="checkbox" name="comment"${x.comment ? " checked" : ""} aria-label="${esc(t("Needs a comment"))}"${dis} /></td><td><input type="checkbox" name="refs"${x.refsReleased ? " checked" : ""} aria-label="${esc(t("Referenced files released"))}"${dis} /></td>
+      <td><input name="fields" value="${esc((x.fields ?? []).join(", "))}" aria-label="${esc(t("Required fields"))}" maxlength="200"${dis} /></td><td>${admin ? `<button class="btn small" data-del-t="${i}" aria-label="${esc(t("Delete"))}">✕</button>` : ""}</td></tr>`).join("");
+    const body = `<p class="muted">${esc(t("States and the transitions between them. A transition can give the next revision, need a role, a comment, filled fields or released referenced files."))}</p>
+      <div class="v-scroll"><table class="v-table v-wf"><thead><tr><th>${esc(t("State"))}</th><th>${esc(t("Colour"))}</th><th>${esc(t("Check-out"))}</th><th>${esc(t("Released"))}</th><th>${esc(t("Obsolete"))}</th><th></th></tr></thead><tbody>${states}</tbody></table>
+      ${admin ? `<button class="btn small" data-add-s>${esc(t("Add state"))}</button>` : ""}
+      <table class="v-table v-wf"><thead><tr><th>${esc(t("Transition"))}</th><th>${esc(t("From"))}</th><th>${esc(t("To"))}</th><th>${esc(t("Revision"))}</th><th>${esc(t("Role"))}</th><th>${esc(t("Comment"))}</th><th>${esc(t("Refs released"))}</th><th>${esc(t("Required fields"))}</th><th></th></tr></thead><tbody>${trs}</tbody></table>
+      ${admin ? `<button class="btn small" data-add-t>${esc(t("Add transition"))}</button>` : ""}</div>
+      <div class="row"><label>${esc(t("Initial state"))} <select name="initial" translate="no"${dis}>${opts(w.initial)}</select></label></div>
+      <input type="file" id="v-wf-file" accept=".json" hidden />`;
+    const d = this.dialog(t("Workflow"), body, admin ? [[t("Cancel"), "cancel"], [t("Export JSON"), "export"], [t("Import JSON…"), "import"], [t("Reset to default"), "reset"], [t("Save"), "ok"]] : [[t("Export JSON"), "export"], [t("Close"), "cancel"]]);
+    // Reads the table back into a workflow (renamed states follow in the transitions).
+    const read = (): Workflow => {
+      const names = new Map<string, string>();
+      const st = [...d.el.querySelectorAll<HTMLElement>("[data-s]")].map(r => {
+        const old = w.states[+r.dataset.s!], q = (n: string) => r.querySelector<HTMLInputElement>(`[name="${n}"]`)!;
+        const name = q("name").value.trim() || old.name;
+        names.set(old.name, name);
+        return { name, color: q("color").value, checkout: q("checkout").checked, ...(q("released").checked ? { released: true } : {}), ...(q("obsolete").checked ? { obsolete: true } : {}) };
+      });
+      const rn = (x: string) => names.get(x) ?? x;
+      const tr = [...d.el.querySelectorAll<HTMLElement>("[data-t]")].map(r => {
+        const q = (n: string) => r.querySelector<HTMLInputElement>(`[name="${n}"]`)!;
+        const fields = q("fields").value.split(",").map(x => x.trim()).filter(Boolean);
+        return { name: q("name").value.trim() || "Transition", from: rn(q("from").value), to: rn(q("to").value), ...(q("revision").value ? { revision: q("revision").value as "release" } : {}), ...(q("role").value ? { role: q("role").value as Role } : {}), ...(q("comment").checked ? { comment: true } : {}), ...(q("refs").checked ? { refsReleased: true } : {}), ...(fields.length ? { fields } : {}) };
+      });
+      return { name: w.name, initial: rn(d.el.querySelector<HTMLSelectElement>('[name="initial"]')!.value), states: st, transitions: tr };
+    };
+    // The same dialog element is reused: open the next one once this one has finished closing.
+    const reopen = (nw: Workflow) => { void d.done.then(() => this.workflowDlg(nw)); d.el.close("redraw"); };
+    d.el.querySelector("[data-add-s]")?.addEventListener("click", e => { e.preventDefault(); const nw = read(); nw.states.push({ name: `State ${nw.states.length + 1}`, color: "#64748b", checkout: false }); reopen(nw); });
+    d.el.querySelector("[data-add-t]")?.addEventListener("click", e => { e.preventDefault(); const nw = read(); nw.transitions.push({ name: "Transition", from: nw.states[0].name, to: nw.states[nw.states.length - 1].name }); reopen(nw); });
+    d.el.querySelectorAll<HTMLElement>("[data-del-s]").forEach(b => b.addEventListener("click", e => { e.preventDefault(); const nw = read(); const gone = nw.states.splice(+b.dataset.delS!, 1)[0]; nw.transitions = nw.transitions.filter(x => x.from !== gone.name && x.to !== gone.name); if (nw.initial === gone.name) nw.initial = nw.states[0]?.name ?? ""; reopen(nw); }));
+    d.el.querySelectorAll<HTMLElement>("[data-del-t]").forEach(b => b.addEventListener("click", e => { e.preventDefault(); const nw = read(); nw.transitions.splice(+b.dataset.delT!, 1); reopen(nw); }));
+    const a = await d.done;
+    if (a === "redraw" || a === "cancel" || !a) return;
+    if (a === "export") { download(`${v.info.name}-workflow.json`, JSON.stringify(admin ? read() : w, null, 2), "application/json"); return; }
+    if (a === "reset") { if (await confirmModal(t("Replace the workflow with the default one?"), t("Reset to default"))) await this.run(async () => { await v.saveSettings({ workflow: defaultWorkflow() }); toast(t("Workflow saved"), "success"); }); return; }
+    if (a === "import") {
+      const inp = document.getElementById("v-wf-file") as HTMLInputElement | null ?? Object.assign(document.createElement("input"), { type: "file", accept: ".json" });
+      inp.onchange = async () => {
+        const file = inp.files?.[0];
+        if (!file) return;
+        try { const nw = JSON.parse(await file.text()) as Workflow; if (!Array.isArray(nw.states) || !Array.isArray(nw.transitions)) throw new VaultError("Not a workflow file."); void this.workflowDlg(nw); } catch (er) { toast(errText(er), true); }
+      };
+      inp.click();
+      return;
+    }
+    const nw = read();
+    // States in use must still exist.
+    const missing = [...new Set(this.files.map(f => f.state))].filter(s2 => !nw.states.some(x => x.name === s2));
+    if (missing.length) { toast(t("Files are still in {list}: keep those states.", { list: missing.join(", ") }), true); void this.workflowDlg(nw); return; }
+    await this.run(async () => { await v.saveSettings({ workflow: nw }); toast(t("Workflow saved"), "success"); });
+  }
+
   // ---------- dialogs ----------
 
   private dialog(title: string, html: string, buttons: [string, string][]) {
@@ -698,14 +887,18 @@ export class VaultPanel {
         <button class="btn small" data-a="rename">${esc(t("Rename / move…"))}</button>
         <button class="btn small" data-a="copy">${esc(t("Copy tree…"))}</button>
         <button class="btn small" data-a="del">${esc(t("Delete"))}</button>
+        <button class="btn small" data-a="eco">${esc(t("Request change…"))}</button>
+        ${sel.checkout && !st?.mine && v.has("Admin") ? `<button class="btn small" data-a="break">${esc(t("Break lock"))}</button>` : ""}
         </div>
+        ${this.conflicts.length ? `<p class="v-warn">${esc(t("Also checked out at the same time by {list}: the earlier check-out holds the lock.", { list: this.conflicts.join(", ") }))}</p>` : ""}
         ${this.cardSummary(sel)}
       </div>` : "";
       const shown = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
       h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>${user}
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="savepart"${this.app.part() && !this.openId ? "" : " disabled"}>${esc(t("Save part to vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button><button class="btn small" data-a="storage">${esc(t("Storage"))}</button><button class="btn small" data-a="export">${esc(t("Export ZIP"))}</button></div>
-        <div class="row"><button class="btn small" data-a="bin">${esc(t("Recycle bin"))}</button><button class="btn small" data-a="settings">${esc(t("Vault settings"))}</button></div>
+        <div class="row"><button class="btn small" data-a="changes">${esc(t("Change orders"))}</button><button class="btn small" data-a="packages">${esc(t("Release packages"))}</button><button class="btn small" data-a="notes">${esc(t("Notifications"))}${this.unseen ? ` <span class="v-badge">${this.unseen}</span>` : ""}</button></div>
+        <div class="row"><button class="btn small" data-a="bin">${esc(t("Recycle bin"))}</button><button class="btn small" data-a="settings">${esc(t("Vault settings"))}</button><button class="btn small" data-a="workflow">${esc(t("Workflow"))}</button></div>
         <div class="row v-search"><input id="v-q" type="search" value="${esc(this.found?.label ?? "")}" placeholder="${esc(t("Search the vault"))}" aria-label="${esc(t("Search the vault"))}" /><button class="btn small" data-a="search">${esc(t("Advanced…"))}</button>${this.found ? `<button class="btn small" data-a="clearq">${esc(t("Clear"))}</button>` : ""}</div>
         <input type="file" id="v-files" multiple hidden /></div>
         ${this.found ? `<p class="muted pad v-found">${esc(t("{n} file found|{n} files found", { n: shown.length }))}</p>` : ""}
@@ -723,7 +916,7 @@ export class VaultPanel {
     });
     h.querySelectorAll<HTMLElement>("[data-openws]").forEach(b => b.addEventListener("click", () => void this.openInBrowser(b.dataset.openws!).catch(e => toast(t((e as Error).message), true))));
     h.querySelectorAll<HTMLElement>(".v-row").forEach(b => {
-      b.addEventListener("click", () => { this.sel = b.dataset.id!; void this.render(); });
+      b.addEventListener("click", () => { this.sel = b.dataset.id!; this.conflicts = []; void this.render().then(() => this.loadConflicts()); });
       b.addEventListener("dblclick", () => void this.openFile(b.dataset.id!));
     });
     const zipIn = h.querySelector<HTMLInputElement>("#v-zip");
@@ -760,6 +953,12 @@ export class VaultPanel {
         case "settings": void this.settingsDlg(); break;
         case "search": void this.searchDlg(); break;
         case "clearq": this.found = null; void this.render(); break;
+        case "changes": void this.changesDlg(); break;
+        case "packages": void this.packagesDlg(); break;
+        case "notes": void this.notificationsDlg(); break;
+        case "workflow": void this.workflowDlg(); break;
+        case "eco": if (id) void this.newChange([id]); break;
+        case "break": if (id) void this.breakLock(id); break;
       }
     }));
     h.querySelectorAll<HTMLElement>("[data-tr]").forEach(b => b.addEventListener("click", () => { if (this.sel) void this.transitionDlg(this.sel, b.dataset.tr!); }));

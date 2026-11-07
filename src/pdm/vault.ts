@@ -39,14 +39,27 @@ export interface VersionRec {
   /** Content dropped by Purge old versions (the row stays in the history). */ purged?: boolean;
   /** Revision label given to this version (FR-PDM-030); `pre`: a pre-release label. */ rev?: string; pre?: boolean; approvedBy?: string;
   refs?: RefRec[]; card?: Record<string, string>;
+  /** The change order that released this version. */ eco?: string;
 }
-export interface CheckOut { user: string; at: string; computer: string }
+export interface CheckOut { user: string; at: string; computer: string; /** The latest version when it was checked out (FR-PDM-070). */ base?: number }
+/** A lock record (FR-PDM-071): append-only, one file each; the holder is worked out from all of them in time order. */
+export interface LockRec { kind: "lock" | "free"; user: string; computer: string; at: string; base?: number; broken?: boolean; by?: string }
+/** A change request / change order (FR-PDM-053). */
+export interface ChangeOrder {
+  id: string; number: string; title: string; reason: string; files: string[]; requester: string; at: string;
+  state: "Requested" | "Approved" | "Rejected" | "Closed";
+  events: { at: string; user: string; action: string; comment?: string }[];
+  /** The release baseline made when the order was closed. */ baseline?: string;
+}
+/** A release package (FR-PDM-054): the files and versions released together. */
+export interface Baseline { id: string; name: string; at: string; user: string; eco?: string; files: { id: string; path: string; version: number; rev?: string }[] }
 export interface FileRec {
   id: string; path: string; kind: string; created: string; state: string; versions: VersionRec[]; checkout?: CheckOut;
   /** The current revision label (the last given). */ revision?: string;
   /** Data card values (FR-PDM-040). */ card?: Record<string, string>;
   /** In the recycle bin (FR-PDM-025). */ deleted?: { at: string; user: string };
   copiedFrom?: { id: string; version: number };
+  /** Record sequence number: the highest wins when a shared vault holds several (FR-PDM-071). */ seq?: number;
 }
 export interface SearchQuery {
   text?: string; state?: string; revision?: string; checkedOutBy?: string; kind?: string;
@@ -56,11 +69,14 @@ export interface SearchQuery {
 }
 export interface TreeNode { id: string; path: string; version: number; qty: number; rev?: string; state: string; children: TreeNode[]; cycle?: boolean; missing?: boolean }
 export type Resolve = "built" | "latest" | "released";
-export interface LogEntry { at: string; seq?: number; user: string; action: string; file?: string; path?: string; version?: number; details?: string }
+export interface LogEntry { at: string; seq?: number; user: string; action: string; file?: string; path?: string; version?: number; details?: string; /** Addressed to a user or role (FR-PDM-061). */ to?: string }
 
 /** A message kept as an English key and its values, so the UI can translate it (`t(key, p)`). */
 export interface Msg { key: string; p?: Record<string, string | number> }
 export const fmtMsg = (m: Msg) => m.key.replace(/\{(\w+)\}/g, (x, k: string) => (m.p && k in m.p ? String(m.p[k]) : x));
+
+/** Check-in refused because someone checked in a newer version meanwhile (FR-PDM-070). */
+export const MOVED_ON = "The file moved on to version {n} since you checked it out. Save your work as a new file, or discard it.";
 
 export class VaultError extends Error {
   constructor(readonly key: string, readonly params: Record<string, string | number> = {}) { super(fmtMsg({ key, p: params })); }
@@ -131,19 +147,104 @@ export class Vault {
   /** Vault files; those in the recycle bin only with `withDeleted`. */
   async files(withDeleted = false): Promise<FileRec[]> {
     const dir = await this.sub("files");
-    const out: FileRec[] = [];
+    const groups = new Map<string, string[]>();
     for (const e of await dir.list()) {
       if (e.kind !== "file" || !e.name.endsWith(".json")) continue;
-      const raw = await dir.read(e.name);
-      if (raw) { try { const f = JSON.parse(dec.decode(raw)) as FileRec; if (withDeleted || !f.deleted) out.push(f); } catch { /* a damaged record: the integrity check reports it */ } }
+      const id = e.name.replace(/(@.*)?\.json$/, "");
+      groups.set(id, [...(groups.get(id) ?? []), e.name]);
+    }
+    const locks = await this.lockRecords();
+    const out: FileRec[] = [];
+    for (const [id, names] of groups) {
+      const f = await this.newest(dir, names);
+      if (f && (withDeleted || !f.deleted)) out.push(this.withLock(f, locks.get(id)));
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
   async file(id: string): Promise<FileRec> {
-    const raw = await (await this.sub("files")).read(`${id}.json`);
-    if (!raw) throw new VaultError("The file is not in the vault.");
-    return JSON.parse(dec.decode(raw));
+    const dir = await this.sub("files");
+    // A shared vault keeps every record (`<id>@<seq>-<rand>.json`): the newest wins, whoever wrote it last.
+    const names = this.info.shared ? (await dir.list()).map(e => e.name).filter(n => n === `${id}.json` || n.startsWith(`${id}@`)) : [`${id}.json`];
+    const f = await this.newest(dir, names);
+    if (!f) throw new VaultError("The file is not in the vault.");
+    return this.withLock(f, (await this.lockRecords(id)).get(id));
+  }
+
+  /** The record with the highest sequence number among a file's records (a damaged one is skipped). */
+  private async newest(dir: VDir, names: string[]): Promise<FileRec | null> {
+    let best: FileRec | null = null;
+    for (const n of names.sort()) {
+      const raw = await dir.read(n);
+      if (!raw) continue;
+      try { const f = JSON.parse(dec.decode(raw)) as FileRec; if (!best || (f.seq ?? 0) > (best.seq ?? 0)) best = f; } catch { /* the integrity check reports it */ }
+    }
+    return best;
+  }
+
+  // ---------- locks (FR-PDM-070/071) ----------
+
+  /** Lock records by file id (all files, or one). */
+  private async lockRecords(only?: string) {
+    const dir = await this.sub("locks");
+    const out = new Map<string, LockRec[]>();
+    for (const e of await dir.list()) {
+      if (e.kind !== "file" || (only && !e.name.startsWith(`${only}~`))) continue;
+      const raw = await dir.read(e.name);
+      if (!raw) continue;
+      try {
+        const id = e.name.split("~")[0], r = JSON.parse(dec.decode(raw)) as LockRec;
+        out.set(id, [...(out.get(id) ?? []), r]);
+      } catch { /* skip */ }
+    }
+    for (const l of out.values()) l.sort((a, b) => a.at.localeCompare(b.at));
+    return out;
+  }
+
+  /** Works out the lock from the records in time order: the earliest lock wins, later ones while it holds are conflicts. */
+  static lockState(recs: LockRec[]) {
+    let holder: LockRec | null = null;
+    const conflicts: LockRec[] = [];
+    for (const r of recs) {
+      const same = holder && holder.user === r.user && holder.computer === r.computer;
+      if (r.kind === "lock") { if (!holder) holder = r; else if (!same) conflicts.push(r); }
+      else if (holder && (same || r.broken)) holder = null;
+    }
+    // A conflict only matters while the lock it lost to still holds.
+    return { holder, conflicts: holder ? conflicts.filter(c => c.at >= holder!.at) : [] };
+  }
+
+  private withLock(f: FileRec, recs?: LockRec[]): FileRec {
+    if (!recs?.length) return f;
+    const { holder } = Vault.lockState(recs);
+    if (holder) f.checkout = { user: holder.user, at: holder.at, computer: holder.computer, base: holder.base };
+    else delete f.checkout;
+    return f;
+  }
+
+  private async writeLock(id: string, r: Omit<LockRec, "user" | "computer" | "at">) {
+    const at = new Date().toISOString();
+    await (await this.sub("locks")).write(`${id}~${at.replace(/[:.]/g, "-")}~${newId()}.json`, json({ user: this.user, computer: this.computer, at, ...r }));
+  }
+
+  /** Lock records that lost to an earlier lock (both users see them, FR-PDM-071). */
+  async lockConflicts(id: string) { return Vault.lockState((await this.lockRecords(id)).get(id) ?? []).conflicts; }
+
+  /** Breaks someone's lock (Admin), e.g. a stale one; logged (FR-PDM-070). */
+  async breakLock(id: string, reason = "") {
+    if (!this.has("Admin")) throw new VaultError("Only an Admin can break a lock.");
+    const f = await this.file(id);
+    if (!f.checkout) return;
+    await this.writeLock(id, { kind: "free", broken: true, by: f.checkout.user });
+    const rec = await this.file(id);
+    await this.saveRec(rec);
+    await this.log("break lock", { file: id, path: f.path, details: `${f.checkout.user} since ${f.checkout.at}${reason ? ` (${reason})` : ""}` });
+  }
+
+  /** Locks older than `hours` (candidates for Break lock). */
+  async staleLocks(hours: number) {
+    const lim = new Date(Date.now() - hours * 3600e3).toISOString();
+    return (await this.files()).filter(f => f.checkout && f.checkout.at < lim);
   }
 
   async byPath(path: string): Promise<FileRec | null> {
@@ -151,7 +252,13 @@ export class Vault {
     return (await this.files()).find(f => f.path.toLowerCase() === p) ?? null;
   }
 
-  private async saveRec(f: FileRec) { await (await this.sub("files")).write(`${f.id}.json`, json(f)); }
+  private async saveRec(f: FileRec) {
+    f.seq = (f.seq ?? 0) + 1;
+    const dir = await this.sub("files");
+    await dir.write(`${f.id}.json`, json(f));
+    // Shared: every record also as its own file, so a writer whose copy of `<id>.json` is overwritten by a sync is not lost.
+    if (this.info.shared) await dir.write(`${f.id}@${String(f.seq).padStart(8, "0")}-${newId()}.json`, json(f));
+  }
 
   private async log(action: string, e: Omit<LogEntry, "at" | "user" | "action"> = {}) {
     const at = new Date().toISOString();
@@ -249,10 +356,15 @@ export class Vault {
       throw new VaultError("Checked out by {user}.", { user: f.checkout.user });
     }
     if (!this.stateOf(f.state).checkout) throw new VaultError("A file in the state {state} cannot be checked out.", { state: f.state });
-    f.checkout = { user: this.user, at: new Date().toISOString(), computer: this.computer };
-    await this.saveRec(f);
-    await this.log("check out", { file: id, path: f.path, version: this.latest(f).n });
-    return f;
+    const base = this.latest(f).n;
+    await this.writeLock(id, { kind: "lock", base });
+    // Someone else's lock record may have arrived first (a synced folder): the earliest wins.
+    const now = await this.file(id);
+    if (now.checkout && (now.checkout.user !== this.user || now.checkout.computer !== this.computer)) throw new VaultError("Checked out by {user}.", { user: now.checkout.user });
+    now.checkout = { user: this.user, at: new Date().toISOString(), computer: this.computer, base };
+    await this.saveRec(now);
+    await this.log("check out", { file: id, path: f.path, version: base });
+    return now;
   }
 
   private mineOrThrow(f: FileRec) {
@@ -275,6 +387,7 @@ export class Vault {
     const f = await this.file(id);
     this.mineOrThrow(f);
     if (this.info.commentRequired && !comment.trim()) throw new VaultError("A check-in needs a comment.");
+    if (f.checkout?.base !== undefined && f.checkout.base !== this.latest(f).n) throw new VaultError(MOVED_ON, { n: this.latest(f).n });
     const data = await this.working(f.path);
     if (!data) throw new VaultError("The local copy is missing.");
     const sha = await this.putObject(data);
@@ -285,7 +398,8 @@ export class Vault {
       f.card = this.cardFromProps(f.kind, await readProps(f.path, data), f.card ?? {});
       f.versions.push({ n, sha, size: data.length, at: new Date().toISOString(), user: this.user, comment: comment.trim(), state: f.state, refs: await this.indexRefs(f.path, data), card: { ...f.card } });
     }
-    if (!keep) delete f.checkout;
+    if (!keep) { delete f.checkout; await this.writeLock(id, { kind: "free" }); }
+    else if (n && f.checkout) { f.checkout.base = n; await this.writeLock(id, { kind: "free" }); await this.writeLock(id, { kind: "lock", base: n }); }
     await this.saveRec(f);
     await this.log("check in", { file: id, path: f.path, version: n ?? this.latest(f).n, details: n ? comment.trim() : "unchanged" });
     return n;
@@ -297,6 +411,7 @@ export class Vault {
     this.mineOrThrow(f);
     await this.writeWorking(f.path, await this.object(this.latest(f).sha));
     delete f.checkout;
+    await this.writeLock(id, { kind: "free" });
     await this.saveRec(f);
     await this.log("undo check out", { file: id, path: f.path, version: this.latest(f).n });
   }
@@ -625,7 +740,7 @@ export class Vault {
    * latest version the next revision label and, in MöbiusCAD documents, writes revision, state, approver and date
    * into the properties (a new version, FR-PDM-034). Returns the revision labels given.
    */
-  async transition(ids: string[], name: string, comment = ""): Promise<Record<string, string | undefined>> {
+  async transition(ids: string[], name: string, comment = "", to?: string): Promise<Record<string, string | undefined>> {
     const chk = await this.checkTransition(ids, name, comment);
     const bad = chk.find(c => c.problems.length);
     if (bad) throw new VaultError("{path}: {problem}", { path: bad.path, problem: fmtMsg(bad.problems[0]) });
@@ -658,9 +773,12 @@ export class Vault {
       }
       if (label) { const v = this.latest(f); v.rev = label; if (pre) v.pre = true; else v.approvedBy = this.user; f.revision = label; }
       await this.saveRec(f);
-      await this.log("transition", { file: id, path: f.path, version: this.latest(f).n, details: `${name}: ${from} → ${tr.to}${label ? `, revision ${label}` : ""}${comment.trim() ? ` (${comment.trim()})` : ""}` });
+      await this.log("transition", { file: id, path: f.path, version: this.latest(f).n, details: `${name}: ${from} → ${tr.to}${label ? `, revision ${label}` : ""}${comment.trim() ? ` (${comment.trim()})` : ""}`, to: to || undefined });
       out[id] = label;
     }
+    // Files released together are recorded as a release package (FR-PDM-054).
+    const tgt = this.workflow.transitions.find(x => x.name === name);
+    if (ids.length > 1 && tgt && this.stateOf(tgt.to).released && !comment.startsWith("ECO-")) await this.makeBaseline(`${name} ${new Date().toISOString().slice(0, 10)}`, ids);
     return out;
   }
 
@@ -838,6 +956,164 @@ export class Vault {
       };
       out = out.filter(f => hit(f.id, new Set()));
     }
+    return out;
+  }
+
+  // ---------- shared vault: conflicts (FR-PDM-070) ----------
+
+  /**
+   * The way out of a refused check-in: the working copy becomes a new file at `newPath`, and the original goes back
+   * to its latest version with the lock released.
+   */
+  async saveAsNew(id: string, newPath: string) {
+    const f = await this.file(id);
+    this.mineOrThrow(f);
+    const data = await this.working(f.path);
+    if (!data) throw new VaultError("The local copy is missing.");
+    const nf = await this.add(newPath, data, `Saved from ${f.path} (check-in refused)`, { ...(f.card ?? {}), [PART_NUMBER]: "" });
+    await this.undoCheckOut(id);
+    return nf;
+  }
+
+  // ---------- notifications (FR-PDM-061) ----------
+
+  /** Events by other users since a time: what changed, and what was addressed to this user or one of their roles. */
+  async notifications(since: string) {
+    const mine = new Set<string>([this.user, ...this.rolesOf()]);
+    const shown = new Set(["add", "check in", "transition", "change request", "change approved", "change rejected", "change closed", "break lock", "rename", "move", "delete"]);
+    return (await this.auditTrail()).filter(e => e.at > since && e.user !== this.user && (shown.has(e.action) || (!!e.to && mine.has(e.to))));
+  }
+
+  // ---------- change requests and orders (FR-PDM-053), release packages (FR-PDM-054) ----------
+
+  private async putJson(dir: string, name: string, v: unknown) { await (await this.sub(dir)).write(name, json(v)); }
+
+  private async readAll<T>(dir: string): Promise<T[]> {
+    const d = await this.sub(dir);
+    const out: T[] = [];
+    for (const e of await d.list()) {
+      const raw = e.kind === "file" && await d.read(e.name);
+      if (raw) { try { out.push(JSON.parse(dec.decode(raw))); } catch { /* skip */ } }
+    }
+    return out;
+  }
+
+  async changes(): Promise<ChangeOrder[]> { return (await this.readAll<ChangeOrder>("changes")).sort((a, b) => a.number.localeCompare(b.number)); }
+
+  async change(id: string): Promise<ChangeOrder> {
+    const c = (await this.changes()).find(x => x.id === id);
+    if (!c) throw new VaultError("The change order is not in the vault.");
+    return c;
+  }
+
+  /** A change request: title, reason and the files it affects (FR-PDM-053). */
+  async requestChange(title: string, reason: string, files: string[], to?: string): Promise<ChangeOrder> {
+    if (!title.trim()) throw new VaultError("A change request needs a title.");
+    if (!files.length) throw new VaultError("Pick the files the change affects.");
+    const n = (await this.changes()).reduce((m, c) => Math.max(m, parseInt(c.number.replace(/\D/g, ""), 10) || 0), 0) + 1;
+    const at = new Date().toISOString();
+    const c: ChangeOrder = { id: newId(), number: `ECO-${String(n).padStart(4, "0")}`, title: title.trim(), reason: reason.trim(), files: [...new Set(files)], requester: this.user, at, state: "Requested", events: [{ at, user: this.user, action: "requested" }] };
+    await this.putJson("changes", `${c.id}.json`, c);
+    await this.log("change request", { details: `${c.number}: ${c.title}`, to: to || "Approver" });
+    return c;
+  }
+
+  /** Approves a request (Approver): it becomes a change order and its released files move to Change pending. */
+  async approveChange(id: string, comment = "") {
+    if (!this.has("Approver")) throw new VaultError("Needs the role {role}.", { role: "Approver" });
+    const c = await this.change(id);
+    if (c.state !== "Requested") throw new VaultError("{n} is {state}.", { n: c.number, state: c.state });
+    // Released files open for the change (the transition from a released state to one that can be checked out).
+    for (const f of (await this.files()).filter(x => c.files.includes(x.id) && this.stateOf(x.state).released)) {
+      const tr = this.transitionsOf(f).find(t => this.stateOf(t.to).checkout && !this.stateOf(t.to).obsolete);
+      if (tr) await this.transition([f.id], tr.name, `${c.number}: ${c.title}`);
+    }
+    c.state = "Approved";
+    c.events.push({ at: new Date().toISOString(), user: this.user, action: "approved", comment: comment.trim() || undefined });
+    await this.putJson("changes", `${c.id}.json`, c);
+    await this.log("change approved", { details: `${c.number}: ${c.title}`, to: c.requester });
+    return c;
+  }
+
+  async rejectChange(id: string, comment: string) {
+    if (!this.has("Approver")) throw new VaultError("Needs the role {role}.", { role: "Approver" });
+    if (!comment.trim()) throw new VaultError("Needs a comment.");
+    const c = await this.change(id);
+    if (c.state !== "Requested") throw new VaultError("{n} is {state}.", { n: c.number, state: c.state });
+    c.state = "Rejected";
+    c.events.push({ at: new Date().toISOString(), user: this.user, action: "rejected", comment: comment.trim() });
+    await this.putJson("changes", `${c.id}.json`, c);
+    await this.log("change rejected", { details: `${c.number}: ${comment.trim()}`, to: c.requester });
+  }
+
+  /**
+   * Closes a change order: its files are released together, each through review to the released state with a new
+   * revision that names the order, and the set is recorded as a release package.
+   */
+  async closeChange(id: string, comment = "") {
+    if (!this.has("Approver")) throw new VaultError("Needs the role {role}.", { role: "Approver" });
+    const c = await this.change(id);
+    if (c.state !== "Approved") throw new VaultError("{n} is {state}.", { n: c.number, state: c.state });
+    const note = `${c.number}: ${c.title}`;
+    // Walk each file towards a released state, one transition at a time, never through Obsolete.
+    for (let step = 0; step < 6; step++) {
+      const files = (await this.files()).filter(f => c.files.includes(f.id) && !this.stateOf(f.state).released);
+      if (!files.length) break;
+      const byTr = new Map<string, string[]>();
+      for (const f of files) {
+        const trs = this.transitionsOf(f).filter(t => !this.stateOf(t.to).obsolete);
+        const tr = trs.find(t => this.stateOf(t.to).released) ?? trs.find(t => !this.stateOf(t.to).checkout || t.revision) ?? trs[0];
+        if (!tr) throw new VaultError("{path} cannot reach a released state.", { path: f.path });
+        byTr.set(tr.name, [...(byTr.get(tr.name) ?? []), f.id]);
+      }
+      for (const [name, ids] of byTr) await this.transition(ids, name, note);
+    }
+    const left = (await this.files()).filter(f => c.files.includes(f.id) && !this.stateOf(f.state).released);
+    if (left.length) throw new VaultError("{path} cannot reach a released state.", { path: left[0].path });
+    // The order's number goes on the released versions (revision tables list it).
+    for (const fid of c.files) {
+      const f = await this.file(fid);
+      const v = this.released(f);
+      if (v) { v.eco = c.number; await this.saveRec(f); }
+    }
+    const b = await this.makeBaseline(`${c.number} ${c.title}`, c.files, c.number);
+    c.state = "Closed";
+    c.baseline = b.id;
+    c.events.push({ at: new Date().toISOString(), user: this.user, action: "closed", comment: comment.trim() || undefined });
+    await this.putJson("changes", `${c.id}.json`, c);
+    await this.log("change closed", { details: note, to: c.requester });
+    return c;
+  }
+
+  /** Records the latest released versions of files as a release package (baseline). */
+  async makeBaseline(name: string, ids: string[], eco?: string): Promise<Baseline> {
+    const files: Baseline["files"] = [];
+    for (const fid of ids) {
+      const f = await this.file(fid);
+      const v = this.released(f) ?? this.latest(f);
+      files.push({ id: f.id, path: f.path, version: v.n, rev: v.rev });
+    }
+    const b: Baseline = { id: newId(), name: name.trim() || "Release", at: new Date().toISOString(), user: this.user, eco, files };
+    await this.putJson("baselines", `${b.id}.json`, b);
+    await this.log("baseline", { details: `${b.name}: ${files.length} files` });
+    return b;
+  }
+
+  async baselines(): Promise<Baseline[]> { return (await this.readAll<Baseline>("baselines")).sort((a, b) => b.at.localeCompare(a.at)); }
+
+  /** The files of a release package at their versions, named `<name>_rev<R>.<ext>`, plus a list as CSV (FR-PDM-054). */
+  async baselineEntries(id: string): Promise<{ name: string; data: Uint8Array }[]> {
+    const b = (await this.baselines()).find(x => x.id === id);
+    if (!b) throw new VaultError("The release package is not in the vault.");
+    const out: { name: string; data: Uint8Array }[] = [];
+    const rows = [["path", "file", "version", "revision"]];
+    for (const x of b.files) {
+      const dot = x.path.lastIndexOf(".");
+      const name = x.rev ? `${x.path.slice(0, dot > 0 ? dot : undefined)}_rev${x.rev}${dot > 0 ? x.path.slice(dot) : ""}` : x.path;
+      out.push({ name, data: await this.versionBytes(x.id, x.version) });
+      rows.push([x.path, name, String(x.version), x.rev ?? ""]);
+    }
+    out.push({ name: "package.csv", data: enc.encode(rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n")) });
     return out;
   }
 
