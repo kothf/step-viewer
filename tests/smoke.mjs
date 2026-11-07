@@ -2769,10 +2769,12 @@ try {
     await mp.click('#vault-dlg button[value="purge"]');
     await mp.waitForSelector("#confirm[open]");
     await mp.click('#confirm [data-a="ok"]');
-    await mp.waitForFunction(async () => (await window.__sv.vault.vault.storage()).find(r => r.path === "note.txt")?.kept === 1, null, { polling: 200, timeout: 10000 }).catch(() => {});
-    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|"));
+    // The purge ends with a toast (or an error toast); reading storage while it still writes would race it.
+    await mp.waitForFunction(() => [...document.querySelectorAll("#toasts .toast")].some(x => /Purged|error/i.test(x.textContent)), null, { polling: 100, timeout: 20000 }).catch(() => {});
+    const toasts = await mp.evaluate(() => [...document.querySelectorAll("#toasts .toast")].map(x => x.textContent).join(" / "));
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|")) + ` [${toasts}]`;
     check(name === "Backup test.mcadvault.zip" && imported.root === "Backup test (2)" && imported.n === 2 && imported.v1 === "v1" && imported.ok, `vault 1.40: export to ZIP and import as a new vault (${name}, ${JSON.stringify(imported)})`);
-    check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after === "note.txt:1/3:2|spec.pdf:1/1:4", `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
+    check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after.startsWith("note.txt:1/3:2|spec.pdf:1/1:4 "), `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
     await ctx.close();
   }
 
