@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-11-07
+
+### Added
+- **Linear and circular sketch patterns** (FR-SK-038): select sketch entities and click Linear pattern or Circular pattern in the sketch toolbar. A PropertyManager sets spacing, instances and angle for one or two directions, or the centre, instances and total angle (equal spacing or a fixed step); the green preview updates as you type. Each copy keeps an equal relation to its seed (lines in a linear pattern also stay parallel). A lone point selected with the entities is taken as the circular pattern's centre.
+- **Move, copy, rotate and scale sketch entities** (FR-SK-039): Move (delta X/Y), Rotate (centre and angle) and Scale (centre and factor) with the same live preview. Copy adds transformed copies; in place, Keep relations decides whether relations and dimensions to the rest of the sketch stay (and pull back) or are removed. Dimensions inside a scaled selection scale with it.
+- **Revolve options** (FR-FT-022): Revolve type Blind, Mid plane or **Up to face or plane** (a flat face or plane through the axis; the revolve stops where the profile first meets it), **Direction 2** with its own angle, and **Thin feature** (a wall inside, outside or centred on the profile).
+
 ## [1.28.0] - 2026-11-07
 
 ### Added
@@ -366,7 +373,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.28.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.29.0...HEAD
+[1.29.0]: https://github.com/kothf/step-viewer/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/kothf/step-viewer/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/kothf/step-viewer/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/kothf/step-viewer/compare/v1.25.0...v1.26.0

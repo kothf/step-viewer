@@ -88,6 +88,28 @@ test("revolve a ring (AT-P1-8)", async () => {
   assert.ok(mesh.index.array.length > 0);
 });
 
+test("revolve up to a plane, direction 2 and thin revolve (FR-FT-022)", async () => {
+  const m = new Modeller(await occ());
+  const s = rect("r", 35, 10, 10, 20, { std: "XZ" });
+  s.ents.push({ id: "ra", t: "point", x: 0, y: 0 }, { id: "rb", t: "point", x: 0, y: 10 }, { id: "rax", t: "line", a: "ra", b: "rb", cons: true });
+  const ring = Math.PI * (40 * 40 - 30 * 30) * 20;
+  const base: Feature = { id: "f1", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "rax", angle: { v: Math.PI * 2 } };
+  // Up to the YZ plane (through the Z axis): a quarter turn either way.
+  for (const flip of [false, true]) {
+    const r = run(m, doc([s, { ...base, end: "upto", upTo: { std: "YZ" }, flip } as Feature]));
+    close(r.props!.volume, ring / 4);
+  }
+  // 90° one way and 45° back.
+  let r = run(m, doc([s, { ...base, angle: { v: Math.PI / 2 }, angle2: { v: Math.PI / 4 } } as Feature]));
+  close(r.props!.volume, (ring * 3) / 8);
+  // A 2 mm wall inside the 10 × 20 profile, a full turn: band area 200 − 6 × 16, centroid at 35.
+  r = run(m, doc([s, { ...base, thin: { t: { v: 2 }, mode: "inside" } } as Feature]));
+  close(r.props!.volume, 2 * Math.PI * 35 * (200 - 96));
+  // XY does not contain the axis.
+  const bad = m.evaluate(doc([s, { ...base, end: "upto", upTo: { std: "XY" } } as Feature]));
+  assert.equal(bad.statuses.find(x => x.id === "f1")!.code, "E-RV-UPTO");
+});
+
 test("mid-plane extrude and errors", async () => {
   const m = new Modeller(await occ());
   const s = rect("s", 0, 0, 10, 10);
