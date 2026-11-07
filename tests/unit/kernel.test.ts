@@ -265,3 +265,26 @@ test("hole wizard: simple, counterbore, countersink, tapped; patterned (FR-FT-05
   r = run(m, doc([s1, ex, tp, lp]));
   close(r.props!.volume, 120000 - 3 * Math.PI * 2.5 ** 2 * (12 + tip / 3), 1e-6);
 });
+
+test("draft tapers faces about a neutral plane (FR-FT-061)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const deg = Math.PI / 180;
+  // One 100 mm side, 5° about the bottom: a wedge of 100 · ½ · 20 · 20·tan 5° comes off (or goes on, flipped).
+  const wedge = 100 * 0.5 * 20 * 20 * Math.tan(5 * deg);
+  const dr: Feature = { id: "f2", type: "draft", name: "Draft1", plane: { std: "XY" }, faces: [{ name: "f1:side:s1l1" }], angle: { v: 5 * deg } };
+  let r = run(m, doc([s1, ex, dr]));
+  const v1 = r.props!.volume;
+  close(Math.abs(120000 - v1), wedge, 1e-4);
+  assert.ok(r.body!.names.includes("f1:side:s1l1"), r.body!.names.join());
+  r = run(m, doc([s1, ex, { ...dr, flip: true } as Feature]));
+  close(r.props!.volume - 120000, 120000 - v1, 1e-4);
+  // All four sides.
+  r = run(m, doc([s1, ex, { ...dr, faces: ["s1l1", "s1l2", "s1l3", "s1l4"].map(l => ({ name: `f1:side:${l}` })) } as Feature]));
+  assert.ok(Math.abs(120000 - r.props!.volume) > 2 * wedge);
+  // A face parallel to the neutral plane can't be drafted.
+  const bad = m.evaluate(doc([s1, ex, { ...dr, faces: [{ name: "f1:end" }] } as Feature]));
+  assert.equal(bad.statuses.at(-1)!.ok, false);
+});
+

@@ -160,6 +160,16 @@ export interface ShellFeature {
   outward?: boolean;
 }
 
+/** Draft (FR-FT-061): tapers the picked faces by an angle about a neutral plane (the pull direction is its normal). */
+export interface DraftFeature {
+  id: string; type: "draft"; name: string; suppressed?: boolean;
+  plane?: PlaneRef;
+  faces: FaceRef[];
+  angle: Num;
+  /** Reverse the pull direction. */
+  flip?: boolean;
+}
+
 /** Mirror (FR-FT-072): copies of features (or of the whole body, with none picked) about a plane. */
 export interface MirrorFeature {
   id: string; type: "mirror"; name: string; suppressed?: boolean;
@@ -222,12 +232,20 @@ export interface HoleFeature {
 }
 
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature
-  | ShellFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature;
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
   title?: string; partNumber?: string; description?: string; revision?: string; author?: string;
   custom?: Record<string, string>;
+}
+
+/** A global variable (FR-PAR-001): a named value other inputs can use by name. */
+export interface GlobalVar {
+  name: string;
+  expr: string;
+  kind: "length" | "angle" | "number";
+  comment?: string;
 }
 
 export interface PartDoc {
@@ -242,6 +260,8 @@ export interface PartDoc {
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
   rollback: number | null;
+  /** Global variables (Equations). */
+  vars?: GlobalVar[];
 }
 
 // ---------- kernel results ----------

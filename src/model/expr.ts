@@ -11,13 +11,21 @@ const FN: Record<string, (...a: number[]) => number> = {
   sqrt: Math.sqrt, abs: Math.abs, min: Math.min, max: Math.max, round: Math.round, floor: Math.floor, ceil: Math.ceil,
 };
 
-export class ExprError extends Error {}
+/** An input error: `key` is a fixed English sentence (translated when shown), `params` fill its {placeholders}. */
+export class ExprError extends Error {
+  constructor(public key: string, public params?: Record<string, string>) {
+    super(params ? key.replace(/\{(\w+)\}/g, (_m, k: string) => params[k] ?? "") : key);
+  }
+}
 
 /**
  * Evaluates an expression. Plain numbers take `defUnit` (the document unit for
  * lengths, degrees for angles). `vars` may name other values (already in internal units).
  */
-export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "deg" : "mm", vars: Record<string, number> = {}): number {
+/** A named value: a number in internal units, or one with `unit: false` that scales like a bare number. */
+export type VarValue = number | { v: number; unit: boolean };
+
+export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "deg" : "mm", vars: Record<string, VarValue> = {}): number {
   // Decimal comma (Russian keyboards): "12,5" is 12.5 unless commas separate function arguments.
   const hasFn = /[a-z]\s*\(/i.test(src);
   const text = hasFn ? src.trim() : src.trim().replace(/(\d),(\d)/g, "$1.$2");
@@ -33,14 +41,14 @@ export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "de
   const num = (): V => {
     ws();
     const m = /^(\d+\.?\d*(?:e[+-]?\d+)?|\.\d+(?:e[+-]?\d+)?)/i.exec(text.slice(i));
-    if (!m) throw new ExprError(`Unexpected "${text.slice(i, i + 8) || "end"}"`);
+    if (!m) throw new ExprError("Unexpected “{s}”", { s: text.slice(i, i + 8) || "end" });
     i += m[0].length;
     let v = parseFloat(m[0]);
     ws();
     const u = /^(mm|cm|um|m|in|ft|deg|rad|°|"|мм|см|м|град)(?![a-zа-я])/i.exec(text.slice(i));
     if (u) {
       const s = scaleOf(u[1].toLowerCase());
-      if (s === undefined) throw new ExprError(`"${u[1]}" is not a unit for this value`);
+      if (s === undefined) throw new ExprError("“{u}” is not a unit for this value", { u: u[1] });
       i += u[0].length;
       return { v: v * s, unit: true };
     }
@@ -60,7 +68,7 @@ export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "de
       if (name.toLowerCase() === "pi" || name === "π") return { v: Math.PI, unit: false };
       const fn = FN[name.toLowerCase()];
       if (fn) {
-        if (peek() !== "(") throw new ExprError(`${name} needs (…)`);
+        if (peek() !== "(") throw new ExprError("{name} needs (…)", { name });
         i++;
         const args: number[] = [];
         // Trig functions take degrees unless a unit is given.
@@ -75,8 +83,8 @@ export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "de
         }
         return { v: fn(...args), unit: !/^(sin|cos|tan)$/i.test(name) && args.length > 0 };
       }
-      if (name in vars) return { v: vars[name], unit: true };
-      throw new ExprError(`Unknown name "${name}"`);
+      if (Object.prototype.hasOwnProperty.call(vars, name)) { const x = vars[name]; return typeof x === "number" ? { v: x, unit: true } : x; }
+      throw new ExprError("Unknown name “{name}”", { name });
     }
     return num();
   };
@@ -109,7 +117,7 @@ export function evaluate(src: string, q: Quantity, defUnit = q === "angle" ? "de
   };
   const r = expr();
   ws();
-  if (i < text.length) throw new ExprError(`Unexpected "${text.slice(i, i + 8)}"`);
+  if (i < text.length) throw new ExprError("Unexpected “{s}”", { s: text.slice(i, i + 8) });
   const v = r.unit ? r.v : r.v * dflt;
   if (!Number.isFinite(v)) throw new ExprError("Not a number");
   return v;

@@ -17,10 +17,11 @@ import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, 
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type {
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
-  HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, SketchFeature, V3,
+  GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, holeSize } from "./holes";
+import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
@@ -58,10 +59,11 @@ type Mode =
   | { kind: "plane" }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
-  | { kind: "props"; draft: PartDoc };
+  | { kind: "props"; draft: PartDoc }
+  | { kind: "eq"; draft: GlobalVar[] };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts";
+type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
 /** Features whose result mirror and patterns can copy. */
@@ -86,8 +88,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Mirror", "LPattern", "CirPattern", "Hole"];
+const ICONS: Record<string, string> = { hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -193,6 +195,8 @@ export class ModelController {
     else {
       this.store = new DocStore(doc);
       this.store.onChange(why => this.changed(why));
+      // Equations: every change re-evaluates the kept expressions (FR-PAR-002/003).
+      this.store.normalize = d => { refreshExprs(d, units.current); };
     }
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
@@ -288,12 +292,11 @@ export class ModelController {
     this.renderEmpty();
     if (this.mode.kind === "feature" && !this.arrowDrag) this.renderPanel();
     const hm = this.mode;
-    if (this.pendingHole && hm.kind === "feature" && hm.draft.type === "hole") {
+    if (this.pendingHole.length && hm.kind === "feature" && hm.draft.type === "hole") {
+      // A rebuild started before the face was picked has no frame yet: keep waiting for the next one.
       const fr = r.frames[hm.draft.id];
-      const w = this.pendingHole;
-      this.pendingHole = null;
-      if (fr) this.placeHole(hm.draft, w, fr);
-    } else this.pendingHole = null;
+      if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, w, fr); }
+    } else this.pendingHole = [];
   }
 
   /** Rebuild (Ctrl+B), or force a rebuild of every feature with a fresh kernel (Ctrl+Q). */
@@ -368,6 +371,7 @@ export class ModelController {
       status: text => { $("#mc-status").textContent = text; },
       toast: (msg, kind) => toast(msg, kind ?? "info"),
       unit: () => ({ mm: 1 / UNITS[units.current].f, name: units.current, decimals: units.decimals ?? this.doc.units.decimals }),
+      vars: () => evalVars(this.doc, units.current).values,
       onSelection: () => this.renderPanel(),
       modelEdges: e => {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
@@ -390,7 +394,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "mirror" | "lpattern" | "cpattern" | "hole") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -402,7 +406,7 @@ export class ModelController {
     // Axis and point take a picked edge or face too.
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
-    const shellFace = type === "shell" || type === "hole" ? this.pickedFace() : null;
+    const shellFace = type === "shell" || type === "hole" || type === "draft" ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
     const d = this.doc;
@@ -443,6 +447,13 @@ export class ModelController {
       const face = fid != null ? this.host.viewer.parts[0]?.data.faces[fid] : undefined;
       if (fid != null && face?.type === "plane") { const pr = this.planeOfFace(fid); if (pr) h.plane = pr; }
       draft = h;
+    } else if (type === "draft") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
+      const dr: DraftFeature = { id, type: "draft", name: nextName(d, "draft"), faces: [], angle: { v: Math.PI / 180 } };
+      const face = shellFace != null ? this.host.viewer.parts[0]?.data.faces[shellFace] : undefined;
+      if (shellFace != null && face?.type === "plane") { const pr = this.planeOfFace(shellFace); if (pr) dr.plane = pr; }
+      draft = dr;
     } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const seeds = seedSel ? [seedSel] : [];
@@ -460,7 +471,7 @@ export class ModelController {
       if (pre) (draft as FilletFeature).edges = [pre];
     }
     const index = end;
-    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" ? "faces" : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
+    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" ? "faces" : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds") : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
@@ -493,6 +504,23 @@ export class ModelController {
       return;
     }
     if (m.kind === "plane") { toast(t("Pick a plane or a flat face for the sketch.")); return; }
+    if (m.kind === "eq") {
+      const names = new Set<string>();
+      for (const v of m.draft) {
+        if (!validVarName(v.name)) { toast(t("“{name}” is not a valid name: use letters, digits and _ , starting with a letter.", { name: v.name }), true); return; }
+        if (names.has(v.name)) { toast(t("Two variables are called “{name}”.", { name: v.name }), true); return; }
+        names.add(v.name);
+      }
+      const errs = evalVars({ ...this.doc, vars: m.draft }, units.current).errors;
+      const bad = Object.entries(errs)[0];
+      if (bad) { toast(`${bad[0]}: ${t(bad[1].key, bad[1].params)}`, true); return; }
+      const dr = m.draft;
+      this.mode = { kind: "none" };
+      this.store!.change("Equations", d => { if (dr.length) d.vars = dr; else delete d.vars; });
+      this.renderAll();
+      void this.rebuild();
+      return;
+    }
     if (m.kind === "props") {
       const dr = m.draft;
       this.mode = { kind: "none" };
@@ -583,6 +611,14 @@ export class ModelController {
   }
 
   /** Part properties and material (FR-DOC-007, FR-MAT-001/003). */
+  /** Equations (FR-PAR-001/005): global variables and every expression in the part, in the panel. */
+  editEquations() {
+    if (!this.store) return;
+    this.exitMode(false);
+    this.mode = { kind: "eq", draft: structuredClone(this.doc.vars ?? []) };
+    this.renderAll();
+  }
+
   editProps() {
     if (!this.store) return;
     this.exitMode(false);
@@ -722,7 +758,7 @@ export class ModelController {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
-      else if (m.kind === "feature" && (m.draft.type === "shell" || isCopy(m.draft))) this.pickCopy(e);
+      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
     }, true);
     vp.addEventListener("dblclick", e => {
@@ -766,7 +802,7 @@ export class ModelController {
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
-    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props") {
+    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props" || m.kind === "eq") {
       if (k === "escape") { stop(); void this.cancel(); }
       else if (k === "enter" && !tg.closest?.("#mc-tree")) { stop(); this.ok(); }
       return;
@@ -856,7 +892,17 @@ export class ModelController {
     if (m.kind !== "feature") return;
     const f = m.draft;
     const own = (n: string | undefined) => !!n && n.startsWith(`${f.id}:`);
-    if (f.type === "shell") {
+    if (f.type === "draft" && (m.focus === "nplane" || !f.plane)) {
+      const r = this.pickRef(e);
+      if (!r || ("face" in r && own(r.face.name))) return;
+      f.plane = r;
+      // The neutral face itself is not drafted.
+      if ("face" in r) f.faces = f.faces.filter(x => x.name !== r.face.name);
+      m.focus = "faces";
+      this.draftChanged();
+      return;
+    }
+    if (f.type === "shell" || f.type === "draft") {
       const hit = this.host.faceAt(e.clientX, e.clientY);
       const fr = hit ? this.faceRef(hit.faceId) : null;
       if (!fr || own(fr.name)) { toast(t("Pick a face.")); return; }
@@ -913,18 +959,20 @@ export class ModelController {
       m.focus = "pts";
       // The first click on a face also places the first hole there.
       const hit = this.host.faceAt(e.clientX, e.clientY);
-      if (hit && "face" in r) this.pendingHole = hit.point;
+      this.pendingHole = hit && "face" in r ? [hit.point] : [];
       this.draftChanged();
       return;
     }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = this.last?.frames[f.id];
-    if (!hit || !fr) return;
+    if (!hit) return;
+    // Clicks made before the plane's frame arrives are placed once it does.
+    if (!fr || this.pendingHole.length) { this.pendingHole.push(hit.point); return; }
     this.placeHole(f, hit.point, fr);
   }
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
-  private pendingHole: V3 | null = null;
+  private pendingHole: V3[] = [];
 
   private placeHole(f: HoleFeature, w: V3, fr: Frame) {
     const d: V3 = [w[0] - fr.o[0], w[1] - fr.o[1], w[2] - fr.o[2]];
@@ -1568,6 +1616,7 @@ export class ModelController {
         + btn("chamfer", t("Chamfer"), t("Bevel edges"), m.kind === "feature" && m.draft.type === "chamfer")
         + btn("hole", t("Hole"), t("Hole wizard: simple, counterbore, countersink and tapped holes at points on a face"), m.kind === "feature" && m.draft.type === "hole")
         + btn("shell", t("Shell"), t("Shell: hollow the body, leaving picked faces open"), m.kind === "feature" && m.draft.type === "shell")
+        + btn("draft", t("Draft"), t("Draft: taper faces by an angle about a neutral plane"), m.kind === "feature" && m.draft.type === "draft")
         + (() => {
           // Pattern flyout: Linear ▾ Circular, Mirror.
           const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
@@ -1775,7 +1824,7 @@ export class ModelController {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "mirror": case "lpattern": case "cpattern": case "hole": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -1816,6 +1865,7 @@ export class ModelController {
     let html = row("part", ICONS.part, d.name, "", " ft-root");
     html += `<div class="ft-group" role="group">`;
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
+    html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += `</div>`;
@@ -1866,6 +1916,7 @@ export class ModelController {
         if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "draft" && asRef && (mm.focus === "nplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.focus = "faces"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "mirror" && asRef && (mm.focus === "mplane" || !mm.draft.plane)) { mm.draft.plane = asRef; if (!mm.draft.features.length) mm.focus = "seeds"; this.draftChanged(); return; }
         if (mm.kind === "feature" && (mm.draft.type === "lpattern" || mm.draft.type === "cpattern") && (mm.focus === "dir" || mm.focus === "dir2") && this.store!.feature(id)?.type === "axis") {
           const ref: LineRef = { axis: id };
@@ -1880,6 +1931,8 @@ export class ModelController {
           this.draftChanged();
           return;
         }
+        // Equations is not geometry to select: a click opens it.
+        if (id === "equations") { this.editEquations(); return; }
         this.selected = id;
         this.renderTree();
         this.drawDecor();
@@ -1887,6 +1940,7 @@ export class ModelController {
       r.addEventListener("dblclick", e => {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
+        if (id === "equations") { this.editEquations(); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -1898,6 +1952,7 @@ export class ModelController {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); go(rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]); }
         else if (e.key === "Home" || e.key === "End") { e.preventDefault(); go(rows[e.key === "Home" ? 0 : rows.length - 1]); }
         else if (e.key === "Enter" && (id === "part" || id === "material")) { e.preventDefault(); this.editProps(); }
+        else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && this.store!.feature(id)) { e.preventDefault(); this.editFeature(id); }
         else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = r.getBoundingClientRect(); this.openMenu(id, b.left + 30, b.bottom); }
       });
@@ -2034,6 +2089,7 @@ export class ModelController {
     }
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
     if (m.kind === "props") { this.renderPropsPanel(pm, m.draft); return; }
+    if (m.kind === "eq") { this.renderEqPanel(pm, m.draft); return; }
     const f = m.draft;
     const sketches = this.doc.features.slice(0, m.index).filter((x): x is SketchFeature => x.type === "sketch");
     const unit = units.current;
@@ -2115,6 +2171,16 @@ export class ModelController {
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
     }
+    if (f.type === "draft") {
+      title = t("Draft");
+      const dbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
+      body = group(t("Draft angle"), numField("angle", t("Angle"), f.angle, "angle"))
+        + group(t("Neutral plane"), dbox("nplane", t("Plane"), this.refLabel(f.plane)) + chk("flip", f.flip, t("Reverse direction"))
+          + `<p class="pm-help muted">${esc(t("The faces keep their size where they cross this plane and taper away from it."))}</p>`)
+        + group(t("Faces to draft"), dbox("faces", t("Faces"), t("{n} face|{n} faces", { n: f.faces.length }))
+          + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
+          + `<p class="pm-help muted">${esc(m.focus === "nplane" || !f.plane ? t("Click a plane or a flat face in the view or the tree.") : t("Click the faces to draft; click a face again to remove it."))}</p>`);
+    }
     if (f.type === "shell" || isCopy(f)) {
       const box = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
       const intField = (key: string, label: string, v: number) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="numeric" data-int="${key}" value="${v}" spellcheck="false" /></span></label>`;
@@ -2177,8 +2243,8 @@ export class ModelController {
       const apply = () => {
         const key = inp.dataset.num!, q = inp.dataset.q as "length" | "angle";
         let v: number;
-        try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit); }
-        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).message), true); return; }
+        try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
@@ -2264,7 +2330,7 @@ export class ModelController {
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { if (m.kind === "feature") { m.focus = b.dataset.focus as Focus; this.renderPanel(); this.drawDecor(); } }));
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell") { f.faces = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft") { f.faces = []; this.draftChanged(); } });
     pm.querySelectorAll<HTMLInputElement>("input[data-int]").forEach(inp => {
       const apply = () => {
         const v = Math.round(Number(inp.value.trim()));
@@ -2287,6 +2353,58 @@ export class ModelController {
     });
     pm.querySelector("[data-k=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-k=cancel]")!.addEventListener("click", () => void this.cancel());
+  }
+
+  /** Equations panel: variables (name, value or expression, kind, result, comment) and the part's expressions. */
+  private renderEqPanel(pm: HTMLElement, vars: GlobalVar[]) {
+    const unit = units.current;
+    const res = evalVars({ ...this.doc, vars }, unit);
+    const shown = (v: GlobalVar) => {
+      if (res.errors[v.name]) return `⚠ ${t(res.errors[v.name].key, res.errors[v.name].params)}`;
+      const x = res.values[v.name];
+      const n = typeof x === "number" ? x : x?.v;
+      if (n == null) return "";
+      return v.kind === "angle" ? `${trimNum((n * 180) / Math.PI, 4)}°` : v.kind === "length" ? `${trimNum(n * UNITS[unit].f, 6)} ${unit}` : trimNum(n, 6);
+    };
+    const kinds: [GlobalVar["kind"], string][] = [["length", t("Length")], ["angle", t("Angle")], ["number", t("Number")]];
+    const rows = vars.map((v, i) => `<div class="eq-row" data-i="${i}">
+        <input type="text" data-e="name" value="${esc(v.name)}" aria-label="${esc(t("Name"))}" spellcheck="false" translate="no" placeholder="${esc(t("Name"))}" />
+        <input type="text" data-e="expr" value="${esc(v.expr)}" aria-label="${esc(t("Value or equation"))}" spellcheck="false" translate="no" placeholder="${esc(t("Value or equation"))}" />
+        <select data-e="kind" aria-label="${esc(t("Type"))}">${kinds.map(([k, l]) => `<option value="${k}"${v.kind === k ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        <span class="eq-val${res.errors[v.name] ? " err" : ""}" translate="no">${esc(shown(v))}</span>
+        <button class="icon" data-e="rm" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(v.name)}">✕</button>
+        <input type="text" data-e="comment" class="eq-c" value="${esc(v.comment ?? "")}" aria-label="${esc(t("Comment"))}" placeholder="${esc(t("Comment"))}" />
+      </div>`).join("");
+    const used = exprTargets(this.doc).map(x => `<li><span translate="no">${esc(featureLabel(x.owner.name))} · ${esc(x.key)}</span> = <code translate="no">${esc(x.num.expr!)}</code> → ${esc(x.q === "angle" ? `${trimNum((x.num.v * 180) / Math.PI, 4)}°` : `${trimNum(x.num.v * UNITS[unit].f, 6)} ${unit}`)}</li>`).join("");
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Equations"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<p class="pm-help muted">${esc(t("Global variables can be used by name in any value box, like Width/2. Dimensions are named like D1@Sketch1."))}</p>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Global variables"))}</legend><div class="eq-list">${rows || `<p class="pm-help muted">${esc(t("No variables yet."))}</p>`}</div><button class="btn small" data-a="add">${esc(t("Add variable"))}</button></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Equations in the part"))}</legend>${used ? `<ul class="eq-used">${used}</ul>` : `<p class="pm-help muted">${esc(t("Type a variable's name or an expression in a value box to drive it."))}</p>`}</fieldset>`;
+    pm.querySelectorAll<HTMLElement>(".eq-row").forEach(r => {
+      const v = vars[+r.dataset.i!];
+      r.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-e]").forEach(el => {
+        const k = el.dataset.e!;
+        if (k === "rm") { el.addEventListener("click", () => { vars.splice(+r.dataset.i!, 1); this.renderEqPanel(pm, vars); }); return; }
+        el.addEventListener("change", () => {
+          const val = el.value.trim();
+          if (k === "name") v.name = val;
+          else if (k === "expr") v.expr = val;
+          else if (k === "kind") v.kind = val as GlobalVar["kind"];
+          else if (val) v.comment = val; else delete v.comment;
+          if (k !== "comment") { this.renderEqPanel(pm, vars); pm.querySelector<HTMLElement>(`.eq-row[data-i="${r.dataset.i}"] [data-e="${k}"]`)?.focus(); }
+        });
+        el.addEventListener("keydown", e => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); (el as HTMLElement).dispatchEvent(new Event("change")); } });
+      });
+    });
+    pm.querySelector("[data-a=add]")!.addEventListener("click", () => {
+      let n = vars.length + 1;
+      while (vars.some(v => v.name === `Var${n}`)) n++;
+      vars.push({ name: `Var${n}`, expr: "10", kind: "length" });
+      this.renderEqPanel(pm, vars);
+      pm.querySelector<HTMLInputElement>(`.eq-row[data-i="${vars.length - 1}"] [data-e="name"]`)?.select();
+    });
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
   }
 
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */
@@ -2458,6 +2576,7 @@ const ICON_SVG: Record<string, string> = {
   editsk: S('<path d="M2 12.5h7M2 12.5 6 5"/><path d="m9 13.5.5-2.5 4-4 2 2-4 4z"/>'),
   hole: S('<ellipse cx="8" cy="4.5" rx="5" ry="2"/><path d="M3 4.5v7M13 4.5v7"/><path d="M3 11.5a5 2 0 0 0 10 0"/><ellipse cx="8" cy="4.5" rx="2.2" ry=".9" fill="currentColor"/>'),
   shell: S('<path d="M2.5 5 8 2l5.5 3v6L8 14l-5.5-3z"/><path d="M5 6.3 8 4.6l3 1.7v3.4L8 11.4 5 9.7z" fill="currentColor" fill-opacity=".3"/>'),
+  draft: S('<path d="M3 13.5h10"/><path d="M4.5 13.5 6.5 3h4l1 10.5" fill="currentColor" fill-opacity=".3"/><path d="M8 2.5v4" stroke-dasharray="1.5 1.2"/>'),
   mirror: S('<path d="M8 1.5v13" stroke-dasharray="2 1.5"/><path d="M6 4 2.5 11H6z"/><path d="M10 4l3.5 7H10z" opacity=".55"/>'),
   lpattern: S('<rect x="1.5" y="6" width="3.5" height="3.5"/><rect x="6.25" y="6" width="3.5" height="3.5" opacity=".7"/><rect x="11" y="6" width="3.5" height="3.5" opacity=".45"/><path d="M2 13h12M12 11.5l2 1.5-2 1.5"/>'),
   cpattern: S('<circle cx="8" cy="8" r="1"/><circle cx="8" cy="3" r="1.6"/><circle cx="12.5" cy="10.5" r="1.6" opacity=".7"/><circle cx="3.5" cy="10.5" r="1.6" opacity=".45"/>'),

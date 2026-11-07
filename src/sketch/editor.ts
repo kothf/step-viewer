@@ -12,7 +12,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
 import { ORIGIN, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
-import { evaluate, ExprError, isPlain } from "../model/expr";
+import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import { t } from "../i18n";
 
 export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
@@ -26,6 +26,8 @@ export interface SketchHost {
   toast(msg: string, kind?: "info" | "warn" | "error"): void;
   /** Display unit factor (mm per unit) and name, decimals. */
   unit(): { mm: number; name: string; decimals: number };
+  /** Global variables and dimensions by name, for expressions typed in dimensions. */
+  vars?(): Record<string, VarValue>;
   onSelection?(ids: string[]): void;
   /** Convert entities: the model edges under the pointer (an edge, or every edge of a face), in world coordinates. */
   modelEdges?(e: PointerEvent): ModelEdge[] | null;
@@ -601,8 +603,8 @@ export class SketchEditor {
     const dim = this.sk.dims.find(d => d.id === inp.dataset.dim);
     if (!dim) return;
     let v: number;
-    try { v = evaluate(inp.value, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name); }
-    catch (err) { this.host.toast(t((err as ExprError).message), "error"); return; }
+    try { v = evaluate(inp.value, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
+    catch (err) { this.host.toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), "error"); return; }
     if (dim.t !== "angle" && !(v > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
     if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(inp.value) ? "" : inp.value)) return;
     const next: SketchFeature = structuredClone(this.sk);

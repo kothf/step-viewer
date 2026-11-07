@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-11-07
+
+### Added
+- **Equations** (FR-PAR-001..005): global variables (length, angle or plain number, with a comment) in a panel opened from Σ at the top of the Features tree. Any value box takes a variable's name or an expression of them, like `Width/2 + 5`.
+- **Draft** (FR-FT-061): tapers the picked faces by an angle about a neutral plane (a flat face or a plane); the faces keep their size where they cross it, and Reverse direction tapers the other way.
+- Sketch dimensions have names (`D1@Sketch1`) that other values and variables can use.
+- Expressions are kept with each value and re-evaluated whenever a variable or a referenced dimension changes; sketches whose dimensions change are solved again. Circular references and unknown names are shown as errors next to the variable.
+
+### Fixed
+- Hole wizard: clicks made before the face's frame is ready are no longer lost (only one of two quick clicks became a hole).
+- Input errors such as an unknown name are translated in the Russian interface.
+
 ## [1.24.0] - 2026-11-07
 
 ### Added
@@ -331,7 +343,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.24.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.25.0...HEAD
+[1.25.0]: https://github.com/kothf/step-viewer/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/kothf/step-viewer/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/kothf/step-viewer/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/kothf/step-viewer/compare/v1.21.0...v1.22.0

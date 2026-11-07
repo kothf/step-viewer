@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
@@ -36,6 +36,8 @@ export class DocStore {
   /** Snapshot at the last save, to tell whether there are unsaved changes. */
   private savedAt: string;
   doc: PartDoc;
+  /** Runs on every change before it is stored (re-evaluates equations). */
+  normalize: ((d: PartDoc) => void) | null = null;
 
   constructor(doc: PartDoc) {
     this.doc = doc;
@@ -50,6 +52,7 @@ export class DocStore {
     const before = JSON.stringify(this.doc);
     const next: PartDoc = JSON.parse(before);
     fn(next);
+    this.normalize?.(next);
     if (JSON.stringify(next) === before) return false;
     this.undoStack.push({ doc: before, label, seq: ++this.seq });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
@@ -129,6 +132,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "hole") plane(f.plane);
   if (f.type === "shell") faces.push(...f.faces.map(x => x.name));
+  if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
