@@ -72,6 +72,8 @@ export class SketchEditor {
   /** In-progress entity: its points so far, and the live cursor point. */
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
+  /** Box selection in progress (sketch coordinates), started at screen x0. */
+  private box: { a: V2; b: V2; x0: number; base: Set<string> } | null = null;
   private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature } | null = null;
   private labels = new Map<string, HTMLElement>();
   private input: HTMLInputElement | null = null;
@@ -202,6 +204,9 @@ export class SketchEditor {
       const h = this.hits(p)[0] ?? null;
       if (!h || h.kind === "origin") {
         if (!e.ctrlKey && !e.shiftKey) this.selection.clear();
+        // Box selection from empty space (FR-SEL-002): left to right takes what is fully inside, right to left what it crosses.
+        this.box = { a: p, b: p, x0: e.clientX, base: new Set(this.selection) };
+        try { (e.target as Element).setPointerCapture?.(e.pointerId); } catch { /* synthetic event */ }
         this.render();
         this.emitSel();
         return true;
@@ -233,6 +238,12 @@ export class SketchEditor {
     if (e.buttons & 6) return false; // panning / orbiting with the other buttons
     const p = this.uv(e);
     if (!p) return true;
+    if (this.box) {
+      this.box.b = p;
+      this.boxSelect(e.clientX < this.box.x0);
+      this.render();
+      return true;
+    }
     if (this.drag) {
       const d = this.drag;
       d.moved = true;
@@ -258,6 +269,7 @@ export class SketchEditor {
 
   pointerUp(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
+    if (this.box) { this.box = null; this.render(); this.emitSel(); return true; }
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
@@ -840,6 +852,28 @@ export class SketchEditor {
     this.render();
   }
 
+  /** Selects what the box holds: fully inside, or (crossing) anything it touches, added to what was selected before. */
+  private boxSelect(crossing: boolean) {
+    const b = this.box!;
+    const x0 = Math.min(b.a[0], b.b[0]), x1 = Math.max(b.a[0], b.b[0]), y0 = Math.min(b.a[1], b.b[1]), y1 = Math.max(b.a[1], b.b[1]);
+    const inside = (q: V2) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1;
+    const samples = (e: SkEnt): V2[] => {
+      if (e.t === "point") return [[e.x, e.y]];
+      const g = curveOf(e, q => this.pt(q));
+      if (!g) return [];
+      const n = 48;
+      if (g.kind === "line") return Array.from({ length: n + 1 }, (_, i) => [g.a[0] + ((g.b[0] - g.a[0]) * i) / n, g.a[1] + ((g.b[1] - g.a[1]) * i) / n] as V2);
+      const sw = g.kind === "circle" ? Math.PI * 2 : g.sweep, a0 = g.kind === "circle" ? 0 : g.a0;
+      return Array.from({ length: n + 1 }, (_, i) => [g.c[0] + g.r * Math.cos(a0 + (sw * i) / n), g.c[1] + g.r * Math.sin(a0 + (sw * i) / n)] as V2);
+    };
+    const sel = new Set(b.base);
+    for (const e of this.sk.ents) {
+      const pts = samples(e);
+      if (pts.length && (crossing ? pts.some(inside) : pts.every(inside))) sel.add(e.id);
+    }
+    this.selection = sel;
+  }
+
   // ---------- slot (FR-SK-017) ----------
 
   /** Straight slot: two centres, half-width w; two lines and two end arcs, tangent, on a construction centre line. */
@@ -1134,7 +1168,7 @@ export class SketchEditor {
       return false;
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
-    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", s: "select", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
+    const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
     return false;
@@ -1276,6 +1310,10 @@ export class SketchEditor {
       }
     }
     for (const pl of this.offsetPreview) poly(pl, C.pre);
+    if (this.box) {
+      const { a: p0, b: p1 } = this.box;
+      poly([p0, [p1[0], p0[1]], p1, [p0[0], p1[1]], p0], C.sel, dimSegs, dimCols);
+    }
     if (this.tool === "slot" && d.pts.length && d.cursor) {
       const [c1, c2] = d.pts.length === 1 ? [d.pts[0], d.cursor] : [d.pts[0], d.pts[1]];
       const w = d.pts.length === 1 ? this.px(c1) * 12 : Math.abs(lineSide(c1, c2, d.cursor));

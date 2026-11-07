@@ -211,6 +211,8 @@ const EN: Tab[] = [
   <li>Drag the orange arrow on the model to set the depth with the mouse (Shift: finer steps). Select an extrude in the tree and drag its arrow to change it at once.</li>
   <li>A revolve has an orange grip at the end of its sweep: drag it round the axis to set the angle (1° steps, Shift: 0.1°). A cut shows the material it removes as a see-through yellow body while it is open.</li>
   <li><b>Plane</b> makes a reference plane offset from a plane or flat face, or at an angle about a straight edge. Sketch on it like on the standard planes.</li>
+  <li><b>Plane ▾</b> also holds <b>Axis</b> (along a straight edge, the axis of a cylinder or cone, or where two planes meet) and <b>Point</b> (a vertex, an arc centre, the centre of a face or the midpoint of an edge). They follow the model when it changes; hide them from the row menu.</li>
+  <li>Press <b>S</b> over the view for the shortcut bar: the part commands, or the sketch tools while sketching. In a sketch, drag from empty space to box-select: left to right takes what is fully inside, right to left anything the box touches.</li>
   <li><b>Revolve</b> turns a sketch around one of its lines (a construction line is taken first), by any angle.</li>
   <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges (or pick an edge first), and set the size. A chamfer can use two distances or a distance and an angle; <b>Keep features that fit</b> skips edges a fillet cannot round.</li>
   <li>The view shows the result while you type; ✓ or <kbd>Enter</kbd> keeps it, ✕ or <kbd>Esc</kbd> cancels.</li>
@@ -241,7 +243,8 @@ ${table([
 ])}
 <h4>Part modelling</h4>
 ${table([
-  ["S L R C A P D", "Sketch: select, line, rectangle, circle, arc, point, dimension"],
+  ["S", "Shortcut bar at the cursor: the sketch tools, or the part commands"],
+  ["L R C A P D", "Sketch: line, rectangle, circle, arc, point, dimension (Esc: back to select)"],
   ["G T F", "Sketch: polygon, trim, fillet"],
   ["E O W", "Sketch: extend, offset entities, slot"],
   ["F2", "Rename the selected feature"],
@@ -397,6 +400,8 @@ const RU: Tab[] = [
   <li>Перетащите оранжевую стрелку на модели, чтобы задать глубину мышью (Shift: мельче шаг). Выберите вытягивание в дереве и тяните его стрелку, чтобы сразу изменить его.</li>
   <li>У вращения есть оранжевый маркер в конце дуги: тяните его вокруг оси, чтобы задать угол (шаг 1°, Shift: 0,1°). Вырез, пока он открыт, показывает удаляемый материал полупрозрачным жёлтым телом.</li>
   <li><b>Плоскость</b> создаёт справочную плоскость со смещением от плоскости или плоской грани либо под углом вокруг прямого ребра. На ней можно рисовать эскиз, как на стандартных плоскостях.</li>
+  <li>В меню <b>Плоскость ▾</b> есть также <b>Ось</b> (вдоль прямого ребра, по оси цилиндра или конуса или на пересечении двух плоскостей) и <b>Точка</b> (вершина, центр дуги, центр грани или середина ребра). Они следуют за моделью при изменениях; скрыть их можно из меню строки.</li>
+  <li>Нажмите <b>S</b> над видом — появится панель быстрого доступа: команды детали или, в эскизе, инструменты эскиза. В эскизе протяните рамку с пустого места: слева направо выбирается то, что целиком внутри, справа налево — всё, чего касается рамка.</li>
   <li><b>Вращение</b> поворачивает эскиз вокруг одного из его отрезков (сначала берётся вспомогательный) на любой угол.</li>
   <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) либо выберите ребро заранее и задайте размер. Фаска бывает с двумя расстояниями или с расстоянием и углом; <b>Сохранять подходящие</b> пропускает рёбра, которые скругление не может обработать.</li>
   <li>Вид показывает результат во время ввода; ✓ или <kbd>Enter</kbd> применяет, ✕ или <kbd>Esc</kbd> отменяет.</li>
@@ -427,7 +432,8 @@ ${table([
 ])}
 <h4>Моделирование детали</h4>
 ${table([
-  ["S L R C A P D", "Эскиз: выбор, отрезок, прямоугольник, окружность, дуга, точка, размер"],
+  ["S", "Панель быстрого доступа у курсора: инструменты эскиза или команды детали"],
+  ["L R C A P D", "Эскиз: отрезок, прямоугольник, окружность, дуга, точка, размер (Esc — снова выбор)"],
   ["G T F", "Эскиз: многоугольник, отсечь, скругление"],
   ["E O W", "Эскиз: удлинить, смещение объектов, паз"],
   ["F2", "Переименовать выбранный элемент"],

@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-07
+
+### Added
+- Reference **Axis** (FR-REF-003) from a straight edge, a cylindrical or conical face, or two planes, and reference **Point** (FR-REF-004) at a vertex, an arc or circle centre, a face centre or an edge midpoint. Both sit under the Plane ▾ flyout, show in the tree and can be hidden.
+- **S shortcut bar** (FR-UI-025): press S to open the most-used commands at the cursor, sketch tools in a sketch and features otherwise.
+- **Box selection** in sketches (FR-SEL-002): drag left to right to select what lies fully inside, right to left to also catch what the box crosses.
+
+### Changed
+- S no longer switches to Select in a sketch; Esc does.
+
 ## [1.20.0] - 2026-11-07
 
 ### Added
@@ -294,7 +304,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.20.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.21.0...HEAD
+[1.21.0]: https://github.com/kothf/step-viewer/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/kothf/step-viewer/compare/v1.19.4...v1.20.0
 [1.19.4]: https://github.com/kothf/step-viewer/compare/v1.19.3...v1.19.4
 [1.19.3]: https://github.com/kothf/step-viewer/compare/v1.19.2...v1.19.3

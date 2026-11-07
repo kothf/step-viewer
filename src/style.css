@@ -615,6 +615,9 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-g { display: flex; flex-wrap: wrap; gap: 2px; }
 .mc-sep { width: 1px; background: var(--line); margin: 3px 2px; }
 .mc-fly { display: flex; align-items: stretch; }
+.mc-sbar { position: fixed; z-index: 70; display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
+.mc-sbar button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); cursor: pointer; }
+.mc-sbar button:hover, .mc-sbar button:focus-visible { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); outline: none; }
 .mc-fly .mc-b { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 3px; }
 .mc-caret { width: 14px; padding: 0; border: 1px solid transparent; border-radius: 0 7px 7px 0; background: none; color: var(--muted); font-size: 10px; cursor: pointer; }
 .mc-caret:hover, .mc-caret[aria-expanded=true] { background: var(--panel-2); border-color: var(--line); color: var(--text); }
