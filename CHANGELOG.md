@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.54.0] - 2026-11-07
+
+### Added
+- **Converted edges follow the model** (FR-SK-064). Convert entities now adds an **On edge** relation: the copied lines, arcs and circles move with their model edge whenever the part rebuilds, and features made from the sketch follow. When the edge is gone, the relation turns **dangling**: the curve keeps its place and is drawn in olive, the sketch gets a warning in the tree, and the sketch panel offers **Re-attach** (click the new edge, or drag the dangling glyph onto it) or **Delete dangling relations** to keep the curves free.
+- **Dimension names** (FR-SK-065). Hovering a dimension shows its full name, such as `D1@Sketch2`, as equations use it. Select one dimension to rename it in the sketch panel; expressions that use it follow, and so do expressions using a renamed sketch. **Show dimension names** puts the names next to the values.
+- **Draggable dimension text** (FR-SK-066). Drag a dimension's value to move it; the position is stored with the sketch. Ordinate values move with their row.
+- **Edit sketch plane** (FR-SK-007). Right-click a sketch in the tree: pick another plane or flat face, the sketch shows there live in orange, and ✓ moves it. On edge curves on the new plane follow their edges again, or dangle if they no longer resolve.
+
 ## [1.53.0] - 2026-11-07
 
 ### Added
@@ -530,7 +538,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.53.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.54.0...HEAD
+[1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0

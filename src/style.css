@@ -809,6 +809,15 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .v-lbl { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .v-lbl textarea { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
 .mc-ro { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--line); font-size: var(--fs-caption); }
+/* Dangling On edge relations (FR-SK-064), dimension names (FR-SK-065), draggable dimension text (FR-SK-066). */
+.sk-rel.dangling { background: #fff6d6; color: #6b4f00; border-color: #c9a227; cursor: grab; }
+:root[data-theme="dark"] .sk-rel.dangling { background: #3a3110; color: #f0d36b; border-color: #8f7a1f; }
+.sk-dim:not(.ord0):not(.draft) { cursor: move; }
+.sk-dname { font-weight: 400; color: var(--muted); margin-right: 4px; }
+.pm-dangling { color: #6b4f00; }
+:root[data-theme="dark"] .pm-dangling { color: #f0d36b; }
+.pm-sec.pm-dangling { border: 1px solid #c9a227; border-radius: 6px; padding: 6px 8px; background: #fffbea; }
+:root[data-theme="dark"] .pm-sec.pm-dangling { background: #2a2410; border-color: #8f7a1f; }
 /* Vault lifecycle (1.50: states, revisions, data cards, references) */
 .v-state { white-space: nowrap; }
 .v-state i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: baseline; }

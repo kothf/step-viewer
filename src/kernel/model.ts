@@ -14,6 +14,8 @@ import type { V2 } from "../model/types";
 import type { AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
+import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
+import { solve } from "../sketch/solver";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -24,7 +26,7 @@ interface Named { shape: any; faces: any[]; names: string[] }
 
 /** What a feature added or removed, so mirror and patterns can copy it: its tool solids and how each was applied. */
 type Tool = { shape: Named; op: "fuse" | "cut" };
-interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[] }
+interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature }
 
 export interface ModelMesh {
   name: string;
@@ -170,6 +172,46 @@ export class Modeller {
     let best = cands[0], bd = Infinity;
     for (const e of cands) { const d = d3(this.edgeMid(e), ref.hint); if (d < bd) { bd = d; best = e; } }
     return best;
+  }
+
+  /** A shown-edge description of an OCCT edge (for sketch curves that follow it). */
+  private modelEdge(e: any): ModelEdge {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_Curve_2(e);
+    const t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+    const start = this.xyz(ad.Value(t0)), end = this.xyz(ad.Value(t1)), mid = this.xyz(ad.Value((t0 + t1) / 2));
+    const ty = ad.GetType();
+    if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) return { type: "line", start, end, mid, closed: false };
+    if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+      const c = ad.Circle();
+      const closed = Math.abs(t1 - t0 - Math.PI * 2) < 1e-6 || d3(start, end) < 1e-7;
+      return { type: closed ? "circle" : "arc", start, end, mid, closed, center: this.xyz(c.Location()), axis: this.xyz(c.Axis().Direction()), radius: c.Radius() };
+    }
+    return { type: "curve", start, end, mid, closed: d3(start, end) < 1e-7 };
+  }
+
+  /**
+   * On edge relations (FR-SK-064): moves each converted curve onto its model edge as the body is now,
+   * marks the ones whose edge is gone as dangling, and re-solves. Null when nothing changed.
+   */
+  followEdges(sk: SketchFeature, body: Named | null, frame: Frame): SketchFeature | null {
+    if (!sk.rels.some(r => r.ext)) return null;
+    const out: SketchFeature = structuredClone(sk);
+    let lost = 0;
+    for (const r of out.rels) {
+      if (!r.ext) continue;
+      const ent = out.ents.find(e => e.id === r.e[0]);
+      let ok = false;
+      try {
+        const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
+        ok = !!g && applyExt(out, ent!, g);
+      } catch { ok = false; }
+      if (ok) delete r.dangling; else { r.dangling = true; lost++; }
+    }
+    if (lost) this.warning = "The sketch has dangling references: model edges it follows are gone.";
+    if (JSON.stringify(out) === JSON.stringify(sk)) return null;
+    solve(out);
+    return JSON.stringify(out) === JSON.stringify(sk) ? null : out;
   }
 
   /** The frame of a sketch plane. */
@@ -1139,8 +1181,11 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame> } {
+  evaluate(doc: PartDoc): { body: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature> } {
     const end = doc.rollback ?? doc.features.length;
+    // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
+    doc = { ...doc, features: [...doc.features] };
+    const sketches: Record<string, SketchFeature> = {};
     let body: Named | null = null;
     let chain = "";
     const statuses: FeatureStatus[] = [];
@@ -1160,19 +1205,25 @@ export class Modeller {
         statuses.push(hit.status);
         if (hit.frame) frames[f.id] = hit.frame;
         if (hit.tools) this.tools.set(f.id, hit.tools);
+        if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
         if (!hit.status.ok) failed.add(f.id);
         if (hit.body) body = hit.body;
         return;
       }
       let status: FeatureStatus = { id: f.id, ok: true };
       let frame: Frame | undefined;
+      let moved: SketchFeature | undefined;
       if (f.suppressed) status = { id: f.id, ok: true, code: "suppressed" };
       else {
         try {
           if (featureRefs(f).features.some(p => failed.has(p))) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
           this.warning = "";
-          if (f.type === "sketch") { frame = this.frameOf(f, body, frames); frames[f.id] = frame; }
-          else if (f.type === "plane") { frame = this.refPlane(f, body, frames); frames[f.id] = frame; }
+          if (f.type === "sketch") {
+            frame = this.frameOf(f, body, frames);
+            frames[f.id] = frame;
+            moved = this.followEdges(f, body, frame) ?? undefined;
+            if (moved) { doc.features[i] = moved; sketches[f.id] = moved; }
+          } else if (f.type === "plane") { frame = this.refPlane(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "axis") { frame = this.refAxis(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "point") { frame = this.refPoint(f, body); frames[f.id] = frame; }
           else if (f.type === "csys") { frame = this.refCsys(f, body, frames); frames[f.id] = frame; }
@@ -1199,10 +1250,10 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id) });
+      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved });
     });
     this.cache = next;
-    return { body, statuses, frames };
+    return { body, statuses, frames, sketches };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

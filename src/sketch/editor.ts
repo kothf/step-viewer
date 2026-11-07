@@ -9,7 +9,9 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
+import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
+import { applyExt, projectEdge, type ModelEdge } from "./external";
+import { renameIn } from "../model/params";
 import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { cutTriangles, thin } from "./intersect";
@@ -62,10 +64,13 @@ export interface SketchHost {
   modelEdges?(e: PointerEvent): ModelEdge[] | null;
   /** The model face under the pointer: its triangles (9 numbers each, world mm) and kind (intersection curve). */
   modelFace?(e: PointerEvent): { tri: ArrayLike<number>; type: string; axis?: [number, number, number]; center?: [number, number, number]; radius?: number } | null;
+  /** A persistent reference to a shown model edge, so a converted curve follows it (FR-SK-064). */
+  edgeRef?(ed: ModelEdge): EdgeRef | null;
+  /** Dimension names typed by the user: rewrite "old@Sketch" in the other features' expressions (FR-SK-065). */
+  renamedDim?(from: string, to: string): void;
 }
 
-/** A model edge for Convert entities, in world millimetres. */
-export interface ModelEdge { type: string; start: [number, number, number]; end: [number, number, number]; mid: [number, number, number]; closed: boolean; center?: [number, number, number]; axis?: [number, number, number]; radius?: number }
+export type { ModelEdge };
 
 const SNAP_PX = 9;
 const HV_TOL = (3 * Math.PI) / 180;
@@ -78,6 +83,8 @@ const COLORS = {
   light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
   dark: { free: 0x6ea8ff, defined: 0xe8ecf2, cons: 0x8a94a6, sel: 0xffa94d, hover: 0xffc078, bad: 0xff6b5e, dim: 0xcbd5e1, pre: 0x51cf66 },
 };
+/** Curves whose model edge is gone (FR-SK-064): olive brown, as dangling items in SolidWorks. */
+const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
 const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
@@ -88,6 +95,12 @@ export const REL_NAME: Record<RelKind, string> = {
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
   onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection",
 };
+
+/** A relation's name: a fix that follows a model edge is "On edge". */
+export const relName = (r: SkRel) => (r.ext ? "On edge" : REL_NAME[r.t]);
+
+/** Dimension names: a letter, then letters, digits and underscores (usable as "D1@Sketch1" in expressions). */
+export const validDimName = (s: string) => /^[a-z_а-я][\wа-я]*$/i.test(s);
 
 export class SketchEditor {
   sk: SketchFeature;
@@ -115,6 +128,12 @@ export class SketchEditor {
   private box: { a: V2; b: V2; x0: number; base: Set<string> } | null = null;
   private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature } | null = null;
   private labels = new Map<string, HTMLElement>();
+  /** A dimension value or dangling relation glyph being dragged (FR-SK-066, FR-SK-064). */
+  private labelDrag: { id: string; x0: number; y0: number; moved: boolean; base: SketchFeature } | null = null;
+  /** Re-attach: the dangling On edge relation the next model edge click attaches (FR-SK-064). */
+  reattaching: string | null = null;
+  /** Show dimension names with their values (FR-SK-065). */
+  showNames = false;
   private input: HTMLInputElement | null = null;
   private marker: THREE.Mesh;
   private dark = false;
@@ -158,6 +177,7 @@ export class SketchEditor {
 
   setTool(tool: SkTool) {
     this.closeInput(false);
+    this.reattaching = null;
     this.tool = tool;
     this.draft = { pts: [], ids: [], cursor: null, snap: null };
     this.dimDraft = { picks: [], dim: null };
@@ -166,6 +186,9 @@ export class SketchEditor {
     this.render();
     this.statusHint();
   }
+
+  /** Something is in progress (drag, drawing, value box): the stored sketch must not replace it now. */
+  get busy() { return !!(this.drag || this.labelDrag || this.box || this.input || this.draft.pts.length || this.dimDraft.picks.length); }
 
   private has(id: string) {
     return id === ORIGIN || this.sk.ents.some(e => e.id === id) || this.sk.rels.some(r => r.id === id) || this.sk.dims.some(d => d.id === id);
@@ -785,6 +808,22 @@ export class SketchEditor {
     this.info = r;
     this.commit("Change dimension");
     this.render();
+  }
+
+  /** Renames a dimension (FR-SK-065); expressions that use "old@Sketch" follow. Returns an error key, or "". */
+  renameDim(id: string, name: string): string {
+    const dim = this.sk.dims.find(d => d.id === id);
+    name = name.trim();
+    if (!dim || name === dim.name) return "";
+    if (!validDimName(name)) return "A name starts with a letter and has only letters, digits and _.";
+    if (this.sk.dims.some(d => d !== dim && d.name === name)) return "Another dimension of this sketch has that name.";
+    const from = `${dim.name}@${this.sk.name}`, to = `${name}@${this.sk.name}`;
+    dim.name = name;
+    for (const d of this.sk.dims) if (d.val.expr) d.val.expr = renameIn(d.val.expr, from, to);
+    this.commit("Rename dimension");
+    this.host.renamedDim?.(from, to);
+    this.render();
+    return "";
   }
 
   // ---------- relations, construction, delete ----------
@@ -1564,53 +1603,78 @@ export class SketchEditor {
 
   // ---------- convert entities (FR-SK-035) ----------
 
-  /** Copies the model edges under the pointer into the sketch, projected onto its plane and fixed there (static in P1). */
+  /**
+   * Copies the model edges under the pointer into the sketch, projected onto its plane. Each copy gets an
+   * On edge relation: it is fixed, and follows its edge when the model changes (FR-SK-064).
+   */
   private convertAt(e: PointerEvent) {
+    if (this.reattaching) { this.reattachAt(e); return; }
     const edges = this.host.modelEdges?.(e);
     if (!edges?.length) { this.host.toast(t("Click a model edge or face to convert.")); return; }
-    const f = this.frame;
-    const uv = (w: [number, number, number]): V2 => {
-      const q = [w[0] - f.o[0], w[1] - f.o[1], w[2] - f.o[2]];
-      return [q[0] * f.x[0] + q[1] * f.x[1] + q[2] * f.x[2], q[0] * f.y[0] + q[1] * f.y[1] + q[2] * f.y[2]];
-    };
-    const ptAt = new Map<string, string>();
-    const point = (q: V2) => {
-      const key = `${q[0].toFixed(6)},${q[1].toFixed(6)}`;
-      let id = ptAt.get(key) ?? this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-6)?.id;
-      if (!id) { id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); }
-      ptAt.set(key, id);
-      return id;
-    };
-    const fixed: string[] = [];
+    const made: { id: string; ext: EdgeRef | null }[] = [];
     let skipped = 0;
     for (const ed of edges) {
-      const round = (ed.type === "circle" || ed.type === "arc") && ed.center && ed.radius && ed.axis;
-      const normal = round && Math.abs(ed.axis![0] * f.n[0] + ed.axis![1] * f.n[1] + ed.axis![2] * f.n[2]) > 1 - 1e-6;
-      if (ed.type === "line") {
-        const a = uv(ed.start), b = uv(ed.end);
-        if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) { skipped++; continue; }
-        const id = uid("l");
-        this.sk.ents.push({ id, t: "line", a: point(a), b: point(b) });
-        fixed.push(id);
-      } else if (round && normal && ed.closed) {
-        const id = uid("c");
-        this.sk.ents.push({ id, t: "circle", c: point(uv(ed.center!)), r: ed.radius! });
-        fixed.push(id);
-      } else if (round && normal) {
-        const c = uv(ed.center!), a = uv(ed.start), b = uv(ed.end), m = uv(ed.mid);
-        const ang = (q: V2) => Math.atan2(q[1] - c[1], q[0] - c[0]);
-        const sw = (x: number, y: number) => { let k = y - x; while (k <= 0) k += Math.PI * 2; return k; };
-        const ccw = sw(ang(a), ang(m)) < sw(ang(a), ang(b));
-        const id = uid("a");
-        this.sk.ents.push({ id, t: "arc", c: point(c), a: point(ccw ? a : b), b: point(ccw ? b : a) });
-        fixed.push(id);
-      } else skipped++;
+      const g = projectEdge(ed, this.frame);
+      if (!g) { skipped++; continue; }
+      const ent = this.entFrom(g);
+      made.push({ id: ent.id, ext: this.host.edgeRef?.(ed) ?? null });
     }
-    if (!fixed.length) { this.host.toast(t("Only straight edges and circles square to the sketch can be converted."), "warn"); return; }
-    for (const id of fixed) this.sk.rels.push({ id: uid("r"), t: "fix", e: [id] });
+    if (!made.length) { this.host.toast(t("Only straight edges and circles square to the sketch can be converted."), "warn"); return; }
+    for (const m of made) this.sk.rels.push({ id: uid("r"), t: "fix", e: [m.id], ...(m.ext ? { ext: m.ext } : {}) });
     if (skipped) this.host.toast(t("{n} edges were not converted (curves not square to the sketch).", { n: skipped }), "warn");
     this.commit("Convert entities");
     this.render();
+  }
+
+  /** A new sketch curve on projected edge geometry, reusing points already there. */
+  private entFrom(g: ReturnType<typeof projectEdge> & object): SkEnt {
+    const point = (q: V2) => {
+      let id = this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - q[0], x.y - q[1]) < 1e-6)?.id;
+      if (!id) { id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); }
+      return id;
+    };
+    const ent: SkEnt = g.t === "line" ? { id: uid("l"), t: "line", a: point(g.a), b: point(g.b) }
+      : g.t === "circle" ? { id: uid("c"), t: "circle", c: point(g.c), r: g.r }
+      : { id: uid("a"), t: "arc", c: point(g.c), a: point(g.a), b: point(g.b) };
+    this.sk.ents.push(ent);
+    return ent;
+  }
+
+  /** Dangling On edge relations of the selection (or all of them when nothing dangling is selected). */
+  danglingRels(): SkRel[] {
+    const all = this.sk.rels.filter(r => r.ext && r.dangling);
+    const sel = all.filter(r => this.selection.has(r.id) || r.e.some(x => this.selection.has(x)));
+    return sel.length ? sel : all;
+  }
+
+  /** Re-attach (FR-SK-064): the next model edge clicked takes over the dangling relation. */
+  startReattach(relId: string) {
+    this.setTool("convert");
+    this.reattaching = relId;
+    this.host.status(t("Click the model edge the curve should follow now."));
+  }
+
+  /** Attaches the dangling relation being re-attached to the edge under the pointer. */
+  private reattachAt(e: PointerEvent): boolean {
+    const id = this.reattaching;
+    const rel = this.sk.rels.find(r => r.id === id);
+    const ed = this.host.modelEdges?.(e);
+    if (!rel || !ed?.length || ed.length !== 1) { this.host.toast(t("Click one model edge.")); return false; }
+    const ent = this.ent(rel.e[0]);
+    const g = projectEdge(ed[0], this.frame);
+    const ref = this.host.edgeRef?.(ed[0]) ?? null;
+    const next = structuredClone(this.sk);
+    const ne = next.ents.find(x => x.id === ent?.id);
+    if (!g || !ne || !ref || !applyExt(next, ne, g)) { this.host.toast(t("That edge is a different kind of curve: pick a {kind}.", { kind: t(ent?.t === "line" ? "straight edge" : ent?.t === "circle" ? "circular edge" : "arc edge") }), "warn"); return false; }
+    const nr = next.rels.find(r => r.id === id)!;
+    nr.ext = ref;
+    delete nr.dangling;
+    this.reattaching = null;
+    this.sk = next;
+    this.commit("Re-attach");
+    this.setTool("select");
+    this.host.onSelection?.([...this.selection]);
+    return true;
   }
 
   // ---------- intersection curve (FR-SK-036) ----------
@@ -1772,9 +1836,11 @@ export class SketchEditor {
     this.clearGroup();
     const segs: number[] = [], cols: number[] = [];
     const dimSegs: number[] = [], dimCols: number[] = [];
+    const lost = new Set(this.sk.rels.filter(r => r.ext && r.dangling).map(r => r.e[0]));
     const color = (id: string, cons?: boolean) => {
       if (this.selection.has(id)) return C.sel;
       if (this.hover?.id === id) return C.hover;
+      if (lost.has(id)) return this.dark ? DANGLING.dark : DANGLING.light;
       if (this.info.status !== "ok" && this.info.conflicting.length) return C.bad;
       if (cons) return C.cons;
       return this.info.defined.has(id) ? C.defined : C.free;
@@ -2006,12 +2072,15 @@ export class SketchEditor {
     const mk = (id: string, cls: string) => {
       let el = this.labels.get(id);
       if (!el) {
-        el = document.createElement("button");
+        const b = el = document.createElement("button");
         el.className = cls;
         el.dataset.id = id;
-        el.addEventListener("pointerdown", e => e.stopPropagation());
+        // Dimension names are the user's ("D1@Sketch1"): not translated.
+        if (cls.includes("sk-dim")) el.setAttribute("translate", "no");
+        el.addEventListener("pointerdown", e => { e.stopPropagation(); this.labelDown(id, b, e); });
         el.addEventListener("click", ev => {
           ev.stopPropagation();
+          if (b.dataset.dragged) { delete b.dataset.dragged; return; }
           if (cls.includes("sk-dim")) {
             if (this.tool === "select" && (ev.detail >= 2 || this.selection.has(id))) { this.editDim(id); return; }
           }
@@ -2033,7 +2102,9 @@ export class SketchEditor {
       el.textContent = d.driven ? `(${v})` : v;
       if (d.dia && !d.driven) el.textContent = `⌀${v}`;
       else if (d.dia) el.textContent = `(⌀${v})`;
-      el.title = `${d.name}${d.val.expr ? ` = ${d.val.expr}` : ""}${d.driven ? ` · ${t("reference")}` : ""}`;
+      // Full name on hover (FR-SK-065), as expressions use it.
+      el.title = `${d.name}@${this.sk.name}${d.val.expr ? ` = ${d.val.expr}` : ""}${d.driven ? ` · ${t("reference")}` : ""}`;
+      if (this.showNames) { const n = document.createElement("span"); n.className = "sk-dname"; n.textContent = d.name; n.setAttribute("translate", "no"); el.prepend(n); }
       el.classList.toggle("sel", this.selection.has(d.id));
       el.classList.toggle("driven", !!d.driven);
       el.classList.toggle("draft", d === this.dimDraft.dim);
@@ -2056,10 +2127,12 @@ export class SketchEditor {
     for (const r of this.sk.rels) {
       if (r.t === "coincident" || r.t === "onCurve") continue;
       const el = mk(r.id, "sk-rel");
-      el.textContent = REL_GLYPH[r.t];
-      el.title = t(REL_NAME[r.t]);
-      el.setAttribute("aria-label", t(REL_NAME[r.t]));
+      el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
+      const name = t(relName(r)) + (r.dangling ? ` · ${t("dangling: drag onto a model edge to re-attach")}` : "");
+      el.title = name;
+      el.setAttribute("aria-label", name);
       el.classList.toggle("sel", this.selection.has(r.id));
+      el.classList.toggle("dangling", !!r.dangling);
       const anchor = r.e.find(x => x !== ORIGIN) ?? ORIGIN;
       const k = per.get(anchor) ?? 0;
       per.set(anchor, k + 1);
@@ -2068,6 +2141,54 @@ export class SketchEditor {
     }
     for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); }
     this.placeLabels();
+  }
+
+  /**
+   * Dragging a dimension value moves its text, stored with the dimension (FR-SK-066); dragging a dangling
+   * On edge glyph onto a model edge re-attaches it (FR-SK-064).
+   */
+  private labelDown(id: string, el: HTMLElement, e: PointerEvent) {
+    if (e.button !== 0 || this.tool !== "select" || this.input) return;
+    const dim = this.sk.dims.find(d => d.id === id);
+    const rel = this.sk.rels.find(r => r.id === id && r.ext && r.dangling);
+    if (!dim && !rel) return;
+    this.labelDrag = { id, x0: e.clientX, y0: e.clientY, moved: false, base: structuredClone(this.sk) };
+    try { el.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+    const move = (ev: PointerEvent) => {
+      const d = this.labelDrag;
+      if (!d) return;
+      if (!d.moved && Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 4) return;
+      d.moved = true;
+      if (rel) { el.style.left = `${ev.clientX - this.host.layer.getBoundingClientRect().left}px`; el.style.top = `${ev.clientY - this.host.layer.getBoundingClientRect().top}px`; return; }
+      const p = this.uv(ev);
+      const dm = this.sk.dims.find(x => x.id === id);
+      if (!p || !dm) return;
+      // Ordinate values stay on their row's line; the row moves sideways.
+      if (dm.ord && dm.pos) dm.pos = dm.t === "hdistance" ? [dm.pos[0], p[1]] : [p[0], dm.pos[1]];
+      else dm.pos = p;
+      this.render();
+    };
+    const up = (ev: PointerEvent) => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      const d = this.labelDrag;
+      this.labelDrag = null;
+      if (!d?.moved) return;
+      el.dataset.dragged = "1";
+      setTimeout(() => delete el.dataset.dragged, 0);
+      if (rel) {
+        this.reattaching = rel.id;
+        const ok = this.reattachAt(ev);
+        this.reattaching = null;
+        if (!ok) this.render();
+        return;
+      }
+      this.commit("Move dimension text");
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   }
 
   private anchorOf(id: string): V2 {

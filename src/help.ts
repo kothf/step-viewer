@@ -205,6 +205,8 @@ const EN: Tab[] = [
   <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Select an item to see orange arrows where it can still move. Drag geometry to try it.</li>
   <li>When a sketch is over-defined, the <b>Sketch assistant</b> in the panel lists the relations and dimensions whose deletion makes it solve again. <b>Show</b> highlights them in the sketch, and <b>Delete</b> removes them.</li>
   <li>Two selected points can be joined with <b>Merge points</b>: the second is replaced by the first everywhere. Select a point and two curves for the <b>Intersection</b> relation, which keeps the point where they cross.</li>
+  <li><b>Convert entities</b> copies model edges into the sketch with an <b>On edge</b> relation: they follow their edge when the model changes. If the edge disappears the relation is <b>dangling</b> (olive): drag its glyph onto another edge, or use <b>Re-attach</b> in the panel, or delete the relation to keep the curve free. Right-click a sketch in the tree for <b>Edit sketch plane</b> to move it to another plane or face.</li>
+  <li>Hover a dimension to see its full name, such as <code>D1@Sketch1</code>, which equations and other values can use. Select one dimension to rename it in the panel (expressions follow); <b>Show dimension names</b> puts the names on the sketch. Drag a dimension's value to move its text.</li>
   <li>✓ or <kbd>Enter</kbd> leaves the sketch; ✕ asks before discarding its changes.</li>
 </ul>
 <h4>Features</h4>
@@ -419,6 +421,8 @@ const RU: Tab[] = [
   <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Выберите элемент: оранжевые стрелки покажут, куда он ещё может двигаться. Перетащите геометрию, чтобы проверить.</li>
   <li>Если эскиз переопределён, <b>Помощник эскиза</b> на панели перечисляет взаимосвязи и размеры, удаление которых снова делает его решаемым. <b>Показать</b> выделяет их в эскизе, <b>Удалить</b> убирает их.</li>
   <li>Две выбранные точки можно соединить кнопкой <b>Объединить точки</b>: вторая всюду заменяется первой. Выберите точку и две кривые для взаимосвязи <b>Пересечение</b>: точка остаётся там, где они пересекаются.</li>
+  <li><b>Преобразование объектов</b> копирует рёбра модели в эскиз со взаимосвязью <b>На ребре</b>: при изменении модели кривые следуют за своими рёбрами. Если ребро исчезло, взаимосвязь становится <b>висячей</b> (оливковой): перетащите её значок на другое ребро, нажмите <b>Присоединить заново</b> на панели или удалите взаимосвязь, чтобы кривая стала свободной. Правый щелчок по эскизу в дереве, <b>Изменить плоскость эскиза</b>, переносит его на другую плоскость или грань.</li>
+  <li>Наведите указатель на размер, чтобы увидеть его полное имя, например <code>D1@Sketch1</code>: его можно использовать в уравнениях и других значениях. Выберите один размер, чтобы переименовать его на панели (выражения меняются вместе с ним); <b>Показывать имена размеров</b> выводит имена на эскиз. Перетащите значение размера, чтобы переместить текст.</li>
   <li>✓ или <kbd>Enter</kbd> выходит из эскиза; ✕ спрашивает, прежде чем отменить изменения.</li>
 </ul>
 <h4>Элементы</h4>

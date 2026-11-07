@@ -30,7 +30,13 @@ export type RelKind =
   /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
   | "intersection";
 
-export interface SkRel { id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean }
+export interface SkRel {
+  id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
+  /** "On edge" (fix only, FR-SK-064): the model edge a converted curve follows on every rebuild. */
+  ext?: EdgeRef;
+  /** Set by the rebuild when `ext` no longer resolves: the curve keeps its place, shown as dangling. */
+  dangling?: boolean;
+}
 
 export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle";
 

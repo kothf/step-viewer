@@ -544,3 +544,52 @@ test("multiple radius fillet: each edge its own radius (FR-FT-031)", async () =>
   r = run(m, doc([s1, ex, { id: "f2", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges } as Feature]));
   close(r.props!.volume, 120000 - 2 * corner(5), 1e-6);
 });
+
+test("converted curves follow their model edge and dangle when it is gone (FR-SK-064)", async () => {
+  const m = new Modeller(await occ());
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 0, 0, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  // A boss on the hole's top edge (converted circle, drawn too small) and a line on the block's right top edge (drawn off).
+  const s3: SketchFeature = {
+    id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "f1:end" } }, dims: [],
+    ents: [
+      { id: "c0", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "c0", r: 3 },
+      { id: "q1", t: "point", x: 40, y: -10 }, { id: "q2", t: "point", x: 40, y: 10 }, { id: "ln", t: "line", a: "q1", b: "q2", cons: true },
+    ],
+    rels: [
+      { id: "r1", t: "fix", e: ["c"], ext: { faces: ["f1:end", "f2:side:s2k"] } },
+      { id: "r2", t: "fix", e: ["ln"], ext: { faces: ["f1:end", "f1:side:s1l2"] } },
+    ],
+  };
+  const boss: Feature = { id: "f3", type: "extrude", name: "Boss", sketch: "s3", op: "boss", end: "blind", depth: { v: 5 } };
+  let r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, s2, cut, s3, boss]));
+  const moved = r.sketches.s3;
+  assert.ok(moved, "the sketch follows the model");
+  const circ = moved.ents.find(e => e.id === "c") as SkEnt & { t: "circle" };
+  close(circ.r, 5);
+  const pts = moved.ents.filter(e => e.id === "q1" || e.id === "q2") as (SkEnt & { t: "point" })[];
+  for (const p of pts) close(Math.abs(p.x), 50);
+  close(Math.abs(pts[0].y - pts[1].y), 60);
+  // The boss uses the moved circle: it fills the hole's top with a 5 mm cylinder of radius 5.
+  close(r.props!.volume, 120000 - 500 * Math.PI + 125 * Math.PI);
+  assert.ok(!moved.rels.some(x => x.dangling));
+
+  // Wider block: the line moves with its edge.
+  r = run(m, doc([rect("s1", 0, 0, 140, 60), ex, s2, cut, s3, boss]));
+  for (const p of r.sketches.s3.ents.filter(e => e.id === "q1" || e.id === "q2") as (SkEnt & { t: "point" })[]) close(Math.abs(p.x), 70);
+
+  // The edge is gone (no hole any more): dangling, the circle stays, and the sketch warns.
+  const noHole = structuredClone(s3);
+  noHole.rels[0].ext = { faces: ["f1:end", "f9:side:x"] };
+  r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, noHole, boss]));
+  const dg = r.sketches.s3;
+  assert.equal(dg.rels.find(x => x.id === "r1")!.dangling, true);
+  assert.ok(!dg.rels.find(x => x.id === "r2")!.dangling);
+  close((dg.ents.find(e => e.id === "c") as SkEnt & { t: "circle" }).r, 3);
+  const st = r.statuses.find(s => s.id === "s3")!;
+  assert.equal(st.code, "warning");
+  // Evaluated again from the moved sketch: nothing more to change (no rebuild loop).
+  const again = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex, dg, boss]));
+  assert.equal(again.sketches.s3, undefined);
+});
