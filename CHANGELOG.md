@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-11-07
+
+### Added
+- **More extrude end conditions** (FR-FT-012). **Up to next** stops at the next face the profile meets: a boss fills the gap up to the body, and a cut goes through the material until it first opens into a void. **Up to vertex** ends level with a picked vertex (click near the end of an edge) or a reference point, extruding toward it.
+- **Start from** for extrudes (FR-FT-013): the sketch plane, an **Offset** from it (the drag arrow moves with it), a parallel **face or plane**, or level with a **vertex**. It works with every end condition.
+
 ## [1.40.0] - 2026-11-07
 
 ### Added
@@ -450,7 +456,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.40.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.41.0...HEAD
+[1.41.0]: https://github.com/kothf/step-viewer/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/kothf/step-viewer/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/kothf/step-viewer/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/kothf/step-viewer/compare/v1.37.0...v1.38.0

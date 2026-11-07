@@ -74,7 +74,10 @@ export interface EdgeRef { faces: [string, string]; hint?: V3 }
 
 // ---------- features ----------
 
-export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2";
+export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2" | "next" | "vertex";
+
+/** A vertex (FR-FT-012/013): the end of an edge nearer `at`, or a reference point feature. */
+export type VertexRef = { edge: EdgeRef; at: V3 } | { point: string };
 
 export interface ExtrudeFeature {
   id: string; type: "extrude"; name: string; suppressed?: boolean;
@@ -92,6 +95,17 @@ export interface ExtrudeFeature {
   /** Offset from surface: the distance short of the face (or past it, reversed). */
   upToOffset?: Num;
   reverseOffset?: boolean;
+  /** Up to vertex: the extrusion ends level with this vertex. */
+  upToVertex?: VertexRef;
+  /** Start from (FR-FT-013): absent is the sketch plane. */
+  start?: "offset" | "surface" | "vertex";
+  /** Start from Offset: the distance from the sketch plane (along its normal; reversed the other way). */
+  startOffset?: Num;
+  startReverse?: boolean;
+  /** Start from Surface/Face/Plane: a flat face or plane parallel to the sketch. */
+  startRef?: PlaneRef;
+  /** Start from Vertex: the profile starts level with this vertex. */
+  startVertex?: VertexRef;
   /** Thin feature (FR-FT-015): a wall of this thickness along the profile instead of a solid. */
   thin?: { t: Num; mode: "inside" | "outside" | "mid" };
   /** Draft while extruding (FR-FT-014): the side faces taper by this angle (outward: they flare). */

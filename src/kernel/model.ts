@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -383,13 +383,25 @@ export class Modeller {
     if (sk.suppressed) throw new FeatureError("E-FT-PARENT", "The feature's sketch is suppressed.");
     const frame = frames[sk.id] ?? this.frameOf(sk, prev, frames);
     let tools: Named[] = [];
+    // Start from (FR-FT-013): the profile moves along the sketch normal before it is swept.
+    const so = f.type === "extrude" ? mul(frame.n, this.startShift(f, frame, prev, frames)) : [0, 0, 0] as V3;
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset")) {
-      tools = this.upTo(f, sk, frame, prev, frames);
+      tools = this.upTo(f, sk, frame, prev, frames, so);
     } else if (f.type === "extrude") {
       // A cut goes into the material (against the sketch normal); Reverse direction flips either.
-      const dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
+      let dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
       let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
       if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
+      if (f.end === "vertex") {
+        // Up to vertex: as far as the vertex's level, toward it.
+        const s = dot(add(this.vertexPos(f.upToVertex, prev, frames), mul(add(frame.o, so), -1)), frame.n);
+        if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The vertex is level with the start of the extrusion.");
+        dir = Math.sign(s); d1 = Math.abs(s); d2 = 0;
+      }
+      if (f.end === "next") {
+        if (!prev) throw new FeatureError("E-FT-NOBODY", "Up to next needs a body.");
+        d1 = this.reach(prev.shape, add(frame.o, so), mul(frame.n, dir)) + 1; d2 = 0;
+      }
       if (f.end === "through" || f.end === "through2") {
         if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
         d1 = this.size(prev.shape) * 2 + 1;
@@ -397,7 +409,7 @@ export class Modeller {
         d2 = f.end === "through2" ? d1 : 0;
       }
       if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
-      const off = mul(frame.n, -d2 * dir);
+      const off = add(so, mul(frame.n, -d2 * dir));
       const { faces, edgeEnt } = this.profileFaces(sk, frame, off);
       for (const face0 of faces) {
         const face = f.thin ? this.thinFace(face0, f.thin) : face0;
@@ -412,6 +424,7 @@ export class Modeller {
           const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
           t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
         }
+        if (f.end === "next") t = this.upToNext(t, prev!, f, add(frame.o, so), mul(frame.n, dir), d1);
         tools.push(t);
       }
     } else {
@@ -464,7 +477,7 @@ export class Modeller {
    * target's plane cut away with a slab; the target's face becomes the feature's end face.
    * Flat faces and planes only in P1.
    */
-  private upTo(f: Feature & { type: "extrude" }, sk: SketchFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>): Named[] {
+  private upTo(f: Feature & { type: "extrude" }, sk: SketchFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>, so: V3 = [0, 0, 0]): Named[] {
     const oc = this.oc;
     if (!f.upTo) throw new FeatureError("E-FT-UPTO", "Pick the face or plane the extrusion goes up to.");
     let target: Frame;
@@ -478,7 +491,7 @@ export class Modeller {
     // Where the profile's middle meets the target along the sketch normal.
     const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
     const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
-    const c = this.w(frame, mid);
+    const c = add(this.w(frame, mid), so);
     const den = dot(frame.n, target.n);
     if (Math.abs(den) < 1e-9) throw new FeatureError("E-FT-UPTO", "The face is parallel to the extrusion direction.");
     let s = dot(add(target.o, mul(c, -1)), target.n) / den;
@@ -493,7 +506,7 @@ export class Modeller {
     }
     const dir = Math.sign(s);
     const big = Math.abs(s) * 2 + (prev ? this.size(prev.shape) : 0) * 2 + 10;
-    const { faces, edgeEnt } = this.profileFaces(sk, frame);
+    const { faces, edgeEnt } = this.profileFaces(sk, frame, so);
     const tools: Named[] = [];
     for (const face of faces) {
       const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, big * dir)), false, true);
@@ -515,6 +528,63 @@ export class Modeller {
       if (out.names.some(n => n === `${f.id}:slab`)) throw new FeatureError("E-FT-UPTO", "The extrusion does not reach that face.");
       return out;
     });
+  }
+
+  /** Where a vertex reference is: an edge end or a reference point. */
+  private vertexPos(r: VertexRef | undefined, body: Named | null, frames: Record<string, Frame>): V3 {
+    if (!r) throw new FeatureError("E-FT-VERTEX", "Pick a vertex.");
+    if ("point" in r) {
+      const fr = frames[r.point];
+      if (!fr) throw new FeatureError("E-FT-PARENT", "The reference point is missing or suppressed.");
+      return fr.o;
+    }
+    return this.refPoint({ id: "", type: "point", name: "", mode: "vertex", edge: r.edge, at: r.at }, body).o;
+  }
+
+  /** Start from (FR-FT-013): how far the profile moves along the sketch normal. */
+  private startShift(f: ExtrudeFeature, frame: Frame, prev: Named | null, frames: Record<string, Frame>): number {
+    if (f.start === "offset") return (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1);
+    if (f.start === "vertex") return dot(add(this.vertexPos(f.startVertex, prev, frames), mul(frame.o, -1)), frame.n);
+    if (f.start !== "surface") return 0;
+    if (!f.startRef) throw new FeatureError("E-FT-START", "Pick the face or plane the extrusion starts from.");
+    let target: Frame;
+    try { target = this.planeFrame(f.startRef, prev, frames); }
+    catch (err) {
+      if (err instanceof FeatureError && err.code === "E-FT-NOTPLANAR") throw new FeatureError("E-FT-START", "Start from a face needs a flat face or a plane.");
+      throw err;
+    }
+    if (Math.abs(Math.abs(dot(target.n, frame.n)) - 1) > 1e-6) throw new FeatureError("E-FT-START", "The start face must be parallel to the sketch.");
+    return dot(add(target.o, mul(frame.o, -1)), target.n) / dot(frame.n, target.n);
+  }
+
+  /**
+   * Up to next (FR-FT-012): a long tool, then the piece of it next to the profile: for a boss the
+   * gap up to the body, for a cut the material up to where it first opens into a void.
+   */
+  private upToNext(tool: Named, body: Named, f: ExtrudeFeature, start: V3, dirN: V3, len: number): Named {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum;
+    const piece = this.bool(f.op === "boss" ? "cut" : "common", tool, body, f.id);
+    const level = (s: any) => {
+      const map = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(s, A.TopAbs_VERTEX, map);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 1; i <= map.Extent(); i++) {
+        const d = dot(add(this.xyz(oc.BRep_Tool.Pnt(oc.TopoDS.Vertex_1(map.FindKey(i)))), mul(start, -1)), dirN);
+        lo = Math.min(lo, d); hi = Math.max(hi, d);
+      }
+      return [lo, hi];
+    };
+    let best: any = null, bestLo = Infinity, bestHi = 0;
+    for (const ex = new oc.TopExp_Explorer_2(piece.shape, A.TopAbs_SOLID, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const s = oc.TopoDS.Solid_1(ex.Current());
+      const [lo, hi] = level(s);
+      if (Math.abs(lo) < Math.abs(bestLo)) { best = s; bestLo = lo; bestHi = hi; }
+    }
+    if (!best || Math.abs(bestLo) > 1e-4) throw new FeatureError(f.op === "boss" ? "E-FT-NEXT" : "E-FT-NOCHANGE", f.op === "boss" ? "The profile starts inside the body: there is no gap up to the next face." : "The cut does not touch the body.");
+    if (f.op === "boss" && bestHi > len - 1e-3) throw new FeatureError("E-FT-NEXT", "Nothing is in the way: the extrusion never meets the body.");
+    const faces = this.sub(best, "FACE");
+    const names = faces.map((x, i) => { const j = piece.faces.findIndex(g => g.IsSame(x)); return j >= 0 ? piece.names[j] : `${f.id}:new:${i}`; });
+    return { shape: best, faces, names };
   }
 
   /** Names the faces of a prism or revolution from the sketch curves they were swept from. */
@@ -1029,6 +1099,17 @@ export class Modeller {
     oc.BRepBndLib.Add(shape, box, false);
     const a = this.xyz(box.CornerMin()), b = this.xyz(box.CornerMax());
     return d3(a, b);
+  }
+
+  /** How far the shape reaches from a point along a direction (0 when all of it is behind). */
+  private reach(shape: any, from: V3, d: V3) {
+    const oc = this.oc;
+    const box = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(shape, box, false);
+    const a = this.xyz(box.CornerMin()), b = this.xyz(box.CornerMax());
+    let r = 0;
+    for (let i = 0; i < 8; i++) r = Math.max(r, dot(add([i & 1 ? b[0] : a[0], i & 2 ? b[1] : a[1], i & 4 ? b[2] : a[2]], mul(from, -1)), d));
+    return r;
   }
 
   private volume(shape: any) {

@@ -19,7 +19,7 @@ import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, 
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3,
+  GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, holeSize, type HoleSize } from "./holes";
@@ -80,7 +80,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type Focus = "base" | "axis" | "upto" | "start" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
 /** Features whose result mirror and patterns can copy. */
@@ -612,6 +612,8 @@ export class ModelController {
     if (f.type === "revolve" && !f.axis) { toast(t("Pick a line of the sketch as the axis."), true); return; }
     if (f.type === "revolve" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the revolve goes up to."), true); return; }
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
+    if (f.type === "extrude" && f.end === "vertex" && !f.upToVertex) { toast(t("Pick the vertex the extrusion goes up to."), true); return; }
+    if (f.type === "extrude" && ((f.start === "surface" && !f.startRef) || (f.start === "vertex" && !f.startVertex))) { toast(t("Pick where the extrusion starts."), true); return; }
     if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
     if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
@@ -988,7 +990,19 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
         else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
-      } else if (m.kind === "feature" && ((m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset")) || (m.draft.type === "revolve" && m.draft.end === "upto"))) {
+      } else if (m.kind === "feature" && m.draft.type === "extrude" && this.extrudeTarget(m.draft, m.focus)) {
+        const f = m.draft, tg = this.extrudeTarget(f, m.focus)!;
+        if (tg === "start-vertex" || tg === "vertex") {
+          const v = this.pickVertex(e);
+          if (!v) return;
+          if (tg === "vertex") f.upToVertex = v; else { f.startVertex = v; m.focus = "upto"; }
+        } else {
+          const r = this.pickRef(e);
+          if (!r) return;
+          if (tg === "upto") f.upTo = r; else { f.startRef = r; m.focus = "upto"; }
+        }
+        this.draftChanged();
+      } else if (m.kind === "feature" && m.draft.type === "revolve" && m.draft.end === "upto") {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
@@ -1093,6 +1107,32 @@ export class ModelController {
   private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
+  /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
+  private extrudeTarget(f: ExtrudeFeature, focus: Focus | undefined): "start-surface" | "start-vertex" | "upto" | "vertex" | null {
+    if (f.start === "surface" && (focus === "start" || !f.startRef)) return "start-surface";
+    if (f.start === "vertex" && (focus === "start" || !f.startVertex)) return "start-vertex";
+    if (f.end === "upto" || f.end === "offset") return "upto";
+    if (f.end === "vertex") return "vertex";
+    return null;
+  }
+
+  /** A vertex under the pointer: the end of the edge under it nearer the click on screen. */
+  private pickVertex(e: PointerEvent): VertexRef | null {
+    const ed = this.host.edgeAt(e.clientX, e.clientY)?.edge;
+    if (!ed) { toast(t("Pick a vertex: click near the end of an edge.")); return null; }
+    const ref = this.refOfEdge(ed);
+    if (!ref) return null;
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return Math.hypot(r.left + ((q.x + 1) / 2) * r.width - e.clientX, r.top + ((1 - q.y) / 2) * r.height - e.clientY); };
+    return { edge: ref, at: scr(ed.start) <= scr(ed.end) ? ed.start : ed.end };
+  }
+
+  private vertexLabel(r: VertexRef | undefined): string {
+    if (!r) return t("None");
+    if ("point" in r) { const f = this.store?.feature(r.point); return f ? featureLabel(f.name) : t("Missing"); }
+    return t("Vertex ({x}, {y}, {z})", { x: trimNum(r.at[0], 3), y: trimNum(r.at[1], 3), z: trimNum(r.at[2], 3) });
+  }
+
   private refLabel(r: PlaneRef | undefined): string {
     if (!r) return t("None");
     if ("std" in r) return t(STD_NAMES[r.std]);
@@ -1452,7 +1492,7 @@ export class ModelController {
       if (f.hidden ?? used.has(f.id)) return;
       this.lines(sketchSegments(f, this.frameOf(f)), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
     });
-    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
+    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
@@ -1703,6 +1743,7 @@ export class ModelController {
     const W = (x: number, y: number) => new THREE.Vector3(...fr.o).addScaledVector(new THREE.Vector3(...fr.x), x).addScaledVector(new THREE.Vector3(...fr.y), y);
     const base = W(cx, cy);
     if (f.type === "revolve") { if (f.end !== "upto") this.drawAngleHandle(f, sk, W); return; }
+    if (f.start === "offset") base.addScaledVector(new THREE.Vector3(...fr.n), (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1));
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
     const tip = base.clone().addScaledVector(dir, mid ? f.depth.v / 2 : f.depth.v);
@@ -2453,7 +2494,13 @@ export class ModelController {
         // Planes picked from the tree while a command needs one.
         const asRef: PlaneRef | null = id.startsWith("std:") ? { std: id.slice(4) as "XY" } : this.store!.feature(id)?.type === "plane" ? { plane: id } : null;
         if (mm.kind === "feature" && asRef && mm.draft.type === "plane" && mm.focus !== "axis" && mm.draft.id !== id) { mm.draft.base = asRef; this.draftChanged(); return; }
-        if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && (mm.draft.end === "upto" || mm.draft.end === "offset")) { mm.draft.upTo = asRef; this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "extrude") {
+          const tg = this.extrudeTarget(mm.draft, mm.focus), pt = this.store!.feature(id)?.type === "point" ? { point: id } : null;
+          if (asRef && tg === "start-surface") { mm.draft.startRef = asRef; mm.focus = "upto"; this.draftChanged(); return; }
+          if (asRef && tg === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
+          if (pt && tg === "start-vertex") { mm.draft.startVertex = pt; mm.focus = "upto"; this.draftChanged(); return; }
+          if (pt && tg === "vertex") { mm.draft.upToVertex = pt; this.draftChanged(); return; }
+        }
         if (mm.kind === "feature" && asRef && mm.draft.type === "revolve" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
@@ -2693,16 +2740,23 @@ export class ModelController {
     const opSel = (op: string) => `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op"><option value="boss"${op === "boss" ? " selected" : ""}>${esc(t("Add material"))}</option><option value="cut"${op === "cut" ? " selected" : ""}>${esc(t("Remove material"))}</option></select></label>`;
     if (f.type === "extrude") {
       title = f.op === "cut" ? t("Cut") : t("Extrude");
-      const ends: [string, string][] = [["blind", t("Blind")], ["mid", t("Mid plane")], ["through", t("Through all")], ...(f.op === "cut" ? [["through2", t("Through all - both")] as [string, string]] : []), ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]];
+      const ends: [string, string][] = [["blind", t("Blind")], ["mid", t("Mid plane")], ["through", t("Through all")], ...(f.op === "cut" ? [["through2", t("Through all - both")] as [string, string]] : []), ["next", t("Up to next")], ["vertex", t("Up to vertex")], ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]];
+      const tg = this.extrudeTarget(f, m.focus);
+      const starts: [string, string][] = [["sketch", t("Sketch plane")], ["offset", t("Offset")], ["surface", t("Surface/Face/Plane")], ["vertex", t("Vertex")]];
+      const startSel = `<label class="pm-field"><span>${esc(t("Start from"))}</span><select data-k="start">${starts.map(([v, l]) => `<option value="${v}"${(f.start ?? "sketch") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`
+        + (f.start === "offset" ? numField("startOffset", t("Start offset"), f.startOffset ?? { v: 10 }, "length") + chk("startReverse", f.startReverse, t("Reverse direction")) : "")
+        + (f.start === "surface" || f.start === "vertex" ? `<div class="pm-field"><span>${esc(t("Start at"))}</span><button class="pm-box${tg?.startsWith("start") ? " focus" : ""}" data-focus="start" translate="no">${esc(f.start === "surface" ? this.refLabel(f.startRef) : this.vertexLabel(f.startVertex))}</button></div>` : "");
       const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const upto = f.end === "upto" || f.end === "offset";
       const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
-      body = group(t("From"), sketchSel(f.sketch) + opSel(f.op))
+      body = group(t("From"), sketchSel(f.sketch) + opSel(f.op) + startSel)
         + group(t("Direction 1"), endSel
-          + (upto ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box focus" data-k="focus-upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (upto ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "upto" ? " focus" : ""}" data-k="focus-upto" data-focus="upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.end === "vertex" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box${tg === "vertex" ? " focus" : ""}" data-focus="upto" translate="no">${esc(this.vertexLabel(f.upToVertex))}</button></div><p class="pm-help muted">${esc(t("Click near the end of an edge, or a reference point in the tree."))}</p>` : "")
+          + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Stops at the next face the profile meets."))}</p>` : "")
           + (f.end === "offset" ? numField("upToOffset", t("Offset distance"), f.upToOffset ?? { v: 5 }, "length") + chk("reverseOffset", f.reverseOffset, t("Reverse offset")) : "")
-          + (f.end === "through" || f.end === "through2" || upto ? "" : numField("depth", t("Depth"), f.depth, "length"))
-          + (upto ? "" : chk("flip", f.flip, t("Reverse direction")))
+          + (f.end === "through" || f.end === "through2" || f.end === "next" || f.end === "vertex" || upto ? "" : numField("depth", t("Depth"), f.depth, "length"))
+          + (upto || f.end === "vertex" ? "" : chk("flip", f.flip, t("Reverse direction")))
           + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
           + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
@@ -2946,6 +3000,16 @@ export class ModelController {
           }, true);
           return;
         }
+        if (k === "start" && f.type === "extrude") {
+          upd(() => {
+            if (val === "sketch") delete f.start; else f.start = val as "offset" | "surface" | "vertex";
+            if (val === "offset") f.startOffset ??= { v: 10 }; else { delete f.startOffset; delete f.startReverse; }
+            if (val !== "surface") delete f.startRef;
+            if (val !== "vertex") delete f.startVertex;
+            if (val === "surface" || val === "vertex") m.focus = "start";
+          }, true);
+          return;
+        }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
@@ -2957,6 +3021,8 @@ export class ModelController {
           if (typeof val === "boolean" && !val) delete g[k]; else g[k] = val;
           if (k === "op" && val !== "cut") delete g.outside;
           if (k === "end" && val !== "upto" && val !== "offset") delete g.upTo;
+          if (k === "end" && val !== "vertex") delete g.upToVertex;
+          if (k === "end" && (val === "upto" || val === "offset" || val === "vertex")) m.focus = "upto";
           if (k === "end" && val === "offset") g.upToOffset ??= { v: 5 };
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
