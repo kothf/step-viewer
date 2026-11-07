@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DocStore, newPart } from "../../src/model/doc";
-import { evalVars, refreshExprs, validVarName } from "../../src/model/params";
+import { evalVars, refreshExprs, renameEverywhere, renameIn, validVarName } from "../../src/model/params";
 import type { PartDoc, SketchFeature } from "../../src/model/types";
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} ≠ ${b}`);
@@ -84,4 +84,12 @@ test("changing a variable drives a sketch dimension and an extrude depth", () =>
   s.undo();
   near(depth(), 10);
   near(b().x, 40);
+});
+
+test("renaming a dimension or a sketch rewrites the expressions that use it (FR-SK-065)", () => {
+  assert.equal(renameIn("D1@Sketch1*2 + D11@Sketch1 + xD1@Sketch1", "D1@Sketch1", "Width@Sketch1"), "Width@Sketch1*2 + D11@Sketch1 + xD1@Sketch1");
+  const d = { vars: [{ name: "w", kind: "length", expr: "D1@Sketch1 / 2" }], features: [{ id: "e", type: "extrude", name: "E", depth: { v: 5, expr: "D1@Sketch1" } }] } as unknown as PartDoc;
+  renameEverywhere(d, "D1@Sketch1", "D1@Base");
+  assert.equal(d.vars![0].expr, "D1@Base / 2");
+  assert.equal((d.features[0] as unknown as { depth: { expr: string } }).depth.expr, "D1@Base");
 });

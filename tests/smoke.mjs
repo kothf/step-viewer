@@ -2971,6 +2971,95 @@ try {
     await ctx.close();
   }
 
+  // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    const s3x = () => mp.evaluate(() => { const sk = window.__sv.model.store.doc.features.find(f => f.id === "s3"); const st = window.__sv.model.last().statuses.find(s => s.id === "s3"); return { xs: sk.ents.filter(e => e.t === "point").map(e => Math.round(Math.abs(e.x) * 1000) / 1000), dangling: sk.rels.filter(r => r.dangling).length, code: st?.code ?? "", ok: st?.ok }; });
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Block", d => {
+        d.features.push(
+          { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -50, -30), P("b", 50, -30), P("c", 50, 30), P("d", -50, 30), L("s1l1", "a", "b"), L("s1l2", "b", "c"), L("s1l3", "c", "d"), L("s1l4", "d", "a")] },
+          { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+          { id: "s3", type: "sketch", name: "Sketch3", hidden: false, plane: { face: { name: "f1:end" } }, dims: [], ents: [P("q1", 40, -10), P("q2", 40, 10), L("ln", "q1", "q2")], rels: [{ id: "r1", t: "fix", e: ["ln"], ext: { faces: ["f1:end", "f1:side:s1l2"] } }] });
+      });
+    });
+    await settle();
+    const a1 = await s3x();
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { for (const e of d.features[0].ents) if (e.t === "point") e.x = Math.sign(e.x) * 70; }));
+    await settle();
+    const a2 = await s3x();
+    check(a1.xs.every(x => Math.abs(x - 50) < 1e-6) && !a1.dangling && a2.xs.every(x => Math.abs(x - 70) < 1e-6) && !a2.dangling && a2.ok, `model 1.53: a converted edge follows the model when it changes (FR-SK-064) (${JSON.stringify(a1)} → ${JSON.stringify(a2)})`);
+    // The edge goes: the relation dangles, the line stays, the sketch warns.
+    await mp.evaluate(() => window.__sv.model.store.change("Lose edge", d => { d.features.find(f => f.id === "s3").rels[0].ext.faces = ["f1:end", "f9:side:zz"]; }));
+    await settle();
+    const a3 = await s3x();
+    check(a3.dangling === 1 && a3.code === "warning" && a3.xs.every(x => Math.abs(x - 70) < 1e-6), `model 1.53: a lost edge leaves a dangling relation and a warning (${JSON.stringify(a3)})`);
+    // In the sketch: the dangling glyph and panel; Re-attach by clicking the block's right top edge.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForFunction(() => window.__sv.model.editor());
+    await settle();
+    const ui = await mp.evaluate(() => ({ glyph: !!document.querySelector("#sk-layer .sk-rel.dangling"), box: !!document.querySelector("#mc-pm .pm-dangling [data-reattach]"), name: document.querySelector("#sk-layer .sk-rel.dangling")?.title ?? "" }));
+    await mp.click("#mc-pm .pm-dangling [data-reattach]");
+    const edgeAt = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new (v.camera.position.constructor)(70, 15, 20).project(v.camera);
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    });
+    await mp.mouse.move(edgeAt[0], edgeAt[1]); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const re = await mp.evaluate(() => { const ed = window.__sv.model.editor(), r = ed.sk.rels.find(x => x.id === "r1"); return { dangling: !!r.dangling, faces: r.ext?.faces.join("|"), tool: ed.tool, box: !!document.querySelector("#mc-pm .pm-dangling") }; });
+    check(ui.glyph && ui.box && /On edge/.test(ui.name) && !re.dangling && /f1:side:s1l2/.test(re.faces ?? "") && re.tool === "select" && !re.box, `model 1.53: Re-attach puts a dangling curve back on a clicked model edge (${JSON.stringify(ui)}, ${JSON.stringify(re)})`);
+    // Dimension text drags and is stored; the full name shows on hover and can be renamed; expressions follow (FR-SK-065/066).
+    await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), next = structuredClone(ed.sk);
+      next.ents.push({ id: "w1", t: "point", x: -30, y: 0 }, { id: "w2", t: "point", x: 0, y: 0 }, { id: "wl", t: "line", a: "w1", b: "w2" });
+      next.dims.push({ id: "dd", name: "D1", t: "distance", e: ["wl"], val: { v: 30 }, pos: [-15, 6] });
+      ed.setSketch(next, ed.frame); ed.commit("Add");
+      window.__sv.model.store.change("Var", d => { d.vars = [{ name: "half", kind: "length", expr: "D1@Sketch3 / 2" }]; });
+    });
+    await settle();
+    const lab = await mp.evaluate(() => { const el = [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd"); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: el.title }; });
+    await mp.mouse.move(lab.x, lab.y); await mp.mouse.down(); await mp.mouse.move(lab.x + 30, lab.y + 30, { steps: 4 }); await mp.mouse.move(lab.x + 60, lab.y + 60, { steps: 4 }); await mp.mouse.up();
+    await mp.waitForTimeout(100);
+    const moved = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
+    check(lab.title === "D1@Sketch3" && Math.hypot(moved.pos[0] + 15, moved.pos[1] - 6) > 3 && JSON.stringify(moved.pos) === JSON.stringify(moved.stored) && !moved.input && moved.v === 30, `model 1.53: dimension text drags and stays where it is put; hover shows D1@Sketch3 (FR-SK-065/066) (${lab.title}, ${JSON.stringify(moved)})`);
+    await mp.evaluate(() => { window.__sv.model.editor().select(["dd"]); window.__sv.model.panel(); });
+    await mp.fill('#mc-pm input[data-a="dimname"]', "Width");
+    await mp.press('#mc-pm input[data-a="dimname"]', "Enter");
+    await mp.evaluate(() => document.querySelector('#mc-pm input[data-a="dimname"]')?.dispatchEvent(new Event("change")));
+    await mp.waitForTimeout(100);
+    await mp.check('#mc-pm input[data-a="shownames"]');
+    const ren = await mp.evaluate(() => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === "dd").name, varExpr: window.__sv.model.store.doc.vars?.[0]?.expr, shown: [...document.querySelectorAll("#sk-layer .sk-dim .sk-dname")].map(e => e.textContent).join(","), title: [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd")?.title }));
+    check(ren.name === "Width" && ren.varExpr === "Width@Sketch3 / 2" && ren.shown.includes("Width") && ren.title === "Width@Sketch3", `model 1.53: renaming a dimension updates expressions that use it; names can be shown (${JSON.stringify(ren)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    // Edit sketch plane (FR-SK-007): move Sketch3 from the block's top face to Top; its curves keep following the edge.
+    await mp.evaluate(() => window.__sv.modeller.editSketchPlane("s3"));
+    await mp.waitForSelector('#mc-pm [data-std="XY"]');
+    await mp.click('#mc-pm [data-std="XY"]');
+    await settle();
+    const live = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { kind: m.kind, plane: m.edit?.plane, cur: document.querySelector('#mc-pm [data-a="cur"]')?.textContent, doc: window.__sv.model.store.doc.features.find(f => f.id === "s3").plane }; });
+    await mp.click('#mc-pm [data-a="ok"]');
+    await settle();
+    const pl = await mp.evaluate(() => ({ plane: window.__sv.model.store.doc.features.find(f => f.id === "s3").plane, kind: window.__sv.model.mode().kind, undo: window.__sv.model.store.undoLabel }));
+    const a4 = await s3x();
+    check(live.kind === "plane" && live.plane?.std === "XY" && "face" in live.doc && pl.plane.std === "XY" && pl.kind === "none" && pl.undo === "Edit sketch plane" && !a4.dangling && a4.ok, `model 1.53: Edit sketch plane previews and moves the sketch to another plane (FR-SK-007) (${JSON.stringify(live)}, ${JSON.stringify(pl)}, ${JSON.stringify(a4)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

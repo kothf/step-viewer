@@ -62,6 +62,13 @@ export class DocStore {
     return true;
   }
 
+  /**
+   * Updates the document in place without an undo step or a change event: results the rebuild
+   * derives from it (On edge curves that followed the model). Undo goes back to a document the
+   * next rebuild derives the same way.
+   */
+  amend(fn: (d: PartDoc) => void) { fn(this.doc); }
+
   /** Replaces the document without an undo step (opening a file). */
   reset(doc: PartDoc) {
     this.doc = doc;

@@ -34,12 +34,12 @@ function holeTitle(f: HoleFeature) { return `${f.size ?? `Ø${trimNum(f.diameter
 
 /** Nominal (major) diameter of an ISO metric size: "M6" → 6. */
 const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
-import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
+import { evalVars, exprTargets, refreshExprs, renameEverywhere, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { bezPts, splineBezier } from "../sketch/spline";
-import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
-import { ORIGIN, repairs } from "../sketch/solver";
+import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
+import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
@@ -76,7 +76,8 @@ export interface ModelHost {
 
 type Mode =
   | { kind: "none" }
-  | { kind: "plane" }
+  /** Picking a sketch plane: for a new sketch, or for an existing one (`edit`: Edit sketch plane, FR-SK-007). */
+  | { kind: "plane"; edit?: { id: string; plane: PlaneRef } }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
   | { kind: "props"; draft: PartDoc }
@@ -343,6 +344,11 @@ export class ModelController {
     if (m.kind === "sketch") {
       const i = d.features.findIndex(f => f.id === m.id);
       d.rollback = i + 1;
+    } else if (m.kind === "plane" && m.edit) {
+      // Edit sketch plane: rolled back to the sketch, which shows on the plane picked so far.
+      const i = d.features.findIndex(f => f.id === m.edit!.id);
+      const sk = d.features[i];
+      if (sk?.type === "sketch") { sk.plane = m.edit.plane; sk.hidden = false; d.rollback = i + 1; }
     } else if (m.kind === "feature") {
       const f = structuredClone(m.draft);
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -363,6 +369,7 @@ export class ModelController {
     this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
+    this.followEdges(r);
     this.rebuildMs = r.ms.eval + r.ms.mesh;
     this.syncCsys();
     const first = !this.shownOnce;
@@ -381,6 +388,39 @@ export class ModelController {
       const fr = r.frames[hm.draft.id];
       if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, this.holeSnap(w.at, fr) ?? w.p, fr); }
     } else this.pendingHole = [];
+  }
+
+  /** Takes over the sketches the rebuild moved onto their model edges or marked dangling (FR-SK-064). */
+  private followEdges(r: Rebuild) {
+    const upd = r.sketches ?? {};
+    for (const [id, sk] of Object.entries(upd)) {
+      const cur = this.store!.feature(id);
+      if (!cur || cur.type !== "sketch") continue;
+      const m = this.mode;
+      const editing = m.kind === "sketch" && m.id === id;
+      // Only the parts the rebuild owns: point positions of followed curves and dangling marks, on the sketch as it is now.
+      const next: SketchFeature = structuredClone(editing ? m.editor.sk : cur);
+      const before = JSON.stringify(next);
+      const pts = new Set<string>();
+      for (const rel of next.rels) {
+        const src = sk.rels.find(x => x.id === rel.id);
+        if (!src || !rel.ext) continue;
+        if (src.dangling) rel.dangling = true; else delete rel.dangling;
+        const e = next.ents.find(x => x.id === rel.e[0]);
+        if (e?.t === "line") { pts.add(e.a); pts.add(e.b); }
+        else if (e?.t === "arc") { pts.add(e.c); pts.add(e.a); pts.add(e.b); }
+        else if (e?.t === "circle") { pts.add(e.c); const r = sk.ents.find(x => x.id === e.id); if (r?.t === "circle") e.r = r.r; }
+      }
+      for (const e of next.ents) {
+        const src = e.t === "point" && pts.has(e.id) ? sk.ents.find(x => x.id === e.id) : null;
+        if (e.t === "point" && src?.t === "point") { e.x = src.x; e.y = src.y; }
+      }
+      const changed = JSON.stringify(next) !== before;
+      if (changed) solve(next);
+      if (!changed) continue;
+      this.store!.amend(d => { const i = d.features.findIndex(f => f.id === id); if (i >= 0) d.features[i] = structuredClone(next); });
+      if (editing && !m.editor.busy) m.editor.setSketch(next, this.frameOf(next));
+    }
   }
 
   /** Rebuild (Ctrl+B), or force a rebuild of every feature with a fresh kernel (Ctrl+Q). */
@@ -476,6 +516,8 @@ export class ModelController {
         }
         return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
       },
+      edgeRef: ed => this.refOfEdge(ed as EdgeInfo),
+      renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
@@ -612,6 +654,15 @@ export class ModelController {
       this.exitMode(true);
       if (sk) this.store!.collapse(this.sketchMark, m.isNew ? `Add ${sk.name}` : `Edit ${sk.name}`);
       this.renderBar();
+      void this.rebuild();
+      return;
+    }
+    if (m.kind === "plane" && m.edit) {
+      const { id, plane } = m.edit;
+      this.mode = { kind: "none" };
+      this.store!.change("Edit sketch plane", d => { const f = d.features.find(x => x.id === id); if (f?.type === "sketch") f.plane = plane; });
+      this.clearDecor();
+      this.renderAll();
       void this.rebuild();
       return;
     }
@@ -757,7 +808,11 @@ export class ModelController {
     const f = this.store?.feature(id);
     const v = name.trim();
     if (!f || !v || v === featureLabel(f.name)) return;
-    this.store!.change(`Rename ${f.name}`, d => { d.features.find(x => x.id === id)!.name = v; });
+    this.store!.change(`Rename ${f.name}`, d => {
+      d.features.find(x => x.id === id)!.name = v;
+      // Dimensions are used as "D1@Sketch1": expressions follow the sketch's new name (FR-SK-065).
+      if (f.type === "sketch") for (const dm of f.dims) renameEverywhere(d, `${dm.name}@${f.name}`, `${dm.name}@${v}`);
+    });
   }
 
   /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (SolidWorks absorbs it). */
@@ -1164,7 +1219,31 @@ export class ModelController {
 
   private pickPlane(e: PointerEvent) {
     const r = this.pickRef(e);
-    if (r) void this.createSketch(r);
+    if (r) this.planePicked(r);
+  }
+
+  /** A plane picked while asking for one: a new sketch on it, or the new plane of the sketch being edited. */
+  private planePicked(r: PlaneRef) {
+    const m = this.mode;
+    if (m.kind !== "plane") return;
+    if (!m.edit) { void this.createSketch(r); return; }
+    const i = this.doc.features.findIndex(f => f.id === m.edit!.id);
+    if ("plane" in r && (r.plane === m.edit.id || this.doc.features.findIndex(f => f.id === r.plane) > i)) { toast(t("That plane comes after the sketch in the tree."), true); return; }
+    m.edit.plane = r;
+    this.renderPanel();
+    void this.rebuild();
+  }
+
+  /** Edit sketch plane (FR-SK-007): pick another plane or flat face; the sketch keeps its geometry in its own coordinates. */
+  editSketchPlane(id: string) {
+    const sk = this.store?.feature(id);
+    if (!sk || sk.type !== "sketch") return;
+    if (this.isFrozen(id)) { this.frozenToast(); return; }
+    this.exitMode(false);
+    this.mode = { kind: "plane", edit: { id, plane: structuredClone(sk.plane) } };
+    this.selected = id;
+    this.renderAll();
+    void this.rebuild();
   }
 
   /** A plane under the pointer: a standard or reference plane drawn in the view, or a flat model face, whichever is nearer. */
@@ -1626,8 +1705,11 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     this.doc.features.slice(0, end).forEach(f => {
       if (f.type !== "sketch" || f.suppressed || (m.kind === "sketch" && m.id === f.id)) return;
-      if (f.hidden ?? used.has(f.id)) return;
-      this.lines(sketchSegments(f, this.frameOf(f)), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+      // Edit sketch plane: the sketch shows on the plane picked so far, highlighted.
+      const moving = m.kind === "plane" && m.edit?.id === f.id;
+      if ((f.hidden ?? used.has(f.id)) && !moving) return;
+      const g = moving ? { ...f, plane: m.edit!.plane } : f;
+      this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
@@ -2226,7 +2308,7 @@ export class ModelController {
     const m = this.mode;
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
     if (m.kind !== "sketch") {
-      $("#mc-status").textContent = m.kind === "plane" ? t("Pick a plane or a flat face for the sketch.")
+      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
         : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
@@ -2660,8 +2742,8 @@ export class ModelController {
         if (a === "del") { void this.deleteFeature(id); return; }
         if ((e.target as HTMLElement).matches("input")) return;
         const mm = this.mode;
-        if (mm.kind === "plane" && id.startsWith("std:")) { void this.createSketch({ std: id.slice(4) as "XY" }); return; }
-        if (mm.kind === "plane" && this.store!.feature(id)?.type === "plane") { void this.createSketch({ plane: id }); return; }
+        if (mm.kind === "plane" && id.startsWith("std:")) { this.planePicked({ std: id.slice(4) as "XY" }); return; }
+        if (mm.kind === "plane" && this.store!.feature(id)?.type === "plane") { this.planePicked({ plane: id }); return; }
         // Planes picked from the tree while a command needs one.
         const asRef: PlaneRef | null = id.startsWith("std:") ? { std: id.slice(4) as "XY" } : this.store!.feature(id)?.type === "plane" ? { plane: id } : null;
         if (mm.kind === "feature" && asRef && mm.draft.type === "plane" && mm.focus !== "axis" && mm.draft.id !== id) { mm.draft.base = asRef; this.draftChanged(); return; }
@@ -2797,6 +2879,7 @@ export class ModelController {
     if (f) {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
+      if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
@@ -2890,9 +2973,15 @@ export class ModelController {
     pm.hidden = false;
     const head = (title: string, help: string) => `<div class="pm-head"><h3>${esc(title)}</h3></div><p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
-      pm.innerHTML = head(t("Sketch"), t("Pick a plane or a flat face for the sketch."))
-        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`;
-      pm.querySelectorAll<HTMLElement>("[data-std]").forEach(b => b.addEventListener("click", () => void this.createSketch({ std: b.dataset.std as "XY" })));
+      const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
+      pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }))
+        + `<p class="pm-help"><b>${esc(t("Plane"))}:</b> <span data-a="cur" translate="no">${esc(this.refLabel(ed.plane))}</span></p>`
+        : head(t("Sketch"), t("Pick a plane or a flat face for the sketch.")))
+        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`
+        + (ed ? `<div class="pm-actions"><button class="btn primary small" data-a="ok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="cancel">✕ ${esc(t("Cancel"))}</button></div>` : "");
+      pm.querySelectorAll<HTMLElement>("[data-std]").forEach(b => b.addEventListener("click", () => this.planePicked({ std: b.dataset.std as "XY" })));
+      pm.querySelector("[data-a=ok]")?.addEventListener("click", () => this.ok());
+      pm.querySelector("[data-a=cancel]")?.addEventListener("click", () => void this.cancel());
       return;
     }
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
@@ -3482,9 +3571,11 @@ export class ModelController {
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + this.danglingBox(ed)
+      + this.dimNameBox(ed)
       + this.assistant(ed)
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
-      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
+      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
@@ -3493,6 +3584,15 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-dim]").forEach(b => b.addEventListener("click", () => ed.editDim(b.dataset.dim!)));
     pm.querySelectorAll<HTMLElement>("[data-delrel]").forEach(b => b.addEventListener("click", () => { ed.deleteItems([b.dataset.delrel!]); this.renderPanel(); }));
     pm.querySelectorAll<HTMLElement>("[data-selrel]").forEach(b => b.addEventListener("click", () => { ed.select([b.dataset.selrel!]); this.renderPanel(); }));
+    pm.querySelectorAll<HTMLElement>("[data-reattach]").forEach(b => b.addEventListener("click", () => { ed.select([b.dataset.reattach!]); ed.startReattach(b.dataset.reattach!); this.renderBar(); this.renderPanel(); }));
+    pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
+    pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
+    pm.querySelector<HTMLInputElement>("[data-a=dimname]")?.addEventListener("change", e => {
+      const inp = e.target as HTMLInputElement;
+      const err = ed.renameDim(inp.dataset.id!, inp.value);
+      if (err) { toast(t(err), true); inp.value = ed.sk.dims.find(d => d.id === inp.dataset.id)?.name ?? ""; return; }
+      this.renderPanel();
+    });
     pm.querySelectorAll<HTMLElement>("[data-fixshow]").forEach(b => b.addEventListener("click", () => { ed.select(b.dataset.fixshow!.split(",")); this.renderPanel(); }));
     pm.querySelectorAll<HTMLElement>("[data-fixapply]").forEach(b => b.addEventListener("click", () => {
       ed.deleteItems(b.dataset.fixapply!.split(","));
@@ -3570,7 +3670,7 @@ export class ModelController {
     const key = JSON.stringify([sk.ents, sk.rels, sk.dims]);
     if (this.assistMemo?.key !== key) this.assistMemo = { key, sets: repairs(sk) };
     const sets = this.assistMemo.sets;
-    const name = (id: string) => { const r = sk.rels.find(x => x.id === id); if (r) return t(REL_NAME[r.t]); return sk.dims.find(x => x.id === id)?.name ?? id; };
+    const name = (id: string) => { const r = sk.rels.find(x => x.id === id); if (r) return t(relName(r)); return sk.dims.find(x => x.id === id)?.name ?? id; };
     const sel = ed.selection;
     return `<div class="pm-sec pm-assist"><h4>${esc(t("Sketch assistant"))}</h4>`
       + (sets.length ? `<p class="muted">${esc(t("The sketch is over-defined. Deleting one of these makes it solve again:"))}</p><ul class="pm-rel-list">`
@@ -3580,6 +3680,25 @@ export class ModelController {
   }
 
   /** All relations of the sketch with their state (FR-SK-055): select or delete each. */
+  /** Dangling On edge relations (FR-SK-064): what to do about them. */
+  private danglingBox(ed: SketchEditor) {
+    const n = ed.sk.rels.filter(r => r.ext && r.dangling).length;
+    if (!n) return "";
+    const first = ed.danglingRels()[0];
+    return `<div class="pm-sec pm-dangling" role="status"><p>⚠ ${esc(t("{n} converted curves lost their model edge (dangling). Re-attach them to another edge, or delete the relations to keep the curves free.", { n }))}</p>`
+      + `<div class="pm-rels"><button class="btn small" data-reattach="${first.id}">${esc(t("Re-attach"))}</button><button class="btn small danger" data-a="deldangling">${esc(t("Delete dangling relations"))}</button></div>`
+      + (ed.reattaching ? `<p class="muted">${esc(t("Click the model edge the curve should follow now."))}</p>` : "")
+      + `</div>`;
+  }
+
+  /** One dimension selected: its name, as expressions use it (FR-SK-065). */
+  private dimNameBox(ed: SketchEditor) {
+    const ids = [...ed.selection];
+    const d = ids.length === 1 ? ed.sk.dims.find(x => x.id === ids[0]) : undefined;
+    if (!d) return "";
+    return `<div class="pm-sec"><h4>${esc(t("Dimension"))}</h4><label class="pm-field"><span>${esc(t("Name"))}</span><span class="pm-in"><input type="text" data-a="dimname" data-id="${d.id}" value="${esc(d.name)}" spellcheck="false" translate="no" /><span class="muted" translate="no">@${esc(ed.sk.name)}</span></span></label></div>`;
+  }
+
   private relationList(ed: SketchEditor) {
     const sk = ed.sk;
     const bad = new Set(ed.info.conflicting ?? []);
@@ -3588,7 +3707,7 @@ export class ModelController {
     const sel = ed.selection;
     const shown = sel.size ? rels.filter(r => sel.has(r.id) || r.e.some(x => sel.has(x))) : rels;
     return (sel.size ? `<p class="muted">${esc(t("Relations of the selection:"))}</p>` : "")
-      + `<ul class="pm-rel-list">${shown.map(r => `<li${bad.has(r.id) ? ' class="pm-err"' : ""}><span><button class="link" data-selrel="${r.id}">${esc(t(REL_NAME[r.t]))}</button>${bad.has(r.id) ? ` · ${esc(t("conflicting"))}` : ""}</span><button class="icon" data-delrel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))} ${esc(t(REL_NAME[r.t]))}">✕</button></li>`).join("")}</ul>`;
+      + `<ul class="pm-rel-list">${shown.map(r => `<li${bad.has(r.id) ? ' class="pm-err"' : r.dangling ? ' class="pm-dangling"' : ""}><span><button class="link" data-selrel="${r.id}">${esc(t(relName(r)))}</button>${bad.has(r.id) ? ` · ${esc(t("conflicting"))}` : r.dangling ? ` · ${esc(t("dangling"))} <button class="link" data-reattach="${r.id}">${esc(t("Re-attach"))}</button>` : ""}</span><button class="icon" data-delrel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))} ${esc(t(relName(r)))}">✕</button></li>`).join("")}</ul>`;
   }
 
   /** Exact body properties from the last rebuild (density 1). */

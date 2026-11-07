@@ -6,11 +6,13 @@
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
-import type { BodyProps, FeatureStatus, Frame, PartDoc, V3 } from "./types";
+import type { BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
   frames: Record<string, Frame>;
+  /** Sketches whose On edge curves the rebuild moved or marked dangling (FR-SK-064). */
+  sketches?: Record<string, SketchFeature>;
   data: PartData | null;
   faceNames: string[];
   props: BodyProps | null;
