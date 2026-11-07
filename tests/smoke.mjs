@@ -2622,6 +2622,64 @@ try {
     await ctx.close();
   }
 
+  // --- 1.39.0: local vault in the browser: save a part, check in, read-only bar, history, roll back, audit trail (FR-PDM) ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const vol = () => mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -10, -10), P("b", 10, -10), P("c", 10, 10), P("d", -10, 10), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    await idle();
+    // A new vault in the browser workspace, then Save part to vault.
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Smoke vault");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="savepart"]:not([disabled])');
+    await mp.click('#vault-panel [data-a="savepart"]');
+    await mp.waitForSelector("#vault-panel .v-row");
+    const row1 = await mp.evaluate(() => document.querySelector("#vault-panel .v-row").textContent.replace(/\s+/g, " ").trim());
+    const title1 = await mp.evaluate(() => document.querySelector("#doc-name").textContent);
+    // Edit, save (into the working copy), check in with a comment: version 2.
+    await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 20 }; }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.save());
+    await mp.click("#vault-panel .v-row");
+    await mp.click('#vault-panel [data-a="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "Twice as deep");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /v2/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    // Checked in: the part is read-only, with a bar to check it out, and saving is refused.
+    await mp.waitForSelector("#mc-ro", { state: "attached" });
+    await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features[1].depth = { v: 25 }; }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.save());
+    const dirty = await mp.evaluate(() => window.__sv.model.store.dirty);
+    // History: two versions; roll back to version 1 makes version 3 and reopens the part as it was.
+    await mp.click('#vault-panel [data-a="hist"]');
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
+    await mp.click('#vault-dlg [data-rb="1"]');
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => /v3/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    await mp.waitForFunction(() => window.__sv.model.store?.doc.features[1]?.depth.v === 10, null, { timeout: 15000 }).catch(() => {});
+    await idle();
+    const vBack = await vol();
+    const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).join(","));
+    const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
+    check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
+    check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

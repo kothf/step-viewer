@@ -92,6 +92,7 @@
       <button data-tab="features" role="tab" id="t-features" aria-selected="false" aria-controls="tab-features" tabindex="-1" hidden>Features</button>
       <button data-tab="tree" class="on" role="tab" id="t-tree" aria-selected="true" aria-controls="tab-tree">Model tree</button>
       <button data-tab="measures" role="tab" id="t-measures" aria-selected="false" aria-controls="tab-measures" tabindex="-1">Measurements <span id="m-count" class="pill">0</span></button>
+      <button data-tab="vault" role="tab" id="t-vault" aria-selected="false" aria-controls="tab-vault" tabindex="-1" title="Vault: versions, check-out and check-in">Vault</button>
     </div>
     <section id="tab-features" class="tab" role="tabpanel" aria-labelledby="t-features">
       <div id="mc-pm" class="pm" hidden></div>
@@ -113,6 +114,7 @@
         <button id="m-clear" class="btn small danger">Clear all</button>
       </div>
     </section>
+    <section id="tab-vault" class="tab" role="tabpanel" aria-labelledby="t-vault"><div id="vault-panel"></div></section>
   </aside>
 
   <aside class="left panel gerber-only sheet" id="g-left" aria-label="Layers and measurements">

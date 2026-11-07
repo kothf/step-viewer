@@ -10,6 +10,7 @@ import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
 import { Annotations } from "./tools/Annotations";
+import { VaultPanel } from "./pdm/panel";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
@@ -1673,7 +1674,18 @@ $("#m-clear").addEventListener("click", async () => {
 $("#m-json").addEventListener("click", () => state.measurements.length ? measurementsJson(state.measurements, state.fileName) : toast(t("No measurements yet")));
 $("#m-csv").addEventListener("click", () => state.measurements.length ? measurementsCsv(state.measurements, state.fileName) : toast(t("No measurements yet")));
 
-const showLeftTab = bindTabs($(".tabs"), tab => $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)));
+const showLeftTab = bindTabs($(".tabs"), tab => { $$(".tab").forEach(t => t.classList.toggle("on", t.id === `tab-${tab}`)); if (tab === "vault") void vaultPanel.render(); });
+// Local vault (FRS 12.5): the Vault tab.
+const vaultPanel = new VaultPanel($("#vault-panel"), {
+  open: async (name, data) => {
+    const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
+    else await openFiles([new File([buf], name)]);
+  },
+  part: () => (modeller.active ? { name: modeller.partName, bytes: () => modeller.partBytes() } : null),
+  setVault: v => modeller.setVault(v),
+  markSaved: () => modeller.markSaved(),
+});
 
 // ---------- display / views ----------
 function setMode(m: DisplayMode) {
@@ -2227,4 +2239,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-11-07
+
+### Added
+- **Local vault** (FRS 12.5, FR-PDM-001…016, 060, P2 first slice). The new **Vault** tab in the left panel creates or opens a vault. A vault can live in this browser's private storage, which every browser has, or in a folder on disk (Chromium). It keeps every version of every file in a hidden `.mcadvault/` folder beside the working files. Each version's bytes are stored once, under their SHA-256. Each file has a record, and every action is appended to an audit log.
+  - **Save part to vault** puts the open part in as version 1, checked out to you. **Add files…** vaults any file, such as STEP, PDF, DXF or images.
+  - **Check out / Check in / Undo check-out**. A vaulted file is read-only until you check it out: a bar above the feature tree offers Check out, and Save refuses to write over the vault copy. Check in asks for a comment and can keep the file checked out; an unchanged file makes no new version. The title shows the version and the lock, and the file list shows the version, a lock badge with the user, and "modified".
+  - **History** lists every version with date, user, comment and size, plus the file's events. From there you can open any version read-only, or **Roll back**, which adds a new version with the old content, so history is never rewritten.
+  - **Get latest**, the **Audit trail** (with CSV export) and an **Integrity check** for missing or damaged versions and unused objects.
+  - Set your user name at the top of the tab; check-outs also record which browser made them.
+
 ## [1.38.0] - 2026-11-07
 
 ### Added
@@ -432,7 +442,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.38.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.39.0...HEAD
+[1.39.0]: https://github.com/kothf/step-viewer/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/kothf/step-viewer/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/kothf/step-viewer/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/kothf/step-viewer/compare/v1.35.0...v1.36.0

@@ -776,3 +776,29 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .cfg-row input { flex: 1; min-width: 0; font-size: 12px; }
 .cfg-row.on input { font-weight: 600; }
 .cfg-act { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-size: 14px; padding: 2px 4px; }
+
+/* Vault tab (FRS 12.5) */
+#tab-vault .row { flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#tab-vault .v-start .row input, .v-user input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.v-user { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--fs-caption); color: var(--muted); }
+.v-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.v-h { margin: 12px 0 4px; font-size: var(--fs-caption); color: var(--muted); }
+.v-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.v-files { border-top: 1px solid var(--line); }
+.v-row { display: flex; flex-direction: column; align-items: stretch; gap: 2px; width: 100%; text-align: left; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; font: inherit; }
+.v-row:hover { background: var(--panel-2); }
+.v-row.sel { background: var(--accent-soft); }
+.v-name { overflow-wrap: anywhere; }
+.v-meta { font-size: var(--fs-caption); color: var(--muted); }
+.v-lock { white-space: nowrap; }
+.v-lock.mine { color: var(--accent-text); }
+.v-acts { padding: 8px 10px; }
+.v-dlg { max-width: min(760px, 94vw); }
+.v-scroll { max-height: 50vh; overflow: auto; }
+.v-table { border-collapse: collapse; width: 100%; font-size: var(--fs-caption); }
+.v-table th, .v-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.v-table .v-acts { padding: 2px 0; white-space: nowrap; display: flex; gap: 4px; }
+.v-log { max-height: 30vh; overflow: auto; padding-left: 18px; font-size: var(--fs-caption); }
+.v-lbl { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.v-lbl textarea { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.mc-ro { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--line); font-size: var(--fs-caption); }
