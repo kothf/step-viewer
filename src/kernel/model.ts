@@ -983,6 +983,12 @@ export class Modeller {
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
+          else if (f.type === "thread") {
+            // Cosmetic only: the edge must still be there; the body is unchanged.
+            if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+            if (!f.edge) throw new FeatureError("E-FT-NOEDGES", "Pick a round edge of a cylinder.");
+            this.resolveEdge(body, f.edge);
+          }
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;

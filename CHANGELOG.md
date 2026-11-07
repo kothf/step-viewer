@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-11-07
+
+### Added
+- **Cosmetic thread** (FR-FT-054): pick a round edge of a hole or a shaft. The feature works out whether the thread is internal or external, fills in the nearest ISO metric size (matched by tap drill for holes and by nominal diameter for shafts) and draws the thread as dashed circles. Internal threads show the major diameter and external ones the minor diameter. The length runs to the end of the cylinder or is set by a value. The geometry is unchanged.
+
+### Fixed
+- A revolve set to Up to face or plane now counts the plane or face as its parent, so reordering and parent marks take it into account.
+
 ## [1.31.0] - 2026-11-07
 
 ### Added
@@ -385,7 +393,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.31.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.32.0...HEAD
+[1.32.0]: https://github.com/kothf/step-viewer/compare/v1.31.0...v1.32.0
 [1.31.0]: https://github.com/kothf/step-viewer/compare/v1.30.0...v1.31.0
 [1.30.0]: https://github.com/kothf/step-viewer/compare/v1.29.0...v1.30.0
 [1.29.0]: https://github.com/kothf/step-viewer/compare/v1.28.0...v1.29.0

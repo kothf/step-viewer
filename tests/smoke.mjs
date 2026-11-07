@@ -2349,6 +2349,20 @@ try {
     await mp.fill("#ft-search", "");
     const fltAll = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row[data-i]")].every(r => !r.hidden));
     check(flt.vis.length > 0 && flt.vis.every(n => /cut/i.test(n)) && flt.gidHidden && flt.folder && fltAll, `model 1.31: the feature filter shows only matching rows (${JSON.stringify(flt)}, ${fltAll})`);
+    // 1.32: cosmetic thread (FR-FT-054) on one of the gasket's Ø8 holes: internal, nearest ISO size by tap drill (M10), dashed circles, no volume change.
+    const vTh0 = await vol();
+    await mp.click('#mc-tools [data-c="thread"]');
+    await mp.waitForFunction(() => window.__sv.model.mode().draft?.type === "thread");
+    await mp.evaluate(() => {
+      const c = window.__sv.modeller, ed = window.__sv.viewer.parts[0].data.edges.find(e => (e.type === "circle" || e.type === "arc") && Math.abs((e.radius ?? 0) - 4) < 1e-3);
+      if (ed && c.setThreadEdge(window.__sv.model.mode().draft, ed)) c.draftChanged();
+    });
+    await idle();
+    const th = await mp.evaluate(() => ({ size: document.querySelector('#mc-pm select[data-k="size"]')?.value, internal: window.__sv.model.mode().draft.internal, dia: window.__sv.model.mode().draft.diameter.v, drawn: window.__sv.modeller.decor.children.some(o => o.userData.thread) }));
+    await mp.click("#mc-ok");
+    await idle();
+    const stTh = await lastSt(), vTh1 = await vol();
+    check(th.size === "M10" && th.internal === true && th.dia === 10 && th.drawn && stTh === "thread:ok" && Math.abs(vTh1 - vTh0) < 1e-6, `model 1.32: cosmetic thread on a Ø8 hole (${JSON.stringify(th)}, ${stTh}, ${(vTh1 - vTh0).toFixed(6)})`);
     await ctx.close();
   }
 
