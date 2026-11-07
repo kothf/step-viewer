@@ -750,6 +750,9 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-items li { display: flex; align-items: center; gap: 6px; padding: 1px 4px; }
 .pm-items li span { flex: 1; }
 .pm-items .icon { width: 20px; height: 18px; font-size: 10px; }
+.pm-items li .pm-in { flex: 0 0 auto; }
+.pm-items li .pm-in input { width: 64px; padding: 1px 4px; font-size: 12px; }
+.pm-items li .pm-in span { flex: none; }
 .mc-callout { transform: translate(-50%, -50%); border-color: #e0a800; background: #fff8db; color: #5c4400; }
 :root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
 .sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }

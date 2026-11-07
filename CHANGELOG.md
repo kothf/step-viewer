@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-11-07
+
+### Added
+- **Multiple radius fillet** (FR-FT-031). Tick "Multiple radius fillet" in the Fillet panel and each picked edge gets its own radius field in the edge list. Every edge shows its own callout in the view (R1, R2…), which you can click to type that edge's size. Edges you don't change use the default radius. Unticking it puts every edge back on one radius.
+
 ## [1.41.0] - 2026-11-07
 
 ### Added
@@ -456,7 +461,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.41.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.42.0...HEAD
+[1.42.0]: https://github.com/kothf/step-viewer/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/kothf/step-viewer/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/kothf/step-viewer/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/kothf/step-viewer/compare/v1.38.0...v1.39.0

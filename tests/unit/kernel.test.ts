@@ -500,3 +500,17 @@ test("extrude: up to next, up to vertex and start from (FR-FT-012/013)", async (
   bad = m.evaluate(doc([s1, ex, s6, { id: "f6", type: "extrude", name: "B", sketch: "s6", op: "boss", end: "next", depth: { v: 1 } } as Feature])).statuses.find(x => x.id === "f6")!;
   assert.equal(bad.ok, false);
 });
+
+test("multiple radius fillet: each edge its own radius (FR-FT-031)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const sides = ["s1l1", "s1l2", "s1l3"].map(e => `f1:side:${e}`);
+  const edges = [{ faces: [sides[0], sides[1]] as [string, string], r: 10 }, { faces: [sides[1], sides[2]] as [string, string] }];
+  const corner = (r: number) => r * r * (1 - Math.PI / 4) * 20;
+  let r = run(m, doc([s1, ex, { id: "f2", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges, multi: true } as Feature]));
+  close(r.props!.volume, 120000 - corner(10) - corner(5), 1e-6);
+  // Off: every edge takes the feature's radius again.
+  r = run(m, doc([s1, ex, { id: "f2", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges } as Feature]));
+  close(r.props!.volume, 120000 - 2 * corner(5), 1e-6);
+});

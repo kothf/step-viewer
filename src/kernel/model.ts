@@ -635,13 +635,16 @@ export class Modeller {
     if (f.type === "chamfer" && mode === "two" && !((f.distance2?.v ?? 0) > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
     if (f.type === "chamfer" && mode === "angle" && !((f.angle?.v ?? 0) > 1e-6 && (f.angle?.v ?? 0) < Math.PI / 2)) throw new FeatureError("E-FT-ANGLE", "The chamfer angle must be between 0° and 90°.");
     const edges = f.edges.map(r => this.resolveEdge(prev, r));
+    // Multiple radius fillet (FR-FT-031): an edge's own radius, else the feature's.
+    const rad = (i: number) => (f.type === "fillet" && f.multi ? f.edges[i].r ?? size : size);
+    if (f.edges.some((_e, i) => !(rad(i) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
     const make = (list: number[]) => {
       const mk = f.type === "fillet"
         ? new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational)
         : new oc.BRepFilletAPI_MakeChamfer(prev.shape);
       for (const i of list) {
         const e = edges[i];
-        if (f.type === "fillet" || mode === "equal") mk.Add_2(size, e);
+        if (f.type === "fillet" || mode === "equal") mk.Add_2(rad(i), e);
         else {
           const r = f.edges[i];
           const face = this.faceOfEdge(prev, e, r.faces[f.type === "chamfer" && f.flip ? 1 : 0]);
