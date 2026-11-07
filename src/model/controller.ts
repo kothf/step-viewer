@@ -19,7 +19,7 @@ import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, 
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
-  AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
+  AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
@@ -86,10 +86,13 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type Focus = "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
-type BodyFeature = CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature;
-const isBodyOp = (f: Feature): f is BodyFeature => f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody";
+type BodyFeature = CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
+/** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
+const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
+  ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length) : f.edges.length > 0;
+const isBodyOp = (f: Feature): f is BodyFeature => f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
 /** Features whose result mirror and patterns can copy. */
 const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpattern", "hole"]);
@@ -123,8 +126,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported"];
+const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -369,7 +372,7 @@ export class ModelController {
     this.setBusy(1);
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
-    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && d.edges.length) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
+    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
     this.setBusy(-1);
     if (!r || !this.store) return;
@@ -538,7 +541,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -604,12 +607,13 @@ export class ModelController {
       const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
       if (threadEdge) this.setThreadEdge(th, threadEdge);
       draft = th;
-    } else if (type === "combine" || type === "bsplit" || type === "delbody" || type === "movebody") {
+    } else if (type === "combine" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const nm = nextName(d, type);
       draft = type === "combine" ? { id, type, name: nm, op: "add", tools: [] } satisfies CombineFeature
         : type === "bsplit" ? { id, type, name: nm, bodies: [] } satisfies SplitBodyFeature
         : type === "delbody" ? { id, type, name: nm, bodies: [] } satisfies DeleteBodyFeature
+        : type === "scale" ? { id, type, name: nm, bodies: [], about: "centroid", factor: { v: 1 } } satisfies ScaleFeature
         : { id, type, name: nm, bodies: [], dx: { v: 0 }, dy: { v: 0 }, dz: { v: 0 } } satisfies MoveBodyFeature;
     } else if (type === "split") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
@@ -655,7 +659,7 @@ export class ModelController {
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" ? "bodies" : undefined;
+      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" ? "bodies" : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
     this.renderAll();
@@ -756,7 +760,7 @@ export class ModelController {
     }
     if (m.kind !== "feature") return;
     const f = m.draft;
-    if ((f.type === "fillet" || f.type === "chamfer") && !f.edges.length) { toast(t("Pick at least one edge."), true); return; }
+    if ((f.type === "fillet" || f.type === "chamfer") && !roundReady(f)) { toast(t(f.type === "fillet" && f.kind === "full" ? "Pick side face set 1, the centre face set and side face set 2." : f.type === "fillet" && f.kind === "face" ? "Pick the faces of face set 1 and face set 2." : "Pick at least one edge."), true); return; }
     if (f.type === "revolve" && !f.axis) { toast(t("Pick a line of the sketch as the axis."), true); return; }
     if (f.type === "revolve" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the revolve goes up to."), true); return; }
     if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
@@ -1230,6 +1234,7 @@ export class ModelController {
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
       if (m.kind === "none") { const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
       else if (m.kind === "plane") this.pickPlane(e);
+      else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) this.pickEdge(e);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
@@ -1409,6 +1414,29 @@ export class ModelController {
     if ("plane" in r) { const f = this.store?.feature(r.plane); return f ? featureLabel(f.name) : t("Missing"); }
     const owner = this.store?.feature(r.face.name.split(":")[0]);
     return owner ? t("Face of {name}", { name: featureLabel(owner.name) }) : t("Face");
+  }
+
+  /**
+   * Face fillet and full round (FR-FT-032): a click toggles a face in the focused face set; the first
+   * face of a set moves the focus on (set 1, then the centre for a full round, then set 2).
+   */
+  private pickFaceSet(e: PointerEvent, f: FilletFeature) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return; }
+    const focus = m.focus === "fs2" || m.focus === "fc" ? m.focus : "fs1";
+    const list = focus === "fs2" ? (f.faces2 ??= []) : focus === "fc" ? (f.center ??= []) : (f.faces1 ??= []);
+    const i = list.findIndex(x => x.name === fr.name && (!x.hint || !fr.hint || Math.hypot(x.hint[0] - fr.hint[0], x.hint[1] - fr.hint[1], x.hint[2] - fr.hint[2]) < 1e-3));
+    if (i >= 0) list.splice(i, 1);
+    else {
+      // A face sits in one set only.
+      for (const other of [f.faces1, f.faces2, f.center]) if (other && other !== list) { const j = other.findIndex(x => x.name === fr.name); if (j >= 0) other.splice(j, 1); }
+      list.push(fr);
+      if (list.length === 1) m.focus = focus === "fs1" ? (f.kind === "full" && !f.center?.length ? "fc" : f.faces2?.length ? focus : "fs2") : focus === "fc" && !f.faces2?.length ? "fs2" : focus;
+    }
+    this.draftChanged();
   }
 
   private pickEdge(e: PointerEvent) {
@@ -2388,7 +2416,7 @@ export class ModelController {
 
   private drawRoundPreview(f: FilletFeature | ChamferFeature) {
     const pv = this.last?.preview;
-    if (pv?.position.length && f.edges.length) {
+    if (pv?.position.length && roundReady(f)) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(pv.position, 3));
       g.computeVertexNormals();
@@ -2778,7 +2806,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3242,7 +3270,18 @@ export class ModelController {
         + (f.type === "chamfer" && cm === "two" ? numField("distance2", t("Distance 2"), f.distance2 ?? { v: f.distance.v }, "length") : "")
         + (f.type === "chamfer" && cm === "angle" ? numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle") : "")
         + (f.type === "chamfer" && cm !== "equal" ? chk("flip", f.flip, t("Flip direction")) : "");
-      body = group(f.type === "fillet" ? t("Items to fillet") : t("Items to chamfer"), `<p class="pm-count">${esc(t("{n} edge|{n} edges", { n: f.edges.length }))}</p>` + items)
+      const kindSel = f.type === "fillet" ? group(t("Fillet type"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="kind">${([["edge", t("Edge fillet")], ["face", t("Face fillet")], ["full", t("Full round fillet")]] as const).map(([v, l]) => `<option value="${v}"${(f.kind ?? "edge") === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`) : "";
+      if (f.type === "fillet" && f.kind) {
+        const fbox = (fc: Focus, label: string, n: number) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === fc ? " focus" : ""}" data-focus="${fc}" translate="no">${esc(n ? t("{n} face|{n} faces", { n }) : t("None"))}</button></div>`;
+        const full = f.kind === "full";
+        body = kindSel + group(t("Items to fillet"), fbox("fs1", full ? t("Side face set 1") : t("Face set 1"), f.faces1?.length ?? 0)
+            + (full ? fbox("fc", t("Center face set"), f.center?.length ?? 0) : "")
+            + fbox("fs2", full ? t("Side face set 2") : t("Face set 2"), f.faces2?.length ?? 0)
+            + `<button class="btn small" data-k="clearSets">${esc(t("Clear selections"))}</button>`
+            + `<p class="pm-help muted">${esc(full ? t("Pick the faces on one side, the centre faces between them, then the faces on the other side. The centre becomes a half round touching both sides.") : t("Pick the faces of set 1, then set 2: the edges where they meet are rounded."))}</p>`)
+          + (full ? "" : group(t("Fillet parameters"), numField("radius", t("Radius"), f.radius, "length")));
+      } else
+      body = kindSel + group(f.type === "fillet" ? t("Items to fillet") : t("Items to chamfer"), `<p class="pm-count">${esc(t("{n} edge|{n} edges", { n: f.edges.length }))}</p>` + items)
         + group(f.type === "fillet" ? t("Fillet parameters") : t("Chamfer parameters"), sizes)
         + group(f.type === "fillet" ? t("Fillet options") : t("Chamfer options"), `<label class="chk pm-chk"><input type="checkbox" data-ui="tangent"${this.tangentProp ? " checked" : ""} />${esc(t("Tangent propagation"))}</label>` + (f.type === "fillet" ? chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)")) : ""));
     }
@@ -3430,6 +3469,17 @@ export class ModelController {
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as "equal" | "two" | "angle"; if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
+        if (f.type === "fillet" && k === "kind") {
+          upd(() => {
+            if (val === "face" || val === "full") {
+              f.kind = val; f.faces1 ??= []; f.faces2 ??= []; f.edges = [];
+              if (val === "full") f.center ??= []; else delete f.center;
+              delete f.multi; delete f.variable; delete f.keepFit;
+              m.focus = "fs1";
+            } else { delete f.kind; delete f.faces1; delete f.faces2; delete f.center; m.focus = undefined; }
+          }, true);
+          return;
+        }
         if (f.type === "fillet" && k === "multi") { upd(() => { if (val) { f.multi = true; delete f.variable; f.edges.forEach(e => { delete e.r2; delete e.at; }); } else { delete f.multi; f.edges.forEach(e => delete e.r); } }, true); return; }
         if (f.type === "fillet" && k === "variable") { upd(() => { if (val) { f.variable = true; delete f.multi; } else { delete f.variable; f.edges.forEach(e => { delete e.r; delete e.r2; delete e.at; }); } }, true); return; }
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
@@ -3534,7 +3584,7 @@ export class ModelController {
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
-        }, k === "end" || k === "op" || k === "sketch" || k === "modelled");
+        }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes");
       });
     });
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
@@ -3605,6 +3655,7 @@ export class ModelController {
         this.renderPanel();
       });
     }
+    pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split") { f.faces = []; this.draftChanged(); }
       if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; this.draftChanged(); } });
@@ -3997,6 +4048,14 @@ export class ModelController {
       return { title: t("Body-Delete/Keep"), body: group(t("Type"), chk("keep", f.keep, t("Keep these bodies (delete the rest)")))
         + group(t("Bodies"), box("bodies", t("Bodies"), n(f.bodies.length)) + clear) + help + status };
     }
+    if (f.type === "scale") {
+      const o = (v: string, l: string) => `<option value="${v}"${f.about === v ? " selected" : ""}>${esc(l)}</option>`;
+      return { title: t("Scale"), body: group(t("Bodies to scale"), box("bodies", t("Bodies"), f.bodies.length ? n(f.bodies.length) : t("All bodies")) + clear)
+        + group(t("Scale parameters"), `<label class="pm-field"><span>${esc(t("Scale about"))}</span><select data-k="about">${o("centroid", t("Centroid"))}${o("origin", t("Origin"))}</select></label>`
+          + chk("axes", f.axes, t("Non-uniform (per axis)"))
+          + (f.axes ? this.countField("fx", "X", f.fx ?? { v: 1 }) + this.countField("fy", "Y", f.fy ?? { v: 1 }) + this.countField("fz", "Z", f.fz ?? { v: 1 }) : this.countField("factor", t("Scale factor"), f.factor)))
+        + help + status };
+    }
     return { title: t("Body-Move/Copy"), body: group(t("Bodies to move/copy"), box("bodies", t("Bodies"), n(f.bodies.length)) + clear + chk("copy", f.copy, t("Copy")))
       + group(t("Translate"), numField("dx", "ΔX", f.dx, "length") + numField("dy", "ΔY", f.dy, "length") + numField("dz", "ΔZ", f.dz, "length"))
       + group(t("Rotate"), box("axis", t("Axis"), this.lineLabel(f.axis)) + (f.axis ? numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 2 }, "angle") : ""))
@@ -4143,6 +4202,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
   ["delbody", t("Body-Delete/Keep"), t("Delete bodies, or keep only the picked ones")],
+  ["scale", t("Scale"), t("Scale bodies: uniform or per axis, about the centroid or the origin")],
 ];
 
 const ICON_SVG: Record<string, string> = {
@@ -4154,6 +4214,7 @@ const ICON_SVG: Record<string, string> = {
   combine: S('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
   bsplit: S('<path d="M2 4h12v9H2z"/><path d="M9 2l-2 13"/>'),
   movebody: S('<path d="M2 9h6v5H2z"/><path d="M8 9l3-3h3v5l-3 3M9 3h5v5"/>'),
+  scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
   delbody: S('<path d="M3 5h10v9H3z"/><path d="M5 7l6 6M11 7l-6 6"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),

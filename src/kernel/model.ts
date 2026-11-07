@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -59,6 +59,7 @@ const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
 const d3 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 /** Rodrigues rotation of v about the unit axis u by angle a. */
@@ -694,6 +695,8 @@ export class Modeller {
   private round(f: Feature & { type: "fillet" | "chamfer" }, prev: Named | null): Named {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (f.type === "fillet" && f.kind === "full") return this.fullRound(f, prev);
+    if (f.type === "fillet" && f.kind === "face") return this.faceFillet(f, prev);
     if (!f.edges.length) throw new FeatureError("E-FT-NOEDGES", "Pick at least one edge.");
     const size = f.type === "fillet" ? f.radius.v : f.distance.v;
     if (!(size > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
@@ -753,6 +756,116 @@ export class Modeller {
       }
     });
     return out;
+  }
+
+  /** A flat face's plane: a point on it and its outward normal; null when it is not flat. */
+  private facePlane(face: any): { p: V3; n: V3 } | null {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null;
+    const pos = ad.Plane().Position();
+    let n = this.xyz(pos.Direction());
+    if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+    return { p: this.centroid(face), n };
+  }
+
+  /**
+   * Face fillet (FR-FT-032): rounds every edge where a face of set 1 meets a face of set 2 with one
+   * radius (the rolling ball between the two sets). New faces are named `fid:fillet:i`.
+   */
+  private faceFillet(f: FilletFeature, prev: Named): Named {
+    const oc = this.oc;
+    const r = f.radius.v;
+    if (!(r > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+    if (!f.faces1?.length || !f.faces2?.length) throw new FeatureError("E-FT-FACESETS", "Pick the faces of face set 1 and face set 2.");
+    const a = f.faces1.map(x => this.resolveFace(prev, x)), b = f.faces2.map(x => this.resolveFace(prev, x));
+    const eb = b.flatMap(x => this.sub(x, "EDGE"));
+    const edges: any[] = [];
+    for (const e of a.flatMap(x => this.sub(x, "EDGE"))) if (eb.some(g => g.IsSame(e)) && !edges.some(g => g.IsSame(e))) edges.push(e);
+    if (!edges.length) throw new FeatureError("E-FT-FACESETS", "The two face sets do not meet: a face fillet rounds the edges between them.");
+    const mk = new oc.BRepFilletAPI_MakeFillet(prev.shape, oc.ChFi3d_FilletShape.ChFi3d_Rational);
+    for (const e of edges) mk.Add_2(r, e);
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-FT-FILLET", `The fillet radius ${r} mm is too large for the selected edges, or the edges cannot be rounded.`);
+    const out = this.carry(mk, [prev], mk.Shape(), f.id);
+    edges.forEach((e, i) => {
+      for (const g of this.list(mk.Generated(e))) {
+        const j = out.faces.findIndex(x => x.IsSame(g));
+        if (j >= 0) out.names[j] = `${f.id}:fillet:${i}`;
+      }
+    });
+    return out;
+  }
+
+  /**
+   * Full round fillet (FR-FT-032): side face sets 1 and 2 are parallel flat faces facing apart; each
+   * flat centre face between them is replaced by a half cylinder of radius half the gap, tangent to
+   * both sides. The material under the centre face, down to the cylinder axis, outside the cylinder
+   * is cut away. New faces are named `fid:round:k`.
+   */
+  private fullRound(f: FilletFeature, prev: Named): Named {
+    const oc = this.oc;
+    if (!f.faces1?.length || !f.faces2?.length || !f.center?.length) throw new FeatureError("E-FT-FACESETS", "Pick side face set 1, the centre face set and side face set 2.");
+    const s1 = this.facePlane(this.resolveFace(prev, f.faces1[0])), s2 = this.facePlane(this.resolveFace(prev, f.faces2[0]));
+    if (!s1 || !s2) throw new FeatureError("E-FT-FULLROUND", "A full round needs flat, parallel side faces facing apart.");
+    if (dot(s1.n, s2.n) > -1 + 1e-6) throw new FeatureError("E-FT-FULLROUND", "A full round needs flat, parallel side faces facing apart.");
+    const gap = dot(sub3(s1.p, s2.p), s1.n);
+    if (!(gap > 1e-6)) throw new FeatureError("E-FT-FULLROUND", "A full round needs flat, parallel side faces facing apart.");
+    const r = gap / 2, mid = add(s1.p, mul(s1.n, -r)), L = this.size(prev.shape) * 2 + 100;
+    let tool: Named | null = null;
+    for (const ref of f.center) {
+      const face = this.resolveFace(prev, ref), c = this.facePlane(face);
+      if (!c || Math.abs(dot(c.n, s1.n)) > 1e-6) throw new FeatureError("E-FT-FULLROUND", "The centre faces must be flat and square to the side faces.");
+      const a = unit(cross(c.n, s1.n));
+      const onMid = sub3(c.p, mul(s1.n, dot(sub3(c.p, mid), s1.n)));
+      const axis = add(onMid, mul(c.n, -r));
+      const slab = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(c.n, -r)), true, true).Shape();
+      const cyl = new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_3(this.P(add(axis, mul(a, -L))), this.D(a)), r, 2 * L).Shape();
+      const cut = new oc.BRepAlgoAPI_Cut_3(slab, cyl, new oc.Message_ProgressRange_1());
+      if (!cut.IsDone() || cut.HasErrors()) throw new FeatureError("E-FT-FULLROUND", "The full round could not be made for these faces.");
+      const t: Named = { shape: cut.Shape(), faces: this.sub(cut.Shape(), "FACE"), names: [] };
+      t.names = t.faces.map((_x, i) => `${f.id}:round:${i}`);
+      tool = tool ? this.bool("fuse", tool, t, f.id) : t;
+    }
+    const out = this.bool("cut", prev, tool!, f.id);
+    if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-FULLROUND", "The full round could not be made for these faces.");
+    let k = 0;
+    out.names = out.names.map(n => (n.startsWith(`${f.id}:`) ? `${f.id}:round:${k++}` : n));
+    return out;
+  }
+
+  /**
+   * Scale (FR-BODY-006): the picked bodies (all when none) scaled about the origin or each body's
+   * centroid, by one factor or per axis. Faces keep their names.
+   */
+  private scaleBodies(f: ScaleFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const k: V3 = f.axes ? [f.fx?.v ?? 1, f.fy?.v ?? 1, f.fz?.v ?? 1] : [f.factor.v, f.factor.v, f.factor.v];
+    if (k.some(x => !(x > 1e-9))) throw new FeatureError("E-BDY-SCALE", "The scale factor must be more than 0.");
+    const list = this.bodyList(prev);
+    const picked = f.bodies.length ? this.pickedBodies(list, prev, f.bodies) : list.map((_b, i) => i);
+    const out: Named[] = list.map((b, i) => {
+      if (!picked.includes(i)) return b;
+      let c: V3 = [0, 0, 0];
+      if (f.about === "centroid") { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(b.shape, p, true, false, false); c = this.xyz(p.CentreOfMass()); }
+      let mk: any;
+      if (!f.axes) {
+        const tr = new oc.gp_Trsf_1();
+        tr.SetScale(this.P(c), k[0]);
+        mk = new oc.BRepBuilderAPI_Transform_2(b.shape, tr, true);
+      } else {
+        const g = new oc.gp_GTrsf_1();
+        for (let j = 0; j < 3; j++) g.SetValue(j + 1, j + 1, k[j]);
+        g.SetTranslationPart(new oc.gp_XYZ_2(c[0] * (1 - k[0]), c[1] * (1 - k[1]), c[2] * (1 - k[2])));
+        mk = new oc.BRepBuilderAPI_GTransform_2(b.shape, g, true);
+      }
+      const shape = mk.Shape();
+      const faces = this.sub(shape, "FACE");
+      const names = faces.map((x, n) => { const j = b.faces.findIndex(y => this.list(mk.Modified(y)).some(m => m.IsSame(x))); return j >= 0 ? b.names[j] : `${f.id}:new:${n}`; });
+      return { shape, faces, names };
+    });
+    return this.compoundOf(out);
   }
 
   /** The face with this name that holds the edge. */
@@ -1757,6 +1870,7 @@ export class Modeller {
           else if (f.type === "bsplit") body = this.splitBody(f, body, frames);
           else if (f.type === "delbody") body = this.deleteBodies(f, body);
           else if (f.type === "movebody") body = this.moveBodies(f, body, frames);
+          else if (f.type === "scale") body = this.scaleBodies(f, body);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           else if (f.type === "thread") {

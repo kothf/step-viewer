@@ -160,6 +160,14 @@ export interface FilletFeature {
   multi?: boolean;
   /** Keep features that fit: skip edges that cannot be rounded, with a warning. */
   keepFit?: boolean;
+  /**
+   * Fillet type (FR-FT-032): edges (unset), a face fillet that rounds where face set 1 meets face set 2,
+   * or a full round that replaces the centre faces with a half cylinder touching side 1 and side 2.
+   */
+  kind?: "face" | "full";
+  faces1?: FaceRef[];
+  faces2?: FaceRef[];
+  center?: FaceRef[];
 }
 
 export interface ChamferFeature {
@@ -437,6 +445,17 @@ export interface MoveBodyFeature {
   angle?: Num;
 }
 
+/** Scale (FR-BODY-006): bodies (all when none picked) scaled about the origin or each body's centroid. */
+export interface ScaleFeature {
+  id: string; type: "scale"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  about: "origin" | "centroid";
+  /** Per axis factors `fx`/`fy`/`fz` instead of one `factor`. */
+  axes?: boolean;
+  factor: Num;
+  fx?: Num; fy?: Num; fz?: Num;
+}
+
 /**
  * Imported body (FR-FT-130, FR-BODY-005): the exact B-rep of a STEP/IGES/BREP file, kept as BREP text
  * in the document. Faces are named `<id>:f<i>` in the file's order. `heal` (FR-FT-131) sews the faces
@@ -453,7 +472,7 @@ export interface ImportFeature {
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
-  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature;
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

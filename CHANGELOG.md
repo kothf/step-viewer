@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Face fillet and full round fillet** (FR-FT-032): the Fillet panel has a **Fillet type**. A face fillet rounds every edge where face set 1 meets face set 2; a full round replaces the centre faces between two parallel side faces with a half round tangent to both (the radius is half the gap). Both preview live.
+- **Scale** (FR-BODY-006), in the **Sweep ▾** menu: scales the picked bodies (all when none are picked) about their centroid or the origin, uniformly or per axis. Faces keep their names, so later features still find them.
+
 ## [1.58.0] - 2026-11-07
 
 ### Added

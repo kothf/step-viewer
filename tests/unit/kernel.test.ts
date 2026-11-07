@@ -796,3 +796,42 @@ test("imported body with a gap: check and heal reports it and closes it (FR-FT-1
   const cut = run(m, doc([imp(true), circle("k", 5, 5, 2, { std: "XY" }), { id: "c", type: "extrude", name: "Cut1", sketch: "k", op: "cut", end: "through", depth: { v: 1 }, flip: true }]));
   assert.ok(cut.props!.volume < 1000 - Math.PI * 4 * 9);
 });
+
+test("full round fillet: a 4 mm wall's top becomes a half cylinder tangent to both sides (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const wall: Feature[] = [rect("s", 0, 0, 40, 4), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r = run(m, doc([...wall, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [], kind: "full", faces1: [{ name: "x:side:sl1" }], center: [{ name: "x:end" }], faces2: [{ name: "x:side:sl3" }] } as Feature]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  // Removed: the 4×2 strip on top minus the half disc of radius 2, along 40 mm.
+  close(r.props!.volume, 40 * 4 * 10 - (8 - 2 * Math.PI) * 40, 1e-4);
+  assert.ok(r.body!.names.some(n => n.startsWith("f:round:")));
+  assert.ok(!r.body!.names.includes("x:end"));
+  // Sides that are not parallel are refused.
+  const bad = m.evaluate(doc([...wall, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [], kind: "full", faces1: [{ name: "x:side:sl1" }], center: [{ name: "x:end" }], faces2: [{ name: "x:side:sl2" }] } as Feature]));
+  assert.equal(bad.statuses[2].code, "E-FT-FULLROUND");
+});
+
+test("face fillet: rounds where the top face meets the side faces (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r = run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [], kind: "face", faces1: [{ name: "x:end" }], faces2: [{ name: "x:side:sl1" }, { name: "x:side:sl3" }] } as Feature]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  close(r.props!.volume, 8000 - (1 - Math.PI / 4) * 4 * 40 * 2, 1e-4);
+  assert.equal(r.body!.names.filter(n => n.startsWith("f:fillet:")).length, 2);
+  const apart = m.evaluate( doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [], kind: "face", faces1: [{ name: "x:end" }], faces2: [{ name: "x:start" }] } as Feature]));
+  assert.equal(apart.statuses[2].code, "E-FT-FACESETS");
+});
+
+test("scale: uniform about the origin, per axis about the centroid (FR-BODY-006)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const u = run(m, doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 2 } } as Feature]));
+  close(u.props!.volume, 64000, 1e-6);
+  close(u.props!.com[2], 10, 1e-6);
+  assert.ok(u.body!.names.includes("x:end"));
+  const a = run(m, doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [{ name: "x:end" }], about: "centroid", axes: true, factor: { v: 1 }, fx: { v: 0.5 }, fy: { v: 1 }, fz: { v: 3 } } as Feature]));
+  close(a.props!.volume, 8000 * 1.5, 1e-6);
+  close(a.props!.com[2], 5, 1e-6);
+  const z = m.evaluate( doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 0 } } as Feature]));
+  assert.equal(z.statuses[2].code, "E-BDY-SCALE");
+});
