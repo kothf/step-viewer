@@ -110,6 +110,21 @@ test("revolve up to a plane, direction 2 and thin revolve (FR-FT-022)", async ()
   assert.equal(bad.statuses.find(x => x.id === "f1")!.code, "E-RV-UPTO");
 });
 
+test("freeze bar keeps frozen features' cached result (FR-HIS-024)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 10, 10);
+  const ex = (v: number): Feature => ({ id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v } });
+  close(run(m, doc([s1, ex(10)])).props!.volume, 1000);
+  // Frozen: a new depth is ignored while the cache holds the old shape.
+  close(run(m, { ...doc([s1, ex(20)]), freezeAfter: "f1" }).props!.volume, 1000);
+  // A feature after the bar still rebuilds on the frozen body.
+  const s2 = circle("s2", 0, 0, 2, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  close(run(m, { ...doc([s1, ex(20), s2, cut]), freezeAfter: "f1" }).props!.volume, 1000 - 40 * Math.PI);
+  // Unfrozen: everything follows the new depth.
+  close(run(m, doc([s1, ex(20), s2, cut])).props!.volume, 2000 - 80 * Math.PI);
+});
+
 test("mid-plane extrude and errors", async () => {
   const m = new Modeller(await occ());
   const s = rect("s", 0, 0, 10, 10);

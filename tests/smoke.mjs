@@ -2322,6 +2322,27 @@ try {
     const vPat = await vol(), stPat = await lastSt();
     const holes7 = 8 * Math.PI * 2.25 * 10 + Math.PI * 9 * 10;
     check(patTitle === "Circular sketch pattern" && pat.cs === "-15,-20 -18,0 -25,-15 -25,-20 -35,-20 0,-18 0,18 18,0" && xf === "-25,1.5 25,3" && pat.eq === 5 && pat.st === "ok" && stPat === "extrude:ok" && vBeforePat - vPat > holes7 - 1, `model 1.29: sketch patterns, move/copy, rotate and scale, cut through the gasket (${patTitle}, ${pat.cs}, ${xf}, ${pat.eq} equal, ${pat.st}, ${stPat}, ${(vBeforePat - vPat).toFixed(1)} ≥ ${holes7.toFixed(1)})`);
+    // 1.30: tree folders (FR-HIS-009) and the freeze bar (FR-HIS-024) from the context menu.
+    const cutId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    const menuPick = async (id, label) => {
+      await mp.click(`#mc-tree .ft-row[data-id="${id}"] .ft-name`, { button: "right" });
+      await mp.locator("#mc-menu button", { hasText: label }).first().click();
+      await idle();
+    };
+    await menuPick(cutId, "Add to new folder");
+    const fold1 = await mp.evaluate(id => ({ name: document.querySelector("#mc-tree .ft-folder .ft-name")?.textContent, inside: document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`)?.classList.contains("infolder") }), cutId);
+    await mp.click("#mc-tree .ft-folder .ft-name");
+    const folded = await mp.evaluate(id => ({ gone: !document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`), exp: document.querySelector("#mc-tree .ft-folder")?.getAttribute("aria-expanded") }), cutId);
+    await mp.click("#mc-tree .ft-folder .ft-name");
+    const vFz0 = await vol();
+    await menuPick(gid, "Freeze up to here");
+    const fz = await mp.evaluate(id => ({ bar: !!document.querySelector("#mc-tree .ft-freeze"), frozen: document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`)?.classList.contains("frozen"), after: window.__sv.model.store.doc.freezeAfter }), gid);
+    await mp.dblclick(`#mc-tree .ft-row[data-id="${gid}"] .ft-name`);
+    const fzMode = await mp.evaluate(() => window.__sv.model.mode().kind);
+    const fzToast = await mp.evaluate(() => [...document.querySelectorAll(".toast")].map(e => e.textContent).join(" | "));
+    await menuPick(gid, "Unfreeze all");
+    const vFz1 = await vol();
+    check(fold1.name === "Folder1" && fold1.inside && folded.gone && folded.exp === "false" && fz.bar && fz.frozen && fz.after === gid && fzMode === "none" && /above the freeze bar/.test(fzToast) && Math.abs(vFz1 - vFz0) < 1e-6 && !(await mp.evaluate(() => window.__sv.model.store.doc.freezeAfter)), `model 1.30: a tree folder that collapses; a freeze bar that blocks editing (${JSON.stringify(fold1)}, ${JSON.stringify(folded)}, ${JSON.stringify(fz)}, ${fzMode})`);
     await ctx.close();
   }
 
