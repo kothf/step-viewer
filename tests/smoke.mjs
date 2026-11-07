@@ -1686,6 +1686,9 @@ try {
     await click([30, 0]);
     const poly = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; return { lines: sk.ents.filter(e => e.t === "line").length, cons: sk.ents.filter(e => e.t === "circle" && e.cons).length, eq: sk.rels.filter(r => r.t === "equal").length, ok: window.__sv.model.editor().info.status }; });
     check(poly.lines === 6 && poly.cons === 1 && poly.eq === 5 && poly.ok === "ok", `model 1.19: polygon makes 6 equal lines on a construction circle (${JSON.stringify(poly)})`);
+    // 1.45: under-defined analysis: a selected polygon side shows orange free-motion arrows (FR-SLV-010).
+    const freeArr = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.find(e => e.t === "line"), prev = ed.tool; ed.setTool("select"); ed.selection.clear(); ed.selection.add(l.id); ed.render(); const n = ed.freeArrows; ed.selection.clear(); ed.render(); const after = ed.freeArrows; ed.setTool(prev); return { n, dof: ed.info.dof, after }; });
+    check(freeArr.n >= 2 && freeArr.dof > 0 && freeArr.after === 0, `model 1.45: a selected under-defined line shows free-motion arrows (${JSON.stringify(freeArr)})`);
     // Ctrl+8: normal to the sketch.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); });
     await mp.keyboard.press("Control+8");

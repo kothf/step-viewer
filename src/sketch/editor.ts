@@ -10,7 +10,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
-import { ORIGIN, measureDim, solve, tryAdd, type SolveResult } from "./solver";
+import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
@@ -69,6 +69,8 @@ const HV_TOL = (3 * Math.PI) / 180;
 
 type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "spline" | "origin" | "dim" | "rel"; d: number };
 
+/** Under-defined analysis arrows (FR-SLV-010). */
+const FREE_ARROW = 0xf08c00;
 const COLORS = {
   light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
   dark: { free: 0x6ea8ff, defined: 0xe8ecf2, cons: 0x8a94a6, sel: 0xffa94d, hover: 0xffc078, bad: 0xff6b5e, dim: 0xcbd5e1, pre: 0x51cf66 },
@@ -96,6 +98,8 @@ export class SketchEditor {
   /** Offset preview under the cursor (polylines in sketch coordinates). */
   private offsetPreview: V2[][] = [];
   selection = new Set<string>();
+  /** Free-motion arrows drawn for the selection (FR-SLV-010); read by the tests. */
+  freeArrows = 0;
   info: SolveResult;
   private group = new THREE.Group();
   private hover: Hit | null = null;
@@ -1635,6 +1639,32 @@ export class SketchEditor {
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") poly(this.splineLine(e), c);
     }
+    // Under-defined analysis (FR-SLV-010): orange arrows show where the selected items can still move.
+    if (this.tool === "select" && this.selection.size && this.info.status === "ok" && this.info.dof > 0) {
+      const pts = new Set<string>();
+      for (const id of this.selection) {
+        const e = this.ent(id);
+        if (!e) continue;
+        if (e.t === "point") pts.add(e.id);
+        else if (e.t === "line") { pts.add(e.a); pts.add(e.b); }
+        else if (e.t === "circle" || e.t === "ellipse") pts.add(e.c);
+        else if (e.t === "arc") { pts.add(e.c); pts.add(e.a); pts.add(e.b); }
+        else if (e.t === "spline") e.pts.forEach(q => pts.add(q));
+      }
+      const L = this.px([0, 0]) * 26, H = L * 0.3;
+      this.freeArrows = 0;
+      for (const [id, dirs] of freeDirections(this.sk, [...pts])) {
+        const o = this.pt(id);
+        for (const u of dirs) for (const sg of [1, -1]) {
+          const dx = u[0] * sg, dy = u[1] * sg;
+          const a: V2 = [o[0] + dx * L * 0.3, o[1] + dy * L * 0.3], tip: V2 = [o[0] + dx * L, o[1] + dy * L];
+          push(a, tip, FREE_ARROW, dimSegs, dimCols);
+          push(tip, [tip[0] - dx * H - dy * H * 0.6, tip[1] - dy * H + dx * H * 0.6], FREE_ARROW, dimSegs, dimCols);
+          push(tip, [tip[0] - dx * H + dy * H * 0.6, tip[1] - dy * H - dx * H * 0.6], FREE_ARROW, dimSegs, dimCols);
+          this.freeArrows++;
+        }
+      }
+    } else this.freeArrows = 0;
     // Preview of the entity being drawn.
     const d = this.draft;
     if (d.pts.length && d.cursor) {

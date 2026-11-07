@@ -202,7 +202,7 @@ const EN: Tab[] = [
   <li><b>Dimension</b>: click a line, circle or arc (or two items), then where the value goes, and type it. Values accept units and arithmetic, such as <code>25.4 mm</code>, <code>1in</code>, <code>100/3</code> or <code>30deg</code>. Double-click a dimension to change it.</li>
   <li>Select items (Ctrl+click for more) to add relations in the panel: parallel, perpendicular, equal, tangent, concentric, midpoint, symmetric, fix. <b>Construction</b> (Q) turns lines into reference geometry, for example a revolve axis.</li>
   <li>The panel lists the sketch's relations: click one to select it, ✕ deletes it.</li>
-  <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Drag geometry to try it.</li>
+  <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Select an item to see orange arrows where it can still move. Drag geometry to try it.</li>
   <li>✓ or <kbd>Enter</kbd> leaves the sketch; ✕ asks before discarding its changes.</li>
 </ul>
 <h4>Features</h4>
@@ -411,7 +411,7 @@ const RU: Tab[] = [
   <li><b>Размер</b>: щёлкните отрезок, окружность или дугу (или два элемента), затем место для значения и введите его. Можно писать единицы и арифметику: <code>25,4 мм</code>, <code>1 дюйм</code> как <code translate="no">1in</code>, <code>100/3</code>, <code>30°</code>. Двойной щелчок по размеру меняет его.</li>
   <li>Выберите элементы (Ctrl+щелчок добавляет), чтобы добавить взаимосвязи на панели: параллельность, перпендикулярность, равенство, касательность, концентричность, середина, симметричность, фиксация. <b>Вспомогательная</b> (Q) делает отрезки справочной геометрией, например осью вращения.</li>
   <li>Панель перечисляет взаимосвязи эскиза: щелчок выбирает, ✕ удаляет.</li>
-  <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Перетащите геометрию, чтобы проверить.</li>
+  <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Выберите элемент: оранжевые стрелки покажут, куда он ещё может двигаться. Перетащите геометрию, чтобы проверить.</li>
   <li>✓ или <kbd>Enter</kbd> выходит из эскиза; ✕ спрашивает, прежде чем отменить изменения.</li>
 </ul>
 <h4>Элементы</h4>

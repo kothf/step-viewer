@@ -1,7 +1,7 @@
 // Solver acceptance set (FRS 16.3).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solve, tryAdd, measureDim, ORIGIN } from "../../src/sketch/solver";
+import { solve, tryAdd, measureDim, ORIGIN, freeDirections } from "../../src/sketch/solver";
 import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
 
 const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
@@ -137,4 +137,21 @@ test("ellipse: 5 DOF, arc ends stay on it, fully defined by dimensions (FR-SK-01
   solve(arc);
   const [zx, zy] = P(arc, "z")!;
   near((zx / 10) ** 2 + (zy / 5) ** 2, 1, 1e-6);
+});
+
+test("under-defined analysis: free directions of points (FR-SLV-010)", () => {
+  // A horizontal line from the origin: its start is fixed, its end slides along X only.
+  const s = sk([pt("a", 0, 0), pt("b", 5, 0.5), ln("l", "a", "b")], [rel("coincident", "a", ORIGIN), rel("horizontal", "l")]);
+  solve(s);
+  let f = freeDirections(s, ["a", "b"]);
+  assert.equal(f.get("a")!.length, 0);
+  assert.equal(f.get("b")!.length, 1);
+  near(Math.abs(f.get("b")![0][0]), 1); near(f.get("b")![0][1], 0);
+  // A loose point moves both ways; dimensioning the line fixes its end.
+  s.ents.push(pt("c", 3, 3));
+  f = freeDirections(s, ["c"]);
+  assert.equal(f.get("c")!.length, 2);
+  s.dims.push(dim("distance", 10, "l"));
+  solve(s);
+  assert.equal(freeDirections(s, ["b"]).get("b")!.length, 0);
 });

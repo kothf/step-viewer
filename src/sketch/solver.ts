@@ -379,6 +379,12 @@ function newton(sys: System, scale: number, iters = 80): number {
 
 /** Rank and the variables pinned by the constraints (not free in any direction of the null space). */
 function analyse(sys: System): { rank: number; pinned: boolean[] } {
+  const { rank, pinned } = nullSpace(sys);
+  return { rank, pinned };
+}
+
+/** Row-reduces the Jacobian: rank, pinned variables and a basis of the null space (the free motions). */
+function nullSpace(sys: System): { rank: number; pinned: boolean[]; basis: Float64Array[] } {
   const n = sys.x.length;
   const { rows } = jacobian(sys, sys.x);
   const M = rows.map(r => { const a = new Float64Array(n); r.idx.forEach((v, k) => { a[v] = r.val[k]; }); return a; });
@@ -408,11 +414,39 @@ function analyse(sys: System): { rank: number; pinned: boolean[] } {
   for (let c = 0; c < n; c++) if (!isPiv[c]) free.push(c);
   // Null space basis: for each free column f, x_f = 1 and x_pivot = -M[row][f].
   const pinned = new Array(n).fill(true);
+  const basis: Float64Array[] = [];
   for (const f of free) {
     pinned[f] = false;
-    pivCols.forEach((c, r) => { if (Math.abs(M[r][f]) > 1e-7) pinned[c] = false; });
+    const v = new Float64Array(n);
+    v[f] = 1;
+    pivCols.forEach((c, r) => { if (Math.abs(M[r][f]) > 1e-7) { pinned[c] = false; v[c] = -M[r][f]; } });
+    basis.push(v);
   }
-  return { rank, pinned };
+  return { rank, pinned, basis };
+}
+
+/**
+ * Under-defined analysis (FR-SLV-010): for each point, the unit directions in which it can still
+ * move (none when it is fully defined, one along a curve, two when it is free in the plane).
+ */
+export function freeDirections(sk: SketchFeature, points: string[]): Map<string, V2[]> {
+  const sys = build(sk);
+  const { basis } = nullSpace(sys);
+  const out = new Map<string, V2[]>();
+  for (const id of points) {
+    const i = sys.px.get(id);
+    if (i === undefined || i < 0) { out.set(id, []); continue; }
+    // Gram–Schmidt on the point's share of each free motion.
+    const dirs: V2[] = [];
+    for (const v of basis) {
+      let d: V2 = [v[i], v[i + 1]];
+      for (const u of dirs) { const k = d[0] * u[0] + d[1] * u[1]; d = [d[0] - k * u[0], d[1] - k * u[1]]; }
+      const l = Math.hypot(d[0], d[1]);
+      if (l > 1e-6 && dirs.length < 2) dirs.push([d[0] / l, d[1] / l]);
+    }
+    out.set(id, dirs);
+  }
+  return out;
 }
 
 function writeBack(sk: SketchFeature, sys: System) {
