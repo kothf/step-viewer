@@ -1524,8 +1524,11 @@ try {
     await mp.waitForSelector('#mc-pm input[data-k="multi"]');
     await mp.check('#mc-pm input[data-k="multi"]');
     await mp.waitForSelector('#mc-pm input[data-er="0"]');
+    // The panel redraws once the rebuild after the tick ends: type into the redrawn one.
+    await idle();
     await mp.fill('#mc-pm input[data-er="0"]', "8");
     await mp.press('#mc-pm input[data-er="0"]', "Enter");
+    await mp.waitForFunction(() => { const m = window.__sv.model.mode(); return m.kind === "feature" && m.draft.edges[0]?.r === 8; });
     await idle();
     const multiUi = await mp.evaluate(() => ({ inputs: document.querySelectorAll("#mc-pm input[data-er]").length, callouts: [...document.querySelectorAll("#mc-layer .mc-callout")].map(c => c.textContent).join("|") }));
     await mp.click("#mc-ok");
@@ -2042,7 +2045,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const ax = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); const fr = window.__sv.model.last().frames[f.id]; return { type: f.type, name: f.name, n: fr?.n.map(v => Math.round(Math.abs(v) * 1e6) / 1e6), row: !!document.querySelector(`#mc-tree .ft-row[data-id="${f.id}"]`) }; });
-    check(refMenu.join("|") === "Plane|Axis|Point" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
+    check(refMenu.join("|") === "Plane|Axis|Point|Coordinate system" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
     // Point at the centre of the top face, picked in the view.
     await mp.click('#mc-tools [data-fly="plane"]');
     await mp.click("#mc-menu button:nth-child(3)");
@@ -2054,6 +2057,33 @@ try {
     await idle();
     const pt = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, o: window.__sv.model.last().frames[f.id]?.o.map(v => Math.round(v * 1e6) / 1e6) }; });
     check(pt.type === "point" && pt.o?.join(",") === "0,0,20", `model 1.21: Point at the centre of a picked face (${JSON.stringify(pt)})`);
+    // 1.46: coordinate system (FR-REF-005): origin the point (tree), Z the top face (view), X the axis (tree); then the measurement frame.
+    await mp.click('#mc-tools [data-fly="plane"]');
+    await mp.click("#mc-menu button:nth-child(4)");
+    const ids = await mp.evaluate(() => { const fs = window.__sv.model.store.doc.features; return { pt: fs.find(f => f.type === "point").id, ax: fs.find(f => f.type === "axis").id }; });
+    await mp.click(`#mc-tree .ft-row[data-id="${ids.pt}"]`);
+    await idle();
+    const topZ = await world([20, 10, 20]);
+    await mp.mouse.click(topZ[0], topZ[1]);
+    await idle();
+    await mp.click(`#mc-tree .ft-row[data-id="${ids.ax}"]`);
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const cs = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); const fr = window.__sv.model.last().frames[f.id]; const R = v => v?.map(x => Math.round(x * 1e6) / 1e6 + 0).join(","); return { id: f.id, type: f.type, name: f.name, o: R(fr?.o), n: R(fr?.n), x: R(fr?.x?.map(Math.abs)), origin: !!f.origin?.point, z: !!f.z?.face, xr: !!f.x?.axis }; });
+    check(cs.type === "csys" && cs.name === "Coordinate system1" && cs.o === "0,0,20" && cs.n === "0,0,1" && cs.x === "0,1,0" && cs.origin && cs.z && cs.xr, `model 1.46: Coordinate system from a point, a face and an axis (${JSON.stringify(cs)})`);
+    await mp.evaluate(id => window.__sv.modeller.useCsys(id), cs.id);
+    await mp.waitForTimeout(100);
+    const csOn = await mp.evaluate(() => ({ shown: !document.querySelector("#csys-reset").hidden, txt: document.querySelector("#csys-reset").textContent }));
+    // It follows a rebuild: the point moves with the top face when the block gets taller.
+    await mp.evaluate(() => window.__sv.model.store.change("Taller", d => { d.features.find(f => f.id === "f1").depth = { v: 30 }; }));
+    await idle();
+    const csZ = await mp.evaluate(() => window.__sv.csys.active?.src ? window.__sv.csys.active.origin[2] : null);
+    await mp.evaluate(() => window.__sv.model.store.change("Back", d => { d.features.find(f => f.id === "f1").depth = { v: 20 }; }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.useCsys(null));
+    const csOff = await mp.evaluate(() => document.querySelector("#csys-reset").hidden);
+    check(csOn.shown && /Coordinate system1/.test(csOn.txt) && Math.abs(csZ - 30) < 1e-6 && csOff, `model 1.46: Use for measurements makes it the active CSYS and it follows rebuilds (${JSON.stringify(csOn)}, z ${csZ}, off ${csOff})`);
     // S: the shortcut bar at the cursor; Esc closes it.
     const mid = await world([0, 0, 10]);
     await mp.mouse.move(mid[0], mid[1]);

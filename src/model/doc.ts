@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
@@ -130,6 +130,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "plane") { plane(f.base); if (f.axis) faces.push(...f.axis.faces); }
   if (f.type === "axis" || f.type === "point") { if (f.edge) faces.push(...f.edge.faces); if (f.face) faces.push(f.face.name); }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
+  if (f.type === "csys" && f.origin) { if ("point" in f.origin) features.push(f.origin.point); else faces.push(...f.origin.edge.faces); }
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
   const line = (l: LineRef | undefined) => {
     if (!l) return;
@@ -137,6 +138,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     if (l.face) faces.push(l.face.name);
     if (l.axis) features.push(l.axis);
   };
+  if (f.type === "csys") { line(f.x); line(f.z); }
   if (f.type === "hole") plane(f.plane);
   if (f.type === "shell") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }

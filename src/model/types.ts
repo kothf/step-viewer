@@ -188,6 +188,20 @@ export interface PointFeature {
   hidden?: boolean;
 }
 
+/**
+ * Reference coordinate system (FR-REF-005): an origin (a vertex or reference point, else the part origin),
+ * an X and a Z direction (else world X and Z); X is made square to Z. Usable as the measurement and export frame.
+ */
+export interface CsysFeature {
+  id: string; type: "csys"; name: string; suppressed?: boolean;
+  origin?: VertexRef;
+  x?: LineRef;
+  z?: LineRef;
+  flipX?: boolean;
+  flipZ?: boolean;
+  hidden?: boolean;
+}
+
 /** A direction or axis: a straight or round edge, a flat or round face, or a reference axis. */
 export interface LineRef { edge?: EdgeRef; face?: FaceRef; axis?: string }
 
@@ -291,7 +305,7 @@ export interface HoleFeature {
   pitch?: number;
 }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature
+export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature;
 export type FeatureType = Feature["type"];
 

@@ -87,6 +87,7 @@ const modeller = new ModelController({
     validateDensity();
   },
   normalTo: n => normalTo(n),
+  setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
@@ -1330,7 +1331,7 @@ function showBody(part: Part) {
 }
 
 /** Makes `c` the active coordinate system (null: global); positions, directions and ΔX/ΔY/ΔZ follow it. */
-function setCsys(c: Csys | null, refresh = true) {
+function setCsys(c: Csys | null, refresh = true, quiet = false) {
   csys.active = c;
   csysMark.visible = !!c;
   const reset = $("#csys-reset");
@@ -1345,7 +1346,7 @@ function setCsys(c: Csys | null, refresh = true) {
   if (!refresh) return;
   refreshMeasurements();
   renderProps();
-  if (c) toast(t("Coordinates relative to {name}", { name: t(c.name) }));
+  if (c && !quiet) toast(t("Coordinates relative to {name}", { name: t(c.name) }));
   viewer.invalidate();
 }
 
@@ -2249,4 +2250,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

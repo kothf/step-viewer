@@ -8,6 +8,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { Annotations } from "./Annotations";
 import { formatMeasurement, type Measurement } from "./measure";
 import { units } from "./units";
+import { csys } from "./csys";
 
 export function download(blob: Blob, name: string) {
   const a = document.createElement("a");
@@ -48,6 +49,13 @@ function exportScene(v: Viewer) {
 
 export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb", baseName: string) {
   const scene = exportScene(v);
+  // Mesh exports are written in the active coordinate system (FR-REF-005).
+  const c = csys.active;
+  if (c) {
+    const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(...c.x), new THREE.Vector3(...c.y), new THREE.Vector3(...c.z)).setPosition(c.origin[0], c.origin[1], c.origin[2]);
+    scene.applyMatrix4(m.invert());
+    scene.updateMatrixWorld(true);
+  }
   if (format === "stl") {
     const data = new STLExporter().parse(scene, { binary: true }) as DataView;
     download(new Blob([data.buffer as ArrayBuffer], { type: "model/stl" }), `${baseName}.stl`);

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.46.0] - 2026-11-07
+
+### Added
+- **Coordinate system** reference feature (FR-REF-005), under Plane ▾. Pick an origin (a vertex, or a reference point in the tree; the part origin if none), a Z direction and an X direction (a straight or round edge, a flat or round face, or a reference axis). Each direction can be reversed, and X is made square to Z. It shows as a red/green/blue triad. Right-click it in the tree and choose **Use for measurements and export**: positions, ΔX/ΔY/ΔZ, the centre of mass in Mass properties and STL/OBJ/glTF exports are then in that frame. The frame follows the model through rebuilds.
+- Mesh exports (STL, OBJ, glTF) now use the active coordinate system, whichever way it was set.
+
 ## [1.45.0] - 2026-11-07
 
 ### Added
@@ -476,7 +482,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.45.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.46.0...HEAD
+[1.46.0]: https://github.com/kothf/step-viewer/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/kothf/step-viewer/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/kothf/step-viewer/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/kothf/step-viewer/compare/v1.42.0...v1.43.0

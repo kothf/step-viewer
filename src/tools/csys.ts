@@ -12,6 +12,8 @@ export interface Csys {
   x: T3;
   y: T3;
   z: T3;
+  /** The coordinate system feature of the modelled part it comes from (FR-REF-005), if any. */
+  src?: string;
 }
 
 export const csys = { active: null as Csys | null };
