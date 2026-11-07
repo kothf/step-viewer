@@ -43,7 +43,7 @@ export function mateTypes(a: Geo["k"], b: Geo["k"]): MateType[] {
 }
 
 /** The mate's residuals (lengths in mm, directions scaled by `L`), for world geometry. */
-export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf): number[] {
+export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo): number[] {
   const da = dirOf(ga), db0 = dirOf(gb);
   const s = m.align === "aligned" ? 1 : -1;
   const sg = m.flip ? -1 : 1;
@@ -82,6 +82,39 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       if (ga.k === "axis" && gb.k === "axis") { parallel(); out.push(axisOff(ga, gb.p) - (ga.r + gb.r)); }
       else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, Math.abs(dot(pl.n, sub(ax.p, pl.p))) - ax.r); }
       break;
+    case "limitdist": {
+      // Off only outside [min, max]: zero (and flat) inside, so a limit takes no freedom away.
+      const lo = m.min ?? 0, hi = Math.max(lo, m.max ?? lo);
+      const room = (v: number) => (v < lo ? v - lo : v > hi ? v - hi : 0);
+      if (ga.k === "plane" && gb.k === "plane") { parallel(); out.push(room(sg * dot(da, sub(gb.p, ga.p)))); }
+      else if (ga.k === "axis" && gb.k === "axis") { parallel(); out.push(room(axisOff(ga, gb.p))); }
+      else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, room(sg * dot(pl.n, sub(ax.p, pl.p)))); }
+      break;
+    }
+    case "limitangle": {
+      const lo = m.min ?? 0, hi = Math.max(lo, m.max ?? lo), b = scale(db0, sg);
+      const a = Math.atan2(len(cross(da, b)), dot(da, b));
+      out.push((a < lo ? a - lo : a > hi ? a - hi : 0) * L);
+      break;
+    }
+    case "symmetric": {
+      if (!gc || gc.k !== "plane") break;
+      // a mirrored in the plane c lies on b.
+      const n = gc.n, refl = (v: V3) => sub(v, scale(n, 2 * dot(v, n))), reflP = (p: V3) => sub(p, scale(n, 2 * dot(sub(p, gc.p), n)));
+      const ra = refl(da), pa = reflP(ga.p);
+      if (ga.k === "plane" && gb.k === "plane") { dirs(sub(ra, db0)); out.push(dot(db0, sub(pa, gb.p))); }
+      else if (ga.k === "axis" && gb.k === "axis") { dirs(cross(ra, db0)); dirs(cross(sub(gb.p, pa), db0)); }
+      break;
+    }
+    case "width": {
+      // The tab (b and d, or the axis b) centred between the width faces a and c.
+      if (!gc || ga.k !== "plane" || gc.k !== "plane") break;
+      // The width faces' midplane, measured along a's normal.
+      const sa = dot(da, ga.p), sc = dot(da, gc.p), wm = (sa + sc) / 2;
+      if (gb.k === "axis") { out.push(dot(da, gb.d) * L, dot(da, gb.p) - wm); }
+      else if (gd) { parallel(); out.push((dot(da, gb.p) + dot(da, gd.p)) / 2 - wm); }
+      break;
+    }
     case "lock": {
       if (!tfa || !tfb || !m.rel) break;
       const r = compose(invert(tfa), tfb);
@@ -114,19 +147,33 @@ export function solve(inp: SolveInput): SolveResult {
   const L = Math.max(1, inp.size ?? 100);
   const all = [...(doc.mates ?? []), ...(inp.extra ?? [])].filter(m => !m.suppressed);
   const missing: string[] = [];
-  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string };
+  type Live = { m: Mate; ga: Geo; gb: Geo; ca: string; cb: string; gc?: Geo; cc?: string; gd?: Geo; cd?: string };
   const live: Live[] = [];
   for (const m of all) {
     const ca = byId.get(m.a.comp), cb = byId.get(m.b.comp);
     const ga = ca && (m.type === "lock" ? ({ k: "plane", p: [0, 0, 0], n: [0, 0, 1] } as Geo) : inp.geo(ca.part, m.a.face));
     const gb = cb && (m.type === "lock" ? ({ k: "plane", p: [0, 0, 0], n: [0, 0, 1] } as Geo) : inp.geo(cb.part, m.b.face));
-    if (!ca || !cb || !ga || !gb || ca.id === cb.id) { missing.push(m.id); continue; }
-    live.push({ m, ga, gb, ca: ca.id, cb: cb.id });
+    if (!ca || !cb || !ga || !gb || (ca.id === cb.id && m.type !== "symmetric")) { missing.push(m.id); continue; }
+    const l: Live = { m, ga, gb, ca: ca.id, cb: cb.id };
+    // The third and fourth references (symmetry plane, width faces).
+    const need = m.type === "symmetric" || m.type === "width";
+    if (need) {
+      const cc = m.c && byId.get(m.c.comp), gc = cc && inp.geo(cc.part, m.c!.face);
+      if (!cc || !gc) { missing.push(m.id); continue; }
+      l.gc = gc; l.cc = cc.id;
+      if (m.type === "width" && gb.k === "plane") {
+        const cd = m.d && byId.get(m.d.comp), gd = cd && inp.geo(cd.part, m.d!.face);
+        if (!cd || !gd) { missing.push(m.id); continue; }
+        l.gd = gd; l.cd = cd.id;
+      }
+      if (m.type === "symmetric" && ca.id === cb.id && ca.id === cc.id) { missing.push(m.id); continue; }
+    }
+    live.push(l);
   }
   const tf0: Record<string, Tf> = {};
   for (const c of doc.components) tf0[c.id] = (inp.start?.[c.id] ?? c.tf).slice();
   // Unknowns: floating components that some mate touches.
-  const touched = new Set(live.flatMap(l => [l.ca, l.cb]));
+  const touched = new Set(live.flatMap(l => [l.ca, l.cb, ...(l.cc ? [l.cc] : []), ...(l.cd ? [l.cd] : [])]));
   const vars = comps.filter(c => !c.fixed && touched.has(c.id)).map(c => c.id);
   const col = new Map(vars.map((id, i) => [id, i * 6]));
   const n = vars.length * 6;
@@ -134,9 +181,10 @@ export function solve(inp: SolveInput): SolveResult {
   for (const id of Object.keys(tf0)) tfs[id] = tf0[id].slice();
   const centreOf = (id: string): V3 => applyPoint(tfs[id], inp.centre?.(byId.get(id)!.part) ?? [0, 0, 0]);
 
+  const resOf = (l: Live, t: Record<string, Tf>) => residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb], l.gc && placeGeo(l.gc, t[l.cc!]), l.gd && placeGeo(l.gd, t[l.cd!]));
   const R = (t: Record<string, Tf>) => {
     const r: number[] = [];
-    for (const l of live) r.push(...residuals(l.m, placeGeo(l.ga, t[l.ca]), placeGeo(l.gb, t[l.cb]), L, t[l.ca], t[l.cb]));
+    for (const l of live) r.push(...resOf(l, t));
     return r;
   };
   /** The transforms moved by a step x (translation, rotation vector × L about each centre). */
@@ -207,11 +255,13 @@ export function solve(inp: SolveInput): SolveResult {
 
   // Which mates are off, by their own residuals.
   const bad: string[] = [];
-  if (!ok) for (const l of live) if (residuals(l.m, placeGeo(l.ga, tfs[l.ca]), placeGeo(l.gb, tfs[l.cb]), L, tfs[l.ca], tfs[l.cb]).some(v => Math.abs(v) > tol * 10)) bad.push(l.m.id);
+  if (!ok) for (const l of live) if (resOf(l, tfs).some(v => Math.abs(v) > tol * 10)) bad.push(l.m.id);
   if (!ok && !bad.length) ok = true;
   const dof: Record<string, number> = {};
   for (const c of comps) dof[c.id] = c.fixed ? 0 : 6;
   if (ok && n) {
+    // A limit takes no freedom away, even when it sits at its end.
+    for (const l of live) if (l.m.type === "limitdist" || l.m.type === "limitangle") l.m = { ...l.m, min: -Infinity, max: Infinity };
     const J = jac(R(tfs));
     const N = nullSpace(J, n);
     for (const id of vars) {

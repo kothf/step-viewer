@@ -9,6 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- Advanced mates: limit distance and limit angle (a range, so they keep the freedom inside it), symmetric (two faces or axes mirrored in a plane) and width (a tab centred in a slot, between two faces or on a cylinder's axis), in the Mate panel's Advanced mates group (FR-MATE-004).
+- Display states: named sets of visibility, colour and transparency per component, added from the assembly's right-click menu and switched in the tree's Display states folder (FR-ASM-025).
+- Component transparency from the right-click menu.
+- Open part from an assembly component: the part opens in the modeller with a Return to assembly bar, and the edit comes back to the assembly as one undo step, with its mates kept (FR-ASM-007).
 - Sub-assemblies: a saved assembly inserted as a component moves as one rigid piece, with its parts listed under it in the tree, and counts in mass properties, interference and STEP export (FR-ASM-001/006).
 - Replace component with another part, assembly or STEP/IGES/BREP model; mates keep the faces they find by name and a warning counts the ones that could not (FR-ASM-008).
 - Suppress and unsuppress components, and per-component colour, from the tree's right-click menu.

@@ -133,3 +133,65 @@ test("sub-assemblies flatten rigidly, placed by their component (FR-ASM-001/006)
   assert.ok(f.components[3].fixed && f.components[3].hidden);
   assert.equal(topOf("k/q"), "k");
 });
+
+test("advanced mates: limit distance, limit angle, symmetric, width (FR-MATE-004)", () => {
+  // Limit distance 2..8 between the plate top and the pin's underside: a pin 20 mm up comes down to 8 and keeps one more freedom than a distance mate.
+  const lim: Mate = { id: "l", name: "LimitDistance1", type: "limitdist", a: { comp: "p", face: "top" }, b: { comp: "q", face: "under" }, align: "anti", min: 2, max: 8 };
+  const d = doc([conc, lim]);
+  d.components[1].tf = translation([20, 10, 20]);
+  const r = solve({ doc: d, geo, size: 100 });
+  assert.ok(r.ok, JSON.stringify(r.bad));
+  const z = applyPoint(r.tfs.q, [0, 0, 10])[2] - 5;
+  assert.ok(Math.abs(z - 8) < 1e-4, String(z));
+  assert.equal(r.dof.q, 2);
+  // Inside the range nothing moves.
+  d.components[1].tf = translation([20, 10, 0]);
+  assert.equal(solve({ doc: d, geo, size: 100 }).moved, false);
+  // Limit angle 0..20° between the plate side and the pin flat.
+  const la: Mate = { id: "a", name: "LimitAngle1", type: "limitangle", a: { comp: "p", face: "side" }, b: { comp: "q", face: "flat" }, min: 0, max: Math.PI / 9 };
+  const d2 = doc([conc, coin, la]);
+  d2.components[1].tf = compose(translation([20, 10, -5]), rotation([0, 0, 0], [0, 0, 1], 1));
+  const r2 = solve({ doc: d2, geo, size: 100 });
+  assert.ok(r2.ok, JSON.stringify(r2.bad));
+  const f = applyDir(r2.tfs.q, [1, 0, 0]);
+  assert.ok(Math.abs(Math.acos(f[0]) - Math.PI / 9) < 1e-4, String(Math.acos(f[0])));
+  // Symmetric: two blocks' outer faces mirrored in the plate's side plane (x = 0).
+  const blk = { lft: { k: "plane", p: [-5, 0, 0], n: [-1, 0, 0] }, rgt: { k: "plane", p: [5, 0, 0], n: [1, 0, 0] }, bot: { k: "plane", p: [0, 0, 0], n: [0, 0, -1] } } as Record<string, Geo>;
+  const g3 = (p: string, f: string) => (p === "blk" ? blk[f] : geo(p, f)) ?? null;
+  const d3 = doc([]);
+  d3.parts.blk = { name: "blk", file: "blk.mcadprt", doc: stub };
+  d3.components = [d3.components[0], { id: "u", name: "blk<1>", part: "blk", tf: translation([-30, 0, 5]), fixed: true }, { id: "v", name: "blk<2>", part: "blk", tf: translation([12, 0, 5]) }];
+  d3.mates = [{ id: "s", name: "Symmetric1", type: "symmetric", a: { comp: "u", face: "lft" }, b: { comp: "v", face: "rgt" }, c: { comp: "p", face: "side" } }];
+  const r3 = solve({ doc: d3, geo: g3, size: 100 });
+  assert.ok(r3.ok, JSON.stringify(r3.bad));
+  assert.ok(Math.abs(applyPoint(r3.tfs.v, [5, 0, 0])[0] - 35) < 1e-4, JSON.stringify(r3.tfs.v));
+  // Width: the block (tab faces lft/rgt) centred between the plate side (x = 0) and a wall at x = 40 on a fixed second block.
+  const d4 = doc([]);
+  d4.parts.blk = { name: "blk", file: "blk.mcadprt", doc: stub };
+  d4.components = [d4.components[0], { id: "w", name: "blk<1>", part: "blk", tf: translation([45, 0, 0]), fixed: true }, { id: "v", name: "blk<2>", part: "blk", tf: translation([7, 3, 5]) }];
+  d4.mates = [{ id: "w1", name: "Width1", type: "width", a: { comp: "p", face: "side" }, c: { comp: "w", face: "lft" }, b: { comp: "v", face: "lft" }, d: { comp: "v", face: "rgt" } }];
+  const r4 = solve({ doc: d4, geo: g3, size: 100 });
+  assert.ok(r4.ok, JSON.stringify(r4.bad));
+  assert.ok(Math.abs(applyPoint(r4.tfs.v, [0, 0, 0])[0] - 20) < 1e-4, JSON.stringify(r4.tfs.v));
+});
+
+test("display states keep visibility, colour and transparency per component (FR-ASM-025)", async () => {
+  const { addState, activateState, deleteState } = await import("../../src/asm/states");
+  const d = doc([]);
+  d.components[1].color = [1, 0, 0];
+  addState(d, "Inside", "ds_in");
+  assert.deepEqual(d.states!.map(s => s.name), ["Default", "Inside"]);
+  d.components[0].hidden = true;
+  d.components[1].opacity = 0.4;
+  activateState(d, "ds_default");
+  assert.equal(d.components[0].hidden, undefined);
+  assert.equal(d.components[1].opacity, undefined);
+  assert.deepEqual(d.components[1].color, [1, 0, 0]);
+  activateState(d, "ds_in");
+  assert.equal(d.components[0].hidden, true);
+  assert.equal(d.components[1].opacity, 0.4);
+  assert.ok(deleteState(d, "ds_in"));
+  assert.equal(d.activeState, "ds_default");
+  assert.equal(d.components[0].hidden, undefined);
+  assert.equal(deleteState(d, "ds_default"), false);
+});

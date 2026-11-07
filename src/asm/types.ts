@@ -18,7 +18,14 @@ export interface Component {
   hidden?: boolean;
   suppressed?: boolean;
   color?: V3;
+  /** 0..1, unset = opaque (FR-ASM-025 transparency). */
+  opacity?: number;
 }
+
+/** A component's look in a display state (FR-ASM-025). */
+export interface Look { hidden?: boolean; color?: V3; opacity?: number }
+/** A named display state: visibility, colour and transparency per component. The active one's looks live on the components. */
+export interface DisplayState { id: string; name: string; looks: Record<string, Look> }
 
 export interface AsmDoc {
   schema: 1;
@@ -33,6 +40,9 @@ export interface AsmDoc {
   patterns?: CompPattern[];
   /** Named exploded views (FR-ASM-023). */
   explodes?: ExplodeView[];
+  /** Display states (FR-ASM-025) and the active one. */
+  states?: DisplayState[];
+  activeState?: string;
   /** The documents the components use, embedded (FR-ASM-003), by key. An entry with `asm` is a
    * sub-assembly (rigid, FR-ASM-006); its `doc` is then an empty placeholder part. */
   parts: Record<string, { name: string; file: string; doc: PartDoc; asm?: AsmDoc }>;
@@ -44,7 +54,9 @@ export interface AsmComponentStatus { id: string; ok: boolean; message?: string 
 /** A face of a component, by its persistent name in the part (FR-MATE-010). */
 export interface MateRef { comp: string; face: string }
 
-export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "distance" | "angle" | "lock";
+export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "distance" | "angle" | "lock"
+  /** Advanced (FR-MATE-004): limits keep a distance or angle in [min, max]; symmetric uses c as the plane; width centres b (and d) between a and c. */
+  | "limitdist" | "limitangle" | "symmetric" | "width";
 
 export interface Mate {
   id: string;
@@ -61,6 +73,13 @@ export interface Mate {
   suppressed?: boolean;
   /** Lock: b's transform relative to a's when the mate was made. */
   rel?: Tf;
+  /** Symmetric: the symmetry plane; width: the second width face. */
+  c?: MateRef;
+  /** Width: the second tab face (none when the tab is a cylinder). */
+  d?: MateRef;
+  /** Limit distance (mm) or angle (rad) range. */
+  min?: number;
+  max?: number;
 }
 
 /** Linear or circular pattern of components along a face's normal / cylinder axis. */

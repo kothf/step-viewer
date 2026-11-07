@@ -10,6 +10,7 @@ import { t, onLangChange } from "../i18n";
 import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
+import { activateState, addState, deleteState } from "./states";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, topOf, type Expanded } from "./patterns";
 import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
@@ -28,6 +29,8 @@ export interface AsmHost {
   selectLeftTab(tab: string): void;
   /** Another document kind takes over (the part modeller closes). */
   leaveOthers(): void;
+  /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
+  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void): void;
   appVersion: string;
 }
 
@@ -36,10 +39,13 @@ const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySele
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const FOREIGN = /\.(step|stp|iges|igs|brep)$/i;
 const MATE_TYPES: MateType[] = ["coincident", "parallel", "perpendicular", "tangent", "concentric", "lock", "distance", "angle"];
-const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle" };
-const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠" };
+const ADV_TYPES: MateType[] = ["symmetric", "width", "limitdist", "limitangle"];
+const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle", symmetric: "Symmetric", width: "Width", limitdist: "Limit distance", limitangle: "Limit angle" };
+const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣" };
+/** The advanced mate types that fit two references (FR-MATE-004). */
+const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; problem?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; problem?: string }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -232,6 +238,7 @@ export class AsmController {
           const tree: TreeNode = { name: doc.name, parts: [], children: r.parts.map((p, i) => ({ name: p.data.name, parts: [i], children: [] })) };
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
+          this.applyOpacity();
         } catch (err) { toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true); }
       } while (this.again);
       $("#asm-busy").hidden = true;
@@ -721,7 +728,7 @@ export class AsmController {
   startMate(edit?: Mate) {
     if (!this.doc) return;
     this.closeTools();
-    this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, type: edit.type, align: edit.align, value: edit.value, flip: edit.flip } : {};
+    this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, ...(edit.c ? { c: { ...edit.c } } : {}), ...(edit.d ? { d: { ...edit.d } } : {}), type: edit.type, align: edit.align, value: edit.value, flip: edit.flip, min: edit.min, max: edit.max } : {};
     this.renderAll();
     this.drawPicks();
     this.previewMate();
@@ -741,10 +748,16 @@ export class AsmController {
     if (!m?.a || !m.b || !m.type || !this.doc) return null;
     const n = (this.doc.mates ?? []).filter(x => x.type === m.type).length + 1;
     const old = m.edit ? this.doc.mates?.find(x => x.id === m.edit) : undefined;
-    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type]}${n}`, type: m.type, a: m.a, b: m.b };
+    const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type].replace(/ (\w)/g, (_, c: string) => c.toUpperCase())}${n}`, type: m.type, a: m.a, b: m.b };
     if (m.align) mate.align = m.align;
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
     if (m.type === "lock") { const a = this.comp(m.a.comp), b = this.comp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
+    if (m.type === "limitdist" || m.type === "limitangle") { mate.min = m.min ?? 0; mate.max = Math.max(mate.min, m.max ?? mate.min); if (m.flip) mate.flip = true; }
+    if (m.type === "symmetric" || m.type === "width") {
+      if (!m.c || (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d)) return null;
+      mate.c = m.c;
+      if (m.type === "width" && m.d) mate.d = m.d;
+    }
     return mate;
   }
 
@@ -795,6 +808,21 @@ export class AsmController {
     if (!c || !face) return;
     if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
     const ref = { comp: id, face };
+    // Symmetric and width take more references after the first two.
+    if (m.a && m.b && (m.type === "symmetric" || m.type === "width")) {
+      const g = this.worldGeo(ref)!;
+      if (!m.c) {
+        if (g.k !== "plane") { toast(t("Pick a flat face."), true); return; }
+        m.c = ref;
+      } else if (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d) {
+        if (g.k !== "plane") { toast(t("Pick a flat face."), true); return; }
+        m.d = ref;
+      } else { m.c = ref; m.d = undefined; }
+      this.drawPicks();
+      this.previewMate();
+      return;
+    }
+    m.c = m.d = undefined;
     if (m.a && !m.b && m.a.comp !== id) m.b = ref;
     else if (m.a && m.a.comp === id && !m.b) m.a = ref;
     else { m.a = ref; m.b = undefined; }
@@ -818,6 +846,9 @@ export class AsmController {
       const d = mateDefaults(type, ga, gb);
       m.align = d.align ?? (type === "coincident" && ga.k === "plane" && gb.k === "plane" ? "anti" : undefined);
       if (type === "distance" || type === "angle") { m.value = d.value; m.flip = d.flip; } else { m.value = undefined; m.flip = undefined; }
+      // Limits start from 0 up to where the references are now.
+      if (type === "limitdist" || type === "limitangle") { const now = mateDefaults(type === "limitdist" ? "distance" : "angle", ga, gb); m.min = 0; m.max = now.value ?? 0; m.flip = now.flip; if (type === "limitdist") m.align = now.align; }
+      if (type !== "symmetric" && type !== "width") m.c = m.d = undefined;
       if (type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.previewMate();
@@ -839,7 +870,8 @@ export class AsmController {
     }
     const m = this.mating ?? (this.patterning?.dir ? { a: undefined, b: this.patterning.dir } : null);
     if (!m) { this.host.viewer.invalidate(); return; }
-    ([[m.a, 0x1f78ff], [m.b, 0xa23cff]] as [MateRef | undefined, number][]).forEach(([ref, color]) => {
+    const more = "c" in m ? [[m.c, 0x2fb344], [m.d, 0xf08c00]] : [];
+    ([[m.a, 0x1f78ff], [m.b, 0xa23cff], ...more] as [MateRef | undefined, number][]).forEach(([ref, color]) => {
       if (!ref) return;
       const i = this.shownIds.indexOf(ref.comp), part = this.host.viewer.parts[i];
       const j = this.faceNames[i]?.indexOf(ref.face) ?? -1;
@@ -965,6 +997,72 @@ export class AsmController {
   }
 
   setSuppressed(id: string, on: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (on) c.suppressed = true; else delete c.suppressed; } }); }
+  /** Transparency (FR-ASM-025): the shown parts of each component take its opacity. */
+  private applyOpacity() {
+    const v = this.host.viewer, comps = new Map((this.expanded?.doc.components ?? []).map(c => [c.id, c]));
+    this.shownIds.forEach((id, i) => {
+      const p = v.parts[i];
+      if (!p) return;
+      const op = comps.get(id)?.opacity ?? 1;
+      if (p.opacity !== op) { p.opacity = op; v.applyPartAppearance(p); }
+    });
+    v.invalidate();
+  }
+  setOpacity(id: string, op: number | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (op !== null && op < 1) c.opacity = op; else delete c.opacity; } }); }
+
+  /** Display states (FR-ASM-025). */
+  addDisplayState() {
+    const n = (this.doc?.states?.length ?? 1) + 1;
+    let id = "";
+    this.change(d => { id = addState(d, `${t("Display State")} ${n}`, uid("ds_")); });
+    return id;
+  }
+  activateDisplayState(id: string) { if (this.doc?.activeState !== id) this.change(d => { activateState(d, id); }); }
+  deleteDisplayState(id: string) {
+    if ((this.doc?.states?.length ?? 0) < 2) { toast(t("An assembly keeps at least one display state."), true); return; }
+    this.change(d => { deleteState(d, id); });
+  }
+  private renameState(id: string) {
+    const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
+    const st = this.doc?.states?.find(s => s.id === id);
+    if (!row || !name || !st) return;
+    const inp = document.createElement("input");
+    inp.className = "ft-ren";
+    inp.value = st.name;
+    inp.setAttribute("aria-label", t("New name"));
+    inp.setAttribute("translate", "no");
+    name.replaceWith(inp);
+    inp.focus();
+    inp.select();
+    let done = false;
+    const finish = (apply: boolean) => {
+      if (done) return;
+      done = true;
+      const v = inp.value.trim();
+      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id); if (s2) s2.name = v; });
+      else this.renderTree();
+    };
+    inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
+    inp.addEventListener("blur", () => finish(true));
+  }
+
+  /** Open part (FR-ASM-007): the part goes to the modeller; Return to assembly brings the edit back as one undo step. */
+  editPart(id: string) {
+    const c = this.comp(id), doc = this.doc, entry = c && doc?.parts[c.part];
+    if (!c || !doc || !entry || !this.host.editPart) return;
+    if (entry.asm) { toast(t("Open the sub-assembly's own file to edit it."), true); return; }
+    const parked = { doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, savedAt: this.savedAt, key: c.part, sel: id };
+    const file = entry.file?.toLowerCase().endsWith(PART_EXT) ? entry.file : `${entry.name}${PART_EXT}`;
+    this.host.editPart(JSON.parse(JSON.stringify(entry.doc)) as PartDoc, file, this.label().replace(/ •$/, ""), pd => {
+      this.load(parked.doc, parked.fileName, parked.handle);
+      this.undoStack = parked.undo;
+      this.savedAt = parked.savedAt;
+      this.selected = parked.sel;
+      if (JSON.stringify(pd) !== JSON.stringify(parked.doc.parts[parked.key]?.doc)) this.change(d => { if (d.parts[parked.key]) d.parts[parked.key].doc = pd; });
+      else this.renderAll();
+    });
+  }
+
   setColor(id: string, color: V3 | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (color) c.color = color; else delete c.color; } }); }
 
   private pickColor(c: Component) {
@@ -1242,6 +1340,10 @@ export class AsmController {
       html += row("folder:explodes", "⇱", t("Exploded views"), " ft-mates");
       html += `<div class="ft-group" role="group">${doc.explodes.map(v => row(v.id, "⇱", v.name, ` ft-explode${this.exploded === v.id ? " on" : ""}`, `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="xp" title="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}" aria-label="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}">${this.exploded === v.id ? "⇲" : "⇱"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`)).join("")}</div>`;
     }
+    if (doc.states?.length) {
+      html += row("folder:states", "◐", t("Display states"), " ft-mates");
+      html += `<div class="ft-group" role="group">${doc.states.map(s => row(s.id, s.id === doc.activeState ? "●" : "○", s.id === "ds_default" && s.name === "Default" ? t("Default") : s.name, ` ft-state${s.id === doc.activeState ? " on" : ""}`, `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`)).join("")}</div>`;
+    }
     if (!this.doc.components.length) html += `<p class="pm-help muted pad">${esc(t("Insert a part or a STEP model to start."))}</p>`;
     box.innerHTML = html;
     box.querySelectorAll<HTMLElement>(".ft-row").forEach(r => {
@@ -1249,6 +1351,8 @@ export class AsmController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        const ds = this.doc?.states?.find(x => x.id === id);
+        if (ds) { if (a === "del") this.deleteDisplayState(id); else this.activateDisplayState(id); return; }
         if (pt && a === "del") { this.deletePattern(id); return; }
         if (xv && a === "del") { this.deleteExplode(id); return; }
         if (xv && a === "xp") { this.toggleExplode(id); return; }
@@ -1269,6 +1373,9 @@ export class AsmController {
         e.preventDefault();
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id);
         if (c) this.menu(c, e.clientX, e.clientY);
+        const ds = this.doc?.states?.find(x => x.id === id);
+        if (ds) { this.popup([[t("Activate"), () => this.activateDisplayState(id)], [t("Rename"), () => this.renameState(id)], [t("Add display state"), () => this.addDisplayState()], [t("Delete"), () => this.deleteDisplayState(id)]], e.clientX, e.clientY); return; }
+        if (id === "asm" || id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
         else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
@@ -1284,11 +1391,13 @@ export class AsmController {
 
   private menu(c: Component, x: number, y: number) {
     this.popup([
+      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
       [c.suppressed ? t("Unsuppress") : t("Suppress"), () => this.setSuppressed(c.id, !c.suppressed)],
       [t("Component colour…"), () => this.pickColor(c)],
+      [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
       [t("Replace component…"), () => this.replaceComponent(c.id)],
       [t("Delete"), () => void this.deleteComponent(c.id)],
@@ -1366,11 +1475,21 @@ export class AsmController {
     pm.hidden = false;
     pm.dataset.id = "mate";
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
-    const fits = ga && gb ? new Set(mateTypes(ga.k, gb.k)) : new Set<MateType>();
+    const fits = ga && gb ? new Set([...mateTypes(ga.k, gb.k), ...advFits(ga.k, gb.k)]) : new Set<MateType>();
+    const lim = m.type === "limitdist" || m.type === "limitangle", deg = m.type === "limitangle";
+    const limIn = (k: "min" | "max", label: string) => `<label class="pm-field"><span>${esc(t(label))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-lim="${k}" value="${esc(String(Math.round(((m[k] ?? 0) * (deg ? 180 / Math.PI : 1)) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">${deg ? "°" : "mm"}</span></span></label>`;
+    const tabPlane = gb?.k === "plane";
+    const extra = m.type === "symmetric"
+      ? `<div class="pm-field"><span>${esc(t("Symmetry plane"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
+      : m.type === "width"
+        ? `<div class="pm-field"><span>${esc(t("Width face 2"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
+          + (tabPlane ? `<div class="pm-field"><span>${esc(t("Tab face 2"))}</span><button class="pm-box${m.c && !m.d ? " focus" : ""}" data-a="sd" translate="no">${esc(this.refText(m.d))}</button></div>` : "")
+          + `<p class="pm-help muted">${esc(t("Selection 1 and the second width face are the slot; selection 2 (and the second tab face) is the tab centred in it."))}</p>`
+        : "";
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;
     const val = m.type === "distance" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round((m.value ?? 0) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
       : m.type === "angle" ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round(((m.value ?? 0) * 180) / Math.PI * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">°</span></span></label>` : "";
-    const canAlign = m.type === "coincident" || m.type === "parallel" || m.type === "distance";
+    const canAlign = m.type === "coincident" || m.type === "parallel" || m.type === "distance" || m.type === "limitdist";
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(m.edit ? t("Edit mate") : t("Mate"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
       + `<fieldset class="pm-group"><legend>${esc(t("Mate selections"))}</legend>`
       + `<div class="pm-field"><span>1</span><button class="pm-box${!m.a ? " focus" : ""}" data-a="sa" translate="no">${esc(this.refText(m.a))}</button></div>`
@@ -1380,11 +1499,23 @@ export class AsmController {
       + `<fieldset class="pm-group"><legend>${esc(t("Standard mates"))}</legend><div class="pm-mates">${MATE_TYPES.map(typeBtn).join("")}</div>${val}`
       + (m.type === "distance" || m.type === "angle" ? `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${m.flip ? " checked" : ""} /> ${esc(t("Flip dimension"))}</label>` : "")
       + `</fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Advanced mates"))}</legend><div class="pm-mates">${ADV_TYPES.map(typeBtn).join("")}</div>${extra}`
+      + (lim ? limIn("min", "Minimum") + limIn("max", "Maximum") + `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${m.flip ? " checked" : ""} /> ${esc(t("Flip dimension"))}</label>` : "")
+      + `</fieldset>`
       + (canAlign && m.type ? `<fieldset class="pm-group"><legend>${esc(t("Mate alignment"))}</legend><div class="pm-mates"><button class="btn small${m.align === "aligned" ? " on" : ""}" data-al="aligned" aria-pressed="${m.align === "aligned"}">${esc(t("Aligned"))}</button><button class="btn small${m.align !== "aligned" ? " on" : ""}" data-al="anti" aria-pressed="${m.align !== "aligned"}">${esc(t("Anti-aligned"))}</button></div></fieldset>` : "")
-      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : t("✓ with nothing picked closes the panel.")))}</p>`;
+      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : t("✓ with nothing picked closes the panel.")))}</p>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okMate());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.cancelMate());
-    pm.querySelector("[data-a=clear]")?.addEventListener("click", () => { m.a = m.b = m.type = undefined; this.drawPicks(); this.previewMate(); });
+    pm.querySelector("[data-a=clear]")?.addEventListener("click", () => { m.a = m.b = m.c = m.d = m.type = undefined; this.drawPicks(); this.previewMate(); });
+    pm.querySelectorAll<HTMLInputElement>("[data-lim]").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const v = Number(inp.value.replace(",", "."));
+        if (!Number.isFinite(v) || v < 0) { inp.setAttribute("aria-invalid", "true"); return; }
+        m[inp.dataset.lim as "min" | "max"] = deg ? (v * Math.PI) / 180 : v;
+        this.previewMate();
+      });
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); inp.dispatchEvent(new Event("change")); this.okMate(); } });
+    });
     pm.querySelectorAll<HTMLButtonElement>("[data-mt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mt as MateType)));
     pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; this.previewMate(); }));
     pm.querySelector<HTMLInputElement>("[data-a=flip]")?.addEventListener("change", e => { m.flip = (e.target as HTMLInputElement).checked; this.previewMate(); });

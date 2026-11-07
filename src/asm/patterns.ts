@@ -49,7 +49,7 @@ export function expandPatterns(doc: AsmDoc, worldGeo: (ref: { comp: string; face
         used.set(s.part, n);
         const id = `${p.id}~${s.id}~${i + 1}`;
         const base = s.name.replace(/<\d+>$/, "");
-        comps.push({ id, name: `${base}<${n}>`, part: s.part, tf: compose(t, s.tf), fixed: true, ...(s.hidden ? { hidden: true } : {}), ...(s.color ? { color: s.color } : {}) });
+        comps.push({ id, name: `${base}<${n}>`, part: s.part, tf: compose(t, s.tf), fixed: true, ...(s.hidden ? { hidden: true } : {}), ...(s.color ? { color: s.color } : {}), ...(s.opacity !== undefined ? { opacity: s.opacity } : {}) });
         instances.set(id, { pattern: p.id, seed: s.id, k: i + 1 });
       }
     });
@@ -110,6 +110,7 @@ export function flattenSubs(doc: AsmDoc, depth = 0): AsmDoc {
         id: `${c.id}/${sc.id}`, name: sc.name, part: `${c.part}/${sc.part}`, tf: compose(c.tf, sc.tf), fixed: true,
         ...(c.hidden || sc.hidden ? { hidden: true } : {}), ...(c.suppressed || sc.suppressed ? { suppressed: true } : {}),
         ...((c.color ?? sc.color) ? { color: c.color ?? sc.color } : {}),
+        ...((c.opacity ?? sc.opacity) !== undefined ? { opacity: c.opacity ?? sc.opacity } : {}),
       });
     }
   }
