@@ -197,6 +197,7 @@ input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid v
 .tab { display: none; flex-direction: column; min-height: 0; flex: 1; }
 .tab.on { display: flex; }
 #tree-search { margin: 8px 10px; }
+#ft-search { margin: 6px 10px 2px; width: calc(100% - 20px); }
 .tree { overflow: auto; flex: 1; padding-bottom: 12px; }
 .node > .row-n {
   display: flex; align-items: center; gap: 3px; padding: 2px 6px 2px calc(var(--d) * 14px + 4px);

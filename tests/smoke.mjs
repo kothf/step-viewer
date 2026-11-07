@@ -2343,6 +2343,12 @@ try {
     await menuPick(gid, "Unfreeze all");
     const vFz1 = await vol();
     check(fold1.name === "Folder1" && fold1.inside && folded.gone && folded.exp === "false" && fz.bar && fz.frozen && fz.after === gid && fzMode === "none" && /above the freeze bar/.test(fzToast) && Math.abs(vFz1 - vFz0) < 1e-6 && !(await mp.evaluate(() => window.__sv.model.store.doc.freezeAfter)), `model 1.30: a tree folder that collapses; a freeze bar that blocks editing (${JSON.stringify(fold1)}, ${JSON.stringify(folded)}, ${JSON.stringify(fz)}, ${fzMode})`);
+    // 1.31: the Features tree filter (FR-HIS-011): "cut" leaves the cuts (and their folder), Extrude rows hide.
+    await mp.fill("#ft-search", "cut");
+    const flt = await mp.evaluate(gid => { const rows = [...document.querySelectorAll("#mc-tree .ft-row[data-i]")]; const vis = rows.filter(r => !r.hidden).map(r => r.querySelector(".ft-name").textContent); return { vis, gidHidden: document.querySelector(`#mc-tree .ft-row[data-id="${gid}"]`)?.hidden, folder: !document.querySelector("#mc-tree .ft-folder")?.hidden }; }, gid);
+    await mp.fill("#ft-search", "");
+    const fltAll = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row[data-i]")].every(r => !r.hidden));
+    check(flt.vis.length > 0 && flt.vis.every(n => /cut/i.test(n)) && flt.gidHidden && flt.folder && fltAll, `model 1.31: the feature filter shows only matching rows (${JSON.stringify(flt)}, ${fltAll})`);
     await ctx.close();
   }
 

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-11-07
+
+### Added
+- **Tangent propagation** for Fillet and Chamfer (FR-SEL-005): clicking an edge also picks the edges that run on smoothly from it, such as the whole rounded outline of a plate. It is on by default, as in SolidWorks, and there is a checkbox for it in the panel.
+- **Feature tree filter** (FR-HIS-011): type in the box above the Features tree to show only the features whose name matches. A folder stays visible while any of its features match.
+
 ## [1.30.0] - 2026-11-07
 
 ### Added
@@ -379,7 +385,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.30.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.31.0...HEAD
+[1.31.0]: https://github.com/kothf/step-viewer/compare/v1.30.0...v1.31.0
 [1.30.0]: https://github.com/kothf/step-viewer/compare/v1.29.0...v1.30.0
 [1.29.0]: https://github.com/kothf/step-viewer/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/kothf/step-viewer/compare/v1.27.0...v1.28.0

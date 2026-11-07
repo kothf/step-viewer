@@ -1186,4 +1186,8 @@ export const RU: Record<string, string> = {
   "Add to {name}": "Добавить в {name}",
   "Remove from folder": "Убрать из папки",
   "Delete folder (keep features)": "Удалить папку (оставить элементы)",
+  "Tangent propagation": "Распространение по касательной",
+  "Chamfer options": "Параметры фаски",
+  "Filter features by name": "Фильтр элементов по имени",
+  "Filter the features": "Фильтр элементов",
 };
