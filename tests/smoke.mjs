@@ -2590,6 +2590,38 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.38.0: modelled (helical) thread from the thread panel (FR-FT-055) ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -20), P("b", 20, -20), P("c", 20, 20), P("d", -20, 20), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a"), P("h", 0, 0), { id: "k", t: "circle", c: "h", r: 2.5 }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }); }); });
+    await idle();
+    const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.evaluate(() => { const ed = window.__sv.viewer.parts[0].data.edges.find(e => e.center && Math.hypot(e.center[0], e.center[1], e.center[2] - 20) < 1e-6); const ref = window.__sv.modeller.entityRef({ edge: ed }); window.__sv.model.store.change("Thread", d => { d.features.push({ id: "t", type: "thread", name: "Thread1", edge: ref.edge, size: "M6", diameter: { v: 6 }, length: { v: 10 }, upToEnd: true, pitch: 1, internal: true }); }); });
+    await idle();
+    // Edit the thread and tick Modelled: the panel says what it does, and OK cuts the groove.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("t"));
+    await mp.waitForSelector('#mc-pm input[data-k="modelled"]');
+    await mp.click('#mc-pm input[data-k="modelled"]');
+    const help = await mp.evaluate(() => /3D printing/.test(document.querySelector("#mc-pm").textContent));
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const r = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props.volume, st: l.statuses.at(-1), shade: window.__sv.modeller.decor.children.filter(o => o.userData.threadShade || o.userData.thread).length }; });
+    const removed = v0 - r.v;
+    check(help && r.st.ok && removed > 40 && removed < 54 && r.shade === 0, `model 1.38: a modelled M6 thread cuts its helical groove (${help}, ${removed.toFixed(2)} mm³, ${JSON.stringify(r.st)}, ${r.shade})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

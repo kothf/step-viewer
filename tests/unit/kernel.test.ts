@@ -435,3 +435,26 @@ test("spline profiles extrude as one exact B-spline face (FR-SK-019)", async () 
   close(r.props!.volume, area2 * 4, 5e-4); // OCCT's default integration of the planar face along a B-spline edge is ~2e-4 off
   assert.equal(r.body!.faces.length, 4);
 });
+
+test("modelled thread cuts a helical groove into a hole (FR-FT-055)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 40, 40);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 0, 0, 2.5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  const base = run(m, doc([s1, ex, s2, cut]));
+  const edge = { faces: ["f1:end", "f2:side:s2k"] as [string, string] };
+  const th: Feature = { id: "t", type: "thread", name: "Thread1", edge, size: "M6", pitch: 1, diameter: { v: 6 }, length: { v: 10 }, upToEnd: true, internal: true, modelled: true };
+  const t0 = performance.now();
+  const r = run(m, doc([s1, ex, s2, cut, th]));
+  const ms = performance.now() - t0;
+  const removed = base.props!.volume - r.props!.volume;
+  // Groove section in the material: a 60° V 0.5 deep (0.144 mm²) round a mean radius of 2.67, per mm of a 1 mm pitch.
+  const perMm = 0.5 * 0.5 * 2 * 0.5 * Math.tan(Math.PI / 6) * 2 * Math.PI * (2.5 + 0.5 / 3);
+  assert.ok(removed > perMm * 20 * 0.85 && removed < perMm * 21 * 1.1, `removed ${removed} for ${perMm * 20}`);
+  // A set length cuts less.
+  const short = run(m, doc([s1, ex, s2, cut, { ...th, upToEnd: false, length: { v: 8 } } as Feature]));
+  const rs = base.props!.volume - short.props!.volume;
+  assert.ok(rs > perMm * 8 * 0.85 && rs < perMm * 9 * 1.15, `short ${rs}`);
+  console.log(`thread: ${removed.toFixed(2)} mm³ in ${ms.toFixed(0)} ms`);
+});

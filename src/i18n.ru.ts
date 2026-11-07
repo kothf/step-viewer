@@ -1225,4 +1225,10 @@ export const RU: Record<string, string> = {
   "Select straight edges of the same length": "Выбрать прямые кромки той же длины",
   "{n} measurement lost its geometry and keeps its old value|{n} measurements lost their geometry and keep their old values": "Измерений, потерявших геометрию (значение прежнее): {n}",
   "out of date": "устарело",
+  "Modelled (helical) thread": "Моделированная (винтовая) резьба",
+  "Cuts the real thread form into the body, for 3D printing. Slower to rebuild than a cosmetic thread.": "Вырезает настоящий профиль резьбы в теле — для 3D-печати. Перестраивается дольше, чем условная резьба.",
+  "A modelled thread needs a pitch: pick a standard size.": "Для моделированной резьбы нужен шаг: выберите стандартный размер.",
+  "A thread needs a round edge of a cylinder.": "Резьбе нужна круглая кромка цилиндра.",
+  "The thread length must be more than half a pitch.": "Длина резьбы должна быть больше половины шага.",
+  "The thread could not be made.": "Не удалось построить резьбу.",
 };

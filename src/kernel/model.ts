@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -808,6 +808,72 @@ export class Modeller {
     return { body: out, frame: fr };
   }
 
+  /**
+   * Modelled thread (FR-FT-055): a 60° V groove swept along a helix on the cylinder the edge bounds and cut
+   * from the body. Internal threads cut outward from the tap drill to the major diameter, external ones inward
+   * from the shaft to the minor diameter. The helix starts a pitch outside the end so the groove runs out cleanly.
+   */
+  private helicalThread(f: ThreadFeature, prev: Named, edge: any): Named {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_Curve_2(edge);
+    if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) throw new FeatureError("E-THR-EDGE", "A thread needs a round edge of a cylinder.");
+    const circ = ad.Circle();
+    const c = this.xyz(circ.Location()), a = unit(this.xyz(circ.Axis().Direction())), r = circ.Radius();
+    const P = f.pitch ?? 0;
+    if (!(P > 1e-6)) throw new FeatureError("E-THR-PITCH", "A modelled thread needs a pitch: pick a standard size.");
+    // Which way the cylinder runs from the edge, and whether it is a hole: probe just inside the material.
+    const xd = unit(cross(a, Math.abs(a[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
+    const inside = (q: V3) => new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(q), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    const probe = (d: V3, rr: number, s: number) => inside(add(add(c, mul(d, s)), mul(xd, rr)));
+    const eps = Math.min(P * 0.25, r * 0.05);
+    let dir: V3 | null = null, internal = false;
+    for (const d of [a, mul(a, -1)] as V3[]) {
+      if (probe(d, r + eps, eps)) { dir = d; internal = true; break; }
+      if (probe(d, r - eps, eps)) { dir = d; internal = false; break; }
+    }
+    if (!dir) throw new FeatureError("E-THR-EDGE", "A thread needs a round edge of a cylinder.");
+    // Length: as set, or as far as the cylinder runs (probed at a quarter pitch).
+    const size = this.size(prev.shape);
+    let L = f.upToEnd ? 0 : f.length.v;
+    if (f.upToEnd) {
+      const rr = internal ? r + eps : r - eps;
+      for (let s = eps; s < size * 2; s += P / 4) { if (!probe(dir, rr, s)) break; L = s; }
+    }
+    if (!(L > P * 0.5)) throw new FeatureError("E-FT-ZERO", "The thread length must be more than half a pitch.");
+    // Groove depth: to the other diameter of the thread, else ISO's 0.5413 P (internal) / 0.6134 P (external).
+    const other = f.diameter.v / 2;
+    const h = internal ? (other > r + 1e-6 && other - r < P ? other - r : 0.5413 * P) : (other < r - 1e-6 && r - other < P ? r - other : 0.6134 * P);
+    const over = P * 0.1, t30 = Math.tan(Math.PI / 6);
+    const half = Math.min((h + over) * t30, P * 0.45);
+    // Helix on a cylinder of radius r, from one pitch before the end face to the far end.
+    const s0 = -P, turns = (L - s0) / P;
+    const ax3 = new oc.gp_Ax3_3(this.P(add(c, mul(dir, s0))), this.D(dir), this.D(xd));
+    const surf = new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(ax3, r));
+    const line = new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_Line_3(new oc.gp_Pnt2d_3(0, 0), new oc.gp_Dir2d_4(2 * Math.PI, P)));
+    const len = turns * Math.hypot(2 * Math.PI, P);
+    const helix = new oc.BRepBuilderAPI_MakeEdge_31(line, surf, 0, len).Edge();
+    oc.BRepLib.BuildCurves3d_2(helix);
+    const spine = new oc.BRepBuilderAPI_MakeWire_2(helix).Wire();
+    // The V profile in the plane through the axis at the helix start: wide end beyond the surface, tip at depth h.
+    const o0 = add(add(c, mul(dir, s0)), mul(xd, r));
+    const out = internal ? -1 : 1;
+    const pt = (rad: number, ax: number) => this.P(add(add(o0, mul(xd, rad)), mul(dir, ax)));
+    const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+    poly.Add_1(pt(out * over, -half)); poly.Add_1(pt(out * over, half)); poly.Add_1(pt(-out * h, 0));
+    poly.Close();
+    const sweep = new oc.BRepOffsetAPI_MakePipeShell(spine);
+    sweep.SetMode_1(true);
+    sweep.Add_1(poly.Wire(), false, false);
+    sweep.Build(new oc.Message_ProgressRange_1());
+    if (!sweep.IsDone()) throw new FeatureError("E-FT-FAIL", "The thread could not be made.");
+    sweep.MakeSolid();
+    const shape = sweep.Shape();
+    const faces = this.sub(shape, "FACE");
+    const tool: Named = { shape, faces, names: faces.map((_x, k) => `${f.id}:t${k}`) };
+    this.tools.set(f.id, [{ shape, op: "cut" }]);
+    return this.bool("cut", prev, tool, f.id);
+  }
+
   /** A direction or an axis from a line reference: point and unit direction. */
   private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
     const oc = this.oc;
@@ -1022,7 +1088,8 @@ export class Modeller {
             // Cosmetic only: the edge must still be there; the body is unchanged.
             if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
             if (!f.edge) throw new FeatureError("E-FT-NOEDGES", "Pick a round edge of a cylinder.");
-            this.resolveEdge(body, f.edge);
+            const e = this.resolveEdge(body, f.edge);
+            if (f.modelled) body = this.helicalThread(f, body, e);
           }
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
