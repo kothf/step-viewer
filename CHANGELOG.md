@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.63.0] - 2026-11-07
+
 ### Added
 - **Interference detection** (FR-ASM-020, AT-P4-4) in the assembly bar: every pair of shown components whose solids overlap, with the overlap volume, listed in the panel and drawn red in the view (click a pair to pick it out). Option to treat touching faces as interference.
 - **Bill of materials** (FR-ASM-024, AT-P4-5): one row per part with item number, part number, description, material, quantity and mass, and CSV export.
@@ -600,7 +602,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.62.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.63.0...HEAD
+[1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/kothf/step-viewer/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/kothf/step-viewer/compare/v1.59.0...v1.60.0
