@@ -13,14 +13,14 @@ import { Annotations } from "./tools/Annotations";
 import {
   CIRCLE_MODES, describeEntity, entityFromSnap, formatMeasurement, makeNote, measure, measureBBox, MeasureError, smartBody, smartMeasure, TOOL_INFO, tx,
   type CircleMode,
-  type Entity, type Measurement, type MeasureType,
+  type Entity, type Measurement, type MeasureSource, type MeasureType, type PickRef,
 } from "./tools/measure";
 import { MATERIALS, massProperties } from "./tools/analysis";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
 import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
-import { analyzeMesh, type EdgeInfo, type PartData, type TreeNode } from "./topology";
+import { analyzeMesh, type EdgeInfo, type PartData, type TreeNode, type V3 } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
@@ -61,6 +61,11 @@ const modeller = new ModelController({
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { faceId: f.face.id, point: f.point.toArray() as [number, number, number] } : null;
+  },
+  snapAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const s = snapper.pick(x - r.left, y - r.top);
+    return s && s.kind !== "onEdge" && s.kind !== "onFace" && s.kind !== "onCap" ? { point: s.point.toArray() as [number, number, number], kind: s.kind } : null;
   },
   edgeAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
@@ -619,6 +624,7 @@ function showPartModel(data: PartData | null, name: string, first: boolean) {
     showEntity(hl.hoverFace, hl.hoverEdge, null);
   }
   viewer.load(data ? [data] : [], { name, parts: data ? [0] : [], children: [] }, first && !!data);
+  if (!first) remeasure();
   state.fileName = name;
   state.fileKey = "";
   document.title = `${name} · MöbiusCAD`;
@@ -997,7 +1003,7 @@ function showAll() {
 }
 
 // ---------- tools ----------
-const TOOL_KEYS: Record<string, Tool> = { d: "distance", m: "minDistance", r: "radius", c: "centerDistance", l: "arcLength", a: "angle", n: "point", b: "bbox", t: "note" };
+const TOOL_KEYS: Record<string, Tool> = { d: "distance", m: "minDistance", r: "radius", c: "centerDistance", l: "arcLength", a: "angle", v: "point", b: "bbox", t: "note" };
 
 function setTool(t: Tool) {
   if (t === "bbox") {
@@ -1087,6 +1093,90 @@ function nextColor() {
   return c;
 }
 
+// ---------- associative measurements (modelling): re-measured after every rebuild, like SolidWorks reference dimensions ----------
+/** Picks by persistent face and edge names, or null when one cannot be named (then the measurement stays fixed). */
+function pickRefs(picks: Entity[]): PickRef[] | null {
+  if (!modeller.active || !picks.length) return null;
+  const out: PickRef[] = [];
+  for (const e of picks) {
+    const point = e.point.toArray() as V3, normal = e.normal?.toArray() as V3 | undefined;
+    if (e.edge) {
+      const ref = modeller.entityRef({ edge: e.edge });
+      if (!ref) return null;
+      const tol = 1e-6 * viewer.modelSize + 1e-9;
+      const is = (q?: V3) => !!q && viewer.toWorld(e.part, q).distanceTo(e.point) <= tol;
+      const at = is(e.edge.center) ? "center" : !e.edge.closed && is(e.edge.mid) ? "mid" : is(e.edge.start) ? "start" : is(e.edge.end) ? "end" : "near";
+      out.push({ kind: e.kind, ref, at, point, normal });
+    } else if (e.face) {
+      const ref = modeller.entityRef({ faceId: e.face.id });
+      if (!ref) return null;
+      out.push({ kind: e.kind, ref, at: "near", point, normal });
+    } else out.push({ kind: e.kind, point, normal });
+  }
+  return out;
+}
+
+/** The point of a polyline edge nearest to p. */
+function nearestOnEdge(part: Part, pts: number[], p: THREE.Vector3) {
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), q = new THREE.Vector3(), best = new THREE.Vector3();
+  let bd = Infinity;
+  for (let i = 3; i < pts.length; i += 3) {
+    a.set(pts[i - 3], pts[i - 2], pts[i - 1]); b.set(pts[i], pts[i + 1], pts[i + 2]);
+    new THREE.Line3(viewer.toWorld(part, a), viewer.toWorld(part, b)).closestPointToPoint(p, true, q);
+    const d = q.distanceToSquared(p);
+    if (d < bd) { bd = d; best.copy(q); }
+  }
+  return bd < Infinity ? best : p.clone();
+}
+
+/** The entities a measurement source names in the rebuilt part, or null if one has gone. */
+function entitiesOf(src: MeasureSource): Entity[] | null {
+  const part = viewer.parts[0];
+  if (!part) return null;
+  const out: Entity[] = [];
+  for (const r of src.picks) {
+    const old = new THREE.Vector3(...r.point), normal = r.normal ? new THREE.Vector3(...r.normal) : undefined;
+    if (!r.ref) { out.push({ kind: r.kind, point: old, part, normal }); continue; }
+    const hit = modeller.resolveRef(r.ref);
+    if (hit?.edge) {
+      const e = hit.edge, q = r.at === "center" ? e.center : r.at === "mid" ? e.mid : r.at === "start" ? e.start : r.at === "end" ? e.end : undefined;
+      out.push({ kind: r.kind, part, edge: e, point: q ? viewer.toWorld(part, q) : nearestOnEdge(part, e.pts, old), normal });
+    } else if (hit?.faceId != null) {
+      const f = part.data.faces[hit.faceId];
+      if (!f) return null;
+      let point = old, n = normal;
+      if (f.type === "plane" && f.normal) {
+        n = new THREE.Vector3(...f.normal);
+        const c = viewer.toWorld(part, f.center);
+        point = old.clone().addScaledVector(n, -old.clone().sub(c).dot(n));
+      }
+      out.push({ kind: r.kind, part, face: f, point, normal: n });
+    } else return null;
+  }
+  return out;
+}
+
+/** Re-measures the pinned measurements that follow the model, after a rebuild. */
+function remeasure() {
+  let lost = 0;
+  for (const m of state.measurements) {
+    if (!m.src) continue;
+    const ents = entitiesOf(m.src);
+    try {
+      if (!ents) throw new Error("gone");
+      const n = m.src.type === "smart" ? smartMeasure(viewer, ents, m.color, { circleMode: m.src.mode }) : measure(viewer, m.src.type, ents, m.color);
+      const keep = { id: m.id, color: m.color, visible: m.visible, src: m.src };
+      for (const k of Object.keys(m)) delete (m as unknown as Record<string, unknown>)[k];
+      Object.assign(m, tagParts(n, ents.map(e => e.part)), keep);
+    } catch {
+      if (!m.stale) lost++;
+      m.stale = true;
+    }
+  }
+  if (lost) toast(t("{n} measurement lost its geometry and keeps its old value|{n} measurements lost their geometry and keep their old values", { n: lost }), true);
+  refreshMeasurements();
+}
+
 function addMeasurement(m: Measurement) {
   state.measurements.push(m);
   state.selectedMeasurement = m.id;
@@ -1172,7 +1262,10 @@ function handlePick(snap: Snap | null) {
   pickMark(ent.point);
   if (state.picks.length < info.picks) { updateHint(); viewer.invalidate(); return; }
   try {
-    addMeasurement(tagParts(measure(viewer, state.tool as MeasureType, state.picks, nextColor()), state.picks.map(p => p.part)));
+    const m = tagParts(measure(viewer, state.tool as MeasureType, state.picks, nextColor()), state.picks.map(p => p.part));
+    const refs = pickRefs(state.picks);
+    if (refs) m.src = { type: state.tool as MeasureType, picks: refs };
+    addMeasurement(m);
   } catch (err) {
     toast(err instanceof MeasureError ? t(err.message) : t("Measurement failed: {err}", { err: (err as Error).message }), true);
   }
@@ -1292,6 +1385,8 @@ function pinLive() {
   const m = state.live;
   if (!m) return;
   state.live = null;
+  const refs = pickRefs(state.livePicks);
+  if (refs) m.src = { type: "smart", mode: state.circleMode, picks: refs };
   nextColor();
   addMeasurement(m);
 }
@@ -1416,24 +1511,34 @@ canvas.addEventListener("pointermove", e => {
   moveQueued = true;
   requestAnimationFrame(() => { moveQueued = false; hover(); });
 });
-canvas.addEventListener("pointerleave", () => { $("#snap-marker").hidden = true; showEntity(hl.hoverFace, hl.hoverEdge, null); });
+canvas.addEventListener("pointerleave", () => { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); });
 canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+function hideSnapMarks() { $("#snap-marker").hidden = true; $("#snap-hint").hidden = true; }
 
 function hover() {
   if (downAt && (Math.abs(lastPointer.x - downAt.x) > 4 || Math.abs(lastPointer.y - downAt.y) > 4)) {
-    $("#snap-marker").hidden = true; return; // orbiting
+    hideSnapMarks(); return; // orbiting
   }
-  if (section.arrowHot) { $("#snap-marker").hidden = true; showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
+  if (section.arrowHot) { hideSnapMarks(); showEntity(hl.hoverFace, hl.hoverEdge, null); return; }
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") {
     // Picking a face to cut on: light up the whole face under the cursor, no point snapping.
-    $("#snap-marker").hidden = true;
+    hideSnapMarks();
     const f = faceUnder(lastPointer.x - r.left, lastPointer.y - r.top);
     showEntity(hl.hoverFace, hl.hoverEdge, f ? { part: f.part, face: f.face, kind: "face" } : null);
     return;
   }
   const snap = snapper.pick(lastPointer.x - r.left, lastPointer.y - r.top);
   state.lastSnap = snap;
+  // The hovered edge's centre or midpoint, shown faintly so it can be picked (SolidWorks-style inference).
+  const hint = snapper.hint, hintEl = $("#snap-hint");
+  hintEl.hidden = !hint || (!!snap && snap.point.distanceTo(hint.point) < 1e-9);
+  if (hint && !hintEl.hidden) {
+    const hs = hint.point.clone().project(viewer.camera);
+    hintEl.dataset.kind = hint.kind;
+    hintEl.style.transform = `translate(${((hs.x + 1) / 2) * viewer.size.x}px, ${((1 - hs.y) / 2) * viewer.size.y}px)`;
+  }
   const marker = $("#snap-marker");
   if (!snap) {
     marker.hidden = true;
@@ -1475,7 +1580,7 @@ function refreshMeasurements() {
       el.className = "m-item" + (m.id === state.selectedMeasurement ? " sel" : "");
       el.setAttribute("role", "listitem");
       el.style.setProperty("--c", m.color);
-      const title = `${i + 1}. ${f.title}`;
+      const title = `${i + 1}. ${f.title}` + (m.stale ? ` (${t("out of date")})` : "");
       el.innerHTML = `<span class="dot" aria-hidden="true"></span><button class="m-main" aria-pressed="${m.id === state.selectedMeasurement}" title="${esc(`${title}: ${f.value}`)}"><span class="t">${esc(title)}</span><span class="val">${esc(f.value)}</span></button>
         <span class="acts"><input type="color" value="${m.color}" title="${t("Colour")}" aria-label="${t("Colour of measurement {n}", { n: i + 1 })}"><button title="${t("Show/hide")}" aria-label="${t(m.visible ? "Hide measurement {n}" : "Show measurement {n}", { n: i + 1 })}" aria-pressed="${m.visible}">${m.visible ? "👁" : "◌"}</button><button title="${t("Delete")}" aria-label="${t("Delete measurement {n}", { n: i + 1 })}">✕</button></span>`;
       el.querySelector(".m-main")!.addEventListener("click", () => { state.selectedMeasurement = m.id; refreshMeasurements(); });
@@ -1592,7 +1697,7 @@ const VIEWS: Record<string, THREE.Vector3> = {
 };
 $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
-  if (v === "fit") viewer.fit(); else viewer.viewFrom(VIEWS[v]);
+  if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
 }));
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;
@@ -1602,6 +1707,7 @@ function normalTo(given?: [number, number, number]) {
   if (given) n = new THREE.Vector3(...given);
   else if (sn) n = new THREE.Vector3(...sn);
   else if (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane") n = new THREE.Vector3(...state.selection.face.normal);
+  else { const pn = modeller.selectedPlaneNormal(); if (pn) n = new THREE.Vector3(...pn); }
   if (!n) { toast(t("Select a flat face first (or open a sketch).")); return; }
   const cam = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
   if (lastNormal && lastNormal.equals(n) && cam.dot(n) > 0.999) n.negate();
@@ -2078,6 +2184,7 @@ window.addEventListener("keydown", e => {
     if (section.active) { section.setGizmo(null, null); renderSections(); }
     return;
   }
+  if (k === "n" && viewer.parts.length + (modeller.active ? 1 : 0) > 0) { normalTo(); return; }
   if (!viewer.parts.length) return;
   if (k === "f") viewer.fit();
   else if (k === "0") viewer.viewFrom(VIEWS.iso);

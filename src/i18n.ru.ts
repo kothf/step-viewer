@@ -175,7 +175,8 @@ export const RU: Record<string, string> = {
   "Angle between edges or faces (A)": "Угол между рёбрами или гранями (A)",
   "∠ Angle": "∠ Угол",
   "∡ 3-point angle": "∡ Угол по 3 точкам",
-  "Point coordinates and normal (N)": "Координаты точки и нормаль (N)",
+  "Point coordinates and normal (V)": "Координаты точки и нормаль (V)",
+  "Normal to the selected flat face or the sketch (N); again for the other side": "Нормально к выбранной плоской грани или эскизу (N); повторно — с другой стороны",
   "⊕ Point / normal": "⊕ Точка / нормаль",
   "Bounding box of visible or selected parts (B)": "Габариты видимых или выбранных деталей (B)",
   "▭ Bounding box": "▭ Габариты",
@@ -1222,4 +1223,6 @@ export const RU: Record<string, string> = {
   "Select tangency": "Выбрать касательные",
   "Select round edges of the same radius": "Выбрать круглые кромки того же радиуса",
   "Select straight edges of the same length": "Выбрать прямые кромки той же длины",
+  "{n} measurement lost its geometry and keeps its old value|{n} measurements lost their geometry and keep their old values": "Измерений, потерявших геометрию (значение прежнее): {n}",
+  "out of date": "устарело",
 };

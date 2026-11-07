@@ -52,6 +52,12 @@ export function selAllowed(kind: SnapKind) {
 export class Snapper {
   radiusPx = 15;
   private current: Snap | null = null;
+  /**
+   * SolidWorks-style inference point: hovering a circle or arc shows its centre, hovering a straight edge its
+   * midpoint. The point stays offered (and pickable, even when the model hides it) until another edge is
+   * hovered or the cursor wanders well away.
+   */
+  hint: Snap | null = null;
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
   /** Own raycaster for probes and occlusion tests, so the viewer's cursor ray stays intact. */
@@ -265,6 +271,15 @@ export class Snapper {
       }
     }
 
+    // The inference point from the last hovered edge: pickable within the snap radius, seen or not.
+    const h = this.hint;
+    if (h && h.part.visible && this.toScreen(h.point, scr)) {
+      const px = scr.distanceTo(cursor);
+      const reach = Math.max(3 * R, h.edge?.radius ? this.radiusOnScreen(h.point, h.edge.radius) + 2 * R : 0);
+      if (px > reach) this.hint = null;
+      else if (px <= R && selAllowed(h.kind)) { const c = { ...h, px }; cands.push(c); sure.add(c); }
+    } else this.hint = null;
+
     // Best first; the first one the camera can actually see wins.
     if (!SEL_FILTER.faces || !SEL_FILTER.edges || !SEL_FILTER.vertices) {
       for (let i = cands.length - 1; i >= 0; i--) if (!selAllowed(cands[i].kind)) { sure.delete(cands[i]); cands.splice(i, 1); }
@@ -278,8 +293,18 @@ export class Snapper {
       if (this.isVisible(c.point, !!c.section)) { best = c; break; }
     }
 
-    return (this.current = this.hysteresis(best, cursor));
+    this.current = this.hysteresis(best, cursor);
+    const e = this.current?.edge;
+    if (e && !this.current!.section && this.current!.kind !== "circleCenter" && this.current!.kind !== "midpoint") {
+      const part = this.current!.part;
+      if (e.center && e.radius) this.hint = { kind: "circleCenter", point: v.toWorld(part, e.center), part, edge: e, px: 0 };
+      else if (e.type === "line" && !e.closed) this.hint = { kind: "midpoint", point: v.toWorld(part, e.mid), part, edge: e, px: 0 };
+    }
+    return this.current;
   }
+
+  /** On-screen size in pixels of a length r at a world point. */
+  private radiusOnScreen(p: THREE.Vector3, r: number) { return r / Math.max(this.pxWorld(p), 1e-12); }
 
   /**
    * Where the ray meets a section cap: the nearest enabled plane point that is
@@ -319,7 +344,7 @@ export class Snapper {
     return px <= this.radiusPx && px < next.px + 3 && this.isVisible(cur.point, !!cur.section) ? { ...cur, px } : next;
   }
 
-  reset() { this.current = null; }
+  reset() { this.current = null; this.hint = null; }
 }
 
 /**
