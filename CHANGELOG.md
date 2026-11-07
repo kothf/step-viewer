@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Collision detection while dragging components: tick it in the Move panel and a drag stops where the component would enter another, even on a fast drag (FR-MATE-002).
+- Inferred mates: hold Alt while dragging a component by a face and drop it on a face of another component; a cylinder on a cylinder makes a concentric mate, a flat face on a flat face a coincident one (FR-MATE-007).
+
 ## [1.65.0] - 2026-11-07
 
 ### Added

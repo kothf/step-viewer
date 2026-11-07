@@ -2061,4 +2061,8 @@ export const RU: Record<string, string> = {
   "Open the sub-assembly's own file to edit it.": "Чтобы изменить подсборку, откройте её собственный файл.",
   "Editing a part of {asm}": "Редактирование детали из {asm}",
   "Return to assembly": "Вернуться в сборку",
+  "Collision detection": "Обнаружение столкновений",
+  "The drag stops where it would touch another component.": "Перетаскивание останавливается там, где компонент коснулся бы другого.",
+  "{name} added.": "{name}: добавлено.",
+  "Hold Alt while dragging a face onto a face of another component to mate them.": "Удерживайте Alt, перетаскивая грань на грань другого компонента, чтобы сопрячь их.",
 };
