@@ -1395,4 +1395,8 @@ export const RU: Record<string, string> = {
   "Pick the Z direction: an edge, a face or an axis.": "Выберите направление Z: ребро, грань или ось.",
   "Pick the X direction: an edge, a face or an axis.": "Выберите направление X: ребро, грань или ось.",
   "MöbiusCAD now also starts offline in this browser.": "Теперь MöbiusCAD запускается в этом браузере и без сети.",
+  "Sketch assistant": "Помощник эскиза",
+  "The sketch is over-defined. Deleting one of these makes it solve again:": "Эскиз переопределён. Удалите одно из этого, и он снова решится:",
+  "No single relation or dimension fixes it. Delete the ones marked conflicting until the sketch solves.": "Ни одна взаимосвязь или размер по отдельности это не исправит. Удаляйте отмеченные как конфликтующие, пока эскиз не решится.",
+  "The sketch solves again.": "Эскиз снова решается.",
 };

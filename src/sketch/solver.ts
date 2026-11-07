@@ -508,6 +508,34 @@ export function solve(sk: SketchFeature, drag?: Drag): SolveResult {
   };
 }
 
+/**
+ * Sketch assistant (FR-SLV-009): for an over-defined sketch, sets of relations and driving dimensions
+ * whose removal makes it solvable again, smallest first. The conflicting items are tried first, then
+ * the rest; pairs only when no single item does it. Bounded by `budgetMs`.
+ */
+export function repairs(sk: SketchFeature, max = 5, budgetMs = 1500): string[][] {
+  const t0 = Date.now();
+  const first = solve(structuredClone(sk));
+  if (first.status === "ok") return [];
+  const all = [...sk.rels.map(r => r.id), ...sk.dims.filter(d => !d.driven).map(d => d.id)];
+  const bad = new Set(first.conflicting);
+  const pool = [...all.filter(i => bad.has(i)), ...all.filter(i => !bad.has(i))];
+  const fixes = (ids: string[]) => {
+    const c: SketchFeature = structuredClone(sk);
+    c.rels = c.rels.filter(r => !ids.includes(r.id));
+    c.dims = c.dims.filter(d => !ids.includes(d.id));
+    return solve(c).status === "ok";
+  };
+  const out: string[][] = [];
+  const late = () => out.length >= max || Date.now() - t0 > budgetMs;
+  for (const id of pool) { if (late()) break; if (fixes([id])) out.push([id]); }
+  if (!out.length) {
+    const few = pool.slice(0, 14);
+    for (let i = 0; i < few.length && !late(); i++) for (let j = i + 1; j < few.length && !late(); j++) if (fixes([few[i], few[j]])) out.push([few[i], few[j]]);
+  }
+  return out;
+}
+
 /** Whether adding this relation/dimension keeps the sketch solvable, and whether it adds information. */
 export function tryAdd(sk: SketchFeature, item: { rel?: SkRel; dim?: SkDim }): { ok: boolean; redundant: boolean; sketch: SketchFeature; result: SolveResult } {
   const before = analyseOnly(sk);

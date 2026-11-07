@@ -1,7 +1,7 @@
 // Solver acceptance set (FRS 16.3).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solve, tryAdd, measureDim, ORIGIN, freeDirections } from "../../src/sketch/solver";
+import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs } from "../../src/sketch/solver";
 import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
 
 const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
@@ -154,4 +154,23 @@ test("under-defined analysis: free directions of points (FR-SLV-010)", () => {
   s.dims.push(dim("distance", 10, "l"));
   solve(s);
   assert.equal(freeDirections(s, ["b"]).get("b")!.length, 0);
+});
+
+test("sketch assistant: removals that fix an over-defined sketch (FR-SLV-009)", () => {
+  const s = rectangle();
+  const w = dim("distance", 100, "l1"), h = dim("distance", 60, "l2"), bad = dim("distance", 80, "l3");
+  s.dims.push(w, h, bad);
+  assert.equal(solve(structuredClone(s)).status, "conflict");
+  const sets = repairs(s);
+  // Deleting either width (top or bottom) or a horizontal/vertical that ties them fixes it; the height does not.
+  assert.ok(sets.length > 0 && sets.every(x => x.length === 1));
+  assert.ok(sets.some(x => x[0] === bad.id) && sets.some(x => x[0] === w.id));
+  assert.ok(!sets.some(x => x[0] === h.id));
+  for (const [id] of sets) {
+    const c = structuredClone(s);
+    c.rels = c.rels.filter(r => r.id !== id); c.dims = c.dims.filter(d => d.id !== id);
+    assert.equal(solve(c).status, "ok");
+  }
+  // A solvable sketch needs nothing.
+  assert.deepEqual(repairs(rectangle()), []);
 });
