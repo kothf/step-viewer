@@ -1433,7 +1433,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForSelector("#mc-bar:not([hidden])");
     const start = await mp.evaluate(() => ({ tab: document.querySelector("#t-features").getAttribute("aria-selected"), rows: [...document.querySelectorAll("#mc-tree .ft-name")].map(e => e.textContent) }));
-    check(start.tab === "true" && start.rows.join("|") === "Part1|Material <not specified>|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
+    check(start.tab === "true" && start.rows.join("|") === "Part1|Material <not specified>|Equations|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
     // Sketch on Top: corner rectangle from the origin, then 100 × 60 by dimensions (AT-P1-1 style).
     await mp.click('[data-c="sketch"]');
     await mp.click('#mc-pm [data-std="XY"]');
@@ -1630,7 +1630,7 @@ try {
     await idle();
     await mp.waitForTimeout(500);
     const onTop = await mp.evaluate(() => ({ kind: window.__sv.model.mode().kind, plane: window.__sv.model.store.doc.features[0]?.plane, empty: document.querySelector("#mc-empty").hidden }));
-    check(rows0.startsWith("Part1|Material <not specified>|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
+    check(rows0.startsWith("Part1|Material <not specified>|Equations|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
     // Polygon: six equal sides on a construction circle.
     await mp.click('[data-c="sk:polygon"]');
     await click([0, 0]);
