@@ -5,10 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.55.0] - 2026-11-07
+
 ### Added
 - **Helix/Spiral** (FR-FT-083). In the new **Sweep ▾** menu: a helix on the circle of a sketch, set by pitch and revolutions, height and revolutions, or height and pitch, with start angle, clockwise, reverse direction and taper. It is exact (a line on a cylinder or cone) and drawn in the view while you edit it.
 - **Sweep and Cut-Sweep** (FR-FT-080/081). A closed profile sketch, or a **circular profile** of a set diameter that needs no sketch, moved along a helix or a sketch path (lines, arcs, splines joined end to end); Follow path or Keep normal constant. A Ø2 circle along a 10-turn helix gives a spring whose volume matches π·r²·L to 1e-4. The result previews live; a cut shows the material it removes.
 - **Loft and Cut-Loft** (FR-FT-082). Through two or more closed profiles in order, smooth or with straight (ruled) sections, optionally closed back to the first. Profiles are picked in the panel; the last two unused sketches are offered first.
+
+## [1.54.1] - 2026-11-07
+
+### Fixed
+- The Vault tab could fail to draw for a moment while it re-read the vault (the file list and their status were updated separately). The two are now swapped in together.
 
 ## [1.54.0] - 2026-11-07
 
@@ -543,7 +550,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.54.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.55.0...HEAD
+[1.55.0]: https://github.com/kothf/step-viewer/compare/v1.54.1...v1.55.0
+[1.54.1]: https://github.com/kothf/step-viewer/compare/v1.54.0...v1.54.1
 [1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
