@@ -853,3 +853,17 @@ test("bodies folder: keys by the feature that made each body, stable through lat
   assert.deepEqual(b.statuses.filter(s => !s.ok), []);
   assert.deepEqual(m.bodyInfo(b.body!, more).map(x => x.key), ["x", "e", "mv"]);
 });
+
+test("insert part: another part's result as BREP text goes in as a body (FR-BODY-005)", async () => {
+  const m = new Modeller(await occ());
+  const other = doc([rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+  const r = m.evaluate(other);
+  const text = new Modeller(await occ()).brepText(r.body!);
+  assert.equal(text.solids, 1);
+  assert.equal(text.faces, 6);
+  const here = doc([circle("k", 0, 0, 5, { std: "XY" }), { id: "c", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "blind", depth: { v: 30 } },
+    { id: "i", type: "import", name: "Imported1", file: "plate.mcadprt", brep: text.brep } as Feature]);
+  const out = run(m, here);
+  assert.equal(out.props!.bodies, 2);
+  close(out.props!.volume, 8000 + Math.PI * 25 * 30, 1e-6);
+});

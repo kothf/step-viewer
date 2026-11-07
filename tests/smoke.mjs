@@ -3487,6 +3487,14 @@ try {
     check(t0.folder === "Solid Bodies (2)" && t0.rows.join() === "Extrude1,Extrude2" && t0.faces === 9 && hid.faces.length === 6 && !hid.faces.some(n => n.startsWith("e:")) && Math.abs(hid.v - (8000 + Math.PI * 250)) < 0.1 && / sup/.test(hid.cls)
       && red === 6 && nm[0] === "Base plate" && nm[1] === "Base plate" && del.n === 1 && /Body-Delete\/Keep1/.test(del.f) && !del.bad,
       `model 1.60: Solid Bodies folder lists, hides, colours, renames and deletes bodies (FR-BODY-001) (${JSON.stringify({ t0, hid: { n: hid.faces.length, v: hid.v, cls: hid.cls }, red, nm, del })})`);
+    // Insert part (FR-BODY-005): this part saved, then inserted into itself as a second body.
+    await mp.evaluate(async () => { const b = await window.__sv.modeller.partBytes(); window.__sv.modeller.importBodyFile(new File([b], "plate.mcadprt")); });
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 120000 });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const ip = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, v: window.__sv.model.last().props.volume, f: window.__sv.model.store.doc.features.at(-1)?.file, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(ip.n === 2 && Math.abs(ip.v - 16000) < 0.1 && ip.f === "plate.mcadprt" && !ip.bad, `model 1.61: Insert part puts a saved part in as a body (FR-BODY-005) (${JSON.stringify(ip)})`);
     await ctx.close();
   }
 

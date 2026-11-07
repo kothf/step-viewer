@@ -21,6 +21,7 @@ export type KernelRequest =
   | { id: number; type: "board"; loops: number[][]; holes: [number, number, number][]; z0: number; thickness: number; name: string }
   | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
+  | { id: number; type: "partBody"; doc: PartDoc }
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
@@ -132,6 +133,11 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         preview = { position, status };
       }
       post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+    } else if (r.type === "partBody") {
+      // Insert part (FR-BODY-005): the other part is evaluated on its own, so this part's feature cache stays.
+      const other = new Modeller(kernel.module).evaluate(r.doc);
+      if (!other.body) throw new Error("The part has no body.");
+      post({ id: r.id, ok: true, ...(modeller ??= new Modeller(kernel.module)).brepText(other.body) });
     } else if (r.type === "importBody") {
       kernel.load(new Uint8Array(r.buffer), r.name);
       post({ id: r.id, ok: true, ...kernel.brepText() });
