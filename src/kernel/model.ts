@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -1171,6 +1171,120 @@ export class Modeller {
     return this.applyTool(f, [tool], prev);
   }
 
+  /**
+   * Rib (FR-FT-062): the open chain thickened (a 2D region from open offsets for Normal to sketch, a
+   * slab along the normal for Parallel to sketch), run out a long way, minus the body; the pieces
+   * that touch the sketch and stop at the body are joined to it. The first direction that reaches
+   * the body wins; `flip` tries the other one first.
+   */
+  private rib(f: RibFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "A rib needs a body to stand on.");
+    const { sk, frame } = this.sketchOf(f.sketch, doc, prev, frames, "an open sketch");
+    const p = sketchPath(sk);
+    if (p.error) throw new FeatureError(p.error.code, p.error.message);
+    if (p.closed) throw new FeatureError("E-RIB-OPEN", "A rib needs an open sketch: lines or arcs that do not close.");
+    const t = f.thickness.v;
+    if (!(t > 1e-6)) throw new FeatureError("E-FT-ZERO", "The thickness must be more than 0.");
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const sg of p.segs) mw.Add_1(this.segEdge(sg, frame));
+    if (!mw.IsDone()) throw new FeatureError("E-RIB-OPEN", "The rib's curves do not join end to end.");
+    const w = mw.Wire();
+    const [s0, s1] = f.side === "mid" ? [-t / 2, t / 2] : f.side === "other" ? [-t, 0] : [0, t];
+    const big = this.size(prev.shape) * 3 + 100;
+    const ends = (x: any): [V3, V3] => { const a = new oc.BRepAdaptor_CompCurve_2(x, false); return [this.xyz(a.Value(a.FirstParameter())), this.xyz(a.Value(a.LastParameter()))]; };
+    const [a, b] = ends(w);
+    const edges = (x: any) => this.sub(x, "EDGE");
+    const named = (shape0: any): Named => { const shape = this.volume(shape0) < 0 ? shape0.Reversed() : shape0; const faces = this.sub(shape, "FACE"); return { shape, faces, names: faces.map((_, i) => `${f.id}:side:${i}`) }; };
+    const fuseAll = (shapes: any[]) => {
+      let out: Named = named(shapes[0]);
+      for (const x of shapes.slice(1)) out = this.bool("fuse", out, named(x), f.id);
+      return out;
+    };
+    let along: V3;
+    const tool = (sgn: number): Named => {
+      if (f.dir === "parallel") {
+        // In the plane, square to the chord; thickness along the normal.
+        along = mul(unit(cross(frame.n, add(b, mul(a, -1)))), sgn);
+        const tr = new oc.gp_Trsf_1();
+        tr.SetTranslation_1(this.V(mul(frame.n, s0)));
+        const w0 = new oc.BRepBuilderAPI_Transform_2(w, tr, true).Shape();
+        const solids = edges(w0).map(e => {
+          const face = new oc.BRepPrimAPI_MakePrism_1(e, this.V(mul(along, big)), true, true).Shape();
+          return new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, s1 - s0)), true, true).Shape();
+        });
+        return fuseAll(solids);
+      }
+      // Normal to sketch: the region between two open offsets of the chain, run along the normal.
+      along = mul(frame.n, sgn);
+      // The side +d goes to: n × the chain's direction at its start.
+      const t0 = p.segs[0].kind === "line" ? unit(add(this.w(frame, p.segs[0].b), mul(this.w(frame, p.segs[0].a), -1))) : null;
+      const straight = p.segs.every(sg => sg.kind === "line") && p.segs.every(sg => sg.kind === "line" && Math.abs(Math.abs(dot(unit(add(this.w(frame, sg.b), mul(this.w(frame, sg.a), -1))), t0!)) - 1) < 1e-9);
+      const off = (d: number): any => {
+        if (Math.abs(d) < 1e-12) return w;
+        if (straight) {
+          // One straight line (or several in line): OCCT cannot tell its plane, so move it instead.
+          const tr = new oc.gp_Trsf_1();
+          tr.SetTranslation_1(this.V(mul(cross(frame.n, t0!), d)));
+          return oc.TopoDS.Wire_1(new oc.BRepBuilderAPI_Transform_2(w, tr, true).Shape());
+        }
+        const make = (k: number) => {
+          const mk = new oc.BRepOffsetAPI_MakeOffset_3(w, oc.GeomAbs_JoinType.GeomAbs_Intersection, true);
+          mk.Perform(k, 0);
+          if (!mk.IsDone()) throw new FeatureError("E-RIB-FAIL", "The rib's thickness could not be offset from the sketch.");
+          return oc.TopoDS.Wire_1(mk.Shape());
+        };
+        // OCCT picks the wire's plane normal itself: check the side and offset the other way if needed.
+        const o = make(d), [p0] = ends(o);
+        const ad = new oc.BRepAdaptor_CompCurve_2(w, false), q = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+        ad.D1(ad.FirstParameter(), q, v);
+        const side = dot(add(p0, mul(this.xyz(q), -1)), cross(frame.n, unit(this.xyz(v))));
+        return side * d > 0 ? o : make(-d);
+      };
+      const A = off(s1), B = off(s0);
+      const [a0, a1] = ends(A), [b0, b1] = ends(B);
+      // A forward, across the far end, B backward, back to the start: edges in wire order so MakeWire joins each.
+      const ordered = (x: any) => { const o: any[] = []; for (const ex = new oc.BRepTools_WireExplorer_2(x); ex.More(); ex.Next()) o.push(ex.Current()); return o; };
+      const mk = new oc.BRepBuilderAPI_MakeWire_1();
+      for (const e of ordered(A)) mk.Add_1(e);
+      if (d3(a1, b1) > 1e-9) mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(a1), this.P(b1)).Edge());
+      for (const e of ordered(B).reverse()) mk.Add_1(oc.TopoDS.Edge_1(e.Reversed()));
+      if (d3(b0, a0) > 1e-9) mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(this.P(b0), this.P(a0)).Edge());
+      if (!mk.IsDone()) throw new FeatureError("E-RIB-FAIL", "The rib's thickness could not be offset from the sketch.");
+      const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+      return named(new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(along, big)), true, true).Shape());
+    };
+    for (const sgn of f.flip ? [-1, 1] : [1, -1]) {
+      let piece: Named;
+      try { piece = this.bool("cut", tool(sgn), prev, f.id); } catch (e) { if (e instanceof FeatureError && e.code === "E-RIB-FAIL") throw e; continue; }
+      const keep: any[] = [];
+      for (const ex = new oc.TopExp_Explorer_2(piece.shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+        const s = oc.TopoDS.Solid_1(ex.Current());
+        const dist = new oc.BRepExtrema_DistShapeShape_2(s, w, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+        if (!dist.IsDone() || dist.Value() > 1e-4) continue;
+        if (Math.max(this.reach(s, a, along!), this.reach(s, b, along!)) > big * 0.9) continue;
+        keep.push(s);
+      }
+      if (!keep.length) continue;
+      const faces: any[] = [], names: string[] = [];
+      for (const s of keep) for (const x of this.sub(s, "FACE")) {
+        const j = piece.faces.findIndex(g => g.IsSame(x));
+        faces.push(x); names.push(j >= 0 ? piece.names[j] : `${f.id}:new:${names.length}`);
+      }
+      let rib: Named = { shape: keep[0], faces: this.sub(keep[0], "FACE"), names: [] };
+      if (keep.length === 1) rib = { shape: keep[0], faces, names };
+      else {
+        const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+        bb.MakeCompound(comp);
+        for (const s of keep) bb.Add(comp, s);
+        rib = { shape: comp, faces, names };
+      }
+      this.tools.set(f.id, [{ shape: rib, op: "fuse" }]);
+      return this.bool("fuse", prev, rib, f.id);
+    }
+    throw new FeatureError("E-RIB-MISS", "The rib does not reach the body. Does the sketch sit next to the part, or should the direction flip?");
+  }
+
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
   private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
     let tool = tools[0];
@@ -1417,6 +1531,7 @@ export class Modeller {
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
+          else if (f.type === "rib") body = this.rib(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           else if (f.type === "thread") {

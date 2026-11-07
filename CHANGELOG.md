@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Rib** (FR-FT-062), in the **Sweep ▾** menu. An open line or arc chain sketched beside the part becomes a wall that runs to the body: thickness on the first side, both sides or the second side, **Parallel to sketch** (a corner gusset) or **Normal to sketch** (ribs across a hollow, sketched above it), with **Flip material side**. It goes the way that meets the body and previews live.
+- **3MF export** (Export → 3MF) for 3D printing: each body as a closed mesh in millimetres with its colour, written in the active coordinate system like the other mesh exports. It reads back into MöbiusCAD as the same solid.
+
 ## [1.55.0] - 2026-11-07
 
 ### Added

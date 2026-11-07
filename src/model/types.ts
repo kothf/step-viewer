@@ -369,9 +369,24 @@ export interface LoftFeature {
   close?: boolean;
 }
 
+/**
+ * Rib (FR-FT-062): an open sketch chain given a thickness and extended to the body. `dir` parallel
+ * grows it in the sketch plane (thickness along the sketch normal), normal grows it along the normal
+ * (thickness in the plane). `side` puts the thickness on both sides of the curve or one; `flip`
+ * tries the other direction first.
+ */
+export interface RibFeature {
+  id: string; type: "rib"; name: string; suppressed?: boolean;
+  sketch: string;
+  thickness: Num;
+  side: "mid" | "one" | "other";
+  dir: "parallel" | "normal";
+  flip?: boolean;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature;
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

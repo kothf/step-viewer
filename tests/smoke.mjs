@@ -1373,6 +1373,15 @@ try {
     await page.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
     const tmf = await page.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { planes: d.faces.filter(f => f.type === "plane").length, vol: d.volume, box: [0, 1, 2].map(k => d.bboxMax[k] - d.bboxMin[k]) }; });
     check(tmf.planes === 6 && near(tmf.vol, 800, 1e-6) && tmf.box.join() === "20,10,4", `3MF: a 20×10×4 block, 6 planar faces, V=${tmf.vol}`);
+    // 3MF export (FR-STO): written in millimetres with colours, it reads back as the same closed block.
+    const [d3] = await Promise.all([page.waitForEvent("download"), page.$eval('[data-export="3mf"]', el => el.click())]);
+    const b3 = await readFile(await d3.path());
+    await page.evaluate(() => { window.__sv.viewer.parts[0].data.__old = true; });
+    await page.setInputFiles("#file-input", { name: "back.3mf", mimeType: "model/3mf", buffer: b3 });
+    await page.waitForFunction(() => document.querySelector("#loading").hidden && window.__sv.viewer.parts[0]?.data && !window.__sv.viewer.parts[0].data.__old, null, { timeout: 30000 });
+    const t2 = await page.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { planes: d.faces.filter(f => f.type === "plane").length, vol: d.volume, box: [0, 1, 2].map(k => +(d.bboxMax[k] - d.bboxMin[k]).toFixed(6)) }; });
+    check(/\.3mf$/.test(d3.suggestedFilename()) && b3.subarray(0, 2).toString() === "PK" && t2.planes === 6 && near(t2.vol, 800, 1e-6) && t2.box.join() === "20,10,4",
+      `3MF export: ${d3.suggestedFilename()} reads back as the 20×10×4 block (${t2.planes} planes, V=${t2.vol})`);
   }
 
   // --- PCB board body as a STEP solid ---
@@ -3220,6 +3229,51 @@ try {
     const pl = await mp.evaluate(() => ({ plane: window.__sv.model.store.doc.features.find(f => f.id === "s3").plane, kind: window.__sv.model.mode().kind, undo: window.__sv.model.store.undoLabel }));
     const a4 = await s3x();
     check(live.kind === "plane" && live.plane?.std === "XY" && "face" in live.doc && pl.plane.std === "XY" && pl.kind === "none" && pl.undo === "Edit sketch plane" && !a4.dangling && a4.ok, `model 1.53: Edit sketch plane previews and moves the sketch to another plane (FR-SK-007) (${JSON.stringify(live)}, ${JSON.stringify(pl)}, ${JSON.stringify(a4)})`);
+    await ctx.close();
+  }
+
+  // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Bracket", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + "a", x0, y0), P(id + "b", x1, y0), P(id + "c", x1, y1), P(id + "d", x0, y1), Ln(id + "1", id + "a", id + "b"), Ln(id + "2", id + "b", id + "c"), Ln(id + "3", id + "c", id + "d"), Ln(id + "4", id + "d", id + "a")] });
+      d.features.push(rect("Sketch1", -50, -30, 50, 30), { id: "bx", type: "extrude", name: "Extrude1", sketch: "Sketch1", op: "boss", end: "blind", depth: { v: 10 } },
+        rect("Sketch2", -50, -30, -40, 30), { id: "wx", type: "extrude", name: "Extrude2", sketch: "Sketch2", op: "boss", end: "blind", depth: { v: 60 } },
+        { id: "rs", type: "sketch", name: "Sketch3", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("ra", -40, 50), P("rb", 40, 10), Ln("rl", "ra", "rb")] });
+    }));
+    await settle();
+    const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Rib")');
+    await settle();
+    const r0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { type: m.draft?.type, sketch: m.draft?.sketch, title: document.querySelector("#mc-pm h3")?.textContent, live: window.__sv.model.last().props.volume }; });
+    await mp.fill('#mc-pm input[data-num="thickness"]', "4");
+    await mp.press('#mc-pm input[data-num="thickness"]', "Tab");
+    await settle();
+    const live4 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click("#mc-ok");
+    await settle();
+    const rib = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(r0.type === "rib" && r0.sketch === "rs" && r0.title === "Rib" && Math.abs(r0.live - v0 - 8000) < 1e-3 && Math.abs(live4 - v0 - 6400) < 1e-3 && Math.abs(rib.v - v0 - 6400) < 1e-3 && !rib.bad && /Rib1/.test(rib.names),
+      `model 1.56: Rib from an open line fills the bracket's corner, previewed live (FR-FT-062) (${JSON.stringify(r0)}, ${v0}, ${live4}, ${JSON.stringify(rib)})`);
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "rib").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, opts: [...document.querySelectorAll('#mc-pm select[data-k="dir"] option')].map(o => o.textContent).join("|") }));
+    check(ru.title === "Ребро" && ru.opts === "Параллельно эскизу|Перпендикулярно эскизу", `model 1.56: rib panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
