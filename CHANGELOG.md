@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-11-07
+
+### Added
+- **Hole wizard** (FR-FT-050..053): simple, counterbore, countersink and tapped holes, blind (with a 118° drill point or a flat bottom) or through all. Click a flat face, then click where each hole goes; click a hole again to remove it.
+- ISO metric sizes M2–M24 (FR-FT-051) fill the sizes: ISO 273 clearance holes (close, normal or loose), counterbores for ISO 4762 cap screws, 90° countersinks for ISO 10642, and tap drills. Typing a size makes the hole custom.
+- Tapped holes show a dashed **cosmetic thread** at the major diameter and keep the thread size, pitch and depth.
+- Holes can be patterned and mirrored like other cuts.
+
 ## [1.23.0] - 2026-11-07
 
 ### Added
@@ -323,7 +331,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.23.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.24.0...HEAD
+[1.24.0]: https://github.com/kothf/step-viewer/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/kothf/step-viewer/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/kothf/step-viewer/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/kothf/step-viewer/compare/v1.20.0...v1.21.0

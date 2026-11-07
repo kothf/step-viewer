@@ -10,7 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -570,6 +570,61 @@ export class Modeller {
     return { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${n++}`) };
   }
 
+  /**
+   * Hole wizard (FR-FT-050): each hole is a profile in (radius, depth) revolved about its axis,
+   * pointing into the material (against the face normal); all holes are cut in one go.
+   */
+  private hole(f: HoleFeature, prev: Named | null, frames: Record<string, Frame>): { body: Named; frame: Frame } {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.plane) throw new FeatureError("E-HOLE-FACE", "Pick a flat face or a plane for the holes.");
+    const fr = this.planeFrame(f.plane, prev, frames);
+    // The panel places holes in this frame, so it is known even before the first hole.
+    frames[f.id] = fr;
+    if (!f.pts.length) throw new FeatureError("E-HOLE-PTS", "Click on the face to place the holes.");
+    const r = f.diameter.v / 2;
+    if (!(r > 1e-6)) throw new FeatureError("E-FT-ZERO", "The diameter must be more than 0.");
+    const through = f.end === "through";
+    const depth = through ? this.size(prev.shape) * 2 + 1 : f.depth.v;
+    if (!(depth > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    // Profile from the axis outward, starting above the face so the top is cut cleanly.
+    const lift = Math.max(0.01, r * 0.05);
+    const prof: [number, number][] = [[0, lift]];
+    if (f.kind === "cbore") {
+      const R = (f.cbDia?.v ?? 0) / 2, d = f.cbDepth?.v ?? 0;
+      if (!(R > r) || !(d > 0) || d >= depth) throw new FeatureError("E-HOLE-CBORE", "The counterbore must be wider than the hole and less deep.");
+      prof.push([R, lift], [R, -d], [r, -d]);
+    } else if (f.kind === "csink") {
+      const R = (f.csDia?.v ?? 0) / 2, a = f.csAngle?.v ?? Math.PI / 2;
+      if (!(R > r) || !(a > 0.1 && a < Math.PI - 0.1)) throw new FeatureError("E-HOLE-CSINK", "The countersink must be wider than the hole, at an angle between 6° and 174°.");
+      const h = (R - r) / Math.tan(a / 2);
+      prof.push([R + lift * Math.tan(a / 2), lift], [r, -h]);
+    } else prof.push([r, lift]);
+    const tipH = f.flat || through ? 0 : r / Math.tan((118 * Math.PI) / 360);
+    prof.push([r, -depth], [0, -depth - tipH]);
+    const tools: Named[] = [];
+    f.pts.forEach((p, i) => {
+      const o = add(add(fr.o, mul(fr.x, p[0])), mul(fr.y, p[1]));
+      // The profile lies in the plane through the axis and the frame's x: (r, z) → o + x·r + n·z.
+      const poly = new oc.BRepBuilderAPI_MakePolygon_1();
+      for (const [rr, z] of prof) poly.Add_1(this.P(add(add(o, mul(fr.x, rr)), mul(fr.n, z))));
+      poly.Close();
+      const face = new oc.BRepBuilderAPI_MakeFace_15(poly.Wire(), true).Face();
+      const mk = new oc.BRepPrimAPI_MakeRevol_1(face, new oc.gp_Ax1_2(this.P(o), this.D(fr.n)), 2 * Math.PI, false);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The hole could not be made.");
+      const shape = mk.Shape();
+      const faces = this.sub(shape, "FACE");
+      tools.push({ shape, faces, names: faces.map((_x, k) => `${f.id}:h${i}:${k}`) });
+    });
+    let tool = tools[0];
+    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    this.tools.set(f.id, [{ shape: tool, op: "cut" }]);
+    const out = this.bool("cut", prev, tool, f.id);
+    if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The holes do not touch the body.");
+    return { body: out, frame: fr };
+  }
+
   /** A direction or an axis from a line reference: point and unit direction. */
   private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
     const oc = this.oc;
@@ -611,7 +666,7 @@ export class Modeller {
       if (!f) throw new FeatureError("E-PAT-SEED", "A feature to copy is missing.");
       if (f.suppressed) continue;
       const t = this.tools.get(id);
-      if (!t) throw new FeatureError("E-PAT-SEED", "Only extrudes, cuts, revolves, mirrors and patterns can be copied for now.");
+      if (!t) throw new FeatureError("E-PAT-SEED", "Only extrudes, cuts, revolves, holes, mirrors and patterns can be copied for now.");
       out.push(...t);
     }
     if (!out.length) throw new FeatureError("E-PAT-SEED", "All the features to copy are suppressed.");
@@ -772,6 +827,7 @@ export class Modeller {
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
+          else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
@@ -783,7 +839,7 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, status, frame, tools: this.tools.get(f.id) });
+      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id) });
     });
     this.cache = next;
     return { body, statuses, frames };
