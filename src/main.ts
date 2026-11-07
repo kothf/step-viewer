@@ -34,6 +34,8 @@ import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
+import { DrawingWorkspace } from "./drawing/workspace";
+import { isDrawingName } from "./drawing/file";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -290,6 +292,40 @@ bindGerberPanel(gerber, {
   panels,
 });
 
+// Drawings (FRS section 11): sheets of the open part or STEP model, in their own workspace.
+const partListeners: (() => void)[] = [];
+const drawing = new DrawingWorkspace({
+  appVersion: __APP_VERSION__,
+  occtBase: new URL("occt/", document.baseURI).href,
+  async currentModel() {
+    const live = modeller.store?.doc;
+    if (modeller.active && live) {
+      const m = live.material;
+      return { name: modeller.partName.replace(/\s*•$/, "") || live.name, part: JSON.parse(JSON.stringify(live)), info: { title: live.props.title || live.name, number: live.props.partNumber, revision: live.props.revision, author: live.props.author, material: m?.name, density: m?.density } };
+    }
+    if (!viewer.parts.length || isPcbMode()) return null;
+    if (kernelOff) { toast(t("Drawings need the geometry kernel, which is turned off (?nokernel)."), true); return null; }
+    if (kernelJob && kernel.status === "loading") { toast(t("Loading the geometry kernel…")); await kernelJob; }
+    if (!kernel.file) { toast(t("Drawings need a STEP, IGES or BREP model; mesh files have no B-rep."), true); return null; }
+    const bytes = await kernel.step(null, viewer.parts.map(p => p.data.name), viewer.parts.map(p => p.data.color));
+    const name = `${baseName()}.step`;
+    return { name, file: { name, bytes }, info: { title: baseName() } };
+  },
+  livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
+  onPartChange: fn => { partListeners.push(fn); },
+  currentView() {
+    if (!viewer.parts.length && !modeller.active) return null;
+    const cam = viewer.camera, d = cam.position.clone().sub(viewer.controls.target).normalize();
+    return { dir: d.toArray() as [number, number, number], up: cam.up.toArray() as [number, number, number] };
+  },
+  download: (blob, name) => download(blob, name),
+});
+$("#new-drawing").addEventListener("click", () => {
+  const key = modeller.active ? `part:${modeller.store?.doc.id}` : state.fileKey || state.fileName;
+  if (drawing.hasDrawing && drawing.modelKey === key) drawing.show();
+  else { drawing.modelKey = key; void drawing.newFromModel(); }
+});
+
 /** File name and status (idle / loading / ready / error) in the header. */
 let docState: [string, "idle" | "loading" | "ready" | "error"] = ["", "idle"];
 function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
@@ -355,6 +391,8 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  const drawingFile = files.find(f => isDrawingName(f.name));
+  if (drawingFile) return drawing.openFile(drawingFile);
   const partFile = files.find(f => modeller.isPartName(f.name));
   if (partFile) return modeller.openFile(partFile);
   const sw = files.filter(f => isSolidWorksName(f.name));
@@ -651,6 +689,7 @@ function showPartModel(data: PartData | null, name: string, first: boolean) {
   updateHint();
   if (first && data) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
   if (lastMassRun) runMass();
+  for (const f of partListeners) f();
 }
 
 let modelStats = { parts: 0, faces: 0, tris: 0, s: 0 };
@@ -2197,6 +2236,7 @@ $("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, 
 
 // ---------- keyboard ----------
 window.addEventListener("keydown", e => {
+  if (drawing.open) return;
   const t = e.target as HTMLElement;
   if (t.matches("input, select, textarea")) return;
   // Keyboard users: let Enter / Space press the focused control, and keep keys inside dialogs and sheets.
@@ -2264,4 +2304,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

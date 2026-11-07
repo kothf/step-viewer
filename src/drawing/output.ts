@@ -1,0 +1,157 @@
+// Drawing output (FR-DRW-030/031): one primitive list drawn as SVG (screen, SVG
+// export, print), PDF (vector, sheet size, embedded font) and DXF (R12, mm, one
+// layer per line type with its linetype).
+import { PEN_DASH, PEN_W, type Prim } from "./prims";
+
+const f = (v: number) => (Math.round(v * 1000) / 1000).toString();
+const escXml = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+/** Font size from the ISO 3098 capital height. */
+export const FONT_K = 1 / 0.72;
+export const FONT = "'DejaVu Sans', Arial, Helvetica, sans-serif";
+
+/** SVG elements of the primitives for a W × H sheet (y flipped). */
+export function svgBody(prims: Prim[], H: number, color = "#000"): string {
+  const parts: string[] = [];
+  const style = (pen: keyof typeof PEN_W) => {
+    const d = PEN_DASH[pen];
+    return `stroke="${color}" stroke-width="${PEN_W[pen]}"${d ? ` stroke-dasharray="${d.join(" ")}"` : ""}`;
+  };
+  for (const p of prims) {
+    if (p.t === "l") parts.push(`<line x1="${f(p.p[0])}" y1="${f(H - p.p[1])}" x2="${f(p.p[2])}" y2="${f(H - p.p[3])}" ${style(p.pen)} data-l="${p.layer}"/>`);
+    else if (p.t === "a") {
+      if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) parts.push(`<circle cx="${f(p.o[0])}" cy="${f(H - p.o[1])}" r="${f(p.r)}" fill="none" ${style(p.pen)} data-l="${p.layer}"/>`);
+      else {
+        const x0 = p.o[0] + p.r * Math.cos(p.a0), y0 = p.o[1] + p.r * Math.sin(p.a0), x1 = p.o[0] + p.r * Math.cos(p.a1), y1 = p.o[1] + p.r * Math.sin(p.a1);
+        parts.push(`<path d="M${f(x0)} ${f(H - y0)}A${f(p.r)} ${f(p.r)} 0 ${p.a1 - p.a0 > Math.PI ? 1 : 0} 0 ${f(x1)} ${f(H - y1)}" fill="none" ${style(p.pen)} data-l="${p.layer}"/>`);
+      }
+    } else if (p.t === "p") {
+      let d = "";
+      for (let i = 0; i < p.p.length; i += 2) d += `${i ? "L" : "M"}${f(p.p[i])} ${f(H - p.p[i + 1])}`;
+      parts.push(`<path d="${d}${p.closed ? "Z" : ""}" fill="none" ${style(p.pen)} stroke-linejoin="round" data-l="${p.layer}"/>`);
+    } else {
+      parts.push(`<text x="${f(p.x)}" y="${f(H - p.y)}" font-size="${f(p.h * FONT_K)}" text-anchor="${p.al === "l" ? "start" : p.al === "c" ? "middle" : "end"}"${p.bold ? ' font-weight="bold"' : ""} fill="${color}" data-l="${p.layer}">${escXml(p.s)}</text>`);
+    }
+  }
+  return parts.join("");
+}
+
+/** A standalone SVG file of one sheet, at its real size in mm. */
+export function sheetSvg(prims: Prim[], W: number, H: number): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}mm" height="${f(H)}mm" viewBox="0 0 ${f(W)} ${f(H)}" font-family="${FONT.replace(/'/g, "")}" stroke-linecap="round">\n<rect width="${f(W)}" height="${f(H)}" fill="#fff"/>\n${svgBody(prims, H)}\n</svg>\n`;
+}
+
+// ---------- DXF ----------
+
+const LTYPES: Record<string, { desc: string; pat: number[] }> = {
+  CONTINUOUS: { desc: "Solid line", pat: [] },
+  HIDDEN: { desc: "Hidden __ __ __", pat: [3, -1.5] },
+  CENTER: { desc: "Center ____ _ ____", pat: [12, -2, 1.5, -2] },
+};
+const LAYERS: Record<string, { color: number; lt: string }> = {
+  VISIBLE: { color: 7, lt: "CONTINUOUS" }, TANGENT: { color: 8, lt: "CONTINUOUS" }, HIDDEN: { color: 5, lt: "HIDDEN" },
+  CENTER: { color: 1, lt: "CENTER" }, FORMAT: { color: 7, lt: "CONTINUOUS" }, TEXT: { color: 7, lt: "CONTINUOUS" }, SKETCH: { color: 3, lt: "CONTINUOUS" },
+};
+
+/** DXF R12 in millimetres, one layer per line type. */
+export function sheetDxf(prims: Prim[], W: number, H: number): string {
+  const o: (string | number)[] = [];
+  const g = (code: number, v: string | number) => o.push(code, typeof v === "number" ? f(v) : v);
+  g(0, "SECTION"); g(2, "HEADER");
+  g(9, "$ACADVER"); g(1, "AC1009");
+  g(9, "$INSUNITS"); o.push(70, 4);
+  g(9, "$MEASUREMENT"); o.push(70, 1);
+  g(9, "$EXTMIN"); g(10, 0); g(20, 0); g(30, 0);
+  g(9, "$EXTMAX"); g(10, W); g(20, H); g(30, 0);
+  g(9, "$LTSCALE"); g(40, 1);
+  g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "TABLES");
+  g(0, "TABLE"); g(2, "LTYPE"); o.push(70, Object.keys(LTYPES).length);
+  for (const [name, lt] of Object.entries(LTYPES)) {
+    g(0, "LTYPE"); g(2, name); o.push(70, 0); g(3, lt.desc); o.push(72, 65, 73, lt.pat.length); g(40, lt.pat.reduce((s, v) => s + Math.abs(v), 0));
+    for (const v of lt.pat) g(49, v);
+  }
+  g(0, "ENDTAB");
+  g(0, "TABLE"); g(2, "LAYER"); o.push(70, Object.keys(LAYERS).length);
+  for (const [name, l] of Object.entries(LAYERS)) { g(0, "LAYER"); g(2, name); o.push(70, 0, 62, l.color); g(6, l.lt); }
+  g(0, "ENDTAB");
+  g(0, "TABLE"); g(2, "STYLE"); o.push(70, 1);
+  g(0, "STYLE"); g(2, "STANDARD"); o.push(70, 0); g(40, 0); g(41, 1); g(50, 0); o.push(71, 0); g(42, 2.5); g(3, "txt"); g(4, "");
+  g(0, "ENDTAB");
+  g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "ENTITIES");
+  for (const p of prims) {
+    if (p.t === "l") { g(0, "LINE"); g(8, p.layer); g(10, p.p[0]); g(20, p.p[1]); g(30, 0); g(11, p.p[2]); g(21, p.p[3]); g(31, 0); }
+    else if (p.t === "a") {
+      if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) { g(0, "CIRCLE"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); }
+      else { g(0, "ARC"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); g(50, p.a0 * 180 / Math.PI); g(51, p.a1 * 180 / Math.PI); }
+    } else if (p.t === "p") {
+      g(0, "POLYLINE"); g(8, p.layer); o.push(66, 1); g(10, 0); g(20, 0); g(30, 0); o.push(70, p.closed ? 1 : 0);
+      for (let i = 0; i < p.p.length; i += 2) { g(0, "VERTEX"); g(8, p.layer); g(10, p.p[i]); g(20, p.p[i + 1]); g(30, 0); }
+      g(0, "SEQEND"); g(8, p.layer);
+    } else {
+      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " "));
+      if (p.al !== "l") { o.push(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
+    }
+  }
+  g(0, "ENDSEC"); g(0, "EOF");
+  return o.join("\n") + "\n";
+}
+
+// ---------- PDF ----------
+
+/** Vector PDF of the sheets at their real size, with an embedded font (Cyrillic and drawing symbols work). */
+export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[], fontBytes: ArrayBuffer, title: string): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
+  const first = sheets[0];
+  const doc = new jsPDF({ unit: "mm", format: [first.W, first.H], orientation: first.W >= first.H ? "landscape" : "portrait", compress: true });
+  let bin = "";
+  const u8 = new Uint8Array(fontBytes);
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  doc.addFileToVFS("DejaVuSans.ttf", btoa(bin));
+  doc.addFont("DejaVuSans.ttf", "DejaVu", "normal");
+  doc.setFont("DejaVu", "normal");
+  doc.setProperties({ title, creator: "MöbiusCAD" });
+  sheets.forEach((sh, i) => {
+    if (i) doc.addPage([sh.W, sh.H], sh.W >= sh.H ? "landscape" : "portrait");
+    const H = sh.H;
+    doc.setLineCap("round");
+    let pen = "";
+    const usePen = (p: keyof typeof PEN_W) => {
+      if (p === pen) return;
+      pen = p;
+      doc.setLineWidth(PEN_W[p]);
+      doc.setLineDashPattern(PEN_DASH[p] ?? [], 0);
+    };
+    for (const p of sh.prims) {
+      if (p.t === "l") { usePen(p.pen); doc.line(p.p[0], H - p.p[1], p.p[2], H - p.p[3]); }
+      else if (p.t === "a") {
+        usePen(p.pen);
+        if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) { doc.circle(p.o[0], H - p.o[1], p.r, "S"); continue; }
+        // Cubic Béziers of at most 90° each.
+        const n = Math.max(1, Math.ceil((p.a1 - p.a0) / (Math.PI / 2))), da = (p.a1 - p.a0) / n, k = 4 / 3 * Math.tan(da / 4);
+        const P = (a: number) => [p.o[0] + p.r * Math.cos(a), H - (p.o[1] + p.r * Math.sin(a))];
+        const [sx, sy] = P(p.a0);
+        const segs: number[][] = [];
+        let [cx, cy] = [sx, sy];
+        for (let j = 0; j < n; j++) {
+          const a = p.a0 + j * da, b = a + da;
+          const c1 = [cx - k * p.r * Math.sin(a), cy - k * p.r * Math.cos(a)];
+          const [ex, ey] = P(b);
+          const c2 = [ex + k * p.r * Math.sin(b), ey + k * p.r * Math.cos(b)];
+          segs.push([c1[0] - cx, c1[1] - cy, c2[0] - cx, c2[1] - cy, ex - cx, ey - cy]);
+          [cx, cy] = [ex, ey];
+        }
+        doc.lines(segs, sx, sy, [1, 1], "S", false);
+      } else if (p.t === "p") {
+        usePen(p.pen);
+        const segs: number[][] = [];
+        for (let j = 2; j < p.p.length; j += 2) segs.push([p.p[j] - p.p[j - 2], -(p.p[j + 1] - p.p[j - 1])]);
+        doc.lines(segs, p.p[0], H - p.p[1], [1, 1], "S", !!p.closed);
+      } else {
+        doc.setFontSize(p.h * FONT_K / 0.3528);
+        doc.text(p.s, p.x, H - p.y, { align: p.al === "l" ? "left" : p.al === "c" ? "center" : "right", baseline: "alphabetic" });
+      }
+    }
+  });
+  return doc.output("blob");
+}

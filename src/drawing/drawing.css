@@ -1,0 +1,59 @@
+/* Drawing workspace (FRS section 11): a full-window sheet editor over the 3D view. */
+.drw { position: fixed; inset: 0; z-index: 1050; display: flex; flex-direction: column; background: var(--bg); color: var(--text); font-size: var(--fs-body); }
+.drw-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.drw-top .btn svg, .drw-top .icon svg { vertical-align: -3px; }
+.drw-top .btn span { margin-left: 4px; }
+.drw-name { font-weight: 600; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drw-cmds { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.drw-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+.drw-dd { position: relative; }
+.drw-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 5; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; }
+.drw-menu.right { left: auto; right: 0; }
+.drw-menu button { text-align: left; background: transparent; border: 0; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.drw-menu button:hover, .drw-menu button:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
+.drw-body { flex: 1; display: flex; min-height: 0; }
+.drw-side { width: 280px; flex: none; background: var(--panel); border-right: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
+.drw-tree { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.drw-ti { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+.drw-ti span { overflow: hidden; text-overflow: ellipsis; }
+.drw-ti small { color: var(--muted); margin-left: auto; padding-left: 8px; }
+.drw-ti:hover { background: var(--panel-2); }
+.drw-ti.on { background: var(--accent-soft); color: var(--accent-text); }
+.drw-ti.on small { color: var(--accent-text); }
+.drw-ti svg { flex: none; }
+.drw-props { padding: 8px 10px 16px; }
+.drw-props .pm-group { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px 10px; margin: 0 0 10px; }
+.drw-props legend { font-weight: 600; padding: 0 4px; }
+.drw-f { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; color: var(--muted); font-size: var(--fs-caption); }
+.drw-f input, .drw-f select { color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font-size: var(--fs-body); }
+.drw-chk { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.drw-note { color: var(--muted); margin: 6px 0 0; }
+.drw-seg { margin-top: 7px; }
+.drw-seg button.on { background: var(--accent-soft); color: var(--accent-text); }
+.drw-props .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.drw-canvas { flex: 1; position: relative; min-width: 0; background: var(--vp-bottom); }
+.drw-svg { position: absolute; inset: 0 0 34px 0; width: 100%; height: calc(100% - 34px); display: block; touch-action: none; outline: none; color: #2563eb; }
+.drw-svg:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.drw-svg.panning { cursor: grabbing !important; }
+.drw-paper { fill: #fff; stroke: #8892a0; stroke-width: 0.3; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); }
+.drw-pending { fill: rgba(37, 99, 235, .06); stroke: #2563eb; stroke-width: .3; stroke-dasharray: 2 1.5; }
+.drw-sel { fill: none; stroke: #2563eb; stroke-width: .5; stroke-dasharray: 2.5 1.5; vector-effect: non-scaling-stroke; }
+.drw-hov { fill: rgba(37, 99, 235, .04); stroke: #60a5fa; stroke-width: .35; vector-effect: non-scaling-stroke; }
+.drw-preview { opacity: .75; }
+.drw-pv-frame { fill: rgba(37, 99, 235, .05); stroke: #2563eb; stroke-width: .35; stroke-dasharray: 2 1.5; }
+.drw-align { stroke: #2563eb; stroke-width: .25; stroke-dasharray: 1 1.5; }
+.drw.stale .drw-view { opacity: .55; }
+.drw-confirm { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; z-index: 2; }
+.drw-tabs { position: absolute; left: 0; right: 0; bottom: 0; height: 34px; display: flex; align-items: stretch; gap: 2px; padding: 0 8px; background: var(--panel); border-top: 1px solid var(--line); overflow-x: auto; }
+.drw-tablist { display: flex; align-items: stretch; gap: 2px; }
+.drw-tabs button { border: 0; background: transparent; padding: 0 14px; cursor: pointer; border-top: 2px solid transparent; white-space: nowrap; }
+.drw-tabs button.on { border-top-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.drw-tabs button:hover { background: var(--panel-2); }
+.drw-status { padding: 5px 12px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); min-height: 28px; }
+.drw-status.warn { color: var(--warn-text); }
+@media (max-width: 767px) {
+  .drw-body { flex-direction: column-reverse; }
+  .drw-side { width: auto; max-height: 40vh; border-right: 0; border-top: 1px solid var(--line); }
+  .drw-top .btn span { display: none; }
+  .drw-name { max-width: 14ch; }
+}

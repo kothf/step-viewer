@@ -1,0 +1,87 @@
+// Main-thread side of the drawing worker: one worker per open drawing, started on
+// demand. Projections are cached by direction; asking again for one in flight
+// shares the request.
+import { compile } from "../kernel/client";
+import type { Projection, V3, ViewDir } from "../kernel/drawing";
+import type { PartDoc } from "../model/types";
+import DrawingWorker from "./drawing.worker?worker";
+import { dirKey } from "./views";
+
+export interface ModelFacts { box: [V3, V3]; volume: number }
+
+export class DrawingKernel {
+  private worker: Worker | null = null;
+  private ready: Promise<void> | null = null;
+  private seq = 0;
+  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private loaded: Promise<ModelFacts> | null = null;
+  /** Bumped at every load: answers for an older model are dropped. */
+  gen = 0;
+  readonly cache = new Map<string, Projection>();
+  private inflight = new Map<string, Promise<Projection>>();
+
+  constructor(private base: string) {}
+
+  private start() {
+    if (this.ready) return this.ready;
+    const w = new DrawingWorker();
+    w.onmessage = (e: MessageEvent) => {
+      const d = e.data, p = this.pending.get(d.id);
+      if (!p) return;
+      this.pending.delete(d.id);
+      if (d.ok) p.resolve(d); else p.reject(new Error(d.error));
+    };
+    w.onerror = e => { for (const p of this.pending.values()) p.reject(new Error(e.message || "The drawing kernel stopped")); this.pending.clear(); this.stop(); };
+    this.worker = w;
+    this.ready = compile(this.base).then(module => this.call<void>({ type: "init", base: this.base, module }));
+    this.ready.catch(() => this.stop());
+    return this.ready;
+  }
+
+  private call<T>(msg: Record<string, unknown>): Promise<T> {
+    const id = ++this.seq;
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.worker!.postMessage({ ...msg, id });
+    });
+  }
+
+  stop() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.ready = null;
+    this.loaded = null;
+    this.cache.clear();
+    this.inflight.clear();
+  }
+
+  /** Loads the model; the projection cache starts over. */
+  load(src: { part?: PartDoc; file?: { name: string; bytes: Uint8Array } }): Promise<ModelFacts> {
+    this.gen++;
+    this.cache.clear();
+    this.inflight.clear();
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume }));
+    return this.loaded;
+  }
+
+  get hasModel() { return !!this.loaded; }
+
+  /** The view's lines (cached by direction). */
+  project(view: ViewDir): Promise<Projection> {
+    const key = dirKey(view);
+    const have = this.cache.get(key);
+    if (have) return Promise.resolve(have);
+    let p = this.inflight.get(key);
+    if (!p) {
+      if (!this.loaded) return Promise.reject(new Error("No model loaded"));
+      const gen = this.gen;
+      p = this.loaded.then(() => this.call<{ proj: Projection }>({ type: "project", view })).then(r => {
+        if (gen === this.gen) this.cache.set(key, r.proj);
+        this.inflight.delete(key);
+        return r.proj;
+      }, err => { this.inflight.delete(key); throw err; });
+      this.inflight.set(key, p);
+    }
+    return p;
+  }
+}

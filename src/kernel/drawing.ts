@@ -1,0 +1,196 @@
+// Drawing views (FRS 11.2, FR-DRW-010/016): hidden-line projection of a body with
+// OCCT's exact HLR (HLRBRep_Algo). A view is a direction and an "up" vector; the
+// result is flat 2D geometry in model millimetres (x right, y up on the sheet),
+// sorted into visible / hidden and sharp / tangent / silhouette edges. Lines and
+// circular arcs stay exact (dimensions and centre marks need them); other curves
+// become polylines within a small chord error.
+
+export type V3 = [number, number, number];
+/** Edge class: 0 sharp edge, 1 tangent (smooth) edge, 2 silhouette (outline). */
+export type EdgeClass = 0 | 1 | 2;
+export type Seg2 =
+  | { k: "l"; c: EdgeClass; p: [number, number, number, number] }
+  /** Arc counter-clockwise from a0 to a1 (radians, a1 > a0; a full circle has a1 − a0 = 2π). */
+  | { k: "a"; c: EdgeClass; o: [number, number]; r: number; a0: number; a1: number }
+  | { k: "p"; c: EdgeClass; p: number[] };
+export interface Projection {
+  vis: Seg2[];
+  hid: Seg2[];
+  /** Bounds of the visible geometry: [xmin, ymin, xmax, ymax]. */
+  box: [number, number, number, number];
+  ms: number;
+}
+/** A view direction: `dir` points from the model towards the viewer; `up` is the sheet's +y. */
+export interface ViewDir { dir: V3; up: V3 }
+
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+/** Sheet x direction of a view (right-handed: x = up × dir). */
+export function viewAxes(v: ViewDir): { x: V3; y: V3; n: V3 } {
+  const n = unit(v.dir);
+  let up = v.up;
+  if (Math.abs(dot(unit(up), n)) > 0.999) up = Math.abs(n[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0];
+  const x = unit(cross(up, n));
+  return { x, y: cross(n, x), n };
+}
+
+/** Reads STEP / IGES / BREP bytes into one shape (all roots in a compound). */
+export function readShape(oc: any, bytes: Uint8Array, name: string): any {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const path = `/drw-${Math.random().toString(36).slice(2)}.${ext === "igs" || ext === "iges" ? "igs" : ext === "brep" ? "brep" : "stp"}`;
+  oc.FS.writeFile(path, bytes);
+  try {
+    if (ext === "brep") {
+      const shape = new oc.TopoDS_Shape();
+      oc.BRepTools.Read_2(shape, path, new oc.BRep_Builder(), new oc.Message_ProgressRange_1());
+      if (shape.IsNull()) throw new Error("Could not read the BREP file");
+      return shape;
+    }
+    const reader = ext === "igs" || ext === "iges" ? new oc.IGESControl_Reader_1() : new oc.STEPControl_Reader_1();
+    if (reader.ReadFile(path) !== oc.IFSelect_ReturnStatus.IFSelect_RetDone) throw new Error("Could not read the file");
+    reader.TransferRoots(new oc.Message_ProgressRange_1());
+    const shape = reader.OneShape();
+    if (shape.IsNull()) throw new Error("The file has no geometry");
+    return shape;
+  } finally {
+    try { oc.FS.unlink(path); } catch { /* gone */ }
+  }
+}
+
+/** Projects `shape` along a view. `tol` is the chord error for free-form curves (mm). */
+export function project(oc: any, shape: any, view: ViewDir, tol = 0.02): Projection {
+  const t0 = Date.now();
+  const { x, n } = viewAxes(view);
+  const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(0, 0, 0), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
+  const algo = new oc.HLRBRep_Algo_1();
+  algo.Add_2(shape, 0);
+  algo.Projector_1(new oc.HLRAlgo_Projector_2(ax));
+  algo.Update();
+  algo.Hide_1();
+  const h = new oc.HLRBRep_HLRToShape(new oc.Handle_HLRBRep_Algo_2(algo));
+  const vis: Seg2[] = [], hid: Seg2[] = [];
+  const take = (s: any, out: Seg2[], c: EdgeClass) => { if (s && !s.IsNull()) edges(oc, s, out, c, tol); };
+  take(h.VCompound_1(), vis, 0);
+  take(h.Rg1LineVCompound_1(), vis, 1);
+  take(h.OutLineVCompound_1(), vis, 2);
+  take(h.HCompound_1(), hid, 0);
+  take(h.Rg1LineHCompound_1(), hid, 1);
+  take(h.OutLineHCompound_1(), hid, 2);
+  return { vis, hid: unhide(hid, vis), box: bounds(vis.length ? vis : hid), ms: Date.now() - t0 };
+}
+
+/** Removes the parts of hidden lines and arcs that lie under visible ones (a back edge behind the outline). */
+export function unhide(hid: Seg2[], vis: Seg2[], eps = 1e-4): Seg2[] {
+  const out: Seg2[] = [];
+  const sub = (iv: [number, number][], a: number, b: number) => {
+    const r: [number, number][] = [];
+    for (const [s, e] of iv) {
+      if (b <= s + eps || a >= e - eps) { r.push([s, e]); continue; }
+      if (a > s + eps) r.push([s, a]);
+      if (b < e - eps) r.push([b, e]);
+    }
+    return r;
+  };
+  for (const h of hid) {
+    if (h.k === "l") {
+      const [x0, y0, x1, y1] = h.p, L = Math.hypot(x1 - x0, y1 - y0);
+      const ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+      let iv: [number, number][] = [[0, L]];
+      for (const v of vis) {
+        if (v.k !== "l") continue;
+        const d0 = (v.p[0] - x0) * uy - (v.p[1] - y0) * ux, d1 = (v.p[2] - x0) * uy - (v.p[3] - y0) * ux;
+        if (Math.abs(d0) > eps || Math.abs(d1) > eps) continue;
+        const t0 = (v.p[0] - x0) * ux + (v.p[1] - y0) * uy, t1 = (v.p[2] - x0) * ux + (v.p[3] - y0) * uy;
+        iv = sub(iv, Math.min(t0, t1), Math.max(t0, t1));
+        if (!iv.length) break;
+      }
+      for (const [a, b] of iv) if (b - a > eps * 10) out.push({ k: "l", c: h.c, p: [x0 + ux * a, y0 + uy * a, x0 + ux * b, y0 + uy * b] });
+    } else if (h.k === "a") {
+      let iv: [number, number][] = [[h.a0, h.a1]];
+      const ae = eps / Math.max(h.r, eps);
+      for (const v of vis) {
+        if (v.k !== "a" || Math.abs(v.r - h.r) > eps || Math.hypot(v.o[0] - h.o[0], v.o[1] - h.o[1]) > eps) continue;
+        // Compare in the hidden arc's turn: try the visible arc shifted by whole turns.
+        for (const k of [-2, -1, 0, 1, 2]) iv = sub(iv, v.a0 + k * 2 * Math.PI - ae, v.a1 + k * 2 * Math.PI + ae);
+        if (!iv.length) break;
+      }
+      for (const [a, b] of iv) if (b - a > ae * 10) out.push({ ...h, a0: a, a1: b });
+    } else out.push(h);
+  }
+  return out;
+}
+
+function edges(oc: any, comp: any, out: Seg2[], c: EdgeClass, tol: number) {
+  const A = oc.TopAbs_ShapeEnum, T = oc.GeomAbs_CurveType;
+  for (const ex = new oc.TopExp_Explorer_2(comp, A.TopAbs_EDGE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const e = oc.TopoDS.Edge_1(ex.Current());
+    let ad: any;
+    try { ad = new oc.BRepAdaptor_Curve_2(e); } catch { continue; }
+    const u0 = ad.FirstParameter(), u1 = ad.LastParameter();
+    if (!(u1 > u0)) continue;
+    const P = (u: number): [number, number] => { const p = ad.Value(u); return [p.X(), p.Y()]; };
+    const ty = ad.GetType();
+    if (ty === T.GeomAbs_Line) {
+      const a = P(u0), b = P(u1);
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-7) out.push({ k: "l", c, p: [a[0], a[1], b[0], b[1]] });
+    } else if (ty === T.GeomAbs_Circle) {
+      const ci = ad.Circle(), loc = ci.Location(), r = ci.Radius();
+      const o: [number, number] = [loc.X(), loc.Y()];
+      const a = P(u0), b = P(u1), m = P((u0 + u1) / 2);
+      const ang = (p: [number, number]) => Math.atan2(p[1] - o[1], p[0] - o[0]);
+      if (u1 - u0 > 2 * Math.PI - 1e-9) { out.push({ k: "a", c, o, r, a0: 0, a1: 2 * Math.PI }); continue; }
+      let a0 = ang(a), a1 = ang(b);
+      const am = ang(m);
+      const norm = (v: number) => { while (v < 0) v += 2 * Math.PI; while (v >= 2 * Math.PI) v -= 2 * Math.PI; return v; };
+      // Counter-clockwise from a0 must pass the middle point; otherwise swap the ends.
+      if (norm(am - a0) > norm(a1 - a0)) [a0, a1] = [a1, a0];
+      let sweep = norm(a1 - a0);
+      if (sweep < 1e-9) sweep = 2 * Math.PI;
+      out.push({ k: "a", c, o, r, a0, a1: a0 + sweep });
+    } else {
+      const pts: number[] = [];
+      try {
+        const d = new oc.GCPnts_TangentialDeflection_2(ad, 0.1, tol, 2, 1e-9, 1e-7);
+        for (let i = 1; i <= d.NbPoints(); i++) { const p = d.Value(i); pts.push(p.X(), p.Y()); }
+      } catch {
+        for (let i = 0; i <= 32; i++) { const p = P(u0 + (u1 - u0) * i / 32); pts.push(p[0], p[1]); }
+      }
+      if (pts.length < 4) continue;
+      // A straight run (a circle seen edge-on) becomes a line, so it can hide under a visible one.
+      const n = pts.length, x0 = pts[0], y0 = pts[1], x1 = pts[n - 2], y1 = pts[n - 1], L = Math.hypot(x1 - x0, y1 - y0);
+      let straight = L > 1e-7;
+      for (let i = 2; straight && i < n - 2; i += 2) straight = Math.abs((pts[i] - x0) * (y1 - y0) - (pts[i + 1] - y0) * (x1 - x0)) / L < 1e-6
+        && (pts[i] - x0) * (x1 - x0) + (pts[i + 1] - y0) * (y1 - y0) >= -1e-9 && (pts[i] - x1) * (x0 - x1) + (pts[i + 1] - y1) * (y0 - y1) >= -1e-9;
+      if (straight) out.push({ k: "l", c, p: [x0, y0, x1, y1] });
+      else out.push({ k: "p", c, p: pts });
+    }
+  }
+}
+
+/** Bounds of 2D segments: [xmin, ymin, xmax, ymax]. */
+export function bounds(segs: Seg2[]): [number, number, number, number] {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x: number, y: number) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  for (const s of segs) {
+    if (s.k === "l") { add(s.p[0], s.p[1]); add(s.p[2], s.p[3]); }
+    else if (s.k === "p") for (let i = 0; i < s.p.length; i += 2) add(s.p[i], s.p[i + 1]);
+    else {
+      add(s.o[0] + s.r * Math.cos(s.a0), s.o[1] + s.r * Math.sin(s.a0));
+      add(s.o[0] + s.r * Math.cos(s.a1), s.o[1] + s.r * Math.sin(s.a1));
+      for (let q = Math.ceil(s.a0 / (Math.PI / 2)); q * Math.PI / 2 <= s.a1; q++) add(s.o[0] + s.r * Math.cos(q * Math.PI / 2), s.o[1] + s.r * Math.sin(q * Math.PI / 2));
+    }
+  }
+  return x0 === Infinity ? [0, 0, 0, 0] : [x0, y0, x1, y1];
+}
+
+/** Tight bounds and volume of a shape (model mm). */
+export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number } {
+  const b = new oc.Bnd_Box_1();
+  oc.BRepBndLib.AddOptimal(shape, b, false, false);
+  const lo = b.CornerMin(), hi = b.CornerMax();
+  const p = new oc.GProp_GProps_1();
+  oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
+  return { box: [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]], volume: Math.abs(p.Mass()) };
+}

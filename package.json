@@ -15,6 +15,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "dejavu-fonts-ttf": "^2.37.3",
     "jspdf": "^2.5.2",
     "occt-import-js": "^0.0.23",
     "opencascade.js": "2.0.0-beta.b5ff984",
