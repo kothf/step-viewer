@@ -17,10 +17,11 @@ import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, 
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type {
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
-  HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, SketchFeature, V3,
+  GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, SketchFeature, V3,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, holeSize } from "./holes";
+import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
@@ -58,7 +59,8 @@ type Mode =
   | { kind: "plane" }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
-  | { kind: "props"; draft: PartDoc };
+  | { kind: "props"; draft: PartDoc }
+  | { kind: "eq"; draft: GlobalVar[] };
 
 /** Which selection box of the feature panel the next click in the view fills. */
 type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts";
@@ -193,6 +195,8 @@ export class ModelController {
     else {
       this.store = new DocStore(doc);
       this.store.onChange(why => this.changed(why));
+      // Equations: every change re-evaluates the kept expressions (FR-PAR-002/003).
+      this.store.normalize = d => { refreshExprs(d, units.current); };
     }
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
@@ -288,12 +292,11 @@ export class ModelController {
     this.renderEmpty();
     if (this.mode.kind === "feature" && !this.arrowDrag) this.renderPanel();
     const hm = this.mode;
-    if (this.pendingHole && hm.kind === "feature" && hm.draft.type === "hole") {
+    if (this.pendingHole.length && hm.kind === "feature" && hm.draft.type === "hole") {
+      // A rebuild started before the face was picked has no frame yet: keep waiting for the next one.
       const fr = r.frames[hm.draft.id];
-      const w = this.pendingHole;
-      this.pendingHole = null;
-      if (fr) this.placeHole(hm.draft, w, fr);
-    } else this.pendingHole = null;
+      if (fr) { const ws = this.pendingHole; this.pendingHole = []; for (const w of ws) this.placeHole(hm.draft, w, fr); }
+    } else this.pendingHole = [];
   }
 
   /** Rebuild (Ctrl+B), or force a rebuild of every feature with a fresh kernel (Ctrl+Q). */
@@ -368,6 +371,7 @@ export class ModelController {
       status: text => { $("#mc-status").textContent = text; },
       toast: (msg, kind) => toast(msg, kind ?? "info"),
       unit: () => ({ mm: 1 / UNITS[units.current].f, name: units.current, decimals: units.decimals ?? this.doc.units.decimals }),
+      vars: () => evalVars(this.doc, units.current).values,
       onSelection: () => this.renderPanel(),
       modelEdges: e => {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
@@ -493,6 +497,23 @@ export class ModelController {
       return;
     }
     if (m.kind === "plane") { toast(t("Pick a plane or a flat face for the sketch.")); return; }
+    if (m.kind === "eq") {
+      const names = new Set<string>();
+      for (const v of m.draft) {
+        if (!validVarName(v.name)) { toast(t("“{name}” is not a valid name: use letters, digits and _ , starting with a letter.", { name: v.name }), true); return; }
+        if (names.has(v.name)) { toast(t("Two variables are called “{name}”.", { name: v.name }), true); return; }
+        names.add(v.name);
+      }
+      const errs = evalVars({ ...this.doc, vars: m.draft }, units.current).errors;
+      const bad = Object.entries(errs)[0];
+      if (bad) { toast(`${bad[0]}: ${t(bad[1].key, bad[1].params)}`, true); return; }
+      const dr = m.draft;
+      this.mode = { kind: "none" };
+      this.store!.change("Equations", d => { if (dr.length) d.vars = dr; else delete d.vars; });
+      this.renderAll();
+      void this.rebuild();
+      return;
+    }
     if (m.kind === "props") {
       const dr = m.draft;
       this.mode = { kind: "none" };
@@ -583,6 +604,14 @@ export class ModelController {
   }
 
   /** Part properties and material (FR-DOC-007, FR-MAT-001/003). */
+  /** Equations (FR-PAR-001/005): global variables and every expression in the part, in the panel. */
+  editEquations() {
+    if (!this.store) return;
+    this.exitMode(false);
+    this.mode = { kind: "eq", draft: structuredClone(this.doc.vars ?? []) };
+    this.renderAll();
+  }
+
   editProps() {
     if (!this.store) return;
     this.exitMode(false);
@@ -766,7 +795,7 @@ export class ModelController {
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
-    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props") {
+    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props" || m.kind === "eq") {
       if (k === "escape") { stop(); void this.cancel(); }
       else if (k === "enter" && !tg.closest?.("#mc-tree")) { stop(); this.ok(); }
       return;
@@ -913,18 +942,20 @@ export class ModelController {
       m.focus = "pts";
       // The first click on a face also places the first hole there.
       const hit = this.host.faceAt(e.clientX, e.clientY);
-      if (hit && "face" in r) this.pendingHole = hit.point;
+      this.pendingHole = hit && "face" in r ? [hit.point] : [];
       this.draftChanged();
       return;
     }
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = this.last?.frames[f.id];
-    if (!hit || !fr) return;
+    if (!hit) return;
+    // Clicks made before the plane's frame arrives are placed once it does.
+    if (!fr || this.pendingHole.length) { this.pendingHole.push(hit.point); return; }
     this.placeHole(f, hit.point, fr);
   }
 
   /** A first hole waiting for the hole's plane frame (it comes with the next rebuild). */
-  private pendingHole: V3 | null = null;
+  private pendingHole: V3[] = [];
 
   private placeHole(f: HoleFeature, w: V3, fr: Frame) {
     const d: V3 = [w[0] - fr.o[0], w[1] - fr.o[1], w[2] - fr.o[2]];
@@ -1816,6 +1847,7 @@ export class ModelController {
     let html = row("part", ICONS.part, d.name, "", " ft-root");
     html += `<div class="ft-group" role="group">`;
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
+    html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += `</div>`;
@@ -1887,6 +1919,7 @@ export class ModelController {
       r.addEventListener("dblclick", e => {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
+        if (id === "equations") { this.editEquations(); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -1898,6 +1931,7 @@ export class ModelController {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); go(rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]); }
         else if (e.key === "Home" || e.key === "End") { e.preventDefault(); go(rows[e.key === "Home" ? 0 : rows.length - 1]); }
         else if (e.key === "Enter" && (id === "part" || id === "material")) { e.preventDefault(); this.editProps(); }
+        else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && this.store!.feature(id)) { e.preventDefault(); this.editFeature(id); }
         else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = r.getBoundingClientRect(); this.openMenu(id, b.left + 30, b.bottom); }
       });
@@ -2034,6 +2068,7 @@ export class ModelController {
     }
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
     if (m.kind === "props") { this.renderPropsPanel(pm, m.draft); return; }
+    if (m.kind === "eq") { this.renderEqPanel(pm, m.draft); return; }
     const f = m.draft;
     const sketches = this.doc.features.slice(0, m.index).filter((x): x is SketchFeature => x.type === "sketch");
     const unit = units.current;
@@ -2177,8 +2212,8 @@ export class ModelController {
       const apply = () => {
         const key = inp.dataset.num!, q = inp.dataset.q as "length" | "angle";
         let v: number;
-        try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit); }
-        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).message), true); return; }
+        try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
@@ -2287,6 +2322,58 @@ export class ModelController {
     });
     pm.querySelector("[data-k=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-k=cancel]")!.addEventListener("click", () => void this.cancel());
+  }
+
+  /** Equations panel: variables (name, value or expression, kind, result, comment) and the part's expressions. */
+  private renderEqPanel(pm: HTMLElement, vars: GlobalVar[]) {
+    const unit = units.current;
+    const res = evalVars({ ...this.doc, vars }, unit);
+    const shown = (v: GlobalVar) => {
+      if (res.errors[v.name]) return `⚠ ${t(res.errors[v.name].key, res.errors[v.name].params)}`;
+      const x = res.values[v.name];
+      const n = typeof x === "number" ? x : x?.v;
+      if (n == null) return "";
+      return v.kind === "angle" ? `${trimNum((n * 180) / Math.PI, 4)}°` : v.kind === "length" ? `${trimNum(n * UNITS[unit].f, 6)} ${unit}` : trimNum(n, 6);
+    };
+    const kinds: [GlobalVar["kind"], string][] = [["length", t("Length")], ["angle", t("Angle")], ["number", t("Number")]];
+    const rows = vars.map((v, i) => `<div class="eq-row" data-i="${i}">
+        <input type="text" data-e="name" value="${esc(v.name)}" aria-label="${esc(t("Name"))}" spellcheck="false" translate="no" placeholder="${esc(t("Name"))}" />
+        <input type="text" data-e="expr" value="${esc(v.expr)}" aria-label="${esc(t("Value or equation"))}" spellcheck="false" translate="no" placeholder="${esc(t("Value or equation"))}" />
+        <select data-e="kind" aria-label="${esc(t("Type"))}">${kinds.map(([k, l]) => `<option value="${k}"${v.kind === k ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>
+        <span class="eq-val${res.errors[v.name] ? " err" : ""}" translate="no">${esc(shown(v))}</span>
+        <button class="icon" data-e="rm" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(v.name)}">✕</button>
+        <input type="text" data-e="comment" class="eq-c" value="${esc(v.comment ?? "")}" aria-label="${esc(t("Comment"))}" placeholder="${esc(t("Comment"))}" />
+      </div>`).join("");
+    const used = exprTargets(this.doc).map(x => `<li><span translate="no">${esc(featureLabel(x.owner.name))} · ${esc(x.key)}</span> = <code translate="no">${esc(x.num.expr!)}</code> → ${esc(x.q === "angle" ? `${trimNum((x.num.v * 180) / Math.PI, 4)}°` : `${trimNum(x.num.v * UNITS[unit].f, 6)} ${unit}`)}</li>`).join("");
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Equations"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<p class="pm-help muted">${esc(t("Global variables can be used by name in any value box, like Width/2. Dimensions are named like D1@Sketch1."))}</p>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Global variables"))}</legend><div class="eq-list">${rows || `<p class="pm-help muted">${esc(t("No variables yet."))}</p>`}</div><button class="btn small" data-a="add">${esc(t("Add variable"))}</button></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Equations in the part"))}</legend>${used ? `<ul class="eq-used">${used}</ul>` : `<p class="pm-help muted">${esc(t("Type a variable's name or an expression in a value box to drive it."))}</p>`}</fieldset>`;
+    pm.querySelectorAll<HTMLElement>(".eq-row").forEach(r => {
+      const v = vars[+r.dataset.i!];
+      r.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-e]").forEach(el => {
+        const k = el.dataset.e!;
+        if (k === "rm") { el.addEventListener("click", () => { vars.splice(+r.dataset.i!, 1); this.renderEqPanel(pm, vars); }); return; }
+        el.addEventListener("change", () => {
+          const val = el.value.trim();
+          if (k === "name") v.name = val;
+          else if (k === "expr") v.expr = val;
+          else if (k === "kind") v.kind = val as GlobalVar["kind"];
+          else if (val) v.comment = val; else delete v.comment;
+          if (k !== "comment") { this.renderEqPanel(pm, vars); pm.querySelector<HTMLElement>(`.eq-row[data-i="${r.dataset.i}"] [data-e="${k}"]`)?.focus(); }
+        });
+        el.addEventListener("keydown", e => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); (el as HTMLElement).dispatchEvent(new Event("change")); } });
+      });
+    });
+    pm.querySelector("[data-a=add]")!.addEventListener("click", () => {
+      let n = vars.length + 1;
+      while (vars.some(v => v.name === `Var${n}`)) n++;
+      vars.push({ name: `Var${n}`, expr: "10", kind: "length" });
+      this.renderEqPanel(pm, vars);
+      pm.querySelector<HTMLInputElement>(`.eq-row[data-i="${vars.length - 1}"] [data-e="name"]`)?.select();
+    });
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
   }
 
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */

@@ -230,6 +230,14 @@ export interface PartProps {
   custom?: Record<string, string>;
 }
 
+/** A global variable (FR-PAR-001): a named value other inputs can use by name. */
+export interface GlobalVar {
+  name: string;
+  expr: string;
+  kind: "length" | "angle" | "number";
+  comment?: string;
+}
+
 export interface PartDoc {
   schema: 1;
   kind: "part";
@@ -242,6 +250,8 @@ export interface PartDoc {
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
   rollback: number | null;
+  /** Global variables (Equations). */
+  vars?: GlobalVar[];
 }
 
 // ---------- kernel results ----------

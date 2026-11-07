@@ -2101,6 +2101,7 @@ try {
     const hA = await world([30, 15, 20]), hB = await world([-30, 15, 20]);
     await mp.mouse.click(hA[0], hA[1]);
     await idle();
+    await mp.waitForFunction(() => document.querySelector('#mc-pm [data-focus="pts"]')?.textContent === "1 hole", null, { timeout: 15000 }).catch(() => {});
     await idle();
     await mp.mouse.click(hB[0], hB[1]);
     await idle();
@@ -2112,6 +2113,32 @@ try {
     const vHole = await vol(), stHole = await lastSt();
     const pts = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).pts);
     check(holePanel.n === "2 holes" && holePanel.d === "5" && stHole === "hole:ok" && Math.abs(vNoShell - vHole - 2 * Math.PI * 6.25 * 20) < 1 && pts.every(p => Math.abs(Math.abs(p[0]) - 30) < 1.5 && Math.abs(p[1] - 15) < 1.5), `model 1.24: two tapped M6 holes clicked on the top face (${JSON.stringify(holePanel)}, ${(vNoShell - vHole).toFixed(1)}, ${stHole}, ${JSON.stringify(pts)})`);
+    // 1.25: equations: a global variable drives Extrude1's depth; changing it in the panel rebuilds the part.
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tree .ft-row[data-id="equations"]');
+    await mp.click('#mc-pm [data-a="add"]');
+    await mp.fill('#mc-pm .eq-row [data-e="name"]', "Height");
+    await mp.press('#mc-pm .eq-row [data-e="name"]', "Enter");
+    await mp.fill('#mc-pm .eq-row [data-e="expr"]', "20");
+    await mp.press('#mc-pm .eq-row [data-e="expr"]', "Enter");
+    await mp.click('#mc-pm [data-a="ok"]');
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude1 depth", d => { d.features.find(f => f.name === "Extrude1").depth = { v: 20, expr: "Height" }; }));
+    await idle();
+    const vH20 = await vol();
+    await mp.click('#mc-tree .ft-row[data-id="equations"]');
+    const eqShown = await mp.evaluate(() => ({ val: document.querySelector("#mc-pm .eq-val")?.textContent, used: document.querySelector("#mc-pm .eq-used li")?.textContent }));
+    await mp.fill('#mc-pm .eq-row [data-e="expr"]', "Height0 + 1");
+    await mp.press('#mc-pm .eq-row [data-e="expr"]', "Enter");
+    const eqErr = await mp.evaluate(() => document.querySelector("#mc-pm .eq-val.err")?.textContent ?? "");
+    await mp.fill('#mc-pm .eq-row [data-e="expr"]', "25");
+    await mp.press('#mc-pm .eq-row [data-e="expr"]', "Enter");
+    await mp.click('#mc-pm [data-a="ok"]');
+    await idle();
+    const vH25 = await vol();
+    const dep25 = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.name === "Extrude1").depth.v);
+    const okAll = await mp.evaluate(() => window.__sv.model.last().statuses.every(s => s.ok));
+    check(eqShown.val === "20 mm" && /Extrude1/.test(eqShown.used ?? "") && /Unknown name/.test(eqErr) && Math.abs(dep25 - 25) < 1e-9 && vH25 > vH20 + 1000 && okAll, `model 1.25: global variable Height drives Extrude1's depth, 20 → 25 mm (${JSON.stringify(eqShown)}, ${eqErr}, ${dep25}, ${Math.round(vH20)} → ${Math.round(vH25)}, ${okAll})`);
     await ctx.close();
   }
 

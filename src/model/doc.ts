@@ -36,6 +36,8 @@ export class DocStore {
   /** Snapshot at the last save, to tell whether there are unsaved changes. */
   private savedAt: string;
   doc: PartDoc;
+  /** Runs on every change before it is stored (re-evaluates equations). */
+  normalize: ((d: PartDoc) => void) | null = null;
 
   constructor(doc: PartDoc) {
     this.doc = doc;
@@ -50,6 +52,7 @@ export class DocStore {
     const before = JSON.stringify(this.doc);
     const next: PartDoc = JSON.parse(before);
     fn(next);
+    this.normalize?.(next);
     if (JSON.stringify(next) === before) return false;
     this.undoStack.push({ doc: before, label, seq: ++this.seq });
     if (this.undoStack.length > UNDO_DEPTH) this.undoStack.shift();
