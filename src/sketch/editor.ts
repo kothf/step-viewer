@@ -1002,7 +1002,31 @@ export class SketchEditor {
     this.group.add(pts);
 
     this.syncLabels(dims);
+    this.cursorLabel();
     v.invalidate();
+  }
+
+  /** The live size beside the cursor while drawing (SolidWorks shows length, radius, angle). */
+  private cursorLabel() {
+    let el = this.host.layer.querySelector<HTMLElement>(".sk-cursor");
+    const d = this.draft, p = d.cursor, a = d.pts[0];
+    const u = this.host.unit();
+    const L = (x: number) => trimNum(x / u.mm, u.decimals);
+    let text = "";
+    if (p && a) {
+      const last = d.pts.at(-1)!;
+      if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
+      else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
+      else if (this.tool === "rect") text = `${L(Math.abs(p[0] - a[0]))} × ${L(Math.abs(p[1] - a[1]))}`;
+      else if (this.tool === "crect") text = `${L(Math.abs(p[0] - a[0]) * 2)} × ${L(Math.abs(p[1] - a[1]) * 2)}`;
+      else if (this.tool === "arc") text = d.pts.length === 1 ? `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}` : (() => { const s = d.pts[1]; let x = Math.atan2(p[1] - a[1], p[0] - a[0]) - Math.atan2(s[1] - a[1], s[0] - a[0]); while (x <= 0) x += Math.PI * 2; return `A ${trimNum((x * 180) / Math.PI, 1)}°`; })();
+    }
+    if (!text) { el?.remove(); return; }
+    if (!el) { el = document.createElement("div"); el.className = "sk-cursor"; el.setAttribute("aria-hidden", "true"); this.host.layer.appendChild(el); }
+    el.textContent = text;
+    const [x, y] = this.screen(p!);
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
   }
 
   private dimGeometry(dm: SkDim, line: (a: V2, b: V2) => void) {

@@ -1014,11 +1014,15 @@ export class ModelController {
 
   /** The faces made by the feature selected in the tree (FR-HIS-003). */
   private drawFeatureFaces() {
-    if (this.mode.kind !== "none" || !this.selected) return;
+    const m = this.mode;
+    // While an extrude or revolve is open, its faces are tinted yellow like a SolidWorks preview.
+    const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") ? m.draft.id : null;
+    const id = draft ?? (m.kind === "none" ? this.selected : null);
+    if (!id) return;
     const part = this.host.viewer.parts[0];
     const names = this.last?.faceNames;
     if (!part || !names) return;
-    const pre = `${this.selected}:`;
+    const pre = `${id}:`;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
     const out: number[] = [];
@@ -1032,7 +1036,7 @@ export class ModelController {
     if (!out.length) return;
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
-    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x4dabf7, transparent: true, opacity: 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: draft ? 0xffd43b : 0x4dabf7, transparent: true, opacity: draft ? 0.5 : 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
     mesh.applyMatrix4(part.mesh.matrixWorld);
     mesh.renderOrder = 2300;
     mesh.raycast = () => {};
@@ -1049,7 +1053,8 @@ export class ModelController {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(pv.position, 3));
       g.computeVertexNormals();
-      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.55, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+      // Drawn over the un-rounded body so the whole new face shows, as a see-through yellow ghost.
       mesh.renderOrder = 2350;
       mesh.raycast = () => {};
       this.decor.add(mesh);
@@ -1397,50 +1402,55 @@ export class ModelController {
     const err = status && !status.ok ? `<p class="pm-err" role="alert">⚠ ${esc(statusText(status))}</p>` : "";
     let body = "";
     let title = "";
+    // PropertyManager-style group boxes (FR-UI-040).
+    const group = (legend: string, inner: string, extra = "") => `<fieldset class="pm-group"${extra}><legend>${esc(legend)}</legend>${inner}</fieldset>`;
+    const chk = (k: string, on: boolean | undefined, label: string) => `<label class="chk pm-chk"><input type="checkbox" data-k="${k}"${on ? " checked" : ""} />${esc(label)}</label>`;
+    const opSel = (op: string) => `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op"><option value="boss"${op === "boss" ? " selected" : ""}>${esc(t("Add material"))}</option><option value="cut"${op === "cut" ? " selected" : ""}>${esc(t("Remove material"))}</option></select></label>`;
     if (f.type === "extrude") {
       title = f.op === "cut" ? t("Cut") : t("Extrude");
-      body = sketchSel(f.sketch)
-        + `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op"><option value="boss"${f.op === "boss" ? " selected" : ""}>${esc(t("Add material"))}</option><option value="cut"${f.op === "cut" ? " selected" : ""}>${esc(t("Remove material"))}</option></select></label>`
-        + `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end"><option value="blind"${f.end === "blind" ? " selected" : ""}>${esc(t("Blind"))}</option><option value="mid"${f.end === "mid" ? " selected" : ""}>${esc(t("Mid plane"))}</option><option value="through"${f.end === "through" ? " selected" : ""}>${esc(t("Through all"))}</option><option value="upto"${f.end === "upto" ? " selected" : ""}>${esc(t("Up to face or plane"))}</option></select></label>`
-        + (f.end === "upto" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box focus" data-k="focus-upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
-        + (f.end === "through" || f.end === "upto" ? "" : numField("depth", t("Depth"), f.depth, "length"))
-        + (f.end === "upto" ? "" : `<label class="chk pm-chk"><input type="checkbox" data-k="flip"${f.flip ? " checked" : ""} />${esc(t("Reverse direction"))}</label>`)
-        + (f.op === "cut" ? `<label class="chk pm-chk"><input type="checkbox" data-k="outside"${f.outside ? " checked" : ""} />${esc(t("Flip side to cut (keep inside the profile)"))}</label>` : "")
-        + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : "")
-        + (f.end === "blind" ? `<label class="chk pm-chk"><input type="checkbox" data-k="dir2"${f.depth2 && f.depth2.v > 0 ? " checked" : ""} />${esc(t("Direction 2"))}</label>` + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "") : "");
+      const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end"><option value="blind"${f.end === "blind" ? " selected" : ""}>${esc(t("Blind"))}</option><option value="mid"${f.end === "mid" ? " selected" : ""}>${esc(t("Mid plane"))}</option><option value="through"${f.end === "through" ? " selected" : ""}>${esc(t("Through all"))}</option><option value="upto"${f.end === "upto" ? " selected" : ""}>${esc(t("Up to face or plane"))}</option></select></label>`;
+      body = group(t("From"), sketchSel(f.sketch) + opSel(f.op))
+        + group(t("Direction 1"), endSel
+          + (f.end === "upto" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box focus" data-k="focus-upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.end === "through" || f.end === "upto" ? "" : numField("depth", t("Depth"), f.depth, "length"))
+          + (f.end === "upto" ? "" : chk("flip", f.flip, t("Reverse direction")))
+          + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
+          + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
+        + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "");
     } else if (f.type === "revolve") {
       title = t("Revolve");
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
       const lines = sk?.ents.filter(e => e.t === "line") ?? [];
-      body = sketchSel(f.sketch)
-        + `<label class="pm-field"><span>${esc(t("Axis"))}</span><select data-k="axis">${lines.map((l, i) => `<option value="${l.id}"${l.id === f.axis ? " selected" : ""}>${esc(t("Line {n}", { n: i + 1 }))}${l.cons ? ` (${esc(t("construction"))})` : ""}</option>`).join("")}</select></label>`
-        + `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op"><option value="boss"${f.op === "boss" ? " selected" : ""}>${esc(t("Add material"))}</option><option value="cut"${f.op === "cut" ? " selected" : ""}>${esc(t("Remove material"))}</option></select></label>`
-        + numField("angle", t("Angle"), f.angle, "angle")
-        + `<label class="chk pm-chk"><input type="checkbox" data-k="mid"${f.mid ? " checked" : ""} />${esc(t("Mid plane"))}</label>`
-        + `<label class="chk pm-chk"><input type="checkbox" data-k="flip"${f.flip ? " checked" : ""} />${esc(t("Reverse direction"))}</label>`;
+      body = group(t("Axis of revolution"), `<label class="pm-field"><span>${esc(t("Axis"))}</span><select data-k="axis">${lines.map((l, i) => `<option value="${l.id}"${l.id === f.axis ? " selected" : ""}>${esc(t("Line {n}", { n: i + 1 }))}${l.cons ? ` (${esc(t("construction"))})` : ""}</option>`).join("")}</select></label>`)
+        + group(t("Direction 1"), numField("angle", t("Angle"), f.angle, "angle") + chk("mid", f.mid, t("Mid plane")) + chk("flip", f.flip, t("Reverse direction")))
+        + group(t("Profile"), sketchSel(f.sketch) + opSel(f.op));
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");
       const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
-      body = (f.type === "chamfer" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="equal"${cm === "equal" ? " selected" : ""}>${esc(t("Equal distance"))}</option><option value="two"${cm === "two" ? " selected" : ""}>${esc(t("Two distances"))}</option><option value="angle"${cm === "angle" ? " selected" : ""}>${esc(t("Distance and angle"))}</option></select></label>` : "")
+      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((_e, i) => `<li><span>${esc(t("Edge {n}", { n: i + 1 }))}</span><button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
+        + (f.edges.length ? `<button class="btn small" data-k="clear">${esc(t("Clear edges"))}</button>` : `<p class="pm-help muted">${esc(t("click edges or faces in the view"))}</p>`);
+      const sizes = (f.type === "chamfer" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="equal"${cm === "equal" ? " selected" : ""}>${esc(t("Equal distance"))}</option><option value="two"${cm === "two" ? " selected" : ""}>${esc(t("Two distances"))}</option><option value="angle"${cm === "angle" ? " selected" : ""}>${esc(t("Distance and angle"))}</option></select></label>` : "")
         + (f.type === "fillet" ? numField("radius", t("Radius"), f.radius, "length") : numField("distance", t("Distance"), f.distance, "length"))
         + (f.type === "chamfer" && cm === "two" ? numField("distance2", t("Distance 2"), f.distance2 ?? { v: f.distance.v }, "length") : "")
         + (f.type === "chamfer" && cm === "angle" ? numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle") : "")
-        + (f.type === "chamfer" && cm !== "equal" ? `<label class="chk pm-chk"><input type="checkbox" data-k="flip"${f.flip ? " checked" : ""} />${esc(t("Flip direction"))}</label>` : "")
-        + (f.type === "fillet" ? `<label class="chk pm-chk"><input type="checkbox" data-k="keepFit"${f.keepFit ? " checked" : ""} />${esc(t("Keep features that fit (skip edges that fail)"))}</label>` : "")
-        + `<div class="pm-field"><span>${esc(t("Edges"))}</span><span class="pm-edges"><b>${f.edges.length}</b> <span class="muted">${esc(t("click edges or faces in the view"))}</span></span></div>`
-        + (f.edges.length ? `<button class="btn small" data-k="clear">${esc(t("Clear edges"))}</button>` : "");
+        + (f.type === "chamfer" && cm !== "equal" ? chk("flip", f.flip, t("Flip direction")) : "");
+      body = group(f.type === "fillet" ? t("Items to fillet") : t("Items to chamfer"), `<p class="pm-count">${esc(t("{n} edge|{n} edges", { n: f.edges.length }))}</p>` + items)
+        + group(f.type === "fillet" ? t("Fillet parameters") : t("Chamfer parameters"), sizes)
+        + (f.type === "fillet" ? group(t("Fillet options"), chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)"))) : "");
     }
     if (f.type === "plane") {
       title = t("Plane");
-      body = `<div class="pm-field"><span>${esc(t("Reference"))}</span><button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button></div>`
-        + `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge"))}</option></select></label>`
-        + (f.mode === "offset" ? numField("offset", t("Distance"), f.offset, "length")
-          : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${m.focus === "axis" ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>` + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
-        + `<label class="chk pm-chk"><input type="checkbox" data-k="flip"${f.flip ? " checked" : ""} />${esc(t("Flip"))}</label>`
+      body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
+        + group(t("Placement"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="offset"${f.mode === "offset" ? " selected" : ""}>${esc(t("Offset distance"))}</option><option value="angle"${f.mode === "angle" ? " selected" : ""}>${esc(t("At angle about an edge"))}</option></select></label>`
+          + (f.mode === "offset" ? numField("offset", t("Distance"), f.offset, "length")
+            : `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box${m.focus === "axis" ? " focus" : ""}" data-k="focus-axis">${esc(f.axis ? t("Edge picked") : t("None"))}</button></div>` + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle"))
+          + chk("flip", f.flip, t("Flip")))
         + `<p class="pm-help muted">${esc(m.focus === "axis" ? t("Click a straight edge of the model.") : t("Click a plane or a flat face in the view or the tree."))}</p>`;
     }
-    pm.innerHTML = head(title, m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels.")) + name + body + err
-      + `<div class="pm-actions"><button class="btn primary small" data-k="ok">${esc(t("OK"))}</button><button class="btn small" data-k="cancel">${esc(t("Cancel"))}</button></div>`;
+    // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(title)}</h3><span class="pm-okc"><button class="pm-ok" data-k="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-k="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + err + `<p class="pm-help muted">${esc(m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels."))}</p>`
+      + name + body;
     const upd = (fn: () => void, structural = false) => { fn(); if (structural) this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); };
     pm.querySelectorAll<HTMLInputElement>("input[data-num]").forEach(inp => {
       const apply = () => {
@@ -1492,6 +1502,11 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch");
       });
     });
+    pm.querySelectorAll<HTMLElement>("[data-rm]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "fillet" && f.type !== "chamfer") return;
+      f.edges.splice(+b.dataset.rm!, 1);
+      this.drawDecor(); this.renderPanel(); void this.rebuild();
+    }));
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });

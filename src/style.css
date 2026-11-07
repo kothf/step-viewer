@@ -663,7 +663,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-in { display: flex; align-items: center; gap: 6px; }
 .pm-in input { font-family: var(--mono); }
 .pm-field input[aria-invalid=true] { border-color: var(--danger); }
-.pm-chk { display: flex; margin: 6px 0; font-size: 12px; }
+.pm-chk { display: flex; align-items: flex-start; gap: 6px; white-space: normal; margin: 6px 0; font-size: 12px; }
 .pm-actions { display: flex; gap: 6px; margin-top: 10px; }
 .pm-err { color: var(--danger); font-size: 12px; margin: 6px 0; }
 .pm-planes, .pm-rels { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
@@ -709,3 +709,22 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-rel-list .icon { width: 20px; height: 18px; font-size: 10px; }
 .pm-n { width: 70px; }
 :root:not([data-theme="dark"]) .ft-row.sel.bad .ft-name { color: #a61b1b; }
+/* PropertyManager-style feature panel (1.19.3) */
+.pm-top { display: flex; align-items: center; gap: 8px; }
+.pm-top h3 { flex: 1; }
+.pm-okc { display: flex; gap: 4px; }
+.pm-okc button { width: 30px; height: 28px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 16px; display: grid; place-items: center; }
+.pm-okc .pm-ok { color: #1f7a35; }
+.pm-okc .pm-cancel { color: var(--danger); }
+:root[data-theme="dark"] .pm-okc .pm-ok { color: #51cf66; }
+.pm-okc button:hover { border-color: var(--accent); }
+.pm-group { min-width: 0; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 4px 10px 8px; background: var(--panel); }
+.pm-group legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+.pm-count { margin: 2px 0 4px; font-size: 12px; font-weight: 600; }
+.pm-items { list-style: none; margin: 0 0 6px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; max-height: 120px; overflow: auto; font-size: 12px; background: var(--panel-2); }
+.pm-items li { display: flex; align-items: center; gap: 6px; padding: 1px 4px; }
+.pm-items li span { flex: 1; }
+.pm-items .icon { width: 20px; height: 18px; font-size: 10px; }
+.mc-callout { transform: translate(-50%, -50%); border-color: #e0a800; background: #fff8db; color: #5c4400; }
+:root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
+.sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }
