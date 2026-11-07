@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.66.0] - 2026-11-08
+
+### Added
+
+- **Section views** (FR-DRW-012, AT-P5-2): Section ▾ in the drawing workspace draws a horizontal, vertical or two-point cutting line on a view; the line follows the cursor and snaps to circle centres, line ends and midpoints. Then the section view follows the cursor on the side it looks from, lined up with its parent, and a click places it. The cut faces are hatched (spacing and angle per view), the parent shows the cutting line with thick ends, arrows and letters, and the view is labelled SECTION A-A. Flip direction looks from the other side.
+- **Detail views** (FR-DRW-013): click the centre of a circle on a view (it snaps too), then its radius, then place the view. It shows the parent's lines (and hatching) clipped to the circle at twice the parent's scale, with DETAIL B and its scale under it, and the circle and letter on the parent. The radius can be typed in the view's properties.
+- **Auxiliary views** (FR-DRW-014): click a straight edge of a view, then place the view square to it; it stays lined up and the parent gets a lettered arrow.
+- Section, detail and auxiliary views are listed under their parent in the drawing tree, drag only along their viewing direction, carry a letter that can be changed (the next free letter, skipping I, O and Q) and export to PDF, SVG and DXF (hatching on its own HATCH layer).
+
 ## [1.65.0] - 2026-11-07
 
 ### Added
@@ -626,7 +635,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.65.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.66.0...HEAD
+[1.66.0]: https://github.com/kothf/step-viewer/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
