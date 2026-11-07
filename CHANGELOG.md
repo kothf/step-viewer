@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.51.0] - 2026-11-07
+
+### Added
+- **Drawings** (FRS section 11, FR-DRW-001/002/003/010/011/016/030/031). The new sheet button next to New part opens a drawing of the open part or STEP / IGES / BREP model in its own workspace. It starts with the **standard 3 views** (front, top and side, lined up) at a standard scale that fits the sheet.
+- **Model view ▾** places any orientation (the six sides, isometric, or the current 3D view). The view follows the cursor with its real lines as a preview, as in SolidWorks. After the click, moving around it and clicking adds **projected views** in first or third angle (diagonal ones give isometric views); Esc or ✓ ends.
+- Views are computed by OpenCASCADE's exact hidden-line removal in a worker. Lines and arcs stay exact, hidden edges are dashed, and back edges that lie under visible ones are left out. Per view: scale (sheet, parent's or own), display style (hidden lines dashed, removed, or wireframe), tangent edges (visible, thin or removed) and an optional label.
+- Drag views to move them: projected views follow their parent, and a side or top view only slides along its alignment.
+- **Sheets**: A4–A0 and ANSI A–E, landscape or portrait, first angle (ISO) or third angle (ANSI), with a frame, zone marks and an ISO 7200 or ANSI title block. The title block fills itself from the part (title, part number, revision, author, material, mass from the part's material) and from the sheet (scale, size, sheet n/m); every field can be typed over. Double-click the title block to edit it. More sheets go in tabs below the sheet.
+- A drawing of a modelled part is associative: change the part and the views update.
+- **Save** (Ctrl+S) writes a `.mcaddrw` file that holds the model too, so it opens on its own. **Export**: PDF of all sheets at their real size (vector, with an embedded DejaVu Sans font, so Cyrillic text works), SVG or DXF R12 of a sheet (millimetres, one layer per line type with HIDDEN and CENTER linetypes), and printing at 1:1 through the browser (Ctrl+P). Undo and redo cover every change.
+
+## [1.50.0] - 2026-11-07
+
+### Added
+- More sketch relations (FR-SK-051). **Intersection** keeps a point where two curves cross: select the point and two lines, circles, arcs or ellipses. **Merge points** appears when two points are selected and joins them into one. The second point is replaced by the first in every curve, relation and dimension, and a curve left with no length goes. The "along X/Y of another point" relation is the existing Horizontal / Vertical on two points.
+- **Heat-set insert** holes in the hole wizard, for brass threaded inserts melted into 3D-printed plastic. Sizes M2 to M8 fill a straight, flat-bottomed hole at the insert makers' usual diameter (M3: Ø4.0 mm), 1 mm deeper than the insert. The panel shows the insert length and the least wall to leave around the hole.
+
 ## [1.49.0] - 2026-11-07
 
 ### Added
@@ -497,7 +514,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.51.0...HEAD
+[1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
+[1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/kothf/step-viewer/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/kothf/step-viewer/compare/v1.46.0...v1.47.0

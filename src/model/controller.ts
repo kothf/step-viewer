@@ -23,7 +23,7 @@ import type { FeatureFolder, ThreadFeature,
   GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
-import { ISO_METRIC, holeSize, type HoleSize } from "./holes";
+import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
 const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch"] as const;
@@ -92,6 +92,16 @@ const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpatter
 
 /** Fills a hole's sizes from the ISO table for its kind, size and fit (FR-FT-051). */
 function applyHoleSize(f: HoleFeature) {
+  if (f.kind === "insert") {
+    const ins = insertSize(f.size);
+    if (!ins) return;
+    delete f.cbDia; delete f.cbDepth; delete f.csDia; delete f.csAngle; delete f.threadDepth; delete f.major; delete f.pitch; delete f.fit;
+    f.diameter = { v: ins.hole };
+    f.end = "blind";
+    f.depth = { v: Math.round((ins.length + 1) * 10) / 10 };
+    f.flat = true;
+    return;
+  }
   const h = holeSize(f.size);
   if (!h) return;
   const fit = f.fit ?? "normal";
@@ -3004,9 +3014,10 @@ export class ModelController {
       body = group(t("Favourites"), `<label class="pm-field"><span>${esc(t("Favourite"))}</span><select data-ui="fav"><option value="">${esc(t("None"))}</option>${favs.map((x, i) => `<option value="${i}" translate="no">${esc(x.name)}</option>`).join("")}</select></label>`
           + `<label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-ui="favName" value="${esc(holeTitle(f))}" spellcheck="false" translate="no" /></label>`
           + `<div class="pm-rels"><button class="btn small" data-ui="favSave">${esc(t("Save as favourite"))}</button>${favs.length ? `<button class="btn small" data-ui="favDel">${esc(t("Delete favourite"))}</button>` : ""}</div>`)
-        + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["cbore", t("Counterbore")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")]], f.kind)
-          + sel("size", t("Size"), [["", t("Custom")], ...ISO_METRIC.map(h => [h.size, h.size] as [string, string])], f.size ?? "")
-          + (f.kind !== "tapped" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
+        + group(t("Hole type"), sel("kind", t("Type"), [["simple", t("Simple hole")], ["cbore", t("Counterbore")], ["csink", t("Countersink")], ["tapped", t("Tapped hole")], ["insert", t("Heat-set insert")]], f.kind)
+          + sel("size", t("Size"), [["", t("Custom")], ...(f.kind === "insert" ? HEAT_INSERTS : ISO_METRIC).map(h => [h.size, h.size] as [string, string])], f.size ?? "")
+          + (f.kind === "insert" && insertSize(f.size) ? `<p class="pm-help muted" data-insert>${esc(t("Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).", { l: trimNum(insertSize(f.size)!.length, 2), w: trimNum(insertSize(f.size)!.wall, 2), b: trimNum(insertSize(f.size)!.hole + 2 * insertSize(f.size)!.wall, 2) }))}</p>` : "")
+          + (f.kind !== "tapped" && f.kind !== "insert" && f.size ? sel("fit", t("Clearance fit"), [["close", t("Close fit")], ["normal", t("Normal fit")], ["loose", t("Loose fit")]], f.fit ?? "normal") : ""))
         + group(t("Hole specification"), numField("diameter", f.kind === "tapped" ? t("Tap drill diameter") : t("Diameter"), f.diameter, "length")
           + (f.kind === "cbore" ? numField("cbDia", t("Counterbore diameter"), f.cbDia ?? { v: f.diameter.v * 1.7 }, "length") + numField("cbDepth", t("Counterbore depth"), f.cbDepth ?? { v: f.diameter.v }, "length") : "")
           + (f.kind === "csink" ? numField("csDia", t("Countersink diameter"), f.csDia ?? { v: f.diameter.v * 2 }, "length") + numField("csAngle", t("Countersink angle"), f.csAngle ?? { v: Math.PI / 2 }, "angle") : "")
@@ -3134,7 +3145,11 @@ export class ModelController {
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
           upd(() => {
-            if (k === "kind") f.kind = val as HoleFeature["kind"];
+            if (k === "kind") {
+              f.kind = val as HoleFeature["kind"];
+              if (f.size && !(f.kind === "insert" ? insertSize(f.size) : holeSize(f.size))) delete f.size;
+              if (f.kind === "insert") f.size ??= "M3";
+            }
             if (k === "size") { if (val) f.size = String(val); else delete f.size; }
             if (k === "fit") f.fit = val as HoleFeature["fit"];
             if (f.size) applyHoleSize(f);
@@ -3459,7 +3474,7 @@ export class ModelController {
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
-        + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button><button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
+        + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
         : `<p class="muted">${esc(t("Select sketch items to add relations (Ctrl+click for more)."))}</p>`)
       + `</div>`
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
@@ -3472,6 +3487,7 @@ export class ModelController {
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
+    pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
     pm.querySelector("[data-a=del]")?.addEventListener("click", () => { ed.deleteSelection(); this.renderPanel(); });
     pm.querySelectorAll<HTMLElement>("[data-dim]").forEach(b => b.addEventListener("click", () => ed.editDim(b.dataset.dim!)));
     pm.querySelectorAll<HTMLElement>("[data-delrel]").forEach(b => b.addEventListener("click", () => { ed.deleteItems([b.dataset.delrel!]); this.renderPanel(); }));
