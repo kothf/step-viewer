@@ -27,9 +27,33 @@ export interface AsmDoc {
   name: string;
   units: { length: "mm" | "cm" | "m" | "in" | "ft"; decimals: number };
   components: Component[];
+  /** Mates between components (FR-MATE-003), solved in order-independent least squares. */
+  mates?: Mate[];
   /** The documents the components use, embedded (FR-ASM-003), by key. */
   parts: Record<string, { name: string; file: string; doc: PartDoc }>;
 }
 
 /** The kernel's answer for an assembly: one mesh per shown component, and mass properties of the solved assembly. */
 export interface AsmComponentStatus { id: string; ok: boolean; message?: string }
+
+/** A face of a component, by its persistent name in the part (FR-MATE-010). */
+export interface MateRef { comp: string; face: string }
+
+export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "distance" | "angle" | "lock";
+
+export interface Mate {
+  id: string;
+  name: string;
+  type: MateType;
+  a: MateRef;
+  b: MateRef;
+  /** Normals the same way (aligned) or opposite (anti, the default for face to face). */
+  align?: "aligned" | "anti";
+  /** Distance (mm) or angle (rad). */
+  value?: number;
+  /** Distance or angle measured to the other side. */
+  flip?: boolean;
+  suppressed?: boolean;
+  /** Lock: b's transform relative to a's when the mate was made. */
+  rel?: Tf;
+}

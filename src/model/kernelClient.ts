@@ -130,9 +130,9 @@ export class ModelKernel {
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
-  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }> {
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }> {
     await this.start();
-    return this.call<{ parts: { id: string; data: PartData }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
+    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

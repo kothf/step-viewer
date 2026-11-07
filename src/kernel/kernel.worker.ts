@@ -153,7 +153,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         data.color = color;
         kernel.meshes.push({ shape: p.body.shape, faces: p.body.faces, name: p.name, color, solid: true });
         applyPatch(data, kernel.exact(kernel.meshes.length - 1, probe(data)));
-        parts.push({ id: p.id, data });
+        parts.push({ id: p.id, data, faces: p.body.names });
       }
       post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
     } else if (r.type === "partBody") {

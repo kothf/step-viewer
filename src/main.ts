@@ -103,7 +103,7 @@ const asm = new AsmController({
   partAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
-    return f ? { idx: viewer.parts.indexOf(f.part), point: f.point.toArray() as [number, number, number] } : null;
+    return f ? { idx: viewer.parts.indexOf(f.part), face: f.part.data.faces.indexOf(f.face), point: f.point.toArray() as [number, number, number] } : null;
   },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
@@ -1528,7 +1528,7 @@ canvas.addEventListener("pointerup", e => {
   const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
   const btn = downAt.button;
   downAt = null;
-  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking) return;
+  if (moved > 4 || btn !== 0 || !viewer.parts.length || modeller.picking || asm.picking) return;
   lastPointer.x = e.clientX; lastPointer.y = e.clientY;
   const r = canvas.getBoundingClientRect();
   if (state.tool === "sectionFace") { sectionOnFace(faceUnder(e.clientX - r.left, e.clientY - r.top)); return; }
