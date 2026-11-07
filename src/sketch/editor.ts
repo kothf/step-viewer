@@ -15,6 +15,16 @@ import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
+import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
+
+/** Points an entity refers to (its ends, centre, axis points). */
+export function refPts(e: SkEnt): string[] {
+  if (e.t === "point") return [];
+  if (e.t === "line") return [e.a, e.b];
+  if (e.t === "circle") return [e.c];
+  if (e.t === "arc") return [e.c, e.a, e.b];
+  return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
+}
 
 function arcPts(c: V2, r: number, a0: number, a1: number, n = 48): V2[] {
   const out: V2[] = [];
@@ -31,7 +41,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -55,7 +65,7 @@ export interface ModelEdge { type: string; start: [number, number, number]; end:
 const SNAP_PX = 9;
 const HV_TOL = (3 * Math.PI) / 180;
 
-type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "origin" | "dim" | "rel"; d: number };
+type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "origin" | "dim" | "rel"; d: number };
 
 const COLORS = {
   light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
@@ -184,6 +194,14 @@ export class SketchEditor {
     return e && e.t === "point" ? [e.x, e.y] : [0, 0];
   }
   private ent(id: string) { return this.sk.ents.find(e => e.id === id); }
+  private ell(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): Ell { return ellOf(mv(this.pt(e.c)), mv(this.pt(e.a)), mv(this.pt(e.b))); }
+  /** Polyline of an ellipse or elliptical arc, optionally moved point by point. */
+  private ellLine(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): V2[] {
+    const E = this.ell(e, mv);
+    if (!e.p0 || !e.p1) return ellPts(E);
+    const t0 = ellParam(E, mv(this.pt(e.p0)));
+    return ellPts(E, t0, ellSweep(t0, ellParam(E, mv(this.pt(e.p1)))), 64);
+  }
 
   // ---------- hit testing ----------
 
@@ -205,6 +223,7 @@ export class SketchEditor {
       if (e.t === "line") d = segDist(p, this.pt(e.a), this.pt(e.b));
       else if (e.t === "circle") d = Math.abs(Math.hypot(p[0] - this.pt(e.c)[0], p[1] - this.pt(e.c)[1]) - e.r);
       else if (e.t === "arc") d = arcDist(p, this.pt(e.c), this.pt(e.a), this.pt(e.b));
+      else if (e.t === "ellipse") d = e.p0 && e.p1 ? earcDist(this.ell(e), this.pt(e.p0), this.pt(e.p1), p) : ellDist(this.ell(e), p);
       if (d < tol) out.push({ id: e.id, kind: e.t as Hit["kind"], d: d + tol * 0.25 });
     }
     return out.sort((a, b) => a.d - b.d);
@@ -234,7 +253,7 @@ export class SketchEditor {
       this.emitSel();
       // Start a drag of what is under the cursor.
       const ent = this.ent(h.id)!;
-      const ids = ent.t === "point" ? [ent.id] : ent.t === "line" ? [ent.a, ent.b] : ent.t === "arc" ? [ent.c, ent.a, ent.b] : [];
+      const ids = ent.t === "point" ? [ent.id] : ent.t === "circle" ? [] : refPts(ent);
       const orig = new Map(ids.map(id => [id, this.pt(id)] as const));
       this.drag = { ids, start: p, orig, circle: ent.t === "circle" ? ent.id : undefined, moved: false, base: structuredClone(this.sk) };
       this.render();
@@ -330,6 +349,7 @@ export class SketchEditor {
 
   private project(p: V2, id: string): V2 {
     const e = this.ent(id)!;
+    if (e.t === "ellipse") { const E = this.ell(e); return ellPt(E, ellParam(E, p)); }
     if (e.t === "line") { const a = this.pt(e.a), b = this.pt(e.b); const d = [b[0] - a[0], b[1] - a[1]], l2 = d[0] ** 2 + d[1] ** 2 || 1; const t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l2; return [a[0] + d[0] * t, a[1] + d[1] * t]; }
     const c = this.pt(e.t === "circle" || e.t === "arc" ? e.c : id), r = e.t === "circle" ? e.r : e.t === "arc" ? Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]) : 0;
     const a = Math.atan2(p[1] - c[1], p[0] - c[0]);
@@ -345,6 +365,19 @@ export class SketchEditor {
   }
 
   // ---------- drawing ----------
+
+  /** The ellipse being drawn: centre c, major end a, and q on it (null when q cannot be on one). */
+  private draftEll(c: V2, a: V2, q: V2): Ell | null {
+    const r1 = Math.hypot(a[0] - c[0], a[1] - c[1]);
+    if (r1 < 1e-9) return null;
+    const u: V2 = [(a[0] - c[0]) / r1, (a[1] - c[1]) / r1];
+    const x = (q[0] - c[0]) * u[0] + (q[1] - c[1]) * u[1], y = -(q[0] - c[0]) * u[1] + (q[1] - c[1]) * u[0];
+    // q on x²/r1² + y²/r2² = 1; near the major axis ends fall back to |y| so it never blows up.
+    const k = 1 - (x / r1) ** 2;
+    const r2 = k > 0.05 ? Math.abs(y) / Math.sqrt(k) : Math.abs(y);
+    if (r2 < this.px(q) * 2) return null;
+    return { c, u, r1, r2 };
+  }
 
   /** A point for a new entity: an existing point, the origin (fixed by a relation), or a new one. */
   private usePoint(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]): string {
@@ -430,6 +463,33 @@ export class SketchEditor {
         const aId = this.usePoint(p1, d.ids[0], null, rels), bId = this.usePoint(p2, d.ids[1], null, rels);
         this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: ccw ? aId : bId, b: ccw ? bId : aId });
         finish("Add arc");
+      }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "ellipse" || this.tool === "earc") {
+      // Centre, end of the major axis, then a point on the ellipse (sets the minor radius; an
+      // elliptical arc starts there), and for an arc the end, counter-clockwise (FR-SK-018).
+      const need = this.tool === "ellipse" ? 3 : 4;
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      if (d.pts.length === 2 && !this.draftEll(d.pts[0], d.pts[1], p)) return;
+      if (d.pts.length + 1 < need) { d.pts.push(p); d.ids.push(s.id); if (d.pts.length === 1) d.snapCurve = s.curve; this.render(); return; }
+      const [c, a] = d.pts;
+      const E = this.draftEll(c, a, d.pts[2] ?? p)!;
+      const side = Math.sign(ellLocal(E, d.pts[2] ?? p)[1]) || 1;
+      const cId = this.usePoint(c, d.ids[0], d.snapCurve ?? null, rels);
+      const aId = this.usePoint(a, d.ids[1], null, rels);
+      const bId = this.usePoint(ellPt(E, (side * Math.PI) / 2), null, null, rels);
+      const id = uid("e");
+      if (this.tool === "ellipse") {
+        this.sk.ents.push({ id, t: "ellipse", c: cId, a: aId, b: bId });
+        finish("Add ellipse");
+      } else {
+        const p0 = this.usePoint(ellPt(E, ellParam(E, d.pts[2])), null, null, rels);
+        const p1 = this.usePoint(ellPt(E, ellParam(E, p)), null, null, rels);
+        this.sk.ents.push({ id, t: "ellipse", c: cId, a: aId, b: bId, p0, p1 });
+        finish("Add elliptical arc");
       }
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
@@ -655,6 +715,8 @@ export class SketchEditor {
     if (total === 2 && n("line") === 1 && circ === 1) out.push("tangent");
     if (total === 2 && n("point") === 1 && circ === 1) out.push("concentric");
     if (total === 2 && n("point") === 1 && n("line") === 1) out.push("midpoint");
+    if (total === 2 && n("point") === 1 && n("ellipse") === 1) out.push("coincident", "concentric");
+    if (total === 2 && n("ellipse") + circ === 2 && n("ellipse")) out.push("concentric");
     if (total === 3 && n("line") >= 1 && (n("point") === 2 || n("line") === 3)) out.push("symmetric");
     if (total >= 1 && !this.selection.has(ORIGIN)) out.push("fix");
     return [...new Set(out)];
@@ -704,16 +766,15 @@ export class SketchEditor {
     for (const id of [...del]) {
       const e = this.ent(id);
       if (!e || e.t === "point") continue;
-      const pts = e.t === "line" ? [e.a, e.b] : e.t === "circle" ? [e.c] : [e.c, e.a, e.b];
-      for (const p of pts) {
-        const used = this.sk.ents.some(o => !del.has(o.id) && o.id !== p && o.t !== "point" && (o.t === "line" ? o.a === p || o.b === p : o.t === "circle" ? o.c === p : o.c === p || o.a === p || o.b === p));
+      for (const p of refPts(e)) {
+        const used = this.sk.ents.some(o => !del.has(o.id) && o.id !== p && refPts(o).includes(p));
         if (!used) del.add(p);
       }
     }
     // Points still used by a kept curve stay.
     for (const id of [...del]) {
       const e = this.ent(id);
-      if (e?.t === "point" && this.sk.ents.some(o => !del.has(o.id) && o.t !== "point" && (o.t === "line" ? o.a === id || o.b === id : o.t === "circle" ? o.c === id : o.c === id || o.a === id || o.b === id))) del.delete(id);
+      if (e?.t === "point" && this.sk.ents.some(o => !del.has(o.id) && refPts(o).includes(id))) del.delete(id);
     }
     this.sk.ents = this.sk.ents.filter(e => !del.has(e.id));
     this.sk.rels = this.sk.rels.filter(r => !del.has(r.id) && !r.e.some(x => del.has(x)));
@@ -807,11 +868,7 @@ export class SketchEditor {
   /** Points no curve uses any more (left by a trim or fillet), with their relations and dimensions, unless they are sketch points of their own. */
   private dropLoosePoints(candidates?: Set<string>) {
     const used = new Set<string>();
-    for (const o of this.sk.ents) {
-      if (o.t === "line") used.add(o.a).add(o.b);
-      else if (o.t === "circle") used.add(o.c);
-      else if (o.t === "arc") used.add(o.c).add(o.a).add(o.b);
-    }
+    for (const o of this.sk.ents) for (const q of refPts(o)) used.add(q);
     const gone = new Set(this.sk.ents.filter(e => e.t === "point" && !used.has(e.id) && (candidates ? candidates.has(e.id) : this.wasEndpoint.has(e.id))).map(e => e.id));
     if (!gone.size) return;
     this.sk.ents = this.sk.ents.filter(e => !gone.has(e.id));
@@ -877,6 +934,7 @@ export class SketchEditor {
     const inside = (q: V2) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1;
     const samples = (e: SkEnt): V2[] => {
       if (e.t === "point") return [[e.x, e.y]];
+      if (e.t === "ellipse") return this.ellLine(e);
       const g = curveOf(e, q => this.pt(q));
       if (!g) return [];
       const n = 48;
@@ -920,7 +978,7 @@ export class SketchEditor {
 
   /** Curves using a point as an end (or centre). */
   private usersOf(id: string) {
-    return this.sk.ents.filter(o => (o.t === "line" && (o.a === id || o.b === id)) || (o.t === "arc" && (o.a === id || o.b === id || o.c === id)) || (o.t === "circle" && o.c === id));
+    return this.sk.ents.filter(o => refPts(o).includes(id));
   }
 
   private extendAt(p: V2) {
@@ -1153,6 +1211,7 @@ export class SketchEditor {
       else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...(e.cons ? { cons: true } : {}) }); this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] }); made.push(id); }
       // A mirror image runs the other way round: the ends swap.
+      else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p1), p1: point(e.p0) } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
     this.selection = new Set(made);
@@ -1171,7 +1230,7 @@ export class SketchEditor {
   private patternSeed(): { items: SkEnt[]; centre: string | null } {
     const sel = [...this.selection].map(id => this.ent(id)).filter((x): x is SkEnt => !!x);
     const used = new Set<string>();
-    for (const e of sel) { if (e.t === "line") used.add(e.a).add(e.b); else if (e.t === "circle") used.add(e.c); else if (e.t === "arc") used.add(e.c).add(e.a).add(e.b); }
+    for (const e of sel) for (const q of refPts(e)) used.add(q);
     const lone = sel.filter(e => e.t === "point" && !used.has(e.id));
     const centre = lone.length === 1 && sel.length > 1 ? lone[0].id : null;
     return { items: sel.filter(e => e.id !== centre && e.id !== ORIGIN), centre };
@@ -1226,6 +1285,7 @@ export class SketchEditor {
         if (e.t === "point") { const q = mv(this.pt(e.id)), r = this.px(q) * 3; out.push(arcPts(q, r, 0, Math.PI * 2, 12)); }
         else if (e.t === "line") out.push([mv(this.pt(e.a)), mv(this.pt(e.b))]);
         else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
+        else if (e.t === "ellipse") out.push(this.ellLine(e, mv));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -1270,6 +1330,10 @@ export class SketchEditor {
           this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...cons(e) });
           this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] });
           made.push(id);
+        } else if (e.t === "ellipse") {
+          const id = uid("e");
+          this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons(e) });
+          made.push(id);
         } else {
           const id = uid("a");
           this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons(e) });
@@ -1294,7 +1358,7 @@ export class SketchEditor {
   private applyTransform(p: Extract<SketchPattern, { kind: "move" | "rotate" | "scale" }>, items: SkEnt[], mv: { f: (q: V2) => V2; k: number }): number {
     const label = p.kind === "move" ? (p.copy ? "Copy entities" : "Move entities") : p.kind === "rotate" ? "Rotate entities" : "Scale entities";
     const pts = new Set<string>();
-    for (const e of items) { if (e.t === "point") pts.add(e.id); else if (e.t === "line") pts.add(e.a).add(e.b); else if (e.t === "circle") pts.add(e.c); else pts.add(e.c).add(e.a).add(e.b); }
+    for (const e of items) { if (e.t === "point") pts.add(e.id); else for (const q of refPts(e)) pts.add(q); }
     pts.delete(ORIGIN);
     const made: string[] = [];
     if (p.copy) {
@@ -1309,6 +1373,7 @@ export class SketchEditor {
         if (e.t === "point") { if (e.id !== ORIGIN) made.push(point(e.id)); }
         else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
         else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
+        else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons }); made.push(id); }
         else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
       }
     } else {
@@ -1463,6 +1528,8 @@ export class SketchEditor {
       offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       slot: "Click the two centres, then the width",
+      ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
+      earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
       dim: "Click one or two items, then click where the dimension goes",
     };
     this.host.status(`${def} · ${t(hints[this.tool])}`);
@@ -1533,7 +1600,7 @@ export class SketchEditor {
         let a1 = Math.atan2(b[1] - cc[1], b[0] - cc[0]);
         while (a1 <= a0) a1 += Math.PI * 2;
         poly(arcPts(cc, Math.hypot(a[0] - cc[0], a[1] - cc[1]), a0, a1), c);
-      }
+      } else if (e.t === "ellipse") poly(this.ellLine(e), c);
     }
     // Preview of the entity being drawn.
     const d = this.draft;
@@ -1558,6 +1625,18 @@ export class SketchEditor {
             const sw = (a0: number, a1: number) => { let x = a1 - a0; while (x <= 0) x += Math.PI * 2; return x; };
             const [s0, s1] = sw(ang(d.pts[0]), ang(p)) < sw(ang(d.pts[0]), ang(d.pts[1])) ? [d.pts[0], d.pts[1]] : [d.pts[1], d.pts[0]];
             poly(arcPts(c, r, ang(s0), ang(s0) + sw(ang(s0), ang(s1))), C.pre);
+          }
+        }
+      } else if (this.tool === "ellipse" || this.tool === "earc") {
+        if (d.pts.length === 1) push(a, p, C.pre);
+        else {
+          const E = this.draftEll(a, d.pts[1], d.pts[2] ?? p);
+          push(a, d.pts[1], C.pre);
+          if (E && d.pts.length === 2) poly(ellPts(E), C.pre);
+          else if (E) {
+            // Arc: the whole ellipse faint, the part kept from the start to the cursor.
+            const t0 = ellParam(E, d.pts[2]);
+            poly(ellPts(E, t0, ellSweep(t0, ellParam(E, p)), 64), C.pre);
           }
         }
       } else if (this.tool === "arc") {
@@ -1631,6 +1710,10 @@ export class SketchEditor {
       const last = d.pts.at(-1)!;
       if (this.tool === "line") { const dx = p[0] - last[0], dy = p[1] - last[1]; text = `L ${L(Math.hypot(dx, dy))} · ${trimNum((((Math.atan2(dy, dx) * 180) / Math.PI) + 360) % 360, 1)}°`; }
       else if (this.tool === "circle" || this.tool === "polygon") text = `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}`;
+      else if ((this.tool === "ellipse" || this.tool === "earc") && d.pts.length < 3) {
+        const E = d.pts.length === 2 ? this.draftEll(a, d.pts[1], p) : null;
+        text = d.pts.length === 1 ? `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}` : E ? `${L(E.r1 * 2)} × ${L(E.r2 * 2)}` : "";
+      }
       else if (this.tool === "rect") text = `${L(Math.abs(p[0] - a[0]))} × ${L(Math.abs(p[1] - a[1]))}`;
       else if (this.tool === "crect") text = `${L(Math.abs(p[0] - a[0]) * 2)} × ${L(Math.abs(p[1] - a[1]) * 2)}`;
       else if (this.tool === "arc") text = d.pts.length === 1 ? `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}` : (() => { const s = d.pts[1]; let x = Math.atan2(p[1] - a[1], p[0] - a[0]) - Math.atan2(s[1] - a[1], s[0] - a[0]); while (x <= 0) x += Math.PI * 2; return `A ${trimNum((x * 180) / Math.PI, 1)}°`; })();
@@ -1741,6 +1824,7 @@ export class SketchEditor {
     if (e.t === "point") return [e.x, e.y];
     if (e.t === "line") { const a = this.pt(e.a), b = this.pt(e.b); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
     if (e.t === "circle") { const c = this.pt(e.c); return [c[0] + e.r * 0.7071, c[1] + e.r * 0.7071]; }
+    if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
     return this.pt(e.a);
   }
 

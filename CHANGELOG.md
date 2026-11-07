@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-11-07
+
+### Added
+- **Ellipse and partial ellipse in sketches** (FR-SK-018), in the Circle ▾ menu. Click the centre, the end of the major axis, then a point on the ellipse; a partial ellipse also takes a start and an end and runs counter-clockwise. The centre and the two axis points are sketch points, so you dimension and relate them like any other: the solver keeps the minor axis square to the major one and the arc ends on the curve. Points can be made coincident with an ellipse or concentric to it. Ellipses extrude, revolve and cut as exact OCCT ellipses, and they follow sketch mirror, patterns, move, rotate, scale and box selection.
+
 ## [1.33.0] - 2026-11-07
 
 ### Added
@@ -398,7 +403,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.33.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.34.0...HEAD
+[1.34.0]: https://github.com/kothf/step-viewer/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/kothf/step-viewer/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/kothf/step-viewer/compare/v1.31.0...v1.32.0
 [1.31.0]: https://github.com/kothf/step-viewer/compare/v1.30.0...v1.31.0

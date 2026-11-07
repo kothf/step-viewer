@@ -10,6 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import type { V2 } from "../model/types";
 import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
@@ -285,7 +286,18 @@ export class Modeller {
     const edgeOf = (s: Seg) => {
       let e: any;
       if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
-      else {
+      else if (s.kind === "ellipse" || s.kind === "earc") {
+        // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
+        const { c, u, r1, r2 } = s.el;
+        const x: V2 = r1 >= r2 ? u : [-u[1], u[0]];
+        const xw = add(this.w(frame, [c[0] + x[0], c[1] + x[1]], off), mul(this.w(frame, c, off), -1));
+        const el = new oc.gp_Elips_2(new oc.gp_Ax2_2(this.P(this.w(frame, c, off)), nrm, this.D(xw)), Math.max(r1, r2), Math.min(r1, r2));
+        if (s.kind === "ellipse") e = new oc.BRepBuilderAPI_MakeEdge_12(el).Edge();
+        else {
+          const pa = this.P(this.w(frame, s.a, off)), pb = this.P(this.w(frame, s.b, off));
+          e = s.ccw ? new oc.BRepBuilderAPI_MakeEdge_14(el, pa, pb).Edge() : oc.TopoDS.Edge_1(new oc.BRepBuilderAPI_MakeEdge_14(el, pb, pa).Edge().Reversed());
+        }
+      } else {
         const circ = new oc.gp_Circ_2(new oc.gp_Ax2_2(this.P(this.w(frame, s.c, off)), nrm, this.D(frame.x)), s.r);
         if (s.kind === "circle") e = new oc.BRepBuilderAPI_MakeEdge_8(circ).Edge();
         else {
@@ -330,6 +342,12 @@ export class Modeller {
   /** Distance from a point to (the middle of) a sketch curve placed in the world. */
   private segDist(s: Seg, frame: Frame, off: V3, p: V3) {
     if (s.kind === "line") return d3(this.w(frame, [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2], off), p);
+    if (s.kind === "ellipse" || s.kind === "earc") {
+      // Nearest of a few points along the curve.
+      const pts = loopPolygon([s], 16);
+      if (s.kind === "earc") pts.push(s.b);
+      return Math.min(...pts.map(q => d3(this.w(frame, q, off), p)));
+    }
     const c = this.w(frame, s.c, off);
     if (s.kind === "circle") return Math.abs(d3(c, p) - s.r) + Math.abs((p[0] - c[0]) * frame.n[0] + (p[1] - c[1]) * frame.n[1] + (p[2] - c[2]) * frame.n[2]);
     const a0 = Math.atan2(s.a[1] - s.c[1], s.a[0] - s.c[0]);
@@ -441,7 +459,7 @@ export class Modeller {
     const prof = sketchProfile(sk);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
     // Where the profile's middle meets the target along the sketch normal.
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : [sg.a, sg.b]))) as [number, number][];
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : [sg.a, sg.b]))) as [number, number][];
     const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
     const c = this.w(frame, mid);
     const den = dot(frame.n, target.n);
@@ -667,7 +685,7 @@ export class Modeller {
     if (Math.abs(dot(n, u)) > 1e-6 || Math.abs(dot(n, add(A, mul(target.o, -1)))) > 1e-4) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
     const prof = sketchProfile(sk);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : [sg.a, sg.b]))) as [number, number][];
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : [sg.a, sg.b]))) as [number, number][];
     const c = this.w(frame, [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]);
     const w = add(c, mul(A, -1));
     const r0 = add(w, mul(u, -dot(w, u)));

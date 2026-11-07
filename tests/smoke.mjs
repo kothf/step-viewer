@@ -2383,6 +2383,58 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.34.0: ellipse and partial ellipse in sketches (FR-SK-018) ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    // The Circle flyout also holds Ellipse and Partial ellipse.
+    await mp.click('#mc-tools [data-fly="circle"]');
+    const elFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    // Ellipse 2 × 30 by 2 × 12 round the origin (the centre snaps to it: 3 DOF left); the third click is on the ellipse at x = 18.
+    await click([0, 0]); await click([30, 0]); await click([18, 12 * Math.sqrt(1 - 0.36)]);
+    const el = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const e = sk.ents.find(x => x.t === "ellipse"); return e ? { r1: Math.hypot(P(e.a).x - P(e.c).x, P(e.a).y - P(e.c).y), r2: Math.hypot(P(e.b).x - P(e.c).x, P(e.b).y - P(e.c).y), st: ed.info.status, dof: ed.info.dof } : null; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }); }));
+    await idle();
+    const vEl = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    // Partial ellipse 20 × 8 on the end face: from (16, 4.8) over the top to (-16, 4.8), closed by a line, cut 2 deep.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end", hint: [0, 0, 5] } }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s2"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("earc"));
+    await click([0, 0]); await click([20, 0]); await click([16, 4.8]); await click([-16, 4.8]);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    const ends = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id); const e = sk.ents.find(x => x.t === "ellipse"); return e?.p0 ? [P(e.p0), P(e.p1)].map(p => [p.x, p.y]) : null; });
+    if (ends) { await click(ends[1]); await click(ends[0]); }
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Cut", d => { d.features.push({ id: "c", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "blind", depth: { v: 2 } }); }));
+    await idle();
+    const cut = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok) }; });
+    const dT = Math.PI - 2 * Math.atan2(0.6, 0.8), half = 80 * (dT - Math.sin(dT)) * 2;
+    check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

@@ -57,6 +57,7 @@ function fixedSet(sk: SketchFeature) {
     else if (e.t === "line") { fixed.add(e.a); fixed.add(e.b); }
     else if (e.t === "circle") { fixed.add(e.c); fixed.add(`${e.id}#r`); }
     else if (e.t === "arc") { fixed.add(e.c); fixed.add(e.a); fixed.add(e.b); }
+    else if (e.t === "ellipse") for (const q of [e.c, e.a, e.b, e.p0, e.p1]) if (q) fixed.add(q);
   }
   return fixed;
 }
@@ -83,6 +84,7 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
       e.t === "point" ? pv(e.id)
       : e.t === "line" ? [...pv(e.a), ...pv(e.b)]
       : e.t === "circle" ? [...pv(e.c), ...((rad.get(e.id) ?? -1) >= 0 ? [rad.get(e.id)!] : [])]
+      : e.t === "ellipse" ? [e.c, e.a, e.b, e.p0, e.p1].flatMap(q => (q ? pv(q) : []))
       : [...pv(e.c), ...pv(e.a), ...pv(e.b)]);
   }
   const add = (owner: string, t: Term) => { sys.terms.push(t); sys.owner.push(owner); };
@@ -90,6 +92,12 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
   for (const e of sk.ents) if (e.t === "arc") {
     const C = P(sys, e.c), A = P(sys, e.a), B = P(sys, e.b);
     add(e.id, term([C, A, B], x => dist(C(x), A(x)) - dist(C(x), B(x))));
+  }
+  // Ellipses: the minor-axis point square to the major axis; arc ends on the ellipse.
+  for (const e of sk.ents) if (e.t === "ellipse") {
+    const C = P(sys, e.c), A = P(sys, e.a), B = P(sys, e.b);
+    add(e.id, term([C, A, B], x => dot(sub(A(x), C(x)), sub(B(x), C(x))) / nrm(sub(A(x), C(x)))));
+    for (const q of [e.p0, e.p1]) if (q) { const Q = P(sys, q); add(e.id, onEllipse(C, A, B, Q)); }
   }
   for (const r of sk.rels) for (const t of relTerms(sys, ents, r)) add(r.id, t);
   for (const d of sk.dims) if (!d.driven) { const t = dimTerm(sys, ents, d); if (t) add(d.id, t); }
@@ -118,10 +126,19 @@ function R(sys: System, ents: Map<string, SkEnt>, id: string): Sc {
   if (i === undefined || i < 0) { const v = sys.fixedR.get(id) ?? (e.t === "circle" ? e.r : 0); const f = (() => v) as unknown as Sc; f.vars = []; return f; }
   const f = ((x: Float64Array) => x[i]) as Sc; f.vars = [i]; return f;
 }
-/** Centre of a circle or arc, or a point itself. */
+/** Centre of a circle, arc or ellipse, or a point itself. */
 function center(sys: System, ents: Map<string, SkEnt>, id: string): Pt {
   const e = ents.get(id);
-  return e && (e.t === "circle" || e.t === "arc") ? P(sys, e.c) : P(sys, id);
+  return e && (e.t === "circle" || e.t === "arc" || e.t === "ellipse") ? P(sys, e.c) : P(sys, id);
+}
+/** Roughly the distance of q from the ellipse (c, major end a, minor end b): zero on it. */
+function onEllipse(C: Pt, A: Pt, B: Pt, Q: Pt): Term {
+  return term([C, A, B, Q], x => {
+    const c = C(x), a = A(x), q = Q(x);
+    const r1 = nrm(sub(a, c)), u: V2 = [(a[0] - c[0]) / r1, (a[1] - c[1]) / r1];
+    const r2 = Math.abs(cross(u, sub(B(x), c))) || 1e-12, d = sub(q, c);
+    return (Math.hypot(dot(d, u) / r1, cross(u, d) / r2) - 1) * Math.sqrt(r1 * r2);
+  });
 }
 function ends(sys: System, ents: Map<string, SkEnt>, id: string): [Pt, Pt] {
   const e = ents.get(id);
@@ -155,6 +172,8 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
     case "onCurve": {
       const p = P(sys, r.e[0]), k = kind(1);
       if (k === "line") { const [a, b] = ends(sys, ents, r.e[1]); return [term([p, a, b], x => lineDist(p(x), a(x), b(x)))]; }
+      const el = ents.get(r.e[1]);
+      if (el?.t === "ellipse") return [onEllipse(P(sys, el.c), P(sys, el.a), P(sys, el.b), p)];
       const c = center(sys, ents, r.e[1]), rr = R(sys, ents, r.e[1]);
       return [term([p, c, rr], x => dist(p(x), c(x)) - rr(x))];
     }

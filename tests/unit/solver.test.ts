@@ -109,3 +109,32 @@ test("redundant but consistent relation (7)", () => {
   assert.equal(r.redundant, true);
   near(measureDim(r.sketch, { t: "distance", e: ["l1"] }), Math.hypot(P(r.sketch, "b")![0] - P(r.sketch, "a")![0], P(r.sketch, "b")![1] - P(r.sketch, "a")![1]));
 });
+
+test("ellipse: 5 DOF, arc ends stay on it, fully defined by dimensions (FR-SK-018)", () => {
+  const e: SkEnt = { id: "e", t: "ellipse", c: "c", a: "a", b: "b" };
+  const s = sk([pt("c", 0, 0), pt("a", 10, 1), pt("b", -0.5, 4), e]);
+  let r = solve(s);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 5);
+  // b is pulled square to the major axis.
+  const [cx, cy] = P(s, "c")!, [ax, ay] = P(s, "a")!, [bx, by] = P(s, "b")!;
+  near((ax - cx) * (bx - cx) + (ay - cy) * (by - cy), 0, 1e-6);
+  s.rels.push(rel("coincident", "c", ORIGIN), rel("horizontal", "c", "a"));
+  s.dims.push(dim("distance", 20, "c", "a"), dim("distance", 6, "c", "b"));
+  r = solve(s);
+  assert.equal(r.dof, 0);
+  near(P(s, "a")![0], 20, 1e-6); near(Math.abs(P(s, "b")![1]), 6, 1e-6);
+  // Elliptical arc: drag an end; it stays on the ellipse.
+  const arc = sk([pt("c", 0, 0), pt("a", 10, 0), pt("b", 0, 5), pt("p", 10, 0), pt("q", 0, 5), { id: "e", t: "ellipse", c: "c", a: "a", b: "b", p0: "p", p1: "q" }],
+    [rel("fix", "c"), rel("fix", "a"), rel("fix", "b")]);
+  r = solve(arc, { point: "q", to: [-6, 6] });
+  assert.equal(r.status, "ok");
+  const [qx, qy] = P(arc, "q")!;
+  near((qx / 10) ** 2 + (qy / 5) ** 2, 1, 1e-6);
+  // A point placed on the ellipse with onCurve.
+  arc.ents.push(pt("z", 3, 3));
+  arc.rels.push(rel("onCurve", "z", "e"));
+  solve(arc);
+  const [zx, zy] = P(arc, "z")!;
+  near((zx / 10) ** 2 + (zy / 5) ** 2, 1, 1e-6);
+});
