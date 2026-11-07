@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.45.0] - 2026-11-07
+
+### Added
+- **Under-defined analysis** in the sketcher (FR-SLV-010). Select a sketch item and orange arrows show the directions it can still move. A point free in the plane gets four arrows, and a point that can only slide along a line or circle gets two. A fully defined item shows none. The solver works these out from the free motions (null space) of its constraint system.
+
 ## [1.44.0] - 2026-11-07
 
 ### Added
@@ -471,7 +476,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.44.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.45.0...HEAD
+[1.45.0]: https://github.com/kothf/step-viewer/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/kothf/step-viewer/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/kothf/step-viewer/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/kothf/step-viewer/compare/v1.41.0...v1.42.0
