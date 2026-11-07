@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-11-07
+
+### Added
+- **Selection helpers for Fillet and Chamfer** (FR-SEL-005). Right-click an edge while picking edges and choose one of three helpers. Select loop takes the boundary of the face under the cursor that runs through the edge. Select tangency takes the smooth chain. The third helper takes every round edge of the same radius, or every straight edge of the same length, such as all the holes of one size.
+
 ## [1.35.0] - 2026-11-07
 
 ### Added
@@ -408,7 +413,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.35.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.36.0...HEAD
+[1.36.0]: https://github.com/kothf/step-viewer/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/kothf/step-viewer/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/kothf/step-viewer/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/kothf/step-viewer/compare/v1.32.0...v1.33.0

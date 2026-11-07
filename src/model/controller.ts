@@ -11,7 +11,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
-import { tangentChain } from "./chain";
+import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
 import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { evaluate, ExprError, isPlain } from "./expr";
@@ -876,6 +876,8 @@ export class ModelController {
       if (!onCanvas(e)) return;
       this.down = { x: e.clientX, y: e.clientY };
       const m = this.mode;
+      // The edge under a right-click, taken before the view controls react to the button.
+      this.rightHit = e.button === 2 && m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null;
       if (m.kind === "sketch" && m.editor.pointerDown(e)) { e.stopPropagation(); e.preventDefault(); return; }
       if (e.button === 0 && this.arrowHit(e)) {
         // Dragging the depth arrow: the orbit controls never see this button.
@@ -899,6 +901,8 @@ export class ModelController {
       if (m.kind === "sketch") { if (m.editor.pointerUp(e)) e.stopPropagation(); return; }
       const d = this.down;
       this.down = null;
+      // Not stopped either: the view controls must see the right button go up.
+      if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { this.edgeMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
       if (m.kind === "none") { const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
@@ -918,6 +922,11 @@ export class ModelController {
         if (hit?.edge && this.setThreadEdge(m.draft, hit.edge)) this.draftChanged();
         else toast(t("Pick a round edge of a cylinder."));
       }
+    }, true);
+    vp.addEventListener("contextmenu", e => {
+      // The edge helpers open on the button going up without a drag (a right-drag pans).
+      const m = this.mode;
+      if (onCanvas(e) && m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
@@ -1020,17 +1029,65 @@ export class ModelController {
     if (m.kind !== "feature" || (m.draft.type !== "fillet" && m.draft.type !== "chamfer")) return;
     const hit = this.host.edgeAt(e.clientX, e.clientY);
     const data = this.host.viewer.parts[0]?.data;
-    const names = this.last?.faceNames ?? [];
     if (!hit || !data) return;
     let edges = hit.edge ? [hit.edge] : data.edges.filter(x => x.faces.includes(hit.faceId!));
     // Tangent propagation (FR-SEL-005, on by default as in SolidWorks): an edge brings its smooth chain.
     if (hit.edge && this.tangentProp) edges = tangentChain(data.edges, hit.edge);
+    this.toggleEdges(edges);
+  }
+
+  /**
+   * Right-click on an edge while picking fillet or chamfer edges: the selection helpers (FR-SEL-005),
+   * Select loop (the face boundary through it), Select tangency, and the edges of the same size.
+   */
+  private rightHit: { edge?: EdgeInfo; faceId?: number } | null = null;
+  private edgeMenu(e: MouseEvent) {
+    const m = this.mode;
+    if (m.kind !== "feature" || (m.draft.type !== "fillet" && m.draft.type !== "chamfer")) return false;
+    const hit = this.rightHit?.edge ? this.rightHit : this.host.edgeAt(e.clientX, e.clientY);
+    this.rightHit = null;
+    const data = this.host.viewer.parts[0]?.data;
+    if (!hit?.edge || !data) return false;
+    const ed = hit.edge;
+    const face = hit.faceId != null && ed.faces.includes(hit.faceId) ? hit.faceId : ed.faces[0];
+    const round = (ed.type === "circle" || ed.type === "arc") && !!ed.radius && !ed.ellipse;
+    const back = () => this.host.viewer.renderer.domElement.focus();
+    this.showMenu([
+      [t("Select loop"), () => this.addEdges(edgeLoop(data.edges, ed, face))],
+      [t("Select tangency"), () => this.addEdges(tangentChain(data.edges, ed))],
+      [round ? t("Select round edges of the same radius") : t("Select straight edges of the same length"), () => this.addEdges(sameEdges(data.edges, ed))],
+    ], e.clientX, e.clientY, back);
+    return true;
+  }
+
+  /** Adds edges to the fillet/chamfer list (the helpers only add). */
+  private addEdges(edges: EdgeInfo[]) {
+    const m = this.mode;
+    if (m.kind !== "feature" || (m.draft.type !== "fillet" && m.draft.type !== "chamfer")) return;
+    const refs = this.edgeRefs(edges);
+    if (!refs.length) { toast(t("That edge cannot be rounded (it is not between two faces).")); return; }
+    const list = m.draft.edges;
+    const same = (x: EdgeRef, y: EdgeRef) => this.edgeOf(x) === this.edgeOf(y) && this.edgeOf(x) != null;
+    for (const r of refs) if (!list.some(x => same(x, r))) list.push(r);
+    this.draftChanged();
+  }
+
+  private edgeRefs(edges: EdgeInfo[]): EdgeRef[] {
+    const names = this.last?.faceNames ?? [];
     const refs: EdgeRef[] = [];
     for (const ed of edges) {
       const [a, b] = ed.faces;
       if (a === b || !names[a] || !names[b]) continue;
       refs.push({ faces: [names[a], names[b]], hint: ed.mid });
     }
+    return refs;
+  }
+
+  /** One edge toggles; several add (or all go when they are all in already). */
+  private toggleEdges(edges: EdgeInfo[]) {
+    const m = this.mode;
+    if (m.kind !== "feature" || (m.draft.type !== "fillet" && m.draft.type !== "chamfer")) return;
+    const refs = this.edgeRefs(edges);
     if (!refs.length) { toast(t("That edge cannot be rounded (it is not between two faces).")); return; }
     const list = m.draft.edges;
     const same = (x: EdgeRef, y: EdgeRef) => this.edgeOf(x) === this.edgeOf(y) && this.edgeOf(x) != null;

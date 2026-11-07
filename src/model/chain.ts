@@ -46,3 +46,34 @@ export function tangentChain(all: EdgeInfo[], seed: EdgeInfo): EdgeInfo[] {
   }
   return [...out];
 }
+
+/**
+ * The closed loop of `face`'s boundary that holds `seed` (FR-SEL-005 "Select loop"): the face's
+ * edges joined end to end with the seed. A circle is a loop of its own.
+ */
+export function edgeLoop(all: EdgeInfo[], seed: EdgeInfo, face: number): EdgeInfo[] {
+  if (!seed.faces.includes(face)) return [seed];
+  const own = all.filter(e => e.faces.includes(face) && e.faces[0] !== e.faces[1]);
+  const scale = Math.max(1, ...own.map(e => Math.hypot(...e.start)));
+  const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-4 * scale;
+  const out = new Set<EdgeInfo>([seed]);
+  const todo = [seed];
+  while (todo.length) {
+    const e = todo.pop()!;
+    if (e.closed) continue;
+    for (const o of own) {
+      if (out.has(o) || o.closed) continue;
+      if ([e.start, e.end].some(p => near(p, o.start) || near(p, o.end))) { out.add(o); todo.push(o); }
+    }
+  }
+  return [...out];
+}
+
+/** Edges like `seed` (FR-SEL-005 "select by type"): round edges of the same radius, or straight edges of the same length. */
+export function sameEdges(all: EdgeInfo[], seed: EdgeInfo): EdgeInfo[] {
+  const round = (e: EdgeInfo) => (e.type === "circle" || e.type === "arc") && !!e.radius && !e.ellipse;
+  const same = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+  return all.filter(e => e.faces[0] !== e.faces[1] && (round(seed)
+    ? round(e) && e.closed === seed.closed && same(e.radius!, seed.radius!) && (seed.closed || same(e.sweep ?? 0, seed.sweep ?? 0))
+    : e.type === seed.type && same(e.length, seed.length)));
+}
