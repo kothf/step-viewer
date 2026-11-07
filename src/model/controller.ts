@@ -1451,6 +1451,7 @@ export class ModelController {
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
     if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
+    else this.ctxPick = null;
   }
 
   /**
@@ -1514,7 +1515,7 @@ export class ModelController {
     bar.style.left = `${Math.max(4, Math.min(at.x + dx0, innerWidth - r.width - 4))}px`;
     bar.style.top = `${Math.max(4, Math.min(at.y - r.height - 12, innerHeight - r.height - 4))}px`;
     const btns = [...bar.querySelectorAll<HTMLButtonElement>("button")];
-    btns.forEach(b => b.addEventListener("click", () => { this.hideShortcutBar(); this.command(b.dataset.c!); this.ctxPick = null; }));
+    btns.forEach(b => b.addEventListener("click", () => { this.hideShortcutBar(true); this.command(b.dataset.c!); this.ctxPick = null; }));
     bar.addEventListener("keydown", e => {
       const k = btns.indexOf(document.activeElement as HTMLButtonElement);
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); btns[(k + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length].focus(); }
@@ -1537,7 +1538,9 @@ export class ModelController {
   }
 
   private sbarOff: (() => void) | null = null;
-  hideShortcutBar() {
+  /** Removes the S bar and the context bar; `keepPick` keeps what the context bar was for (its command runs next). */
+  hideShortcutBar(keepPick = false) {
+    if (!keepPick) this.ctxPick = null;
     this.sbarOff?.();
     this.sbarOff = null;
     document.getElementById("mc-sbar")?.remove();
