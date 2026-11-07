@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.57.0] - 2026-11-07
+
 ### Added
 - **Multibody parts** (FRS 9.10). Extrude and revolve bosses have **Merge result** (on by default); off makes a new body. New in the **Sweep ▾** menu: **Combine** (add, subtract the tools from a main body, or keep the common part), **Split** (cut bodies by a plane into separate bodies; split and combine back keeps the volume, AT-P3-3), **Body-Move/Copy** (translate and rotate about an axis, or copy) and **Body-Delete/Keep**. Bodies are picked by clicking any face of them, and the panels show how many bodies the part has.
 - **Variable radius fillet** (FR-FT-032): each edge goes from a start radius to an end radius, typed in the list or by clicking the callouts at the edge ends.
@@ -561,7 +563,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.56.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.57.0...HEAD
+[1.57.0]: https://github.com/kothf/step-viewer/compare/v1.56.0...v1.57.0
 [1.56.0]: https://github.com/kothf/step-viewer/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/kothf/step-viewer/compare/v1.54.1...v1.55.0
 [1.54.1]: https://github.com/kothf/step-viewer/compare/v1.54.0...v1.54.1
