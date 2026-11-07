@@ -1409,4 +1409,12 @@ export const RU: Record<string, string> = {
   "Those points cannot meet with the sketch's other relations and dimensions.": "Эти точки не могут совпасть при других взаимосвязях и размерах эскиза.",
   "Heat-set insert": "Термовставка",
   "Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).": "Длина вставки {l} мм; оставьте вокруг отверстия стенку не меньше {w} мм (бобышка Ø {b} мм).",
+  "Smart dimension": "Автоматический размер",
+  "Horizontal ordinate": "Горизонтальный ординатный",
+  "Vertical ordinate": "Вертикальный ординатный",
+  "Horizontal ordinate dimensions: X distances from one base": "Горизонтальные ординатные размеры: расстояния по X от одной базы",
+  "Vertical ordinate dimensions: Y distances from one base": "Вертикальные ординатные размеры: расстояния по Y от одной базы",
+  "Base of the ordinate dimensions": "База ординатных размеров",
+  "Click the base point, then where the values go, then each point to dimension along X": "Щёлкните базовую точку, затем место для значений, затем каждую точку для размера по X",
+  "Click the base point, then where the values go, then each point to dimension along Y": "Щёлкните базовую точку, затем место для значений, затем каждую точку для размера по Y",
 };

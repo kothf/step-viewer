@@ -46,6 +46,10 @@ export interface SkDim {
   pos?: V2;
   /** Angle: the quadrant chosen when placed (flips line directions). */
   flip?: [boolean, boolean];
+  /** Distance to a centerline shown and driven as a diameter (twice the distance), for revolve profiles. */
+  dia?: boolean;
+  /** Ordinate dimension (horizontal/vertical distance from the base e[0]); pos holds the row of the values. */
+  ord?: boolean;
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, or a reference plane feature. */

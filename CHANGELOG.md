@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.51.0] - 2026-11-07
+
+### Added
+- **Ordinate and centerline diameter dimensions** in the sketcher (FR-SK-063). Horizontal and Vertical ordinate, in the Dimension ▾ menu, dimension a row of points from one base: click the base, where the values go, then each point. The base shows 0. A dimension from a centerline to a point or a parallel line, placed on the far side of the centerline, becomes a ⌀ diameter (twice the distance), as SolidWorks does for revolve profiles.
+
+### Changed
+- Polygon moved into the Rectangle ▾ menu of the sketch toolbar (still on G), so the toolbar keeps to two rows with the new Dimension ▾ menu.
+
 ## [1.50.0] - 2026-11-07
 
 ### Added
@@ -503,7 +511,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.50.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.51.0...HEAD
+[1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/kothf/step-viewer/compare/v1.47.0...v1.48.0
