@@ -11,9 +11,9 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
-import { loopPolygon, polyArea, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
+import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 
@@ -1285,6 +1285,44 @@ export class Modeller {
     throw new FeatureError("E-RIB-MISS", "The rib does not reach the body. Does the sketch sit next to the part, or should the direction flip?");
   }
 
+  /**
+   * Split line (FR-FT-084): the sketch's curves run out both ways along its normal into sheets; their
+   * sections with the picked faces (or the whole body) split those faces with BRepFeat_SplitShape.
+   * The pieces keep the face's name (their hints tell them apart).
+   */
+  private splitLine(f: SplitFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to split yet.");
+    const { sk, frame } = this.sketchOf(f.sketch, doc, prev, frames, "a sketch to project");
+    const segs = sketchCurves(sk);
+    if (!segs.length) throw new FeatureError("E-SPL-EMPTY", "The sketch has no curves to project.");
+    const big = this.size(prev.shape) * 2 + 100;
+    const bb = new oc.BRep_Builder(), sheets = new oc.TopoDS_Compound();
+    bb.MakeCompound(sheets);
+    for (const sg of segs) {
+      const e = this.segEdge(sg, frame, mul(frame.n, -big));
+      bb.Add(sheets, new oc.BRepPrimAPI_MakePrism_1(e, this.V(mul(frame.n, 2 * big)), false, true).Shape());
+    }
+    const targets = f.faces.length ? f.faces.map(r => this.resolveFace(prev, r)) : [prev.shape];
+    const seq = new oc.TopTools_SequenceOfShape_1();
+    for (const tgt of targets) {
+      const sec = new oc.BRepAlgoAPI_Section_3(tgt, sheets, false);
+      sec.ComputePCurveOn1(true);
+      sec.Approximation(true);
+      sec.Build(new oc.Message_ProgressRange_1());
+      if (!sec.IsDone()) throw new FeatureError("E-SPL-FAIL", "The sketch could not be projected onto the faces.");
+      for (const e of this.sub(sec.Shape(), "EDGE")) seq.Append_1(e);
+    }
+    if (!seq.Length()) throw new FeatureError("E-SPL-MISS", "The projected sketch does not cross the faces.");
+    const sp = new oc.BRepFeat_SplitShape_2(prev.shape);
+    sp.Add_1(seq);
+    sp.Build(new oc.Message_ProgressRange_1());
+    if (!sp.IsDone()) throw new FeatureError("E-SPL-FAIL", "The faces could not be split.");
+    const out = this.carry(sp, [prev], sp.Shape(), f.id);
+    if (out.faces.length === prev.faces.length) throw new FeatureError("E-SPL-MISS", "The projected sketch does not cross the faces.");
+    return out;
+  }
+
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
   private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
     let tool = tools[0];
@@ -1532,6 +1570,7 @@ export class Modeller {
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
+          else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           else if (f.type === "thread") {

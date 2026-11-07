@@ -384,9 +384,20 @@ export interface RibFeature {
   flip?: boolean;
 }
 
+/**
+ * Split line (FR-FT-084): the sketch's curves projected along its normal (both ways) split the faces
+ * they cross; `faces` limits it to those faces (empty: every face the projection meets). The body
+ * keeps its shape; the pieces are separate faces for colours, drafts and mates.
+ */
+export interface SplitFeature {
+  id: string; type: "split"; name: string; suppressed?: boolean;
+  sketch: string;
+  faces: FaceRef[];
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature | RibFeature;
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

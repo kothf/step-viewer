@@ -208,3 +208,21 @@ export function sketchPath(sk: SketchFeature): { segs: Seg[]; closed: boolean; e
   if (used.some(u => !u)) return fail("The path must be one connected chain of curves.");
   return { segs, closed: free < 0 };
 }
+
+/** Every curve of a sketch (not construction) as one segment each, in no particular order (split line). */
+export function sketchCurves(sk: SketchFeature): Seg[] {
+  const m = new Map(sk.ents.map(e => [e.id, e] as const));
+  const out: Seg[] = [];
+  for (const e of sk.ents) {
+    if (e.cons) continue;
+    if (e.t === "line") out.push({ ent: e.id, kind: "line", a: pt(m, e.a), b: pt(m, e.b) });
+    else if (e.t === "circle") out.push({ ent: e.id, kind: "circle", c: pt(m, e.c), r: e.r });
+    else if (e.t === "arc") { const c = pt(m, e.c), a = pt(m, e.a); out.push({ ent: e.id, kind: "arc", c, r: Math.hypot(a[0] - c[0], a[1] - c[1]), a, b: pt(m, e.b), ccw: true }); }
+    else if (e.t === "spline") out.push({ ent: e.id, kind: "spline", bz: splineBezier(e.pts.map(q => pt(m, q)), !!e.closed) });
+    else if (e.t === "ellipse") {
+      const el = ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b));
+      out.push(e.p0 && e.p1 ? { ent: e.id, kind: "earc", el, a: pt(m, e.p0), b: pt(m, e.p1), ccw: true } : { ent: e.id, kind: "ellipse", el });
+    }
+  }
+  return out;
+}

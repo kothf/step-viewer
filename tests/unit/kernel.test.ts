@@ -692,3 +692,19 @@ test("rib: parallel to sketch fills an L bracket's corner, normal to sketch span
   const bad = m.evaluate(doc([...base, rect("q", 0, 0, 10, 10, { std: "XZ" }), { id: "rb", type: "rib", name: "Rib1", sketch: "q", thickness: { v: 4 }, side: "mid", dir: "parallel" }]));
   assert.equal(bad.statuses.find(s => s.id === "rb")?.code, "E-RIB-OPEN");
 });
+
+test("split line: a projected circle splits the top and bottom faces, or only the picked one (FR-FT-084)", async () => {
+  const m = new Modeller(await occ());
+  const base: Feature[] = [rect("s", 0, 0, 40, 40), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, circle("c", 0, 0, 5, { plane: "p" })];
+  const all = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  close(all.props!.volume, 32000);
+  assert.equal(all.body!.faces.length, 8);
+  assert.equal(all.body!.names.filter(n => n === "x:end").length, 2);
+  const one = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [{ name: "x:end" }] }]));
+  assert.equal(one.body!.faces.length, 7);
+  close(one.props!.volume, 32000);
+  // A sketch that misses the part is an error.
+  const miss = m.evaluate(doc([...base.slice(0, 3), circle("c", 100, 0, 5, { plane: "p" }), { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  assert.equal(miss.statuses.find(s => s.id === "sp")?.code, "E-SPL-MISS");
+});

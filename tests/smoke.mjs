@@ -3269,6 +3269,19 @@ try {
     const rib = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(r0.type === "rib" && r0.sketch === "rs" && r0.title === "Rib" && Math.abs(r0.live - v0 - 8000) < 1e-3 && Math.abs(live4 - v0 - 6400) < 1e-3 && Math.abs(rib.v - v0 - 6400) < 1e-3 && !rib.bad && /Rib1/.test(rib.names),
       `model 1.56: Rib from an open line fills the bracket's corner, previewed live (FR-FT-062) (${JSON.stringify(r0)}, ${v0}, ${live4}, ${JSON.stringify(rib)})`);
+    // Split line (FR-FT-084): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 20, y: 15 }, { id: "k", t: "circle", c: "o", r: 6 }] }); }));
+    await settle();
+    const nf0 = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Split Line")');
+    await settle();
+    const sp0 = await mp.evaluate(() => ({ sketch: window.__sv.model.mode().draft?.sketch, count: document.querySelector("#mc-pm .pm-count")?.textContent, faces: window.__sv.model.last().faceNames.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sp = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, faces: window.__sv.model.last().faceNames.length }));
+    check(sp0.sketch === "cs" && sp0.count === "All faces it crosses" && sp0.faces === nf0 + 2 && sp.faces === nf0 + 2 && !sp.bad && Math.abs(sp.v - rib.v) < 1e-6,
+      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FR-FT-084) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "rib").id));
     await settle();

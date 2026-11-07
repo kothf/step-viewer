@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - **Rib** (FR-FT-062), in the **Sweep ▾** menu. An open line or arc chain sketched beside the part becomes a wall that runs to the body: thickness on the first side, both sides or the second side, **Parallel to sketch** (a corner gusset) or **Normal to sketch** (ribs across a hollow, sketched above it), with **Flip material side**. It goes the way that meets the body and previews live.
+- **Split Line** (FR-FT-084), in the **Sweep ▾** menu. A sketch is projected along its normal, both ways, and splits the faces it crosses (or only the faces you click), so each piece can take its own colour, draft or mate. The body keeps its shape.
 - **3MF export** (Export → 3MF) for 3D printing: each body as a closed mesh in millimetres with its colour, written in the active coordinate system like the other mesh exports. It reads back into MöbiusCAD as the same solid.
 
 ## [1.55.0] - 2026-11-07
