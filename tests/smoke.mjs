@@ -1713,6 +1713,10 @@ try {
     await mp.click('[data-c="plane"]');
     await mp.waitForSelector('#mc-pm input[data-num="offset"]');
     await mp.fill('#mc-pm input[data-num="offset"]', "40");
+    // A rebuild finishing while the value is typed must not put the old value back.
+    await mp.evaluate(() => window.__sv.model.panel());
+    const kept = await mp.evaluate(() => { const i = document.querySelector('#mc-pm input[data-num="offset"]'); return { v: i.value, focus: document.activeElement === i }; });
+    check(kept.v === "40" && kept.focus, `model 1.19: a value being typed survives a rebuild of the panel (${JSON.stringify(kept)})`);
     await mp.press('#mc-pm input[data-num="offset"]', "Enter");
     await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
     await idle();

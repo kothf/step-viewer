@@ -13,6 +13,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - An extrude or revolve being edited shows its new faces tinted yellow, as a preview.
 - While drawing in a sketch, a label at the cursor gives the live size (length and angle, radius, width × height).
 
+### Fixed
+- A value being typed in a feature panel is no longer put back to the old one when a rebuild finishes before Enter is pressed.
+
 ## [1.19.2] - 2026-11-06
 
 ### Fixed
