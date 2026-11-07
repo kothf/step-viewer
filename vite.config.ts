@@ -23,7 +23,7 @@ export default defineConfig({
         files: ["native/parasolid-wasm/licenses/parasolid-kit-MIT.txt", "native/parasolid-wasm/licenses/parasolid-kit-Apache-2.0.txt"], note: "Parasolid reader for SolidWorks files: parasolid-core is copied into native/parasolid-core and compiled to WebAssembly (src/sw/parasolid.wasm) from native/parasolid-wasm." },
     ],
     // package.json names one maintainer; the licence names the copyright holders
-    overrides: { three: { author: "three.js authors" }, jspdf: { author: "James Hall, yWorks GmbH" } },
+    overrides: { three: { author: "three.js authors" }, jspdf: { author: "James Hall, yWorks GmbH" }, "dejavu-fonts-ttf": { license: "Bitstream Vera Fonts License (DejaVu changes: public domain)", author: "Bitstream, DejaVu fonts team" } },
   })],
   build: { target: "es2022", chunkSizeWarningLimit: 1500 },
 });

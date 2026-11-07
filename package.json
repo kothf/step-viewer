@@ -1,6 +1,6 @@
 {
   "name": "step-viewer",
-  "version": "1.64.0",
+  "version": "1.65.0",
   "description": "Browser STEP/IGES viewer and Gerber PCB viewer for engineers: B-rep aware measurements, sections with caps, exploded view, mass properties.",
   "scripts": {
     "predev": "node scripts/copy-occt.mjs",
@@ -15,6 +15,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "dejavu-fonts-ttf": "^2.37.3",
     "jspdf": "^2.5.2",
     "occt-import-js": "^0.0.23",
     "opencascade.js": "2.0.0-beta.b5ff984",

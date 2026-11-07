@@ -2965,6 +2965,124 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings (FRS 11, FR-DRW-001/002/003/010/011/016/030/031): standard 3 views, model and projected views, drag, title block, export, .mcaddrw, associative update, RU, axe ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwblock", name: "Block", units: { length: "mm", decimals: 2 }, props: { partNumber: "BLK-001" }, material: { name: "Steel", density: 7.85 }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const views = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => ({ id: v.id, x: v.x, y: v.y, side: v.side ?? null, orient: v.orient ?? null, style: v.style ?? null })));
+    const box = id => dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), id);
+    const v3 = await views();
+    const sheet = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0]; return `${s.size} ${s.scale.join(":")} ${s.projection} ${s.format}`; });
+    const fb = await box(v3[0].id);
+    const prims = await dp.evaluate(() => { const p = window.__sv.drw.prims(); return { hidden: p.filter(x => x.layer === "HIDDEN").length, circles: p.filter(x => x.t === "a" && x.layer === "VISIBLE" && Math.abs(x.r - 8) < 1e-6).length, text: p.filter(x => x.t === "t").map(x => x.s) }; });
+    check(sheet === "A3 1:1 first iso" && v3.length === 3 && fb.join(",") === "-50,0,50,20" && v3[1].x === v3[0].x && v3[1].y < v3[0].y && v3[2].y === v3[0].y && v3[2].x > v3[0].x,
+      `drawing: new drawing of a part gets the standard 3 views, lined up in first angle, at 1:1 on A3 (${sheet}, ${JSON.stringify(v3)}, front ${fb})`);
+    check(prims.hidden === 4 && prims.circles === 1 && prims.text.includes("BLK-001") && prims.text.includes("Steel") && prims.text.includes("0.910 kg") && prims.text.includes("1:1"),
+      `drawing: exact HLR lines (hidden hole edges dashed, the hole a true circle) and title block from the part (number, material, mass) (${prims.hidden} hidden, ${prims.circles} circle, ${prims.text.filter(s => /BLK|Steel|kg/.test(s)).join(" / ")})`);
+    // Drag the front view: its projected views follow; a projected view only slides along its alignment.
+    const pt = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+    let [sx, sy] = await pt(v3[0].x, v3[0].y + 9);
+    let [ex, ey] = await pt(v3[0].x - 20, v3[0].y + 9 + 15);
+    await dp.mouse.move(sx, sy); await dp.mouse.down(); await dp.mouse.move((sx + ex) / 2, (sy + ey) / 2); await dp.mouse.move(ex, ey); await dp.mouse.up();
+    const moved = await views();
+    [sx, sy] = await pt(moved[2].x, moved[2].y);
+    [ex, ey] = await pt(moved[2].x + 10, moved[2].y + 30);
+    await dp.mouse.move(sx, sy); await dp.mouse.down(); await dp.mouse.move(ex, ey); await dp.mouse.up();
+    const slid = await views();
+    const d = (a, b) => [Math.round(b.x - a.x), Math.round(b.y - a.y)].join(",");
+    const flat = (a, b) => Math.abs(b.y - a.y) < 1e-9;
+    check(d(v3[0], moved[0]) === "-20,15" && d(v3[1], moved[1]) === "-20,15" && d(v3[2], moved[2]) === "-20,15" && d(moved[2], slid[2]) === "10,0" && flat(moved[2], slid[2]),
+      `drawing: dragging the parent moves its projected views; a side view only slides sideways (${d(v3[0], moved[0])} ${d(v3[1], moved[1])} ${d(v3[2], moved[2])}, side ${d(moved[2], slid[2])})`);
+    await dp.keyboard.press("Control+z"); await dp.keyboard.press("Control+z");
+    const undone = await views();
+    check(undone.length === 3 && d(v3[0], undone[0]) === "0,0" && d(v3[2], undone[2]) === "0,0", "drawing: Ctrl+Z undoes the moves");
+    // Model view ▾ Isometric: the preview follows the cursor; the click places it, then projected views come off it.
+    await dp.click('#drw [data-a="model"]');
+    await dp.click('#drw [data-orient="iso"]');
+    [sx, sy] = await pt(330, 220);
+    await dp.mouse.move(sx, sy); await dp.mouse.move(sx + 3, sy + 3);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line, #drw .drw-preview path, #drw .drw-preview circle").length > 5, null, { timeout: 30000 });
+    await dp.mouse.click(sx, sy);
+    const [rx, ry] = await pt(390, 220);
+    await dp.mouse.move(rx, ry); await dp.mouse.click(rx, ry);
+    await dp.keyboard.press("Escape");
+    await ready();
+    const v5 = await views();
+    const iso = v5.find(v => v.orient === "iso"), isoKid = v5.find(v => v.side && v.side[0] === 1 && iso && v.y === iso.y && v.x > iso.x);
+    check(v5.length === 5 && iso?.style === "hlr" && !!isoKid, `drawing: model view (isometric, hidden lines removed) placed with a live preview, then a projected view off it (${JSON.stringify(v5.slice(3))})`);
+    // Exports: SVG, DXF (layers with linetypes) and PDF; then save the drawing.
+    const grab = async x => {
+      await dp.click('#drw [data-a="export"]');
+      const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click(`#drw [data-x="${x}"]`)]);
+      return { name: dl.suggestedFilename(), data: await readFile(await dl.path()) };
+    };
+    const svg = await grab("svg"), dxf = await grab("dxf"), pdf = await grab("pdf");
+    const dxfT = dxf.data.toString();
+    check(svg.name === "Block-Sheet1.svg" && /width="420mm" height="297mm"/.test(svg.data.toString()) && dxf.name === "Block-Sheet1.dxf" && /AC1009/.test(dxfT) && /\nHIDDEN\n/.test(dxfT) && /\nLTYPE\n/.test(dxfT) && pdf.name === "Block.pdf" && pdf.data.subarray(0, 4).toString() === "%PDF" && pdf.data.length > 20000,
+      `drawing: export SVG (sheet size in mm), DXF R12 with line-type layers, PDF with the font embedded (${svg.name}, ${dxf.name} ${dxf.data.length} B, ${pdf.name} ${pdf.data.length} B)`);
+    const [sv] = await Promise.all([dp.waitForEvent("download"), dp.keyboard.press("Control+s")]);
+    const drwBytes = await readFile(await sv.path());
+    // Associative: a change in the part updates the drawing's views.
+    await dp.click('#drw [data-a="back"]');
+    await dp.evaluate(() => window.__sv.modeller.store.change("Width", d => { const e = d.features[0].ents; e[1].x = 70; e[2].x = 70; }));
+    await dp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForTimeout(400);
+    await ready();
+    const fb2 = await box(v3[0].id);
+    check(sv.suggestedFilename() === "Block.mcaddrw" && drwBytes.readUInt32LE(0) === 0x04034b50 && fb2.join(",") === "-50,0,70,20", `drawing: Ctrl+S saves ${sv.suggestedFilename()}; the views follow a change of the part (front ${fb2})`);
+    // Russian: nothing left in English in the drawing workspace; axe on it.
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(200);
+    const left = await dp.evaluate(() => {
+      const OK = /^(MöbiusCAD|ISO|ANSI|Y14|PDF|SVG|DXF|Ctrl|Esc|Delete|mcaddrw|mm|kg|F|A\d|B|C|D|E|S|Z|Y|P)$/;
+      const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
+      const bad = new Set();
+      const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
+      const root = document.querySelector("#drw");
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) if (!skip(n.parentElement)) test(n.data, "text");
+      for (const e of root.querySelectorAll("[title], [aria-label], [placeholder]")) { if (skip(e)) continue; for (const a of ["title", "aria-label", "placeholder"]) { const v = e.getAttribute(a); if (v) test(v, a); } }
+      return [...bad];
+    });
+    const ruSheet = await dp.evaluate(() => window.__sv.drw.prims().filter(x => x.t === "t").map(x => x.s));
+    check(left.length === 0 && ruSheet.includes("Разработал") && ruSheet.includes("Проецирование по первому углу"), `drawing: Russian workspace and title block labels${left.length ? ": " + left.slice(0, 6).join(" | ") : ""}`);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const ax = await dp.evaluate(async () => (await window.axe.run(document.querySelector("#drw"), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
+    check(ax.length === 0, `drawing: 0 WCAG 2.1 AA violations in the workspace${ax.length ? ": " + ax.join(" | ") : ""}`);
+    // Reopen the saved file in a fresh page: the drawing (with its part inside) comes back.
+    const dp2 = await ctx.newPage();
+    dp2.on("pageerror", e => errors.push(e.message));
+    await dp2.goto(`${origin}/index.html?debug`);
+    await dp2.waitForFunction(() => window.__sv);
+    await dp2.setInputFiles("#file-input", { name: "Block.mcaddrw", mimeType: "application/zip", buffer: drwBytes });
+    await dp2.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 5 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const reb = await dp2.evaluate(() => ({ open: !document.querySelector("#drw").hidden, name: document.querySelector("#drw .drw-name").textContent }));
+    check(reb.open && reb.name === "Block.mcaddrw", `drawing: a saved .mcaddrw opens with its views (${JSON.stringify(reb)})`);
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

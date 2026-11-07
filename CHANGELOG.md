@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.64.0] - 2026-11-07
+## [1.65.0] - 2026-11-07
 
 ### Added
 
@@ -13,6 +13,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Replace component with another part, assembly or STEP/IGES/BREP model; mates keep the faces they find by name and a warning counts the ones that could not (FR-ASM-008).
 - Suppress and unsuppress components, and per-component colour, from the tree's right-click menu.
 - BOM as top-level items or parts only; parts only counts parts inside sub-assemblies together with the same parts at the top (FR-ASM-024).
+
+## [1.64.0] - 2026-11-07
+
+### Added
+- **Drawings** (FRS section 11, FR-DRW-001/002/003/010/011/016/030/031). **New drawing** in the New ▾ menu opens a drawing of the open part or STEP / IGES / BREP model in its own workspace. It starts with the **standard 3 views** (front, top and side, lined up) at a standard scale that fits the sheet.
+- **Model view ▾** places any orientation (the six sides, isometric, or the current 3D view). The view follows the cursor with its real lines as a preview, as in SolidWorks. After the click, moving around it and clicking adds **projected views** in first or third angle (diagonal ones give isometric views); Esc or ✓ ends.
+- Views are computed by OpenCASCADE's exact hidden-line removal in a worker. Lines and arcs stay exact, hidden edges are dashed, and back edges that lie under visible ones are left out. Per view: scale (sheet, parent's or own), display style (hidden lines dashed, removed, or wireframe), tangent edges (visible, thin or removed) and an optional label.
+- Drag views to move them: projected views follow their parent, and a side or top view only slides along its alignment.
+- **Sheets**: A4–A0 and ANSI A–E, landscape or portrait, first angle (ISO) or third angle (ANSI), with a frame, zone marks and an ISO 7200 or ANSI title block. The title block fills itself from the part (title, part number, revision, author, material, mass from the part's material) and from the sheet (scale, size, sheet n/m); every field can be typed over. Double-click the title block to edit it. More sheets go in tabs below the sheet.
+- A drawing of a modelled part is associative: change the part and the views update.
+- **Save** (Ctrl+S) writes a `.mcaddrw` file that holds the model too, so it opens on its own. **Export**: PDF of all sheets at their real size (vector, with an embedded DejaVu Sans font, so Cyrillic text works), SVG or DXF R12 of a sheet (millimetres, one layer per line type with HIDDEN and CENTER linetypes), and printing at 1:1 through the browser (Ctrl+P). Undo and redo cover every change.
 
 ## [1.63.0] - 2026-11-07
 
@@ -611,7 +622,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.64.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.65.0...HEAD
+[1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
