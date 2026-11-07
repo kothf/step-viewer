@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-11-07
+
+### Added
+- Extrude end conditions (FR-FT-012): **Offset from surface** stops short of a face or plane by a distance (or goes past it, reversed), and cuts get **Through all - both**.
+- **Draft while extruding** (FR-FT-014): the side faces taper inward or outward by an angle, for blind and mid-plane extrudes.
+- **Thin feature** (FR-FT-015): an extrude can make a wall of a set thickness along a closed profile, inside it, outside it (rounded outer corners) or centred on it.
+
 ## [1.27.0] - 2026-11-07
 
 ### Added
@@ -359,7 +366,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.27.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.28.0...HEAD
+[1.28.0]: https://github.com/kothf/step-viewer/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/kothf/step-viewer/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/kothf/step-viewer/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/kothf/step-viewer/compare/v1.24.0...v1.25.0
