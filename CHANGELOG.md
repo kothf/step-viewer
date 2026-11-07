@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.19.3] - 2026-11-07
+
+### Changed
+- Feature panels are laid out like SolidWorks' PropertyManager: ✓/✕ at the top, then titled groups (Extrude: From, Direction 1, Direction 2; Revolve: Axis of revolution, Direction 1, Profile; Fillet and Chamfer: Items, Parameters, Options; Plane: First reference, Placement).
+- Fillet and Chamfer list the picked edges ("Edge 1", "Edge 2"…) with a remove button on each, and show the whole new rounded or bevelled face as a see-through yellow ghost over the body.
+- An extrude or revolve being edited shows its new faces tinted yellow, as a preview.
+- While drawing in a sketch, a label at the cursor gives the live size (length and angle, radius, width × height).
+
 ## [1.19.2] - 2026-11-06
 
 ### Fixed
@@ -262,7 +270,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.2...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.3...HEAD
+[1.19.3]: https://github.com/kothf/step-viewer/compare/v1.19.2...v1.19.3
 [1.19.2]: https://github.com/kothf/step-viewer/compare/v1.19.1...v1.19.2
 [1.19.1]: https://github.com/kothf/step-viewer/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/kothf/step-viewer/compare/v1.18.0...v1.19.0
