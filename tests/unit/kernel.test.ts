@@ -593,3 +593,65 @@ test("converted curves follow their model edge and dangle when it is gone (FR-SK
   const again = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex, dg, boss]));
   assert.equal(again.sketches.s3, undefined);
 });
+
+test("helix and circular-profile sweep: a spring (AT-P3-1, FR-FT-081/083)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = circle("s1", 0, 0, 10, { std: "XY" });
+  const hx: Feature = { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 5 }, revs: { v: 10 }, height: { v: 50 } };
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 2 }, path: { helix: "h1" } };
+  const r = run(m, doc([s1, hx, sw]));
+  const L = 10 * Math.hypot(2 * Math.PI * 10, 5);
+  close(r.props!.volume, Math.PI * L, 1e-4);
+  // The helix curve for the view: starts on the circle, ends 50 mm up.
+  const pts = r.curves.h1;
+  close(Math.hypot(pts[0][0], pts[0][1]), 10);
+  close(pts.at(-1)![2], 50);
+  // Height and revolutions, reversed, with taper: ends 30 mm down, wider.
+  const hx2: Feature = { ...hx, mode: "heightRev", height: { v: 30 }, revs: { v: 3 }, reverse: true, taper: { v: (5 * Math.PI) / 180 } };
+  const r2 = m.evaluate(doc([s1, hx2]));
+  const end = r2.curves.h1.at(-1)!;
+  close(end[2], -30);
+  close(Math.hypot(end[0], end[1]), 10 + 30 * Math.tan((5 * Math.PI) / 180), 1e-6);
+});
+
+test("loft between a square and a circle (AT-P3-2, FR-FT-082)", async () => {
+  const m = new Modeller(await occ());
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } };
+  const sq = rect("s1", 0, 0, 40, 40);
+  const ci = circle("s2", 0, 0, 15, { plane: "p1" });
+  const lf: Feature = { id: "l1", type: "loft", name: "Loft1", op: "boss", profiles: ["s1", "s2"] };
+  const r = run(m, doc([sq, pl, ci, lf]));
+  const v = r.props!.volume;
+  // Between the frustum-like bounds: more than the cylinder of the circle, less than the square prism.
+  assert.ok(v > Math.PI * 225 * 50 && v < 1600 * 50, `${v}`);
+  assert.ok(r.body!.names.includes("l1:start") && r.body!.names.includes("l1:end"), r.body!.names.join());
+  // Ruled loft: straight sections, a cut through it removes material.
+  const ruled: Feature = { ...lf, ruled: true };
+  run(m, doc([sq, pl, ci, ruled]));
+});
+
+test("sweep a profile along a sketch path, boss and cut (FR-FT-080)", async () => {
+  const m = new Modeller(await occ());
+  // Path on Front (XZ): a line up 40 then a quarter arc R20; profile: a 6×4 rectangle on Top at the path start.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const path: SketchFeature = { id: "ps", type: "sketch", name: "Path", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+    P("a", 0, 0), P("b", 0, 40), P("c", 20, 40), P("d", 20, 60),
+    { id: "pl", t: "line", a: "a", b: "b" }, { id: "pa", t: "arc", c: "c", a: "d", b: "b" },
+  ] };
+  const prof = rect("pr", 0, 0, 6, 4);
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "ps" } };
+  const r = run(m, doc([path, prof, sw]));
+  const L = 40 + (Math.PI / 2) * 20;
+  close(r.props!.volume, 24 * L, 1e-3);
+  assert.ok(r.body!.names.some(n => n.startsWith("w1:side:prl")), r.body!.names.join());
+  // Keep normal constant along a straight path is the same prism.
+  const straight: SketchFeature = { ...path, ents: [P("a", 0, 0), P("b", 0, 40), { id: "pl", t: "line", a: "a", b: "b" }] };
+  const r2 = run(m, doc([straight, prof, { ...sw, orient: "normal" } as Feature]));
+  close(r2.props!.volume, 24 * 40, 1e-6);
+  // A circular cut swept through a block.
+  const blk = rect("b", 0, 0, 30, 30);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "b", op: "boss", end: "blind", depth: { v: 30 } };
+  const cut: Feature = { id: "w2", type: "sweep", name: "Cut-Sweep1", op: "cut", circular: { v: 4 }, path: { sketch: "ps" } };
+  const r3 = run(m, doc([blk, ex, straight, cut]));
+  close(r3.props!.volume, 27000 - Math.PI * 4 * 30, 1e-4);
+});

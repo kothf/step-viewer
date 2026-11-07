@@ -13,6 +13,8 @@ export interface Rebuild {
   frames: Record<string, Frame>;
   /** Sketches whose On edge curves the rebuild moved or marked dangling (FR-SK-064). */
   sketches?: Record<string, SketchFeature>;
+  /** Points along curve features (helix), for the view. */
+  curves?: Record<string, V3[]>;
   data: PartData | null;
   faceNames: string[];
   props: BodyProps | null;

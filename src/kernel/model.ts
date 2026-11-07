@@ -11,9 +11,9 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
-import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
+import { loopPolygon, polyArea, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 
@@ -26,7 +26,9 @@ interface Named { shape: any; faces: any[]; names: string[] }
 
 /** What a feature added or removed, so mirror and patterns can copy it: its tool solids and how each was applied. */
 type Tool = { shape: Named; op: "fuse" | "cut" };
-interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature }
+/** A curve feature's result (helix): the OCCT wire and points along it for the view. */
+interface Curve { wire: any; pts: V3[] }
+interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve }
 
 export interface ModelMesh {
   name: string;
@@ -75,6 +77,8 @@ export class Modeller {
   private cache: CacheEntry[] = [];
   /** Tools of the features evaluated so far in this evaluation (by feature id). */
   private tools = new Map<string, Tool[]>();
+  /** Curves made by helix features in the current evaluation (FR-FT-083). */
+  private curves = new Map<string, Curve>();
   /** A warning set while evaluating the current feature. */
   private warning = "";
 
@@ -339,48 +343,7 @@ export class Modeller {
     const prof = sketchProfile(sk, skip);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
     const edgeEnt: [any, string][] = [];
-    const nrm = this.D(frame.n);
-    const edgeOf = (s: Seg) => {
-      let e: any;
-      if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
-      else if (s.kind === "spline") {
-        // One B-spline edge: the Bézier segments joined with triple knots (C1 form of the C2 curve).
-        const n = (s.bz.length - 1) / 3;
-        const poles = new oc.TColgp_Array1OfPnt_2(1, s.bz.length);
-        s.bz.forEach((q, i) => poles.SetValue(i + 1, this.P(this.w(frame, q, off))));
-        const knots = new oc.TColStd_Array1OfReal_2(1, n + 1), mults = new oc.TColStd_Array1OfInteger_2(1, n + 1);
-        // Knots at the chord lengths the interpolant was parametrised by, so the joins are C2 in the parameter too.
-        let u = 0;
-        for (let i = 0; i <= n; i++) {
-          if (i) u += Math.hypot(s.bz[3 * i][0] - s.bz[3 * i - 3][0], s.bz[3 * i][1] - s.bz[3 * i - 3][1]) || 1e-9;
-          knots.SetValue(i + 1, u); mults.SetValue(i + 1, i === 0 || i === n ? 4 : 3);
-        }
-        const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, 3, false);
-        // The interpolant is C2: drop the interior knots to single ones (cleaner curve, accurate mass properties).
-        for (let i = n; i >= 2; i--) curve.RemoveKnot(i, 1, 1e-7 * (1 + Math.abs(s.bz[0][0]) + Math.abs(s.bz[0][1])));
-        e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
-      } else if (s.kind === "ellipse" || s.kind === "earc") {
-        // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
-        const { c, u, r1, r2 } = s.el;
-        const x: V2 = r1 >= r2 ? u : [-u[1], u[0]];
-        const xw = add(this.w(frame, [c[0] + x[0], c[1] + x[1]], off), mul(this.w(frame, c, off), -1));
-        const el = new oc.gp_Elips_2(new oc.gp_Ax2_2(this.P(this.w(frame, c, off)), nrm, this.D(xw)), Math.max(r1, r2), Math.min(r1, r2));
-        if (s.kind === "ellipse") e = new oc.BRepBuilderAPI_MakeEdge_12(el).Edge();
-        else {
-          const pa = this.P(this.w(frame, s.a, off)), pb = this.P(this.w(frame, s.b, off));
-          e = s.ccw ? new oc.BRepBuilderAPI_MakeEdge_14(el, pa, pb).Edge() : oc.TopoDS.Edge_1(new oc.BRepBuilderAPI_MakeEdge_14(el, pb, pa).Edge().Reversed());
-        }
-      } else {
-        const circ = new oc.gp_Circ_2(new oc.gp_Ax2_2(this.P(this.w(frame, s.c, off)), nrm, this.D(frame.x)), s.r);
-        if (s.kind === "circle") e = new oc.BRepBuilderAPI_MakeEdge_8(circ).Edge();
-        else {
-          const pa = this.P(this.w(frame, s.a, off)), pb = this.P(this.w(frame, s.b, off));
-          // Arc from a to b counter-clockwise about the normal, reversed when the loop runs the other way.
-          e = s.ccw ? new oc.BRepBuilderAPI_MakeEdge_10(circ, pa, pb).Edge() : oc.TopoDS.Edge_1(new oc.BRepBuilderAPI_MakeEdge_10(circ, pb, pa).Edge().Reversed());
-        }
-      }
-      return e;
-    };
+    const edgeOf = (s: Seg) => this.segEdge(s, frame, off);
     const wireOf = (loop: Seg[]) => {
       const mk = new oc.BRepBuilderAPI_MakeWire_1();
       for (const s of loop) mk.Add_1(edgeOf(s));
@@ -410,6 +373,51 @@ export class Modeller {
       return face;
     });
     return { faces, edgeEnt };
+  }
+
+  /** An OCCT edge for a sketch curve placed on its plane (moved by `off`). */
+  private segEdge(s: Seg, frame: Frame, off: V3 = [0, 0, 0]): any {
+    const oc = this.oc;
+    const nrm = this.D(frame.n);
+    let e: any;
+    if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
+    else if (s.kind === "spline") {
+      // One B-spline edge: the Bézier segments joined with triple knots (C1 form of the C2 curve).
+      const n = (s.bz.length - 1) / 3;
+      const poles = new oc.TColgp_Array1OfPnt_2(1, s.bz.length);
+      s.bz.forEach((q, i) => poles.SetValue(i + 1, this.P(this.w(frame, q, off))));
+      const knots = new oc.TColStd_Array1OfReal_2(1, n + 1), mults = new oc.TColStd_Array1OfInteger_2(1, n + 1);
+      // Knots at the chord lengths the interpolant was parametrised by, so the joins are C2 in the parameter too.
+      let u = 0;
+      for (let i = 0; i <= n; i++) {
+        if (i) u += Math.hypot(s.bz[3 * i][0] - s.bz[3 * i - 3][0], s.bz[3 * i][1] - s.bz[3 * i - 3][1]) || 1e-9;
+        knots.SetValue(i + 1, u); mults.SetValue(i + 1, i === 0 || i === n ? 4 : 3);
+      }
+      const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, 3, false);
+      // The interpolant is C2: drop the interior knots to single ones (cleaner curve, accurate mass properties).
+      for (let i = n; i >= 2; i--) curve.RemoveKnot(i, 1, 1e-7 * (1 + Math.abs(s.bz[0][0]) + Math.abs(s.bz[0][1])));
+      e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+    } else if (s.kind === "ellipse" || s.kind === "earc") {
+      // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
+      const { c, u, r1, r2 } = s.el;
+      const x: V2 = r1 >= r2 ? u : [-u[1], u[0]];
+      const xw = add(this.w(frame, [c[0] + x[0], c[1] + x[1]], off), mul(this.w(frame, c, off), -1));
+      const el = new oc.gp_Elips_2(new oc.gp_Ax2_2(this.P(this.w(frame, c, off)), nrm, this.D(xw)), Math.max(r1, r2), Math.min(r1, r2));
+      if (s.kind === "ellipse") e = new oc.BRepBuilderAPI_MakeEdge_12(el).Edge();
+      else {
+        const pa = this.P(this.w(frame, s.a, off)), pb = this.P(this.w(frame, s.b, off));
+        e = s.ccw ? new oc.BRepBuilderAPI_MakeEdge_14(el, pa, pb).Edge() : oc.TopoDS.Edge_1(new oc.BRepBuilderAPI_MakeEdge_14(el, pb, pa).Edge().Reversed());
+      }
+    } else {
+      const circ = new oc.gp_Circ_2(new oc.gp_Ax2_2(this.P(this.w(frame, s.c, off)), nrm, this.D(frame.x)), s.r);
+      if (s.kind === "circle") e = new oc.BRepBuilderAPI_MakeEdge_8(circ).Edge();
+      else {
+        const pa = this.P(this.w(frame, s.a, off)), pb = this.P(this.w(frame, s.b, off));
+        // Arc from a to b counter-clockwise about the normal, reversed when the loop runs the other way.
+        e = s.ccw ? new oc.BRepBuilderAPI_MakeEdge_10(circ, pa, pb).Edge() : oc.TopoDS.Edge_1(new oc.BRepBuilderAPI_MakeEdge_10(circ, pb, pa).Edge().Reversed());
+      }
+    }
+    return e;
   }
 
   /** Distance from a point to (the middle of) a sketch curve placed in the world. */
@@ -1004,6 +1012,177 @@ export class Modeller {
     return this.bool("cut", prev, tool, f.id);
   }
 
+  // ---------- P3: helix, sweep, loft (FRS 9.9) ----------
+
+  /** A sketch feature evaluated before `doc`'s current feature, with its frame. */
+  private sketchOf(id: string | undefined, doc: PartDoc, body: Named | null, frames: Record<string, Frame>, what: string): { sk: SketchFeature; frame: Frame } {
+    const sk = id ? doc.features.find(x => x.id === id) : undefined;
+    if (!sk || sk.type !== "sketch") throw new FeatureError("E-FT-NOSKETCH", `Pick ${what}.`);
+    if (sk.suppressed) throw new FeatureError("E-FT-PARENT", "A sketch this feature uses is suppressed.");
+    return { sk, frame: frames[sk.id] ?? this.frameOf(sk, body, frames) };
+  }
+
+  /**
+   * Helix / spiral (FR-FT-083): on a cylinder (or a cone, with taper) through the sketch's circle, as a
+   * Geom2d line on the surface, so the curve is exact.
+   */
+  private helix(f: HelixFeature, doc: PartDoc, body: Named | null, frames: Record<string, Frame>): Curve {
+    const oc = this.oc;
+    const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch with a circle");
+    const circ = (sk.ents.find(e => e.t === "circle" && !e.cons) ?? sk.ents.find(e => e.t === "circle")) as (SketchFeature["ents"][number] & { t: "circle" }) | undefined;
+    if (!circ) throw new FeatureError("E-HLX-CIRCLE", "A helix starts from a circle in its sketch.");
+    const cp = sk.ents.find(e => e.id === circ.c);
+    if (!cp || cp.t !== "point") throw new FeatureError("E-HLX-CIRCLE", "A helix starts from a circle in its sketch.");
+    const r = circ.r;
+    let P = f.pitch.v, N = f.revs.v, H = f.height.v;
+    if (f.mode === "pitchRev") H = P * N;
+    else if (f.mode === "heightRev") P = H / N;
+    else N = H / P;
+    if (!(P > 1e-6 && N > 1e-6 && H > 1e-6)) throw new FeatureError("E-HLX-VALUES", "Height, pitch and revolutions must be more than 0.");
+    if (N > 2000) throw new FeatureError("E-HLX-VALUES", "A helix can have at most 2000 revolutions.");
+    const ta = f.taper?.v ?? 0;
+    if (Math.abs(ta) >= (80 * Math.PI) / 180) throw new FeatureError("E-HLX-TAPER", "The taper angle must be less than 80°.");
+    if (r + H * Math.tan(ta) <= 1e-6) throw new FeatureError("E-HLX-TAPER", "The taper closes the helix before its end: use a smaller angle.");
+    const dir = mul(frame.n, f.reverse ? -1 : 1);
+    const s0 = f.start?.v ?? 0;
+    const xd = unit(add(mul(frame.x, Math.cos(s0)), mul(frame.y, Math.sin(s0))));
+    const yd = cross(dir, xd);
+    const c = this.w(frame, [cp.x, cp.y]);
+    const sg = f.cw ? -1 : 1;
+    const ax3 = new oc.gp_Ax3_3(this.P(c), this.D(dir), this.D(xd));
+    const cone = Math.abs(ta) > 1e-9;
+    const surf = new oc.Handle_Geom_Surface_2(cone ? new oc.Geom_ConicalSurface_1(ax3, ta, r) : new oc.Geom_CylindricalSurface_1(ax3, r));
+    // Along a cone's generator the parameter is the slant length: z = v·cos(taper).
+    const dv = cone ? P / Math.cos(ta) : P;
+    const line = new oc.Handle_Geom2d_Curve_2(new oc.Geom2d_Line_3(new oc.gp_Pnt2d_3(0, 0), new oc.gp_Dir2d_4(sg * 2 * Math.PI, dv)));
+    const edge = new oc.BRepBuilderAPI_MakeEdge_31(line, surf, 0, N * Math.hypot(2 * Math.PI, dv)).Edge();
+    oc.BRepLib.BuildCurves3d_2(edge);
+    const wire = new oc.BRepBuilderAPI_MakeWire_2(edge).Wire();
+    const pts: V3[] = [];
+    const n = Math.max(16, Math.min(8000, Math.ceil(N * 72)));
+    for (let k = 0; k <= n; k++) {
+      const tt = (k / n) * N, z = tt * P, rr = r + z * Math.tan(ta), th = sg * 2 * Math.PI * tt;
+      pts.push(add(add(c, mul(dir, z)), add(mul(xd, rr * Math.cos(th)), mul(yd, rr * Math.sin(th)))));
+    }
+    return { wire, pts };
+  }
+
+  /** The wire of a sweep path: a helix, or a sketch's chain of curves. */
+  private pathWire(f: SweepFeature, doc: PartDoc, body: Named | null, frames: Record<string, Frame>): any {
+    const oc = this.oc;
+    if (!f.path) throw new FeatureError("E-SWP-PATH", "Pick a path: a sketch or a helix.");
+    if ("helix" in f.path) {
+      const c = this.curves.get(f.path.helix);
+      if (!c) throw new FeatureError("E-FT-PARENT", "The helix is missing or has an error.");
+      return c.wire;
+    }
+    const { sk, frame } = this.sketchOf(f.path.sketch, doc, body, frames, "a path sketch");
+    const p = sketchPath(sk);
+    if (p.error) throw new FeatureError(p.error.code, p.error.message);
+    const mk = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const sg of p.segs) mk.Add_1(this.segEdge(sg, frame));
+    if (!mk.IsDone()) throw new FeatureError("E-SWP-PATH", "The path's curves do not join end to end.");
+    return mk.Wire();
+  }
+
+  /** Sweep (FR-FT-080/081): profile regions (or a circle) along a path, with MakePipeShell. */
+  private sweepAlong(f: SweepFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const spine = this.pathWire(f, doc, prev, frames);
+    const helixPath = !!f.path && "helix" in f.path;
+    const pipe = (w: any, edgeEnt: [any, string][]): Named => {
+      const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
+      if (f.orient === "normal") {
+        // Keep normal constant: the profile keeps its start orientation all along.
+        const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+        const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1();
+        ad.D1(ad.FirstParameter(), p0, v0);
+        const t0 = unit(this.xyz(v0));
+        mk.SetMode_2(new oc.gp_Ax2_3(p0, this.D(t0)));
+      } else mk.SetMode_1(helixPath);
+      mk.Add_1(w, false, false);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
+      if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");
+      let shape = mk.Shape();
+      if (this.volume(shape) < 0) shape = shape.Reversed();
+      return this.nameSweep(mk, f.id, edgeEnt, shape);
+    };
+    const tools: Named[] = [];
+    if (f.circular) {
+      const d = f.circular.v;
+      if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The diameter must be more than 0.");
+      const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+      const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1();
+      ad.D1(ad.FirstParameter(), p0, v0);
+      const e = new oc.BRepBuilderAPI_MakeEdge_8(new oc.gp_Circ_2(new oc.gp_Ax2_3(p0, this.D(unit(this.xyz(v0)))), d / 2)).Edge();
+      tools.push(pipe(new oc.BRepBuilderAPI_MakeWire_2(e).Wire(), [[e, "circle"]]));
+    } else {
+      const { sk, frame } = this.sketchOf(f.profile, doc, prev, frames, "a profile sketch");
+      const { faces, edgeEnt } = this.profileFaces(sk, frame);
+      for (const face of faces) {
+        const wires = this.subWires(face);
+        const outer = oc.BRepTools.OuterWire(face);
+        let t = pipe(outer, edgeEnt);
+        // Holes in the profile: their sweeps are cut out of the outer one.
+        for (const h of wires) if (!h.IsSame(outer)) t = this.bool("cut", t, pipe(h, edgeEnt), f.id);
+        tools.push(t);
+      }
+    }
+    return this.applyTool(f, tools, prev);
+  }
+
+  /** Loft (FR-FT-082): through the profiles' outer contours in order, with ThruSections. */
+  private loft(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
+    let firstEdges: [any, string][] = [];
+    const wires: any[] = [];
+    f.profiles.forEach((id, k) => {
+      const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
+      const { faces, edgeEnt } = this.profileFaces(sk, frame);
+      if (faces.length !== 1) throw new FeatureError("E-LOFT-PROFILE", "Each loft profile must be one closed region.");
+      const w = oc.BRepTools.OuterWire(faces[0]);
+      if (k === 0) firstEdges = edgeEnt;
+      wires.push(w);
+    });
+    if (f.close && wires.length >= 3) wires.push(wires[0]);
+    for (const w of wires) mk.AddWire(w);
+    mk.CheckCompatibility(true);
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+    let shape = mk.Shape();
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    // Faces from the first profile's curves are named after them; the end caps start/end.
+    const faces = this.sub(shape, "FACE");
+    const names: (string | null)[] = faces.map(() => null);
+    for (const [e, ent] of firstEdges) {
+      let g: any = null;
+      try { g = mk.GeneratedFace(e); } catch { g = null; }
+      if (!g || g.IsNull()) continue;
+      const i = faces.findIndex(x => x.IsSame(g));
+      if (i >= 0 && !names[i]) names[i] = `${f.id}:side:${ent}`;
+    }
+    const first = this.sub(mk.FirstShape(), "FACE"), last = this.sub(mk.LastShape(), "FACE");
+    faces.forEach((x, i) => { if (!names[i] && first.some(g => g.IsSame(x))) names[i] = `${f.id}:start`; else if (!names[i] && last.some(g => g.IsSame(x))) names[i] = `${f.id}:end`; });
+    let k = 0;
+    const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
+    return this.applyTool(f, [tool], prev);
+  }
+
+  /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
+  private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
+    let tool = tools[0];
+    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
+    if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
+    const out = this.bool("cut", prev, tool, f.id);
+    if (Math.abs(this.volume(out.shape) - this.volume(prev.shape)) < 1e-9) throw new FeatureError("E-FT-NOCHANGE", "The cut does not touch the body.");
+    return out;
+  }
+
   /** A direction or an axis from a line reference: point and unit direction. */
   private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
     const oc = this.oc;
@@ -1181,7 +1360,7 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature> } {
+  evaluate(doc: PartDoc): { body: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]> } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -1193,6 +1372,7 @@ export class Modeller {
     const failed = new Set<string>();
     const next: CacheEntry[] = [];
     this.tools = new Map();
+    this.curves = new Map();
     // Freeze bar (FR-HIS-024): features up to it keep their cached result even when they changed.
     const frozen = doc.freezeAfter ? doc.features.findIndex(f => f.id === doc.freezeAfter) + 1 : 0;
     doc.features.forEach((f, i) => {
@@ -1206,6 +1386,7 @@ export class Modeller {
         if (hit.frame) frames[f.id] = hit.frame;
         if (hit.tools) this.tools.set(f.id, hit.tools);
         if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
+        if (hit.curve) this.curves.set(f.id, hit.curve);
         if (!hit.status.ok) failed.add(f.id);
         if (hit.body) body = hit.body;
         return;
@@ -1233,6 +1414,9 @@ export class Modeller {
           else if (f.type === "draft") body = this.draft(f, body, frames);
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
+          else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
+          else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
+          else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           else if (f.type === "thread") {
@@ -1250,10 +1434,12 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved });
+      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id) });
     });
     this.cache = next;
-    return { body, statuses, frames, sketches };
+    const curves: Record<string, V3[]> = {};
+    for (const [id, c] of this.curves) curves[id] = c.pts;
+    return { body, statuses, frames, sketches, curves };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

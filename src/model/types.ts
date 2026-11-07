@@ -317,8 +317,61 @@ export interface HoleFeature {
   pitch?: number;
 }
 
+/**
+ * Helix / spiral curve (FR-FT-083): round the circle of a sketch, starting on it at the start angle and
+ * running along the sketch normal (reversed: the other way). Two of height, pitch and revolutions set it.
+ */
+export interface HelixFeature {
+  id: string; type: "helix"; name: string; suppressed?: boolean;
+  sketch: string;
+  /** Which values define it; the third follows. */
+  mode: "pitchRev" | "heightRev" | "heightPitch";
+  pitch: Num;
+  revs: Num;
+  height: Num;
+  /** Taper angle (outward positive): the radius grows by height·tan(taper). */
+  taper?: Num;
+  /** Start angle from the sketch's x axis. */
+  start?: Num;
+  /** Clockwise (left-handed) instead of counter-clockwise about the direction it runs. */
+  cw?: boolean;
+  reverse?: boolean;
+  hidden?: boolean;
+}
+
+/** Sweep path: an open (or closed) chain of a sketch's curves, or a helix feature. */
+export type SweepPath = { sketch: string } | { helix: string };
+
+/**
+ * Sweep (FR-FT-080/081): a closed profile sketch, or a circle of the given diameter (circular profile),
+ * moved along a path. Boss adds material, cut removes it.
+ */
+export interface SweepFeature {
+  id: string; type: "sweep"; name: string; suppressed?: boolean;
+  op: "boss" | "cut";
+  /** Profile sketch; absent with `circular`. */
+  profile?: string;
+  /** Circular profile: diameter, centred on the start of the path and square to it. */
+  circular?: Num;
+  path?: SweepPath;
+  /** Follow path (the profile turns with the path's frame) or keep normal constant. */
+  orient?: "follow" | "normal";
+}
+
+/** Loft (FR-FT-082): through two or more closed profiles in order. */
+export interface LoftFeature {
+  id: string; type: "loft"; name: string; suppressed?: boolean;
+  op: "boss" | "cut";
+  profiles: string[];
+  /** Straight (ruled) sections between profiles instead of a smooth surface. */
+  ruled?: boolean;
+  /** Close loft: back from the last profile to the first (needs three or more). */
+  close?: boolean;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
-  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature;
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
+  | HelixFeature | SweepFeature | LoftFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

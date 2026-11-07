@@ -115,7 +115,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         }
         preview = { position, status };
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, data, faceNames: res.body?.names ?? [], props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: res.body?.names ?? [], props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "modelStep") {
       if (!lastBody) throw new Error("There is no body to export yet.");
       kernel.meshes = [{ shape: lastBody.shape, faces: lastBody.faces, name: r.name, color: r.color, solid: true }];

@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Helix/Spiral** (FR-FT-083). In the new **Sweep ▾** menu: a helix on the circle of a sketch, set by pitch and revolutions, height and revolutions, or height and pitch, with start angle, clockwise, reverse direction and taper. It is exact (a line on a cylinder or cone) and drawn in the view while you edit it.
+- **Sweep and Cut-Sweep** (FR-FT-080/081). A closed profile sketch, or a **circular profile** of a set diameter that needs no sketch, moved along a helix or a sketch path (lines, arcs, splines joined end to end); Follow path or Keep normal constant. A Ø2 circle along a 10-turn helix gives a spring whose volume matches π·r²·L to 1e-4. The result previews live; a cut shows the material it removes.
+- **Loft and Cut-Loft** (FR-FT-082). Through two or more closed profiles in order, smooth or with straight (ruled) sections, optionally closed back to the first. Profiles are picked in the panel; the last two unused sketches are offered first.
+
 ## [1.54.0] - 2026-11-07
 
 ### Added

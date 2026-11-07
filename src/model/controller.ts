@@ -20,7 +20,7 @@ import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snaps
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -40,6 +40,7 @@ import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { bezPts, splineBezier } from "../sketch/spline";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
+import { sketchProfile } from "../sketch/profile";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
@@ -120,8 +121,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread"];
+const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -364,7 +365,7 @@ export class ModelController {
     this.setBusy(1);
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
-    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && d.edges.length) || ((d.type === "extrude" || d.type === "revolve") && d.op === "cut")) ? m.index : undefined;
+    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && d.edges.length) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
     this.setBusy(-1);
     if (!r || !this.store) return;
@@ -533,7 +534,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -599,6 +600,10 @@ export class ModelController {
       const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
       if (threadEdge) this.setThreadEdge(th, threadEdge);
       draft = th;
+    } else if (type === "helix" || type === "sweep" || type === "sweepcut" || type === "loft" || type === "loftcut") {
+      const p3 = this.p3Draft(type, id, sketches, used);
+      if (!p3) return;
+      draft = p3;
     } else if (type === "draft") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
@@ -631,6 +636,38 @@ export class ModelController {
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
+  }
+
+  /**
+   * New helix, sweep or loft (FRS 9.9) with sensible picks: a helix on the selected (or last) sketch with a
+   * circle; a sweep along the last helix or a path sketch, with the last unused closed sketch as its
+   * profile (else a circular profile); a loft through the last two unused sketches.
+   */
+  private p3Draft(type: "helix" | "sweep" | "sweepcut" | "loft" | "loftcut", id: string, sketches: SketchFeature[], used: Set<string>): Feature | null {
+    const d = this.doc;
+    const end = d.rollback ?? d.features.length;
+    const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
+    const closed = (s: SketchFeature) => !sketchProfile(s).error;
+    if (type === "helix") {
+      const withCircle = sketches.filter(s => s.ents.some(e => e.t === "circle"));
+      const sk = (sel && withCircle.includes(sel) ? sel : null) ?? withCircle.at(-1);
+      if (!sk) { toast(t("Draw a sketch with a circle first: the helix starts on it."), true); return null; }
+      return { id, type: "helix", name: nextName(d, "helix"), sketch: sk.id, mode: "pitchRev", pitch: { v: 5 }, revs: { v: 4 }, height: { v: 20 } } satisfies HelixFeature;
+    }
+    const cut = type === "sweepcut" || type === "loftcut";
+    if (cut && !this.last?.data) { toast(t("There is no body yet."), true); return null; }
+    const free = sketches.filter(s => !used.has(s.id) && !d.features.some(g => (g.type === "sweep" && (g.profile === s.id || (g.path && "sketch" in g.path && g.path.sketch === s.id))) || (g.type === "loft" && g.profiles.includes(s.id)) || (g.type === "helix" && g.sketch === s.id)));
+    if (type === "loft" || type === "loftcut") {
+      const profs = free.filter(closed).slice(-2);
+      return { id, type: "loft", name: nextName(d, "loft", cut), op: cut ? "cut" : "boss", profiles: profs.map(s => s.id) } satisfies LoftFeature;
+    }
+    const helix = d.features.slice(0, end).filter(f => f.type === "helix" && !f.suppressed).at(-1);
+    const profile = (sel && closed(sel) ? sel : null) ?? free.filter(closed).at(-1);
+    const pathSk = free.filter(s => s !== profile && !closed(s)).at(-1);
+    const sw: SweepFeature = { id, type: "sweep", name: nextName(d, "sweep", cut), op: cut ? "cut" : "boss" };
+    if (helix) sw.path = { helix: helix.id }; else if (pathSk) sw.path = { sketch: pathSk.id };
+    if (profile && !(helix && profile.id === (helix as HelixFeature).sketch)) sw.profile = profile.id; else sw.circular = { v: 2 };
+    return sw;
   }
 
   editFeature(id: string) {
@@ -709,6 +746,9 @@ export class ModelController {
     if ((f.type === "lpattern" || f.type === "cpattern") && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
     if (f.type === "lpattern" && !f.dir) { toast(t("Pick a direction: an edge, a face or an axis."), true); return; }
     if (f.type === "cpattern" && !f.axis) { toast(t("Pick an axis: a round edge or face, a straight edge or a reference axis."), true); return; }
+    if (f.type === "sweep" && !f.path) { toast(t("Pick a path: a sketch or a helix."), true); return; }
+    if (f.type === "sweep" && !f.profile && !f.circular) { toast(t("Pick a profile sketch, or use a circular profile."), true); return; }
+    if (f.type === "loft" && f.profiles.length < 2) { toast(t("Pick two or more profile sketches."), true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
@@ -817,7 +857,7 @@ export class ModelController {
 
   /** Whether a sketch shows in the view: by its own choice, else until a feature uses it (SolidWorks absorbs it). */
   private sketchShown(f: SketchFeature) {
-    return !(f.hidden ?? this.doc.features.some(g => (g.type === "extrude" || g.type === "revolve") && g.sketch === f.id));
+    return !(f.hidden ?? this.doc.features.some(g => absorbs(g, f.id)));
   }
 
   toggleHidden(id: string) {
@@ -837,9 +877,9 @@ export class ModelController {
       this.store!.change(show ? `Show ${f.name}` : `Hide ${f.name}`, d => { (d.features.find(x => x.id === id) as SketchFeature).hidden = !show; });
       return;
     }
-    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point" && f?.type !== "csys") return;
+    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point" && f?.type !== "csys" && f?.type !== "helix") return;
     this.store!.change(f.hidden ? `Show ${f.name}` : `Hide ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature | CsysFeature;
+      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature | CsysFeature | HelixFeature;
       if (g.hidden) delete g.hidden; else g.hidden = true;
     });
   }
@@ -1700,7 +1740,7 @@ export class ModelController {
     const dark = document.documentElement.dataset.theme === "dark";
     const m = this.mode;
     // Sketches no feature uses yet are shown (SolidWorks shows unabsorbed sketches).
-    const used = new Set(this.doc.features.flatMap(f => (f.type === "extrude" || f.type === "revolve" ? [f.sketch] : [])));
+    const used = new Set(this.doc.features.flatMap(f => this.doc.features.filter(g => g.type === "sketch" && absorbs(f, g.id)).map(g => g.id)));
     if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve")) used.add(m.draft.sketch);
     const end = this.doc.rollback ?? this.doc.features.length;
     this.doc.features.slice(0, end).forEach(f => {
@@ -1711,6 +1751,15 @@ export class ModelController {
       const g = moving ? { ...f, plane: m.edit!.plane } : f;
       this.lines(sketchSegments(g, this.frameOf(g)), moving ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, moving ? 2.2 : 1.4);
     });
+    // Helix curves (FR-FT-083): drawn like sketch curves; the one being edited highlighted.
+    for (const [id, pts] of Object.entries(this.last?.curves ?? {})) {
+      const hf = this.doc.features.find(x => x.id === id);
+      const editing = m.kind === "feature" && m.draft.id === id;
+      if (!editing && (hf?.type !== "helix" || hf.hidden || hf.suppressed)) continue;
+      const pos: number[] = [];
+      for (let i = 0; i + 1 < pts.length; i++) pos.push(...pts[i], ...pts[i + 1]);
+      this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
+    }
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
@@ -2359,6 +2408,13 @@ export class ModelController {
         + btn("shell", t("Shell"), t("Shell: hollow the body, leaving picked faces open"), m.kind === "feature" && m.draft.type === "shell")
         + btn("draft", t("Draft"), t("Draft: taper faces by an angle about a neutral plane"), m.kind === "feature" && m.draft.type === "draft")
         + (() => {
+          // Sweep flyout (FRS 9.9): Sweep ▾ Cut-Sweep, Loft, Cut-Loft, Helix.
+          const open = m.kind === "feature" ? (m.draft.type === "sweep" || m.draft.type === "loft" ? `${m.draft.type}${m.draft.op === "cut" ? "cut" : ""}` : m.draft.type) : null;
+          const all = P3_TOOLS();
+          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("sweep")) ?? all[0];
+          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="sweep" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
+        })()
+        + (() => {
           // Pattern flyout: Linear ▾ Circular, Mirror.
           const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
           const open = m.kind === "feature" ? m.draft.type : null;
@@ -2388,6 +2444,12 @@ export class ModelController {
         const r = b.getBoundingClientRect();
         this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="pattern"]')?.focus());
+        return;
+      }
+      if (b.dataset.fly === "sweep" && mm.kind !== "sketch") {
+        const r = b.getBoundingClientRect();
+        this.showMenu(P3_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("sweep", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="sweep"]')?.focus());
         return;
       }
       if (b.dataset.fly === "save") {
@@ -2593,7 +2655,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -2882,7 +2944,7 @@ export class ModelController {
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
-      if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
+      if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
       items.push([t("Roll back to here"), () => this.setRollback(i)]);
@@ -3159,6 +3221,7 @@ export class ModelController {
           + `<p class="pm-help muted">${esc(t("For the axis, click a round edge or face, a straight edge, or a reference axis in the tree."))}</p>`;
       }
     }
+    if (f.type === "helix" || f.type === "sweep" || f.type === "loft") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
@@ -3192,7 +3255,8 @@ export class ModelController {
         let v: number;
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
-        if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        // Helix start angle and taper may be 0 or negative.
+        if (!(v > 0) && !(key === "start" || key === "taper")) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down.
@@ -3293,6 +3357,27 @@ export class ModelController {
             if (val !== "vertex") delete f.startVertex;
             if (val === "surface" || val === "vertex") m.focus = "start";
           }, true);
+          return;
+        }
+        if (f.type === "helix" && (k === "taperOn" || k === "mode" || k === "hsketch")) {
+          upd(() => {
+            if (k === "taperOn") { if (val) f.taper = { v: (5 * Math.PI) / 180 }; else delete f.taper; }
+            if (k === "mode") f.mode = val as HelixFeature["mode"];
+            if (k === "hsketch") f.sketch = String(val);
+          }, true);
+          return;
+        }
+        if (f.type === "sweep" && (k === "profileKind" || k === "swProfile" || k === "swPath" || k === "orient")) {
+          upd(() => {
+            if (k === "profileKind") { if (val === "circular") { f.circular ??= { v: 2 }; delete f.profile; } else { delete f.circular; f.profile = sketches.find(s => sketchProfileOk(s))?.id; if (!f.profile) delete f.profile; } }
+            if (k === "swProfile") { if (val) f.profile = String(val); else delete f.profile; }
+            if (k === "swPath") { const v = String(val); if (!v) delete f.path; else f.path = v.startsWith("h:") ? { helix: v.slice(2) } : { sketch: v.slice(2) }; }
+            if (k === "orient") { if (val === "normal") f.orient = "normal"; else delete f.orient; }
+          }, true);
+          return;
+        }
+        if (f.type === "loft" && /^lp\d+$/.test(k)) {
+          upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
         }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
@@ -3680,6 +3765,48 @@ export class ModelController {
   }
 
   /** All relations of the sketch with their state (FR-SK-055): select or delete each. */
+  /** PropertyManager groups for helix, sweep and loft (FRS 9.9). */
+  private p3Panel(f: HelixFeature | SweepFeature | LoftFeature, sketches: SketchFeature[], group: (legend: string, inner: string) => string,
+    numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, chk: (k: string, on: boolean | undefined, label: string) => string): { title: string; body: string } {
+    const opt = (v: string, l: string, cur: string) => `<option value="${esc(v)}"${v === cur ? " selected" : ""} translate="no">${esc(l)}</option>`;
+    const skOpts = (list: SketchFeature[], cur: string, none?: string) => (none != null ? opt("", none, cur) : "") + list.map(s => opt(s.id, featureLabel(s.name), cur)).join("");
+    const sel = (k: string, label: string, inner: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${inner}</select></label>`;
+    if (f.type === "helix") {
+      const withCircle = sketches.filter(s => s.ents.some(e => e.t === "circle"));
+      const modes: [HelixFeature["mode"], string][] = [["pitchRev", t("Pitch and revolution")], ["heightRev", t("Height and revolution")], ["heightPitch", t("Height and pitch")]];
+      const fields = f.mode === "pitchRev" ? numField("pitch", t("Pitch"), f.pitch, "length") + this.countField("revs", t("Revolutions"), f.revs)
+        : f.mode === "heightRev" ? numField("height", t("Height"), f.height, "length") + this.countField("revs", t("Revolutions"), f.revs)
+        : numField("height", t("Height"), f.height, "length") + numField("pitch", t("Pitch"), f.pitch, "length");
+      return { title: t("Helix/Spiral"), body: group(t("Defined by"), sel("hsketch", t("Sketch with a circle"), skOpts(withCircle, f.sketch)) + sel("mode", t("Type"), modes.map(([v, l]) => `<option value="${v}"${v === f.mode ? " selected" : ""}>${esc(l)}</option>`).join("")))
+        + group(t("Parameters"), fields + chk("reverse", f.reverse, t("Reverse direction")) + numField("start", t("Start angle"), f.start ?? { v: 0 }, "angle") + chk("cw", f.cw, t("Clockwise")))
+        + group(t("Taper helix"), chk("taperOn", !!f.taper, t("Taper helix")) + (f.taper ? numField("taper", t("Angle"), f.taper, "angle") : ""))
+        + `<p class="pm-help muted">${esc(t("The helix starts on the sketch's circle and runs along the sketch normal. Use it as a sweep path for springs and threads."))}</p>` };
+    }
+    if (f.type === "sweep") {
+      const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
+      const helices = this.doc.features.slice(0, at).filter(g => g.type === "helix");
+      const closed = sketches.filter(sketchProfileOk);
+      const pathCur = f.path ? ("helix" in f.path ? `h:${f.path.helix}` : `s:${f.path.sketch}`) : "";
+      const paths = opt("", t("None"), pathCur) + helices.map(h => opt(`h:${h.id}`, featureLabel(h.name), pathCur)).join("") + sketches.filter(s => s.id !== f.profile).map(s => opt(`s:${s.id}`, featureLabel(s.name), pathCur)).join("");
+      return { title: f.op === "cut" ? t("Cut-Sweep") : t("Sweep"), body: group(t("Profile and path"),
+        `<label class="pm-field"><span>${esc(t("Profile"))}</span><select data-k="profileKind"><option value="sketch"${f.circular ? "" : " selected"}>${esc(t("Sketch profile"))}</option><option value="circular"${f.circular ? " selected" : ""}>${esc(t("Circular profile"))}</option></select></label>`
+        + (f.circular ? numField("circular", t("Diameter"), f.circular, "length") : sel("swProfile", t("Profile sketch"), skOpts(closed, f.profile ?? "", t("None"))))
+        + sel("swPath", t("Path"), paths))
+        + group(t("Options"), sel("orient", t("Profile orientation"), `<option value="follow"${f.orient === "normal" ? "" : " selected"}>${esc(t("Follow path"))}</option><option value="normal"${f.orient === "normal" ? " selected" : ""}>${esc(t("Keep normal constant"))}</option>`))
+        + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
+    }
+    const closed = sketches.filter(sketchProfileOk);
+    const rows = f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
+      + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"));
+    return { title: f.op === "cut" ? t("Cut-Loft") : t("Loft"), body: group(t("Profiles"), rows + `<p class="pm-help muted">${esc(t("Profiles are joined in this order. Each is one closed region, usually on parallel planes."))}</p>`)
+      + group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : "")) };
+  }
+
+  /** A positive number field that takes fractions (revolutions). */
+  private countField(key: string, label: string, n: Num) {
+    return `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="decimal" data-num="${key}" data-q="number" value="${esc(n.expr ?? trimNum(n.v, 6))}" spellcheck="false" /></span></label>`;
+  }
+
   /** Dangling On edge relations (FR-SK-064): what to do about them. */
   private danglingBox(ed: SketchEditor) {
     const n = ed.sk.rels.filter(r => r.ext && r.dangling).length;
@@ -3787,7 +3914,32 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 }
 
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+/** Whether a feature uses a sketch up (SolidWorks hides it once used). */
+function absorbs(g: Feature, sketch: string): boolean {
+  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix") return g.sketch === sketch;
+  if (g.type === "sweep") return g.profile === sketch || (!!g.path && "sketch" in g.path && g.path.sketch === sketch);
+  if (g.type === "loft") return g.profiles.includes(sketch);
+  return false;
+}
+
+/** A sketch with closed regions (usable as a sweep or loft profile). */
+const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
+
+/** The sweep flyout's commands (FRS 9.9). */
+const P3_TOOLS = (): [string, string, string][] => [
+  ["sweep", t("Sweep"), t("Swept boss: a profile (or a circle) along a path")],
+  ["sweepcut", t("Cut-Sweep"), t("Swept cut: removes a profile moved along a path")],
+  ["loft", t("Loft"), t("Lofted boss: through two or more profiles")],
+  ["loftcut", t("Cut-Loft"), t("Lofted cut: removes material through two or more profiles")],
+  ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
+];
+
 const ICON_SVG: Record<string, string> = {
+  sweep: S('<path d="M3 13c0-6 4-10 10-10"/><circle cx="3" cy="13" r="1.8"/><circle cx="13" cy="3" r="1.8"/>'),
+  sweepcut: S('<path d="M2 6h12v8H2z"/><path d="M4 12c2-4 5-5 8-5" stroke-dasharray="2 1.5"/>'),
+  loft: S('<path d="M3 13h6v-2H3zM9 4h4v3H9z"/><path d="M3 11l6-7M9 11l4-4"/>'),
+  loftcut: S('<path d="M2 6h12v8H2z"/><path d="M5 12h3l3-4H9z" fill="currentColor" fill-opacity=".3"/>'),
+  helix: S('<path d="M4 14c4 0 8-1 8-2s-8-1-8-2 8-1 8-2-8-1-8-2 8-1 8-2"/>'),
   sketch: S('<path d="M2.5 13.5 4 9.5l7-7 2.5 2.5-7 7z"/><path d="M9.5 4 12 6.5"/>'),
   extrude: S('<path d="M3 11h7v3H3z"/><path d="M3 11l3-3h7l-3 3M13 8v3l-3 3"/><path d="M8 7V2M6 4l2-2 2 2"/>'),
   cut: S('<path d="M2 6h12v8H2z"/><path d="M6 6v4h4V6" fill="currentColor" fill-opacity=".3"/><path d="M8 4V1M6.5 2.5 8 4l1.5-1.5"/>'),
