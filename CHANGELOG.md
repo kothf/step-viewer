@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-07
+
+### Added
+- **Shell** (FR-FT-060): hollows the body to a wall thickness, inward or outward; click the faces to leave open, or none for a closed hollow body.
+- **Linear pattern** (FR-FT-070): copies of extrudes, cuts, revolves, mirrors or patterns along one or two directions (an edge, a face's normal or a reference axis), with spacing, instance count and instances to skip.
+- **Circular pattern** (FR-FT-071): copies about an axis (a round edge or face, a straight edge or a reference axis), spread equally over an angle or at a set angle apart.
+- **Mirror** (FR-FT-072): mirrors the picked features, or the whole body when none are picked, about a plane or flat face.
+- Copies that miss the body, or land where material is already gone, are skipped with a warning listing them (FR-FT-075). Pick the features to copy by clicking their faces or their rows in the tree; the pattern tools share a ▾ button on the feature bar.
+
 ## [1.22.0] - 2026-11-07
 
 ### Added
@@ -311,7 +320,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.22.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.23.0...HEAD
+[1.23.0]: https://github.com/kothf/step-viewer/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/kothf/step-viewer/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/kothf/step-viewer/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/kothf/step-viewer/compare/v1.19.4...v1.20.0

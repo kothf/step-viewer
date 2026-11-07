@@ -16,8 +16,8 @@ import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type {
-  AxisFeature, ChamferFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, Num, PartDoc, PlaneFeature, PlaneRef,
-  PointFeature, RevolveFeature, SketchFeature, V3,
+  AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
+  MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, SketchFeature, V3,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { STD_FRAMES } from "../kernel/model";
@@ -56,13 +56,20 @@ type Mode =
   | { kind: "none" }
   | { kind: "plane" }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
-  | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: "base" | "axis" | "upto"; instant?: boolean }
+  | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
   | { kind: "props"; draft: PartDoc };
+
+/** Which selection box of the feature panel the next click in the view fills. */
+type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces";
+type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
+const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
+/** Features whose result mirror and patterns can copy. */
+const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpattern"]);
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point"];
+const ICONS: Record<string, string> = { sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Mirror", "LPattern", "CirPattern"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -77,7 +84,9 @@ export function featureLabel(name: string) {
 function statusText(s: FeatureStatus) {
   if (s.code === "warning" && s.warning) {
     const m = s.warning.match(/^(\d+) of (\d+) edges/);
-    return m ? t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] }) : t(s.warning);
+    if (m) return t("{n} of {m} edges could not be rounded and were skipped.", { n: m[1], m: m[2] });
+    const c = s.warning.match(/^(\d+) of (\d+) copies fall outside the body and were skipped: (.*)\.$/);
+    return c ? t("{n} of {m} copies fall outside the body and were skipped (instances {list}).", { n: c[1], m: c[2], list: c[3] }) : t(s.warning);
   }
   if (s.code === "E-TN-LOST") return t("A face or edge this feature used is gone (reference lost).");
   if (s.code === "E-KRN-CRASH") return t("The geometry kernel stopped; it was restarted.");
@@ -356,7 +365,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "mirror" | "lpattern" | "cpattern") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -368,6 +377,8 @@ export class ModelController {
     // Axis and point take a picked edge or face too.
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
+    const shellFace = type === "shell" ? this.pickedFace() : null;
+    const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
     const d = this.doc;
     const end = d.rollback ?? d.features.length;
@@ -400,6 +411,15 @@ export class ModelController {
       if (refEdge) { pt.edge = this.refOfEdge(refEdge) ?? undefined; pt.mode = refEdge.type === "circle" || refEdge.type === "arc" ? "centre" : "mid"; }
       else if (refFace != null) { const fr = this.faceRef(refFace); if (fr) { pt.mode = "face"; pt.face = fr; } }
       draft = pt;
+    } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      const seeds = seedSel ? [seedSel] : [];
+      if (type === "shell") {
+        const fr = shellFace != null ? this.faceRef(shellFace) : null;
+        draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: fr ? [fr] : [] } satisfies ShellFeature;
+      } else if (type === "mirror") draft = { id, type: "mirror", name: nextName(d, "mirror"), features: seeds } satisfies MirrorFeature;
+      else if (type === "lpattern") draft = { id, type: "lpattern", name: nextName(d, "lpattern"), features: seeds, spacing: { v: 10 }, count: 3 } satisfies LinearPatternFeature;
+      else draft = { id, type: "cpattern", name: nextName(d, "cpattern"), features: seeds, count: 4, angle: { v: 2 * Math.PI }, equal: true } satisfies CircularPatternFeature;
     } else {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       draft = type === "fillet"
@@ -408,7 +428,10 @@ export class ModelController {
       if (pre) (draft as FilletFeature).edges = [pre];
     }
     const index = end;
-    this.mode = { kind: "feature", draft, index, isNew: true, focus: type === "plane" ? "base" : undefined };
+    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" ? "faces"
+      : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
+      : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds") : undefined;
+    this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -453,6 +476,10 @@ export class ModelController {
     if (f.type === "extrude" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
+    if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
+    if ((f.type === "lpattern" || f.type === "cpattern") && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
+    if (f.type === "lpattern" && !f.dir) { toast(t("Pick a direction: an edge, a face or an axis."), true); return; }
+    if (f.type === "cpattern" && !f.axis) { toast(t("Pick an axis: a round edge or face, a straight edge or a reference axis."), true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
@@ -662,6 +689,7 @@ export class ModelController {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "shell" || isCopy(m.draft))) this.pickCopy(e);
     }, true);
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
@@ -783,6 +811,81 @@ export class ModelController {
     this.drawDecor();
     this.renderPanel();
     void this.rebuild();
+  }
+
+  /**
+   * Shell, mirror and patterns: a click fills the focused box. Faces toggle in Shell's list; for the
+   * features to copy, a face picks the feature that made it; a direction or axis takes an edge or a face.
+   */
+  private pickCopy(e: PointerEvent) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const f = m.draft;
+    const own = (n: string | undefined) => !!n && n.startsWith(`${f.id}:`);
+    if (f.type === "shell") {
+      const hit = this.host.faceAt(e.clientX, e.clientY);
+      const fr = hit ? this.faceRef(hit.faceId) : null;
+      if (!fr || own(fr.name)) { toast(t("Pick a face.")); return; }
+      const i = f.faces.findIndex(x => x.name === fr.name && (!x.hint || !fr.hint || Math.hypot(x.hint[0] - fr.hint[0], x.hint[1] - fr.hint[1], x.hint[2] - fr.hint[2]) < 1e-3));
+      if (i >= 0) f.faces.splice(i, 1); else f.faces.push(fr);
+      this.draftChanged();
+      return;
+    }
+    if (!isCopy(f)) return;
+    if (m.focus === "mplane" && f.type === "mirror") {
+      const r = this.pickRef(e);
+      if (!r) return;
+      if ("face" in r && own(r.face.name)) return;
+      f.plane = r;
+      if (!f.features.length) m.focus = "seeds";
+      this.draftChanged();
+      return;
+    }
+    if (m.focus === "dir" || m.focus === "dir2") {
+      const hit = this.host.edgeAt(e.clientX, e.clientY);
+      let ref: LineRef | null = null;
+      if (hit?.edge && (hit.edge.type === "line" || hit.edge.type === "circle" || hit.edge.type === "arc")) { const er = this.refOfEdge(hit.edge); if (er && !er.faces.some(own)) ref = { edge: er }; }
+      else if (hit?.faceId != null) {
+        const face = this.host.viewer.parts[0]?.data.faces[hit.faceId];
+        const fr = this.faceRef(hit.faceId);
+        if (fr && !own(fr.name) && face && (face.type === "plane" || face.type === "cylinder")) ref = { face: fr };
+      }
+      if (!ref) { toast(t("Pick a straight or round edge, or a flat or round face.")); return; }
+      if (f.type === "cpattern") f.axis = ref;
+      else if (m.focus === "dir2" && f.type === "lpattern") f.dir2 = ref;
+      else if (f.type === "lpattern") f.dir = ref;
+      this.draftChanged();
+      return;
+    }
+    // Features to copy: the feature that made the clicked face.
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const name = hit ? this.last?.faceNames[hit.faceId] : undefined;
+    const owner = name?.split(":")[0];
+    const sf = owner ? this.store?.feature(owner) : undefined;
+    if (!sf || sf.id === f.id || !SEED_TYPES.has(sf.type)) { toast(t("Pick a face made by an extrude, a cut, a revolve, a mirror or a pattern.")); return; }
+    this.toggleSeed(f, sf.id);
+  }
+
+  private toggleSeed(f: CopyFeature, id: string) {
+    const m = this.mode;
+    const i = f.features.indexOf(id);
+    if (i >= 0) f.features.splice(i, 1);
+    else {
+      // Only features before this one.
+      const at = m.kind === "feature" ? m.index : this.doc.features.length;
+      if (this.doc.features.findIndex(x => x.id === id) >= at) return;
+      f.features.push(id);
+    }
+    this.draftChanged();
+  }
+
+  /** A direction or axis reference in words. */
+  private lineLabel(r: LineRef | undefined): string {
+    if (!r) return t("None");
+    if (r.axis) { const f = this.store?.feature(r.axis); return f ? featureLabel(f.name) : t("Missing"); }
+    if (r.edge) return t("Edge picked");
+    const owner = r.face ? this.store?.feature(r.face.name.split(":")[0]) : undefined;
+    return owner ? t("Face of {name}", { name: featureLabel(owner.name) }) : t("Face");
   }
 
   /** A persistent reference to a shown face. */
@@ -1363,6 +1466,14 @@ export class ModelController {
         + btn("revolve", t("Revolve"), t("Revolve a sketch around a line"), m.kind === "feature" && m.draft.type === "revolve")
         + btn("fillet", t("Fillet"), t("Round edges"), m.kind === "feature" && m.draft.type === "fillet")
         + btn("chamfer", t("Chamfer"), t("Bevel edges"), m.kind === "feature" && m.draft.type === "chamfer")
+        + btn("shell", t("Shell"), t("Shell: hollow the body, leaving picked faces open"), m.kind === "feature" && m.draft.type === "shell")
+        + (() => {
+          // Pattern flyout: Linear ▾ Circular, Mirror.
+          const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
+          const open = m.kind === "feature" ? m.draft.type : null;
+          const cur = pats.find(r => r[0] === open) ?? pats.find(r => r[0] === this.flyLast.get("pattern")) ?? pats[0];
+          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="pattern" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
+        })()
         + (() => {
           // Reference geometry flyout: Plane ▾ Axis, Point.
           const refs: [string, string, string][] = [["plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")], ["axis", t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")], ["point", t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")]];
@@ -1382,6 +1493,12 @@ export class ModelController {
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
       const mm = this.mode;
+      if (b.dataset.fly === "pattern" && mm.kind !== "sketch") {
+        const r = b.getBoundingClientRect();
+        this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="pattern"]')?.focus());
+        return;
+      }
       if (b.dataset.fly === "plane" && mm.kind !== "sketch") {
         const r = b.getBoundingClientRect();
         this.showMenu(([["plane", t("Plane")], ["axis", t("Axis")], ["point", t("Point")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("plane", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
@@ -1557,7 +1674,7 @@ export class ModelController {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "mirror": case "lpattern": case "cpattern": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -1647,6 +1764,14 @@ export class ModelController {
         if (mm.kind === "feature" && asRef && mm.draft.type === "plane" && mm.focus !== "axis" && mm.draft.id !== id) { mm.draft.base = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
+        if (mm.kind === "feature" && mm.draft.type === "mirror" && asRef && (mm.focus === "mplane" || !mm.draft.plane)) { mm.draft.plane = asRef; if (!mm.draft.features.length) mm.focus = "seeds"; this.draftChanged(); return; }
+        if (mm.kind === "feature" && (mm.draft.type === "lpattern" || mm.draft.type === "cpattern") && (mm.focus === "dir" || mm.focus === "dir2") && this.store!.feature(id)?.type === "axis") {
+          const ref: LineRef = { axis: id };
+          if (mm.draft.type === "cpattern") mm.draft.axis = ref; else if (mm.focus === "dir2") mm.draft.dir2 = ref; else mm.draft.dir = ref;
+          this.draftChanged();
+          return;
+        }
+        if (mm.kind === "feature" && isCopy(mm.draft) && SEED_TYPES.has(this.store!.feature(id)?.type ?? "") && id !== mm.draft.id) { this.toggleSeed(mm.draft, id); return; }
         if (mm.kind === "feature" && (mm.draft.type === "extrude" || mm.draft.type === "revolve") && this.store!.feature(id)?.type === "sketch") {
           mm.draft.sketch = id;
           if (mm.draft.type === "revolve") { const sk = this.store!.feature(id) as SketchFeature; const ls = sk.ents.filter(x => x.t === "line"); mm.draft.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }
@@ -1871,6 +1996,37 @@ export class ModelController {
         + `<div class="pm-field"><span>${esc(t("Reference"))}</span><button class="pm-box focus" data-k="focus-ref" translate="no">${esc(picked)}</button></div>`)
         + `<p class="pm-help muted">${esc(help)}</p>`;
     }
+    if (f.type === "shell" || isCopy(f)) {
+      const box = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
+      const intField = (key: string, label: string, v: number) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="numeric" data-int="${key}" value="${v}" spellcheck="false" /></span></label>`;
+      const seeds = isCopy(f) ? (f.features.map(id => this.store!.feature(id)).filter(Boolean).map(x => featureLabel(x!.name)).join(", ") || t("None")) : "";
+      const seedGroup = isCopy(f) ? group(f.type === "mirror" ? t("Features to mirror") : t("Features to pattern"), box("seeds", t("Features"), seeds)
+        + `<p class="pm-help muted">${esc(f.type === "mirror" ? t("Click faces of the features (or rows in the tree); none mirrors the whole body.") : t("Click faces of the features, or rows in the tree."))}</p>`) : "";
+      const skip = (f.type === "lpattern" || f.type === "cpattern") ? group(t("Instances to skip"), `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
+      if (f.type === "shell") {
+        title = t("Shell");
+        body = group(t("Parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + chk("outward", f.outward, t("Shell outward")))
+          + group(t("Faces to remove"), `<p class="pm-count">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</p>`
+            + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
+            + `<p class="pm-help muted">${esc(t("Click the faces to leave open; none makes a closed hollow body."))}</p>`);
+      } else if (f.type === "mirror") {
+        title = t("Mirror");
+        body = group(t("Mirror face/plane"), box("mplane", t("Plane"), this.refLabel(f.plane)) + `<p class="pm-help muted">${esc(t("Click a plane or a flat face in the view or the tree."))}</p>`) + seedGroup;
+      } else if (f.type === "lpattern") {
+        title = t("Linear pattern");
+        body = group(t("Direction 1"), box("dir", t("Direction"), this.lineLabel(f.dir)) + numField("spacing", t("Spacing"), f.spacing, "length") + intField("count", t("Instances"), f.count) + chk("flip", f.flip, t("Reverse direction")))
+          + group(t("Direction 2"), chk("useDir2", !!f.dir2 || m.focus === "dir2", t("Direction 2"))
+            + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + numField("spacing2", t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction")) : ""))
+          + seedGroup + skip
+          + `<p class="pm-help muted">${esc(t("For a direction, click a straight edge, a flat face (its normal) or a reference axis in the tree."))}</p>`;
+      } else {
+        title = t("Circular pattern");
+        body = group(t("Parameters"), box("dir", t("Axis"), this.lineLabel(f.axis)) + numField("angle", t("Angle"), f.angle, "angle") + intField("count", t("Instances"), f.count)
+          + chk("equal", f.equal, t("Equal spacing")) + chk("flip", f.flip, t("Reverse direction")))
+          + seedGroup + skip
+          + `<p class="pm-help muted">${esc(t("For the axis, click a round edge or face, a straight edge, or a reference axis in the tree."))}</p>`;
+      }
+    }
     if (f.type === "plane") {
       title = t("Plane");
       body = group(t("First reference"), `<button class="pm-box${m.focus !== "axis" ? " focus" : ""}" data-k="focus-base" translate="no">${esc(this.refLabel(f.base))}</button>`)
@@ -1935,6 +2091,18 @@ export class ModelController {
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as "equal" | "two" | "angle"; if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
+        if (k === "skip" && (f.type === "lpattern" || f.type === "cpattern")) {
+          const list = String(val).split(/[;\s]+/).map(x => x.trim()).filter(Boolean);
+          const ok = list.every(x => (f.type === "lpattern" && f.dir2 ? /^\d+,\d+$/ : /^\d+$/).test(x));
+          if (!ok) { el.setAttribute("aria-invalid", "true"); toast(t("Write instance numbers like 2; 3 (or 1,1; 2,0 with two directions)."), true); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { if (list.length) f.skip = list; else delete f.skip; });
+          return;
+        }
+        if (k === "useDir2" && f.type === "lpattern") {
+          upd(() => { if (val) { m.focus = "dir2"; f.spacing2 ??= { v: f.spacing.v }; f.count2 ??= 2; } else { delete f.dir2; delete f.spacing2; delete f.count2; delete f.flip2; if (m.focus === "dir2") m.focus = "dir"; } }, true);
+          return;
+        }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
@@ -1957,6 +2125,28 @@ export class ModelController {
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
     pm.querySelector("[data-k=focus-axis]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "axis"; this.renderPanel(); this.drawDecor(); } });
+    pm.querySelectorAll<HTMLElement>("[data-focus]").forEach(b => b.addEventListener("click", () => { if (m.kind === "feature") { m.focus = b.dataset.focus as Focus; this.renderPanel(); this.drawDecor(); } }));
+    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell") { f.faces = []; this.draftChanged(); } });
+    pm.querySelectorAll<HTMLInputElement>("input[data-int]").forEach(inp => {
+      const apply = () => {
+        const v = Math.round(Number(inp.value.trim()));
+        if (!Number.isFinite(v) || v < 1 || v > 500) { inp.setAttribute("aria-invalid", "true"); toast(t("Enter a whole number from 1 to 500."), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const g = f as unknown as Record<string, number>;
+        if (g[inp.dataset.int!] === v) return;
+        upd(() => { g[inp.dataset.int!] = v; });
+      };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); apply(); this.ok(); }
+        else if (e.key === "Escape") { e.preventDefault(); void this.cancel(); }
+        else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const cur = Math.round(Number(inp.value)) + (e.key === "ArrowUp" ? 1 : -1);
+          if (cur >= 1 && cur <= 500) { inp.value = String(cur); apply(); }
+        }
+      });
+    });
     pm.querySelector("[data-k=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-k=cancel]")!.addEventListener("click", () => void this.cancel());
   }
@@ -2128,6 +2318,10 @@ const ICON_SVG: Record<string, string> = {
   normal: S('<path d="M1.5 12 4.5 7h10l-3 5z"/><path d="M8 9.5V1.5M6 3.5l2-2 2 2"/>'),
   edit: S('<path d="M2.5 2.5h7v4"/><path d="M2.5 2.5v11h5"/><path d="m8.5 13.5.5-2.5 4.5-4.5 2 2-4.5 4.5z"/>'),
   editsk: S('<path d="M2 12.5h7M2 12.5 6 5"/><path d="m9 13.5.5-2.5 4-4 2 2-4 4z"/>'),
+  shell: S('<path d="M2.5 5 8 2l5.5 3v6L8 14l-5.5-3z"/><path d="M5 6.3 8 4.6l3 1.7v3.4L8 11.4 5 9.7z" fill="currentColor" fill-opacity=".3"/>'),
+  mirror: S('<path d="M8 1.5v13" stroke-dasharray="2 1.5"/><path d="M6 4 2.5 11H6z"/><path d="M10 4l3.5 7H10z" opacity=".55"/>'),
+  lpattern: S('<rect x="1.5" y="6" width="3.5" height="3.5"/><rect x="6.25" y="6" width="3.5" height="3.5" opacity=".7"/><rect x="11" y="6" width="3.5" height="3.5" opacity=".45"/><path d="M2 13h12M12 11.5l2 1.5-2 1.5"/>'),
+  cpattern: S('<circle cx="8" cy="8" r="1"/><circle cx="8" cy="3" r="1.6"/><circle cx="12.5" cy="10.5" r="1.6" opacity=".7"/><circle cx="3.5" cy="10.5" r="1.6" opacity=".45"/>'),
   filter: S('<path d="M2 3h12l-4.5 5.5V13l-3 1.5v-6z"/>'),
   "sel:faces": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" fill="currentColor" fill-opacity=".35"/>'),
   "sel:edges": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" opacity=".35"/><path d="M8 8.5v6" stroke-width="2.4"/>'),

@@ -10,7 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AxisFeature, BodyProps, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, PartDoc, PlaneFeature, PlaneRef, PointFeature, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -21,7 +21,9 @@ export class FeatureError extends Error {
 /** A body and the names of its faces (parallel arrays). */
 interface Named { shape: any; faces: any[]; names: string[] }
 
-interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame }
+/** What a feature added or removed, so mirror and patterns can copy it: its tool solids and how each was applied. */
+type Tool = { shape: Named; op: "fuse" | "cut" };
+interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[] }
 
 export interface ModelMesh {
   name: string;
@@ -68,6 +70,8 @@ function frameFrom(o: V3, x: V3, n: V3): Frame {
 
 export class Modeller {
   private cache: CacheEntry[] = [];
+  /** Tools of the features evaluated so far in this evaluation (by feature id). */
+  private tools = new Map<string, Tool[]>();
   /** A warning set while evaluating the current feature. */
   private warning = "";
 
@@ -380,6 +384,7 @@ export class Modeller {
     // Several regions: fuse the tools first.
     let tool = tools[0];
     for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
@@ -536,6 +541,184 @@ export class Modeller {
     throw new FeatureError("E-TN-LOST", `Reference lost: face ${name}`);
   }
 
+  /** Shell (FR-FT-060): MakeThickSolid; kept faces keep their names, the new walls are `fid:off:<face>`. */
+  private shell(f: ShellFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const t = f.thickness.v;
+    if (!(t > 1e-6)) throw new FeatureError("E-FT-ZERO", "The thickness must be more than 0.");
+    const list = new oc.TopTools_ListOfShape_1();
+    for (const r of f.faces) list.Append_1(this.resolveFace(prev, r));
+    const mk = new oc.BRepOffsetAPI_MakeThickSolid();
+    try {
+      mk.MakeThickSolidByJoin(prev.shape, list, f.outward ? t : -t, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false, new oc.Message_ProgressRange_1());
+    } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-FT-SHELL", "The shell failed: the wall may be too thick for this body, or a fillet is smaller than the thickness.");
+    const result = mk.Shape();
+    const faces = this.sub(result, "FACE");
+    const names: (string | null)[] = faces.map(() => null);
+    prev.faces.forEach((pf, i) => {
+      const j = faces.findIndex(x => x.IsSame(pf));
+      if (j >= 0) names[j] = prev.names[i];
+      for (const m of [...this.list(mk.Modified(pf)), ...this.list(mk.Generated(pf))]) {
+        const k = faces.findIndex(x => x.IsSame(m));
+        if (k >= 0 && !names[k]) names[k] = j >= 0 ? `${f.id}:off:${prev.names[i]}` : prev.names[i];
+      }
+    });
+    // Outward: the original faces are the inside now; whatever is unnamed is new.
+    let n = 0;
+    return { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${n++}`) };
+  }
+
+  /** A direction or an axis from a line reference: point and unit direction. */
+  private lineOf(ref: LineRef | undefined, body: Named | null, frames: Record<string, Frame>, what: string): { o: V3; d: V3 } {
+    const oc = this.oc;
+    if (!ref) throw new FeatureError("E-PAT-DIR", `Pick ${what}.`);
+    if (ref.axis) {
+      const fr = frames[ref.axis];
+      if (!fr) throw new FeatureError("E-FT-PARENT", "The reference axis is missing or has an error.");
+      return { o: fr.o, d: unit(fr.n) };
+    }
+    if (ref.edge) {
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, ref.edge));
+      const ty = ad.GetType();
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) return { o: this.xyz(ad.Line().Location()), d: this.xyz(ad.Line().Direction()) };
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) { const ax = ad.Circle().Axis(); return { o: this.xyz(ax.Location()), d: this.xyz(ax.Direction()) }; }
+      throw new FeatureError("E-PAT-DIR", "Use a straight or round edge.");
+    }
+    if (ref.face) {
+      const face = this.resolveFace(body, ref.face);
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      const ty = ad.GetType();
+      if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) { const ax = ad.Cylinder().Axis(); return { o: this.xyz(ax.Location()), d: this.xyz(ax.Direction()) }; }
+      if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone) { const ax = ad.Cone().Axis(); return { o: this.xyz(ax.Location()), d: this.xyz(ax.Direction()) }; }
+      if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
+        let n = this.xyz(ad.Plane().Position().Direction());
+        if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+        return { o: this.centroid(face), d: n };
+      }
+      throw new FeatureError("E-PAT-DIR", "Use a flat or round face.");
+    }
+    throw new FeatureError("E-PAT-DIR", `Pick ${what}.`);
+  }
+
+  /** The tools of the seed features, in feature order. */
+  private seedTools(ids: string[], doc: PartDoc): Tool[] {
+    if (!ids.length) throw new FeatureError("E-PAT-SEED", "Pick the features to copy.");
+    const out: Tool[] = [];
+    for (const id of ids) {
+      const f = doc.features.find(x => x.id === id);
+      if (!f) throw new FeatureError("E-PAT-SEED", "A feature to copy is missing.");
+      if (f.suppressed) continue;
+      const t = this.tools.get(id);
+      if (!t) throw new FeatureError("E-PAT-SEED", "Only extrudes, cuts, revolves, mirrors and patterns can be copied for now.");
+      out.push(...t);
+    }
+    if (!out.length) throw new FeatureError("E-PAT-SEED", "All the features to copy are suppressed.");
+    return out;
+  }
+
+  private transformed(t: Tool, trsf: any, fid: string, tag: string): Tool {
+    const oc = this.oc;
+    const mk = new oc.BRepBuilderAPI_Transform_2(t.shape.shape, trsf, true);
+    const shape = mk.Shape();
+    const faces = this.sub(shape, "FACE");
+    const names: string[] = faces.map((_f, i) => `${fid}:${tag}:new:${i}`);
+    t.shape.faces.forEach((f, i) => {
+      for (const m of this.list(mk.Modified(f))) { const j = faces.findIndex(x => x.IsSame(m)); if (j >= 0) names[j] = `${fid}:${tag}:${t.shape.names[i]}`; }
+    });
+    return { shape: { shape, faces, names }, op: t.op };
+  }
+
+  private solids(shape: any) {
+    const oc = this.oc;
+    let n = 0;
+    for (const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) n++;
+    return n;
+  }
+
+  /**
+   * Applies copies of tools to the body; a copy that adds nothing (a cut beside the part, a boss
+   * floating free of it) is skipped and listed in a warning (FR-FT-075).
+   */
+  private applyCopies(body: Named | null, copies: { tool: Tool; label: string }[], fid: string, seeds: Tool[] = []): Named {
+    if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const skipped: string[] = [];
+    const used: Tool[] = [];
+    for (const c of copies) {
+      try {
+        const before = this.volume(body.shape), solids = this.solids(body.shape);
+        const out = this.bool(c.tool.op, body, c.tool.shape, fid);
+        const after = this.volume(out.shape);
+        if (Math.abs(after - before) < 1e-9 || (c.tool.op === "fuse" && this.solids(out.shape) > solids)) { skipped.push(c.label); continue; }
+        body = out;
+        used.push(c.tool);
+      } catch { skipped.push(c.label); }
+    }
+    if (!used.length) throw new FeatureError("E-PAT-NONE", "No copy touches the body.");
+    // Copying this feature later copies its seeds too (a mirror of a pattern mirrors every instance).
+    this.tools.set(fid, [...seeds, ...used]);
+    if (skipped.length) this.warning = `${skipped.length} of ${copies.length} copies fall outside the body and were skipped: ${[...new Set(skipped)].join("; ")}.`;
+    return body;
+  }
+
+  /** Mirror (FR-FT-072): the seed features' tools reflected in a plane, or the whole body joined to its reflection. */
+  private mirror(f: MirrorFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.plane) throw new FeatureError("E-MIR-PLANE", "Pick a plane or a flat face to mirror about.");
+    const fr = this.planeFrame(f.plane, prev, frames);
+    const trsf = new oc.gp_Trsf_1();
+    trsf.SetMirror_3(new oc.gp_Ax2_3(this.P(fr.o), this.D(fr.n)));
+    const tools = f.features.length ? this.seedTools(f.features, doc) : [{ shape: prev, op: "fuse" as const }];
+    return this.applyCopies(prev, tools.map((t, i) => ({ tool: this.transformed(t, trsf, f.id, `m${i}`), label: "1" })), f.id, f.features.length ? tools : []);
+  }
+
+  /** Linear pattern (FR-FT-070): count × count2 copies; instance (0, 0) is the seed. */
+  private linearPattern(f: LinearPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const tools = this.seedTools(f.features, doc);
+    const d1 = mul(this.lineOf(f.dir, prev, frames, "a direction: an edge, a face or an axis").d, f.flip ? -1 : 1);
+    const n1 = Math.max(1, Math.round(f.count)), n2 = f.dir2 ? Math.max(1, Math.round(f.count2 ?? 1)) : 1;
+    const d2 = f.dir2 ? mul(this.lineOf(f.dir2, prev, frames, "the second direction").d, f.flip2 ? -1 : 1) : [0, 0, 0] as V3;
+    if (n1 * n2 < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
+    if (!(f.spacing.v > 1e-6) || (f.dir2 && n2 > 1 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
+    const skip = new Set(f.skip ?? []);
+    const copies: { tool: Tool; label: string }[] = [];
+    for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
+      if (i === 0 && j === 0) continue;
+      const key = f.dir2 ? `${i},${j}` : `${i}`;
+      if (skip.has(key)) continue;
+      const v = add(mul(d1, i * f.spacing.v), mul(d2, j * (f.spacing2?.v ?? 0)));
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetTranslation_1(this.V(v));
+      tools.forEach((t, k) => copies.push({ tool: this.transformed(t, trsf, f.id, `i${key.replace(",", "_")}s${k}`), label: String(key) }));
+    }
+    return this.applyCopies(prev, copies, f.id, tools);
+  }
+
+  /** Circular pattern (FR-FT-071): copies turned about an axis; equal spacing spreads them over the angle. */
+  private circularPattern(f: CircularPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const tools = this.seedTools(f.features, doc);
+    const ax = this.lineOf(f.axis, prev, frames, "an axis: a round edge or face, a straight edge or a reference axis");
+    const n = Math.max(1, Math.round(f.count));
+    if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
+    const total = f.angle.v;
+    if (!(total > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
+    const full = Math.abs(total - 2 * Math.PI) < 1e-9;
+    const step = f.equal ? total / (full ? n : n - 1) : total;
+    const skip = new Set(f.skip ?? []);
+    const copies: { tool: Tool; label: string }[] = [];
+    for (let i = 1; i < n; i++) {
+      if (skip.has(String(i))) continue;
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
+      tools.forEach((t, k) => copies.push({ tool: this.transformed(t, trsf, f.id, `i${i}s${k}`), label: String(i) }));
+    }
+    return this.applyCopies(prev, copies, f.id, tools);
+  }
+
   private size(shape: any) {
     const oc = this.oc;
     const box = new oc.Bnd_Box_1();
@@ -561,6 +744,7 @@ export class Modeller {
     const frames: Record<string, Frame> = {};
     const failed = new Set<string>();
     const next: CacheEntry[] = [];
+    this.tools = new Map();
     doc.features.forEach((f, i) => {
       if (i >= end) { statuses.push({ id: f.id, ok: true, code: "rolled-back" }); return; }
       chain = `${chain}|${JSON.stringify(f)}`;
@@ -569,6 +753,7 @@ export class Modeller {
         next.push(hit);
         statuses.push(hit.status);
         if (hit.frame) frames[f.id] = hit.frame;
+        if (hit.tools) this.tools.set(f.id, hit.tools);
         if (!hit.status.ok) failed.add(f.id);
         if (hit.body) body = hit.body;
         return;
@@ -586,6 +771,10 @@ export class Modeller {
           else if (f.type === "point") { frame = this.refPoint(f, body); frames[f.id] = frame; }
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
+          else if (f.type === "shell") body = this.shell(f, body);
+          else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
+          else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
+          else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;
@@ -594,7 +783,7 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, status, frame });
+      next.push({ key: chain, body, status, frame, tools: this.tools.get(f.id) });
     });
     this.cache = next;
     return { body, statuses, frames };

@@ -1,7 +1,7 @@
 // Document store: every change goes through `change()` (a command with a label),
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
-import { SCHEMA, type Feature, type FeatureType, type PartDoc, type PlaneRef } from "./types";
+import { SCHEMA, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", shell: "Shell", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
@@ -121,6 +121,16 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "axis" || f.type === "point") { if (f.edge) faces.push(...f.edge.faces); if (f.face) faces.push(f.face.name); }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  const line = (l: LineRef | undefined) => {
+    if (!l) return;
+    if (l.edge) faces.push(...l.edge.faces);
+    if (l.face) faces.push(l.face.name);
+    if (l.axis) features.push(l.axis);
+  };
+  if (f.type === "shell") faces.push(...f.faces.map(x => x.name));
+  if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
+  if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
+  if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
   return { faces, features };
 }
 

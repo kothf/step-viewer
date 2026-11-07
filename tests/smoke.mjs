@@ -2049,6 +2049,49 @@ try {
     check(win.join() === "m1" && cross.join() === "m1,m2", `model 1.21: sketch box selection, window then crossing (${win.join()} / ${cross.join()})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // 1.23 (P2): linear pattern of a hole, mirror of the pattern, shell.
+    await mp.evaluate(() => window.__sv.model.store.change("Hole", d => { d.features.push({ id: "s20", type: "sketch", name: "Sketch20", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "h0", t: "point", x: -40, y: -15 }, { id: "hk", t: "circle", c: "h0", r: 4 }] }, { id: "c20", type: "extrude", name: "Cut20", sketch: "s20", op: "cut", end: "through", depth: { v: 0 } }); }));
+    await idle();
+    const vol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const lastSt = () => mp.evaluate(() => { const r = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); const s = r.statuses.find(x => x.id === f.id); return `${f.type}:${s?.code ?? (s?.ok ? "ok" : "err")}`; });
+    const hole = 16 * Math.PI * 20;
+    await mp.click('#mc-tree .ft-row[data-id="c20"]');
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    const patMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(1)");
+    const eX = await world([0, -30, 20]);
+    await mp.mouse.click(eX[0], eX[1]);
+    await idle();
+    await mp.fill('#mc-pm input[data-num="spacing"]', "20");
+    await mp.press('#mc-pm input[data-num="spacing"]', "Tab");
+    await idle();
+    await mp.fill('#mc-pm input[data-int="count"]', "4");
+    await mp.press('#mc-pm input[data-int="count"]', "Tab");
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vLp = await vol(), stLp = await lastSt();
+    check(patMenu === "Linear pattern|Circular pattern|Mirror" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vMi = await vol(), stMi = await lastSt();
+    check(Math.abs(vMi - (120000 - 5 * hole)) < 1 && stMi === "mirror:warning", `model 1.23: mirror of the pattern about Right; copies on existing holes are skipped (${Math.round(vMi)}, ${stMi})`);
+    // Shell 2 mm, open at the top.
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-c="shell"]');
+    const topS = await world([30, 15, 20]);
+    await mp.mouse.click(topS[0], topS[1]);
+    await idle();
+    const shellFaces = await mp.evaluate(() => document.querySelector("#mc-pm .pm-count")?.textContent);
+    await mp.click("#mc-ok");
+    await idle();
+    const vSh = await vol(), stSh = await lastSt();
+    check(shellFaces === "1 face" && stSh === "shell:ok" && vSh > 15000 && vSh < 30000, `model 1.23: shell 2 mm with the top face open (${shellFaces}, ${Math.round(vSh)}, ${stSh})`);
     await ctx.close();
   }
 
