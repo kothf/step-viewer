@@ -1215,4 +1215,7 @@ export const RU: Record<string, string> = {
   "Partial ellipse: centre, major axis, start, then end": "Частичный эллипс: центр, большая ось, начало, затем конец",
   "Click the centre, the end of the major axis, then a point on the ellipse": "Щёлкните центр, конец большой оси, затем точку на эллипсе",
   "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)": "Щёлкните центр, конец большой оси, начало, затем конец (против часовой стрелки)",
+  "Spline": "Сплайн",
+  "Spline: click points it passes through; double-click ends it": "Сплайн: щёлкайте точки, через которые он проходит; двойной щелчок завершает",
+  "Click points the spline passes through; double-click ends it, clicking the first point closes it": "Щёлкайте точки, через которые проходит сплайн; двойной щелчок завершает его, щелчок по первой точке замыкает",
 };

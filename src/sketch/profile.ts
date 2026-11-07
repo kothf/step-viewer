@@ -6,6 +6,7 @@
 // Crossing curves (regions cut by intersections) are reported, not split.
 import type { SketchFeature, SkEnt, V2 } from "../model/types";
 import { ellOf, ellParam, ellPts, ellSweep, type Ell } from "./ellipse";
+import { bezPts, splineBezier } from "./spline";
 
 export type Seg =
   | { ent: string; kind: "line"; a: V2; b: V2 }
@@ -15,7 +16,9 @@ export type Seg =
   /** Full ellipse (FR-SK-018). */
   | { ent: string; kind: "ellipse"; el: Ell }
   /** Elliptical arc from a to b; ccw as for arcs. */
-  | { ent: string; kind: "earc"; el: Ell; a: V2; b: V2; ccw: boolean };
+  | { ent: string; kind: "earc"; el: Ell; a: V2; b: V2; ccw: boolean }
+  /** Spline as cubic Bézier control points in the direction of travel (closed: first = last). */
+  | { ent: string; kind: "spline"; bz: V2[] };
 
 export interface ProfileFace { outer: Seg[]; holes: Seg[][] }
 export interface Profile { faces: ProfileFace[]; error?: { code: string; message: string; at?: V2 } }
@@ -33,7 +36,8 @@ export function loopPolygon(loop: Seg[], n = 24): V2[] {
     if (s.kind === "line") out.push(s.a);
     else if (s.kind === "circle") {
       for (let k = 0; k < n * 2; k++) { const t = (k / (n * 2)) * Math.PI * 2; out.push([s.c[0] + s.r * Math.cos(t), s.c[1] + s.r * Math.sin(t)]); }
-    } else if (s.kind === "ellipse") out.push(...ellPts(s.el, 0, 2 * Math.PI, n * 2).slice(0, -1));
+    } else if (s.kind === "spline") out.push(...bezPts(s.bz, Math.max(4, Math.ceil(n / 2))).slice(0, -1));
+    else if (s.kind === "ellipse") out.push(...ellPts(s.el, 0, 2 * Math.PI, n * 2).slice(0, -1));
     else if (s.kind === "earc") {
       const ta = ellParam(s.el, s.a), tb = ellParam(s.el, s.b);
       const sw = s.ccw ? ellSweep(ta, tb) : -ellSweep(tb, ta);
@@ -72,7 +76,7 @@ function segsCross(a: V2, b: V2, c: V2, d: V2, tol: number) {
 /** The closed regions of a sketch. */
 export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()): Profile {
   const m = new Map(sk.ents.map(e => [e.id, e] as const));
-  const curves = sk.ents.filter(e => !e.cons && !skip.has(e.id) && (e.t === "line" || e.t === "arc" || e.t === "circle" || e.t === "ellipse"));
+  const curves = sk.ents.filter(e => !e.cons && !skip.has(e.id) && (e.t === "line" || e.t === "arc" || e.t === "circle" || e.t === "ellipse" || e.t === "spline"));
   const loops: Seg[][] = [];
   // Scale-relative tolerance for joining ends.
   let size = 1;
@@ -90,6 +94,9 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
       const el = ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b));
       if (e.p0 && e.p1) open.push({ ent: e, a: pt(m, e.p0), b: pt(m, e.p1) });
       else loops.push([{ ent: e.id, kind: "ellipse", el }]);
+    } else if (e.t === "spline" && e.pts.length >= 2) {
+      if (e.closed && e.pts.length >= 3) loops.push([{ ent: e.id, kind: "spline", bz: splineBezier(e.pts.map(q => pt(m, q)), true) }]);
+      else if (!e.closed) open.push({ ent: e, a: pt(m, e.pts[0]), b: pt(m, e.pts[e.pts.length - 1]) });
     }
   }
   // Nodes by position; snap near ends together.
@@ -125,6 +132,7 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
       const a = forward ? o.a : o.b, b = forward ? o.b : o.a;
       if (e.t === "line") loop.push({ ent: e.id, kind: "line", a, b });
       else if (e.t === "arc") { const c = pt(m, e.c); loop.push({ ent: e.id, kind: "arc", c, r: Math.hypot(o.a[0] - c[0], o.a[1] - c[1]), a, b, ccw: forward }); }
+      else if (e.t === "spline") { const bz = splineBezier(e.pts.map(q => pt(m, q))); loop.push({ ent: e.id, kind: "spline", bz: forward ? bz : bz.reverse() }); }
       else if (e.t === "ellipse") loop.push({ ent: e.id, kind: "earc", el: ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b)), a, b, ccw: forward });
       const to = forward ? ends[i][1] : ends[i][0];
       const next = nodes.get(to)!.find(j => j !== i || ends[i][0] === ends[i][1]);

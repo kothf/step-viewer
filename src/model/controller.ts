@@ -36,6 +36,7 @@ const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
+import { bezPts, splineBezier } from "../sketch/spline";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
 import { SEL_FILTER } from "../tools/Snapper";
@@ -1814,14 +1815,14 @@ export class ModelController {
         ["crect", t("Centre rect"), t("Centre rectangle")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
-        ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["point", t("Point"), t("Point (P)")],
+        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["point", t("Point"), t("Point (P)")],
         ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")],
         ["dim", t("Dimension"), t("Smart dimension (D)")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim"], ["line"], ["rect", "crect"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert"]];
+      const groups: SkTool[][] = [["select"], ["dim"], ["line", "spline"], ["rect", "crect"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["polygon"], ["slot"], ["point"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -1885,8 +1886,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ rect: ["rect", "crect"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert"] } as Record<string, SkTool[]>)[b.dataset.fly!];
-      const label: Record<string, string> = { rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities") };
+      const g = ({ line: ["line", "spline"], rect: ["rect", "crect"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert"] } as Record<string, SkTool[]>)[b.dataset.fly!];
+      const label: Record<string, string> = { line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -3076,6 +3077,9 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
       const t0 = e.p0 && e.p1 ? ellParam(E, pts.get(e.p0)!) : 0;
       const line = e.p0 && e.p1 ? ellPts(E, t0, ellSweep(t0, ellParam(E, pts.get(e.p1)!)), 48) : ellPts(E, 0, 2 * Math.PI, 64);
       for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
+    } else if (e.t === "spline" && e.pts.length >= 2) {
+      const line = bezPts(splineBezier(e.pts.map(q => pts.get(q)!), !!e.closed && e.pts.length >= 3), 16);
+      for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
     }
   }
   return out;
@@ -3130,6 +3134,7 @@ const ICON_SVG: Record<string, string> = {
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),
   "sk:polygon": S('<path d="M8 2 13.7 6.1 11.5 12.9h-7L2.3 6.1z"/>'),
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
+  "sk:spline": S('<path d="M2 12c2.5-8 5-8 6-4s3.5 4 6-4"/><circle cx="2" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="14" cy="4" r="1" fill="currentColor"/>'),
   "sk:ellipse": S('<ellipse cx="8" cy="8" rx="6" ry="3.5" transform="rotate(-25 8 8)"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/>'),
   "sk:earc": S('<path d="M2.6 10.5A6 3.5 -25 0 1 13.4 5.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/><path d="M8 8 13.4 5.5" stroke-dasharray="1.2 1.4"/>'),
   "sk:slot": S('<path d="M5 4.5h6a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7z"/><path d="M5 8h6" stroke-dasharray="1.5 1.5"/>'),

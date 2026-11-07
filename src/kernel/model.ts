@@ -286,7 +286,23 @@ export class Modeller {
     const edgeOf = (s: Seg) => {
       let e: any;
       if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
-      else if (s.kind === "ellipse" || s.kind === "earc") {
+      else if (s.kind === "spline") {
+        // One B-spline edge: the Bézier segments joined with triple knots (C1 form of the C2 curve).
+        const n = (s.bz.length - 1) / 3;
+        const poles = new oc.TColgp_Array1OfPnt_2(1, s.bz.length);
+        s.bz.forEach((q, i) => poles.SetValue(i + 1, this.P(this.w(frame, q, off))));
+        const knots = new oc.TColStd_Array1OfReal_2(1, n + 1), mults = new oc.TColStd_Array1OfInteger_2(1, n + 1);
+        // Knots at the chord lengths the interpolant was parametrised by, so the joins are C2 in the parameter too.
+        let u = 0;
+        for (let i = 0; i <= n; i++) {
+          if (i) u += Math.hypot(s.bz[3 * i][0] - s.bz[3 * i - 3][0], s.bz[3 * i][1] - s.bz[3 * i - 3][1]) || 1e-9;
+          knots.SetValue(i + 1, u); mults.SetValue(i + 1, i === 0 || i === n ? 4 : 3);
+        }
+        const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, 3, false);
+        // The interpolant is C2: drop the interior knots to single ones (cleaner curve, accurate mass properties).
+        for (let i = n; i >= 2; i--) curve.RemoveKnot(i, 1, 1e-7 * (1 + Math.abs(s.bz[0][0]) + Math.abs(s.bz[0][1])));
+        e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+      } else if (s.kind === "ellipse" || s.kind === "earc") {
         // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
         const { c, u, r1, r2 } = s.el;
         const x: V2 = r1 >= r2 ? u : [-u[1], u[0]];
@@ -342,10 +358,11 @@ export class Modeller {
   /** Distance from a point to (the middle of) a sketch curve placed in the world. */
   private segDist(s: Seg, frame: Frame, off: V3, p: V3) {
     if (s.kind === "line") return d3(this.w(frame, [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2], off), p);
-    if (s.kind === "ellipse" || s.kind === "earc") {
+    if (s.kind === "ellipse" || s.kind === "earc" || s.kind === "spline") {
       // Nearest of a few points along the curve.
       const pts = loopPolygon([s], 16);
       if (s.kind === "earc") pts.push(s.b);
+      if (s.kind === "spline") pts.push(s.bz[s.bz.length - 1]);
       return Math.min(...pts.map(q => d3(this.w(frame, q, off), p)));
     }
     const c = this.w(frame, s.c, off);
@@ -459,7 +476,7 @@ export class Modeller {
     const prof = sketchProfile(sk);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
     // Where the profile's middle meets the target along the sketch normal.
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : [sg.a, sg.b]))) as [number, number][];
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
     const mid: [number, number] = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
     const c = this.w(frame, mid);
     const den = dot(frame.n, target.n);
@@ -685,7 +702,7 @@ export class Modeller {
     if (Math.abs(dot(n, u)) > 1e-6 || Math.abs(dot(n, add(A, mul(target.o, -1)))) > 1e-4) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
     const prof = sketchProfile(sk);
     if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
-    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : [sg.a, sg.b]))) as [number, number][];
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : sg.kind === "ellipse" ? [sg.el.c] : sg.kind === "spline" ? [sg.bz[0], sg.bz[sg.bz.length - 1]] : [sg.a, sg.b]))) as [number, number][];
     const c = this.w(frame, [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]);
     const w = add(c, mul(A, -1));
     const r0 = add(w, mul(u, -dot(w, u)));

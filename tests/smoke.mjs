@@ -2432,6 +2432,23 @@ try {
     const cut = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok) }; });
     const dT = Math.PI - 2 * Math.atan2(0.6, 0.8), half = 80 * (dT - Math.sin(dT)) * 2;
     check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
+    // 1.35: a closed spline (FR-SK-019) from the Line flyout on the end face, cut through all.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [-15, 0, 5] } }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForTimeout(1200);
+    await mp.click('#mc-tools [data-fly="line"]');
+    const lnFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(2)");
+    await click([-22, 0]); await click([-15, -3]); await click([-8, 0]); await click([-15, 3]); await click([-22, 0]);
+    const spl = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "spline"); return e ? { n: e.pts.length, closed: !!e.closed, dof: ed.info.dof } : null; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Cut", d => { d.features.push({ id: "c3", type: "extrude", name: "Cut2", sketch: "s3", op: "cut", end: "through", depth: { v: 0 } }); }));
+    await idle();
+    const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
+    const dSpl = cut.v - cut3.v;
+    check(lnFly === "Line|Spline" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 

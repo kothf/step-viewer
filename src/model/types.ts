@@ -20,7 +20,9 @@ export type SkEnt =
    * Ellipse round c: a is the end of the major axis, b the end of the minor one (kept square to it).
    * With p0/p1 it is an elliptical arc, counter-clockwise from p0 to p1 (FR-SK-018).
    */
-  | { id: string; t: "ellipse"; c: string; a: string; b: string; p0?: string; p1?: string; cons?: boolean };
+  | { id: string; t: "ellipse"; c: string; a: string; b: string; p0?: string; p1?: string; cons?: boolean }
+  /** Interpolating cubic spline through the points; closed runs back to the first (FR-SK-019). */
+  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean };
 
 export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"

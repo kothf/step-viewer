@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-11-07
+
+### Added
+- **Spline in sketches** (FR-SK-019), in the Line ▾ menu: click the points the curve passes through. A double-click ends it, and clicking the first point again closes it. It is a smooth (C2) cubic interpolating spline, parametrised by chord length. Its points are ordinary sketch points, so dragging, dimensions and relations on them reshape the curve. Closed splines, or open ones joined to other curves, make regions that extrude, revolve and cut as a single exact B-spline face. Splines also work with sketch mirror, patterns, move, rotate, scale and box selection.
+
 ## [1.34.0] - 2026-11-07
 
 ### Added
@@ -403,7 +408,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.34.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.35.0...HEAD
+[1.35.0]: https://github.com/kothf/step-viewer/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/kothf/step-viewer/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/kothf/step-viewer/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/kothf/step-viewer/compare/v1.31.0...v1.32.0

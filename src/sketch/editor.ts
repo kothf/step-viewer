@@ -15,6 +15,7 @@ import { uid } from "../model/doc";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
+import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -23,6 +24,7 @@ export function refPts(e: SkEnt): string[] {
   if (e.t === "line") return [e.a, e.b];
   if (e.t === "circle") return [e.c];
   if (e.t === "arc") return [e.c, e.a, e.b];
+  if (e.t === "spline") return e.pts.slice();
   return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
 }
 
@@ -41,7 +43,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -65,7 +67,7 @@ export interface ModelEdge { type: string; start: [number, number, number]; end:
 const SNAP_PX = 9;
 const HV_TOL = (3 * Math.PI) / 180;
 
-type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "origin" | "dim" | "rel"; d: number };
+type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "spline" | "origin" | "dim" | "rel"; d: number };
 
 const COLORS = {
   light: { free: 0x1d4ed8, defined: 0x111827, cons: 0x7c8594, sel: 0xf08c00, hover: 0xf59f00, bad: 0xd32f2f, dim: 0x334155, pre: 0x2f9e44 },
@@ -195,6 +197,10 @@ export class SketchEditor {
   }
   private ent(id: string) { return this.sk.ents.find(e => e.id === id); }
   private ell(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): Ell { return ellOf(mv(this.pt(e.c)), mv(this.pt(e.a)), mv(this.pt(e.b))); }
+  /** Polyline of a spline, optionally moved point by point. */
+  private splineLine(e: SkEnt & { t: "spline" }, mv: (q: V2) => V2 = q => q): V2[] {
+    return bezPts(splineBezier(e.pts.map(q => mv(this.pt(q))), !!e.closed && e.pts.length >= 3), 16);
+  }
   /** Polyline of an ellipse or elliptical arc, optionally moved point by point. */
   private ellLine(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): V2[] {
     const E = this.ell(e, mv);
@@ -223,6 +229,7 @@ export class SketchEditor {
       if (e.t === "line") d = segDist(p, this.pt(e.a), this.pt(e.b));
       else if (e.t === "circle") d = Math.abs(Math.hypot(p[0] - this.pt(e.c)[0], p[1] - this.pt(e.c)[1]) - e.r);
       else if (e.t === "arc") d = arcDist(p, this.pt(e.c), this.pt(e.a), this.pt(e.b));
+      else if (e.t === "spline") d = nearestOn(this.splineLine(e), p).d;
       else if (e.t === "ellipse") d = e.p0 && e.p1 ? earcDist(this.ell(e), this.pt(e.p0), this.pt(e.p1), p) : ellDist(this.ell(e), p);
       if (d < tol) out.push({ id: e.id, kind: e.t as Hit["kind"], d: d + tol * 0.25 });
     }
@@ -350,6 +357,7 @@ export class SketchEditor {
   private project(p: V2, id: string): V2 {
     const e = this.ent(id)!;
     if (e.t === "ellipse") { const E = this.ell(e); return ellPt(E, ellParam(E, p)); }
+    if (e.t === "spline") return nearestOn(this.splineLine(e), p).q;
     if (e.t === "line") { const a = this.pt(e.a), b = this.pt(e.b); const d = [b[0] - a[0], b[1] - a[1]], l2 = d[0] ** 2 + d[1] ** 2 || 1; const t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l2; return [a[0] + d[0] * t, a[1] + d[1] * t]; }
     const c = this.pt(e.t === "circle" || e.t === "arc" ? e.c : id), r = e.t === "circle" ? e.r : e.t === "arc" ? Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]) : 0;
     const a = Math.atan2(p[1] - c[1], p[0] - c[0]);
@@ -464,6 +472,21 @@ export class SketchEditor {
         this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: ccw ? aId : bId, b: ccw ? bId : aId });
         finish("Add arc");
       }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "spline") {
+      // Through the clicked points (FR-SK-019): a double-click ends it, the first point again closes it.
+      const near = (q: V2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < this.px(p) * 3;
+      const closing = d.pts.length >= 3 && (near(d.pts[0]) || (!!s.id && s.id === d.ids[0]));
+      const again = d.pts.length > 0 && near(d.pts.at(-1)!);
+      if (!closing && !again) { d.pts.push(p); d.ids.push(s.id); if (d.pts.length === 1) d.snapCurve = s.curve; }
+      if (!closing && !(e.detail >= 2 || again)) { this.render(); return; }
+      if (d.pts.length < 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return; }
+      const ids = d.pts.map((q, i) => this.usePoint(q, d.ids[i] ?? null, i === 0 ? d.snapCurve ?? null : null, rels));
+      this.sk.ents.push({ id: uid("s"), t: "spline", pts: ids, ...(closing ? { closed: true } : {}) });
+      finish("Add spline");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -935,6 +958,7 @@ export class SketchEditor {
     const samples = (e: SkEnt): V2[] => {
       if (e.t === "point") return [[e.x, e.y]];
       if (e.t === "ellipse") return this.ellLine(e);
+      if (e.t === "spline") return this.splineLine(e);
       const g = curveOf(e, q => this.pt(q));
       if (!g) return [];
       const n = 48;
@@ -1212,6 +1236,7 @@ export class SketchEditor {
       else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...(e.cons ? { cons: true } : {}) }); this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] }); made.push(id); }
       // A mirror image runs the other way round: the ends swap.
       else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p1), p1: point(e.p0) } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+      else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
     this.selection = new Set(made);
@@ -1286,6 +1311,7 @@ export class SketchEditor {
         else if (e.t === "line") out.push([mv(this.pt(e.a)), mv(this.pt(e.b))]);
         else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
         else if (e.t === "ellipse") out.push(this.ellLine(e, mv));
+        else if (e.t === "spline") out.push(this.splineLine(e, mv));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -1329,6 +1355,10 @@ export class SketchEditor {
           const id = uid("c");
           this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...cons(e) });
           this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] });
+          made.push(id);
+        } else if (e.t === "spline") {
+          const id = uid("s");
+          this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons(e) });
           made.push(id);
         } else if (e.t === "ellipse") {
           const id = uid("e");
@@ -1374,6 +1404,7 @@ export class SketchEditor {
         else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
         else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
         else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons }); made.push(id); }
+        else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons }); made.push(id); }
         else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
       }
     } else {
@@ -1528,6 +1559,7 @@ export class SketchEditor {
       offset: "Move to the side to offset to, then click the curve or chain; set the distance in the panel",
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       slot: "Click the two centres, then the width",
+      spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
       dim: "Click one or two items, then click where the dimension goes",
@@ -1601,6 +1633,7 @@ export class SketchEditor {
         while (a1 <= a0) a1 += Math.PI * 2;
         poly(arcPts(cc, Math.hypot(a[0] - cc[0], a[1] - cc[1]), a0, a1), c);
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
+      else if (e.t === "spline") poly(this.splineLine(e), c);
     }
     // Preview of the entity being drawn.
     const d = this.draft;
@@ -1627,6 +1660,9 @@ export class SketchEditor {
             poly(arcPts(c, r, ang(s0), ang(s0) + sw(ang(s0), ang(s1))), C.pre);
           }
         }
+      } else if (this.tool === "spline") {
+        const closing = d.pts.length >= 3 && Math.hypot(p[0] - a[0], p[1] - a[1]) < this.px(p) * 3;
+        poly(bezPts(splineBezier(closing ? d.pts : [...d.pts, p], closing), 16), C.pre);
       } else if (this.tool === "ellipse" || this.tool === "earc") {
         if (d.pts.length === 1) push(a, p, C.pre);
         else {
@@ -1825,6 +1861,7 @@ export class SketchEditor {
     if (e.t === "line") { const a = this.pt(e.a), b = this.pt(e.b); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; }
     if (e.t === "circle") { const c = this.pt(e.c); return [c[0] + e.r * 0.7071, c[1] + e.r * 0.7071]; }
     if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
+    if (e.t === "spline") { const l = this.splineLine(e); return l[Math.floor(l.length / 2)]; }
     return this.pt(e.a);
   }
 
