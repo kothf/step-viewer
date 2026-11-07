@@ -26,6 +26,8 @@ export type KernelRequest =
   | { id: number; type: "partBody"; doc: PartDoc }
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
   | { id: number; type: "asm"; doc: AsmDoc; quality: number }
+  | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
+  | { id: number; type: "asmStep"; doc: AsmDoc }
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
@@ -156,6 +158,21 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         parts.push({ id: p.id, data, faces: p.body.names });
       }
       post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
+    } else if (r.type === "asmInterfere") {
+      assembler ??= new Assembler(kernel.module);
+      const { placed } = assembler.evaluate(r.doc, 1);
+      const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
+      post({ id: r.id, ok: true, pairs: assembler.interference(shown, !!r.touch) });
+    } else if (r.type === "asmStep") {
+      // Assembly STEP (AT-P4-6): one product per part, one named instance per shown component.
+      assembler ??= new Assembler(kernel.module);
+      const { placed } = assembler.evaluate(r.doc, 1);
+      const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
+      if (!shown.length) throw new Error("There is no body to export yet.");
+      const keys = [...new Set(shown.map(p => p.part))];
+      const parts = keys.map(k => ({ key: k, shape: assembler!.sourceBody(k, r.doc)!.shape, name: r.doc.parts[k].name, color: (r.doc.parts[k].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number] }));
+      const bytes = kernel.writeAssemblyStep(r.doc.name, parts, shown.map(p => ({ part: p.part, name: p.name, tf: p.tf }))).slice();
+      post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
     } else if (r.type === "partBody") {
       // Insert part (FR-BODY-005): the other part is evaluated on its own, so this part's feature cache stays.
       const other = new Modeller(kernel.module).evaluate(r.doc);

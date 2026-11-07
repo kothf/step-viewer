@@ -135,6 +135,18 @@ export class ModelKernel {
     return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
   }
 
+  /** Overlapping component pairs, with the overlap volume and triangles (FR-ASM-020). */
+  async interference(doc: AsmDoc, touch = false): Promise<{ a: string; b: string; volume: number; position: number[] }[]> {
+    await this.start();
+    return (await this.call<{ pairs: { a: string; b: string; volume: number; position: number[] }[] }>({ type: "asmInterfere", doc, touch })).pairs;
+  }
+
+  /** STEP of the assembly: one product per shown component (AT-P4-6). */
+  async assemblyStep(doc: AsmDoc): Promise<Uint8Array> {
+    await this.start();
+    return (await this.call<{ bytes: Uint8Array }>({ type: "asmStep", doc })).bytes;
+  }
+
   async step(name: string, color: V3): Promise<Uint8Array> {
     await this.start();
     const r = await this.call<{ bytes: Uint8Array }>({ type: "modelStep", name, color });

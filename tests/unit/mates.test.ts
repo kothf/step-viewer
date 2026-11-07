@@ -84,3 +84,34 @@ test("distance, angle, lock and quick mate types", () => {
   assert.ok(r3.ok && r3.dof.q === 0);
   assert.ok(r3.tfs.q.every((v, i) => Math.abs(v - translation([1, 2, 3])[i]) < 1e-6));
 });
+
+import { expandPatterns, explodeOffsets, autoExplode } from "../../src/asm/patterns";
+import { placeGeo } from "../../src/asm/solver";
+
+test("component patterns: circular instances round the hole axis, linear along a face normal (FR-ASM-022)", () => {
+  const d = doc([]);
+  d.components[1].tf = translation([20, 0, 5]);
+  d.patterns = [{ id: "cp", name: "CircPattern1", kind: "circular", seeds: ["q"], dir: { comp: "p", face: "hole" }, count: 4, spacing: 2 * Math.PI, equal: true }];
+  const wg = (r: { comp: string; face: string }) => { const c = d.components.find(x => x.id === r.comp)!; const g = geo(c.part, r.face); return g && placeGeo(g, c.tf); };
+  const e = expandPatterns(d, wg);
+  assert.equal(e.doc.components.length, 5);
+  assert.deepEqual(e.doc.components.slice(2).map(c => c.name), ["pin<2>", "pin<3>", "pin<4>"]);
+  // Pin at (20, 0) about the hole axis at (20, 10): 90° steps.
+  const at = e.doc.components.slice(2).map(c => applyPoint(c.tf, [0, 0, 0]).map(v => Math.round(v * 1e6) / 1e6));
+  assert.deepEqual(at, [[30, 10, 5], [20, 20, 5], [10, 10, 5]]);
+  assert.ok(e.doc.components.slice(2).every(c => c.fixed));
+  d.patterns = [{ id: "lp", name: "LocalLPattern1", kind: "linear", seeds: ["q"], dir: { comp: "p", face: "side" }, count: 3, spacing: 15 }];
+  const l = expandPatterns(d, wg);
+  assert.deepEqual(l.doc.components.slice(2).map(c => c.tf[3]), [35, 50]);
+  d.patterns[0].dir = null;
+  assert.deepEqual(expandPatterns(d, wg).bad, ["lp"]);
+});
+
+test("exploded views: steps add up; auto explode moves floating components outward (FR-ASM-023)", () => {
+  const off = explodeOffsets({ id: "e", name: "Exploded1", steps: [{ comps: ["a", "b"], dir: [0, 0, 1], dist: 10 }, { comps: ["b"], dir: [1, 0, 0], dist: 5 }] });
+  assert.deepEqual(off.get("a"), [0, 0, 10]);
+  assert.deepEqual(off.get("b"), [5, 0, 10]);
+  const steps = autoExplode([{ id: "a", centre: [0, 0, 0], fixed: true }, { id: "b", centre: [10, 0, 0] }], 40);
+  assert.equal(steps.length, 1);
+  assert.deepEqual(steps[0], { comps: ["b"], dir: [1, 0, 0], dist: 20 });
+});

@@ -3658,6 +3658,121 @@ try {
     await ctx.close();
   }
 
+  // --- 1.63: interference detection, BOM and assembly STEP (FR-ASM-020/024, AT-P4-4..6) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.props.partNumber = "BX-10";
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -5, -5), P("b", 5, -5), P("c", 5, 5), P("d", -5, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const box = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    for (let k = 1; k <= 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "box.mcadprt")), box); await shown(k); }
+    // Second box 1 mm into the first: X = 9 (the first spans -5..5).
+    await mp.evaluate(() => { const a = window.__sv.asm, id = a.doc.components[1].id; a.change(d => { d.components[1].tf = [1, 0, 0, 9, 0, 1, 0, 0, 0, 0, 1, 0]; }); return id; });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="interfere"]');
+    await mp.waitForFunction(() => window.__sv.asm.interfere?.pairs, null, { timeout: 120000 });
+    const inf = await mp.evaluate(() => ({ title: document.querySelector("#asm-pm h3")?.textContent, status: document.querySelector("#asm-pm [data-istatus]")?.textContent, rows: [...document.querySelectorAll("#asm-pm [data-pair]")].map(e => e.textContent), v: window.__sv.asm.interfere.pairs[0]?.volume }));
+    await mp.click("#asm-pm [data-a=ok]");
+    // BOM: one row, quantity 2, mass from the part's material.
+    await mp.click('#asm-tools [data-ac="bom"]');
+    const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
+    await mp.click('#asm-bom [data-a="close"]');
+    // STEP of the assembly reopens with the same names and placements (AT-P4-6).
+    const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
+    await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
+    await mp.waitForFunction(() => !window.__sv.asm.doc && window.__sv.viewer.parts.length === 2, null, { timeout: 120000 });
+    const re = await mp.evaluate(() => { const flat = n => [n.name, ...n.children.flatMap(flat)]; return { tree: flat(window.__sv.viewer.tree), parts: window.__sv.viewer.parts.map(p => ({ name: p.data.name, x: [Math.round(p.data.bboxMin[0] * 1000) / 1000, Math.round(p.data.bboxMax[0] * 1000) / 1000] })) }; });
+    check(inf.title === "Interference detection" && inf.status === "1 interference · 100 mm³" && inf.rows.length === 1 && /^box<1> ↔ box<2>: 100 mm³$/.test(inf.rows[0]) && Math.abs(inf.v - 100) < 1e-6
+      && bom.open && bom.cells.join("|") === "1|box|BX-10||Aluminium 6061|2|0.0027" && bom.csv.split("\r\n")[1] === "1,box,BX-10,,Aluminium 6061,2,0.002700"
+      && re.parts.map(p => p.name).join() === "box,box" && re.tree.includes("Assembly1") && Math.abs(re.parts[1].x[0] - 4) < 1e-3 && Math.abs(re.parts[1].x[1] - 14) < 1e-3,
+      `asm 1.63: interference finds the 1 mm overlap, BOM counts and weighs, assembly STEP reopens placed (FR-ASM-020/024, AT-P4-4..6) (${JSON.stringify({ inf, bom, re })})`);
+    await ctx.close();
+  }
+
+  // --- 1.63: component patterns and exploded views (FR-ASM-022/023, AT-P4-5) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const plate = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -20), P("b", 20, -20), P("c", 20, 20), P("d", -20, 20), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a"), P("h", 0, 0), { id: "hc", t: "circle", c: "h", r: 4 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }]);
+    const pin = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), { id: "c", t: "circle", c: "o", r: 2 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(2);
+    // The pin at (12, 0, 5); a circular pattern of 4 about the plate's hole axis.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 12, 0, 1, 0, 0, 0, 0, 1, 5]; }));
+    await shown(2);
+    await mp.click("#asm-tree .ft-comp >> nth=1");
+    await mp.click('#asm-tools [data-ac="pattern"]');
+    await mp.click('#asm-pm [data-pk="circular"]');
+    await mp.evaluate(() => { const a = window.__sv.asm, d = a.doc, hole = [...a.geo.get(d.components[0].part).entries()].find(([, g]) => g.k === "axis")[0]; a.patterning.dir = { comp: d.components[0].id, face: hole }; a.drawPatternPreview(); a.renderAll(); });
+    const pv = await mp.evaluate(() => ({ title: document.querySelector("#asm-pm h3")?.textContent, ghosts: window.__sv.asm.overlay.children.length, seeds: document.querySelector('#asm-pm [data-focus="seeds"]')?.textContent }));
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(5);
+    const pat = await mp.evaluate(() => {
+      const v = window.__sv.viewer.parts.map(p => { const c = [(p.data.bboxMin[0] + p.data.bboxMax[0]) / 2, (p.data.bboxMin[1] + p.data.bboxMax[1]) / 2]; return c.map(x => Math.round(x * 1000) / 1000); });
+      return { name: window.__sv.asm.doc.patterns[0].name, inst: [...document.querySelectorAll("#asm-tree .ft-inst .ft-name")].map(e => e.textContent), at: v.slice(1), bom: window.__sv.asm.bom().map(r => `${r.part}:${r.qty}`).join() };
+    });
+    // Auto explode, then collapse from the tree.
+    await mp.click('#asm-tools [data-ac="explode"]');
+    await mp.click('#asm-pm [data-a="auto"]');
+    const steps = await mp.evaluate(() => window.__sv.asm.exploding.steps.length);
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(5);
+    await mp.waitForTimeout(100);
+    const ex = await mp.evaluate(() => ({ row: document.querySelector("#asm-tree .ft-explode")?.className, moved: window.__sv.viewer.parts.slice(1).every(p => p.group.position.length() > 5), plate: window.__sv.viewer.parts[0].group.position.length() }));
+    await mp.hover("#asm-tree .ft-explode");
+    await mp.click('#asm-tree .ft-explode [data-a="xp"]');
+    await mp.waitForTimeout(800);
+    const col = await mp.evaluate(() => ({ exploded: window.__sv.asm.exploded, back: window.__sv.viewer.parts.every(p => p.group.position.length() < 1e-6) }));
+    const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "p.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return [window.__sv.asm.doc.patterns?.length, window.__sv.asm.doc.explodes?.[0]?.steps.length]; });
+    await shown(5);
+    check(pv.title === "Circular component pattern" && pv.ghosts === 3 && pv.seeds === "pin<1>" && pat.name === "CircPattern1" && pat.inst.join() === "pin<2>,pin<3>,pin<4>"
+      && JSON.stringify(pat.at) === JSON.stringify([[12, 0], [0, 12], [-12, 0], [0, -12]]) && pat.bom === "plate:1,pin:4"
+      && steps === 4 && / on/.test(ex.row) && ex.moved && ex.plate < 1e-9 && col.exploded === null && col.back && re[0] === 1 && re[1] === 4,
+      `asm 1.63: circular component pattern previewed and counted in the BOM, auto explode and collapse (FR-ASM-022/023, AT-P4-5) (${JSON.stringify({ pv, pat, steps, ex, col, re })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

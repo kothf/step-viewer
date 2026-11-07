@@ -31,6 +31,9 @@ export class Assembler {
     return s;
   }
 
+  /** A part's evaluated body in its own coordinates (null when it has none). */
+  sourceBody(key: string, doc: AsmDoc): Named | null { return this.source(key, doc).body; }
+
   /** Places every shown, unsuppressed component. */
   evaluate(doc: AsmDoc, quality = 1): { placed: Placed[]; statuses: AsmComponentStatus[] } {
     const oc = this.oc;
@@ -59,6 +62,47 @@ export class Assembler {
   }
 
   /** Mass properties of the placed components together (density 1). */
+  /**
+   * Interference detection (FR-ASM-020): each pair of components whose boxes overlap is intersected;
+   * pairs that share volume come back with it and the overlap's triangles (world positions) to show.
+   * Touching faces are not interference unless `touch` is set (they then count with volume 0).
+   */
+  interference(placed: Placed[], touch = false): { a: string; b: string; volume: number; position: number[] }[] {
+    const oc = this.oc;
+    const boxes = placed.map(p => { const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(p.body.shape, b, false); return b; });
+    const m = new Modeller(oc);
+    const out: { a: string; b: string; volume: number; position: number[] }[] = [];
+    for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+      if (boxes[i].IsOut_4(boxes[j])) continue;
+      const pr = new oc.Message_ProgressRange_1();
+      const mk = new oc.BRepAlgoAPI_Common_3(placed[i].body.shape, placed[j].body.shape, pr);
+      if (!mk.IsDone() || mk.HasErrors()) continue;
+      const shape = mk.Shape();
+      const gp = new oc.GProp_GProps_1();
+      oc.BRepGProp.VolumeProperties_1(shape, gp, true, false, false);
+      const volume = gp.Mass();
+      const faces: any[] = [];
+      const map = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+      for (let k = 1; k <= map.Extent(); k++) faces.push(oc.TopoDS.Face_1(map.FindKey(k)));
+      if (volume < 1e-6) {
+        if (!touch) continue;
+        const dist = new oc.BRepExtrema_DistShapeShape_2(placed[i].body.shape, placed[j].body.shape, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+        if (!dist.IsDone() || dist.Value() > 1e-6) continue;
+        out.push({ a: placed[i].id, b: placed[j].id, volume: 0, position: [] });
+        continue;
+      }
+      const position: number[] = [];
+      if (faces.length) {
+        const mesh = m.mesh({ shape, faces, names: faces.map(() => "") }, "overlap", [1, 0, 0], 1);
+        const P = mesh.attributes.position.array, I = mesh.index.array;
+        for (const v of I) position.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]);
+      }
+      out.push({ a: placed[i].id, b: placed[j].id, volume: Math.max(0, volume), position });
+    }
+    return out;
+  }
+
   props(placed: Placed[]): BodyProps | null {
     if (!placed.length) return null;
     const m = new Modeller(this.oc);

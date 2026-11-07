@@ -29,6 +29,10 @@ export interface AsmDoc {
   components: Component[];
   /** Mates between components (FR-MATE-003), solved in order-independent least squares. */
   mates?: Mate[];
+  /** Component patterns (FR-ASM-022): their instances are derived, not stored as components. */
+  patterns?: CompPattern[];
+  /** Named exploded views (FR-ASM-023). */
+  explodes?: ExplodeView[];
   /** The documents the components use, embedded (FR-ASM-003), by key. */
   parts: Record<string, { name: string; file: string; doc: PartDoc }>;
 }
@@ -57,3 +61,23 @@ export interface Mate {
   /** Lock: b's transform relative to a's when the mate was made. */
   rel?: Tf;
 }
+
+/** Linear or circular pattern of components along a face's normal / cylinder axis. */
+export interface CompPattern {
+  id: string;
+  name: string;
+  kind: "linear" | "circular";
+  seeds: string[];
+  /** Direction (linear: plane normal or axis direction) or axis (circular: a cylindrical face). */
+  dir: MateRef | null;
+  /** Total instances, the seed included. */
+  count: number;
+  /** Linear: spacing (mm). Circular: angle between instances (rad), or the total angle when `equal`. */
+  spacing: number;
+  equal?: boolean;
+  flip?: boolean;
+  suppressed?: boolean;
+}
+
+export interface ExplodeStep { comps: string[]; dir: V3; dist: number }
+export interface ExplodeView { id: string; name: string; steps: ExplodeStep[] }
