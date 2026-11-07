@@ -1692,6 +1692,24 @@ try {
     // 1.45: under-defined analysis: a selected polygon side shows orange free-motion arrows (FR-SLV-010).
     const freeArr = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const l = ed.sk.ents.find(e => e.t === "line"), prev = ed.tool; ed.setTool("select"); ed.selection.clear(); ed.selection.add(l.id); ed.render(); const n = ed.freeArrows; ed.selection.clear(); ed.render(); const after = ed.freeArrows; ed.setTool(prev); return { n, dof: ed.info.dof, after }; });
     check(freeArr.n >= 2 && freeArr.dof > 0 && freeArr.after === 0, `model 1.45: a selected under-defined line shows free-motion arrows (${JSON.stringify(freeArr)})`);
+    // 1.48: sketch assistant (FR-SLV-009): two different sizes on equal sides over-define it; the panel offers deletions that fix it.
+    const assist = await mp.evaluate(() => {
+      const m = window.__sv.model, ed = m.editor(), orig = structuredClone(ed.sk);
+      const ls = ed.sk.ents.filter(e => e.t === "line");
+      const bad = structuredClone(ed.sk);
+      bad.dims.push({ id: "xd1", name: "X1", t: "distance", e: [ls[0].id], val: { v: 30 } }, { id: "xd2", name: "X2", t: "distance", e: [ls[1].id], val: { v: 40 } });
+      ed.setSketch(bad, ed.frame);
+      m.panel();
+      const over = ed.info.status;
+      const rows = [...document.querySelectorAll("#mc-pm .pm-assist [data-fixapply]")].map(b => b.dataset.fixapply);
+      document.querySelector("#mc-pm .pm-assist [data-fixshow]")?.click();
+      const shown = [...ed.selection].join(",");
+      document.querySelector("#mc-pm .pm-assist [data-fixapply]")?.click();
+      const after = { status: ed.info.status, gone: !document.querySelector("#mc-pm .pm-assist") };
+      ed.setSketch(orig, ed.frame); ed.commit("Restore"); m.panel();
+      return { over, rows, shown, after };
+    });
+    check(assist.over === "conflict" && assist.rows.length >= 2 && assist.rows.includes("xd1") && assist.shown === assist.rows[0] && assist.after.status === "ok" && assist.after.gone, `model 1.48: the sketch assistant lists deletions that fix an over-defined sketch and applies one (${JSON.stringify(assist)})`);
     // Ctrl+8: normal to the sketch.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); });
     await mp.keyboard.press("Control+8");
@@ -2809,7 +2827,12 @@ try {
     await mp.goto(`${origin}/index.html?debug`);
     await mp.waitForFunction(() => window.__sv);
     await mp.click("#t-vault");
+    // The tab may redraw once it has read the stored vaults: type the name into the settled field.
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
     await mp.fill("#v-name", "Backup test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Backup test") await mp.fill("#v-name", "Backup test");
     await mp.click('#vault-panel [data-a="new-ws"]');
     await mp.waitForSelector('#vault-panel [data-a="export"]');
     // Three versions of one file and a PDF.

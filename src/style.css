@@ -732,6 +732,9 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-rel-list li { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
 .pm-rel-list li span { flex: 1; }
 .pm-rel-list .icon { width: 20px; height: 18px; font-size: 10px; }
+.pm-assist .pm-rel-list li { padding: 2px 4px; border-radius: 4px; }
+.pm-assist .pm-rel-list li > span:last-child { flex: 0 0 auto; }
+.pm-assist .pm-rel-list li.pm-on { background: color-mix(in srgb, var(--accent, #2f6fed) 14%, transparent); }
 .pm-n { width: 70px; }
 :root:not([data-theme="dark"]) .ft-row.sel.bad .ft-name { color: #a61b1b; }
 /* PropertyManager-style feature panel (1.19.3) */

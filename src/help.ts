@@ -203,6 +203,7 @@ const EN: Tab[] = [
   <li>Select items (Ctrl+click for more) to add relations in the panel: parallel, perpendicular, equal, tangent, concentric, midpoint, symmetric, fix. <b>Construction</b> (Q) turns lines into reference geometry, for example a revolve axis.</li>
   <li>The panel lists the sketch's relations: click one to select it, ✕ deletes it.</li>
   <li>Colours: blue can still move, black is fully defined, red is over-defined. The panel shows the remaining degrees of freedom. Select an item to see orange arrows where it can still move. Drag geometry to try it.</li>
+  <li>When a sketch is over-defined, the <b>Sketch assistant</b> in the panel lists the relations and dimensions whose deletion makes it solve again. <b>Show</b> highlights them in the sketch, and <b>Delete</b> removes them.</li>
   <li>✓ or <kbd>Enter</kbd> leaves the sketch; ✕ asks before discarding its changes.</li>
 </ul>
 <h4>Features</h4>
@@ -413,6 +414,7 @@ const RU: Tab[] = [
   <li>Выберите элементы (Ctrl+щелчок добавляет), чтобы добавить взаимосвязи на панели: параллельность, перпендикулярность, равенство, касательность, концентричность, середина, симметричность, фиксация. <b>Вспомогательная</b> (Q) делает отрезки справочной геометрией, например осью вращения.</li>
   <li>Панель перечисляет взаимосвязи эскиза: щелчок выбирает, ✕ удаляет.</li>
   <li>Цвета: синее ещё может двигаться, чёрное полностью определено, красное переопределено. Панель показывает оставшиеся степени свободы. Выберите элемент: оранжевые стрелки покажут, куда он ещё может двигаться. Перетащите геометрию, чтобы проверить.</li>
+  <li>Если эскиз переопределён, <b>Помощник эскиза</b> на панели перечисляет взаимосвязи и размеры, удаление которых снова делает его решаемым. <b>Показать</b> выделяет их в эскизе, <b>Удалить</b> убирает их.</li>
   <li>✓ или <kbd>Enter</kbd> выходит из эскиза; ✕ спрашивает, прежде чем отменить изменения.</li>
 </ul>
 <h4>Элементы</h4>

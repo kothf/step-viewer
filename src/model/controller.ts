@@ -39,7 +39,7 @@ import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { bezPts, splineBezier } from "../sketch/spline";
 import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
-import { ORIGIN } from "../sketch/solver";
+import { ORIGIN, repairs } from "../sketch/solver";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
@@ -3454,6 +3454,7 @@ export class ModelController {
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + this.assistant(ed)
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
       + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
@@ -3463,6 +3464,12 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-dim]").forEach(b => b.addEventListener("click", () => ed.editDim(b.dataset.dim!)));
     pm.querySelectorAll<HTMLElement>("[data-delrel]").forEach(b => b.addEventListener("click", () => { ed.deleteItems([b.dataset.delrel!]); this.renderPanel(); }));
     pm.querySelectorAll<HTMLElement>("[data-selrel]").forEach(b => b.addEventListener("click", () => { ed.select([b.dataset.selrel!]); this.renderPanel(); }));
+    pm.querySelectorAll<HTMLElement>("[data-fixshow]").forEach(b => b.addEventListener("click", () => { ed.select(b.dataset.fixshow!.split(",")); this.renderPanel(); }));
+    pm.querySelectorAll<HTMLElement>("[data-fixapply]").forEach(b => b.addEventListener("click", () => {
+      ed.deleteItems(b.dataset.fixapply!.split(","));
+      if (ed.info.status === "ok") toast(t("The sketch solves again."), "success");
+      this.renderPanel();
+    }));
     pm.querySelector<HTMLInputElement>("[data-a=sides]")?.addEventListener("change", e => {
       const n = Math.round(+(e.target as HTMLInputElement).value);
       if (n >= 3 && n <= 64) ed.polySides = n; else { toast(t("A polygon has 3 to 64 sides."), true); (e.target as HTMLInputElement).value = String(ed.polySides); }
@@ -3523,6 +3530,24 @@ export class ModelController {
     }));
     pm.querySelector("[data-a=pok]")!.addEventListener("click", () => { ed.applyPattern(); this.renderPanel(); });
     pm.querySelector("[data-a=pcancel]")!.addEventListener("click", () => { ed.cancelPattern(); this.renderPanel(); });
+  }
+
+  private assistMemo: { key: string; sets: string[][] } | null = null;
+
+  /** Sketch assistant (FR-SLV-009): ways out of an over-defined sketch, each shown on the sketch first or applied at once. */
+  private assistant(ed: SketchEditor) {
+    if (ed.info.status === "ok") return "";
+    const sk = ed.sk;
+    const key = JSON.stringify([sk.ents, sk.rels, sk.dims]);
+    if (this.assistMemo?.key !== key) this.assistMemo = { key, sets: repairs(sk) };
+    const sets = this.assistMemo.sets;
+    const name = (id: string) => { const r = sk.rels.find(x => x.id === id); if (r) return t(REL_NAME[r.t]); return sk.dims.find(x => x.id === id)?.name ?? id; };
+    const sel = ed.selection;
+    return `<div class="pm-sec pm-assist"><h4>${esc(t("Sketch assistant"))}</h4>`
+      + (sets.length ? `<p class="muted">${esc(t("The sketch is over-defined. Deleting one of these makes it solve again:"))}</p><ul class="pm-rel-list">`
+        + sets.map(s => `<li${s.every(id => sel.has(id)) && sel.size === s.length ? ' class="pm-on"' : ""}><span translate="no">${esc(s.map(name).join(" + "))}</span><span><button class="btn small" data-fixshow="${s.join(",")}">${esc(t("Show"))}</button> <button class="btn small" data-fixapply="${s.join(",")}">${esc(t("Delete"))}</button></span></li>`).join("") + `</ul>`
+        : `<p class="muted">${esc(t("No single relation or dimension fixes it. Delete the ones marked conflicting until the sketch solves."))}</p>`)
+      + `</div>`;
   }
 
   /** All relations of the sketch with their state (FR-SK-055): select or delete each. */

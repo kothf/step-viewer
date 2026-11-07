@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.48.0] - 2026-11-07
+
+### Added
+- **Sketch assistant** (FR-SLV-009). When a sketch is over-defined, for example after an undo, an equation change or an opened file, the sketch panel now lists the relations and dimensions whose deletion makes it solve again. The conflicting ones are tried first, and pairs are offered only when no single item works. **Show** highlights an option in the sketch, and **Delete** removes it as one undoable step.
+
 ## [1.47.0] - 2026-11-07
 
 ### Added
@@ -487,7 +492,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.47.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.48.0...HEAD
+[1.48.0]: https://github.com/kothf/step-viewer/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/kothf/step-viewer/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/kothf/step-viewer/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/kothf/step-viewer/compare/v1.44.0...v1.45.0
