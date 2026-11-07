@@ -7,7 +7,7 @@
  * Opens public CAX-IF / sample STEP files that ship with occt-import-js
  * (node_modules/occt-import-js/test/testfiles) and checks parsing, topology,
  * measurements, sections, mass properties and the tree.
- * Set CHROMIUM_PATH to use a specific browser binary.
+ * Set CHROMIUM_PATH to use a specific browser binary, SMOKE_SHARD=i/n to run one shard (see inShard).
  */
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
@@ -101,6 +101,14 @@ const origin = `http://localhost:${server.address().port}`;
 let failures = 0;
 const check = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
+// Shards: SMOKE_SHARD=i/n runs only the blocks marked inShard(k) with (k - 1) % n + 1 === i (CI runs
+// 1/4 … 4/4 as parallel jobs); unset, every block runs. A block must not rely on what another block
+// left behind (blocks 1 and 2 hold several sections that share `page`). A new section goes in its own
+// `if (inShard(k)) { … }` block, k = the shard with the shortest time (printed at the end of a run).
+const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
+if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
+const inShard = k => (k - 1) % shardN + 1 === shardI;
+const started = Date.now();
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -114,6 +122,7 @@ async function open(file, kernel = false) {
 }
 
 try {
+  if (inShard(1)) { // these sections share `page`: keep them together
   // --- a 10 mm cube: exact topology and every basic measurement ---
   await open("cube-10x10mm/Cube 10x10.stp");
   // --- branding: name, header logo, favicon and web manifest ---
@@ -1178,7 +1187,9 @@ try {
     check(/pcb/.test(tipsSeen) && /model/.test(tipsSeen) && off.hidden && off.v === "off" && quiet, `hints: each tip once, Turn off tips stops them (${JSON.stringify({ tipsSeen, off, quiet })})`);
     await ctx.close();
   }
+  }
 
+  if (inShard(2)) { // these sections share `page`: keep them together
   // --- exact geometry: the full kernel reads the file again; values switch to the B-rep ---
   {
     await open("rounded-cube/rounded-cube.step", true);
@@ -1398,9 +1409,10 @@ try {
   });
   check(perf.objs === 270000 && loadS < 30, `pcb perf: ${perf.objs} objects load in ${loadS.toFixed(1)} s`);
   check(perf.move < 16, `pcb perf: snap + overlay per mouse move ${perf.move.toFixed(2)} ms (full redraw ${perf.render.toFixed(0)} ms)`);
+  }
 
   // --- Part modelling (FRS P1): new part, sketch with dimensions, extrude, cut on a face, fillet, edit, undo, save/open, STEP, recovery, RU ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1648,7 +1660,7 @@ try {
   }
 
   // --- Part modelling 1.19.0 (FRS P1 rest): empty-state planes, polygon, drag arrow, rollback bar, rename, menu, reference plane, up to face, trim, sketch fillet, views, properties ---
-  {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1901,7 +1913,7 @@ try {
   }
 
   // --- Part modelling 1.19.4: revolve angle handle, cut preview of the removed material ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1966,7 +1978,7 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2035,7 +2047,7 @@ try {
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
-  {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2546,7 +2558,7 @@ try {
   }
 
   // --- Part modelling 1.34.0: ellipse and partial ellipse in sketches (FR-SK-018) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2615,7 +2627,7 @@ try {
   }
 
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2658,7 +2670,7 @@ try {
   }
 
   // --- Part modelling 1.37.0: sketch Show/Hide, visible main planes, Normal to (N), hole snapping to the origin ---
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2753,7 +2765,7 @@ try {
   }
 
   // --- Part modelling 1.38.0: modelled (helical) thread from the thread panel (FR-FT-055) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2785,7 +2797,7 @@ try {
   }
 
   // --- 1.39.0: local vault in the browser: save a part, check in, read-only bar, history, roll back, audit trail (FR-PDM) ---
-  {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2844,7 +2856,7 @@ try {
   }
 
   // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2898,7 +2910,7 @@ try {
   }
 
   // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const pg = await ctx.newPage();
     await pg.goto(`${origin}/index.html?sw`);
@@ -2920,5 +2932,5 @@ try {
   await browser.close();
   server.close();
 }
-console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
+console.log(`${shardN > 1 ? `\nshard ${shardI}/${shardN}: ` : "\n"}${failures ? `${failures} check(s) failed` : "all checks passed"} in ${Math.round((Date.now() - started) / 1000)} s`);
 process.exit(failures ? 1 : 0);
