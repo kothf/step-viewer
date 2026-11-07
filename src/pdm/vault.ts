@@ -244,7 +244,7 @@ export class Vault {
   /** Locks older than `hours` (candidates for Break lock). */
   async staleLocks(hours: number) {
     const lim = new Date(Date.now() - hours * 3600e3).toISOString();
-    return (await this.files()).filter(f => f.checkout && f.checkout.at < lim);
+    return (await this.files()).filter(f => f.checkout && f.checkout.at <= lim);
   }
 
   async byPath(path: string): Promise<FileRec | null> {

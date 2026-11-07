@@ -369,9 +369,35 @@ export interface LoftFeature {
   close?: boolean;
 }
 
+/**
+ * Rib (FR-FT-062): an open sketch chain given a thickness and extended to the body. `dir` parallel
+ * grows it in the sketch plane (thickness along the sketch normal), normal grows it along the normal
+ * (thickness in the plane). `side` puts the thickness on both sides of the curve or one; `flip`
+ * tries the other direction first.
+ */
+export interface RibFeature {
+  id: string; type: "rib"; name: string; suppressed?: boolean;
+  sketch: string;
+  thickness: Num;
+  side: "mid" | "one" | "other";
+  dir: "parallel" | "normal";
+  flip?: boolean;
+}
+
+/**
+ * Split line (FR-FT-084): the sketch's curves projected along its normal (both ways) split the faces
+ * they cross; `faces` limits it to those faces (empty: every face the projection meets). The body
+ * keeps its shape; the pieces are separate faces for colours, drafts and mates.
+ */
+export interface SplitFeature {
+  id: string; type: "split"; name: string; suppressed?: boolean;
+  sketch: string;
+  faces: FaceRef[];
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature;
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

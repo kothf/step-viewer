@@ -655,3 +655,56 @@ test("sweep a profile along a sketch path, boss and cut (FR-FT-080)", async () =
   const r3 = run(m, doc([blk, ex, straight, cut]));
   close(r3.props!.volume, 27000 - Math.PI * 4 * 30, 1e-4);
 });
+
+test("rib: parallel to sketch fills an L bracket's corner, normal to sketch spans a channel (FR-FT-062)", async () => {
+  const m = new Modeller(await occ());
+  const line = (id: string, plane: SketchFeature["plane"], a: [number, number], b: [number, number]): SketchFeature => ({
+    id, type: "sketch", name: id, plane, rels: [], dims: [],
+    ents: [{ id: `${id}a`, t: "point", x: a[0], y: a[1] }, { id: `${id}b`, t: "point", x: b[0], y: b[1] }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }],
+  });
+  const base: Feature[] = [
+    rect("b", 0, 0, 100, 60), { id: "bx", type: "extrude", name: "Base", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("w", -45, 0, 10, 60), { id: "wx", type: "extrude", name: "Wall", sketch: "w", op: "boss", end: "blind", depth: { v: 60 } },
+  ];
+  // Diagonal from the wall (x = -40, z = 50) to the base (x = 40, z = 10): a 80 × 40 triangle, 4 thick.
+  const r1 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "parallel" }]));
+  close(r1.props!.volume, 90000 + 6400);
+  // One side: the same volume, all of it on one side of the sketch plane.
+  const r2 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "one", dir: "parallel" }]));
+  close(r2.props!.volume, 90000 + 6400);
+  // Flip with nowhere to go the other way still finds the body.
+  const r3 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "parallel", flip: true }]));
+  close(r3.props!.volume, 90000 + 6400);
+  // A channel: walls at both ends; a line across the top, run down to the floor: 80 × 50 × 4.
+  const chan: Feature[] = [...base, rect("w2", 45, 0, 10, 60), { id: "w2x", type: "extrude", name: "Wall2", sketch: "w2", op: "boss", end: "blind", depth: { v: 60 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 60 } }];
+  const r4 = run(m, doc([...chan, line("r", { plane: "p" }, [-45, 0], [45, 0]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "normal" }]));
+  close(r4.props!.volume, 120000 + 16000);
+  // A bent chain on one side or the other: n × the start direction is "one" (the inside of this bend).
+  const bent = (side: "one" | "other"): SketchFeature[] | Feature[] => [...chan, {
+    id: "r", type: "sketch", name: "r", plane: { plane: "p" }, rels: [], dims: [],
+    ents: [{ id: "ra", t: "point", x: -45, y: 0 }, { id: "rb0", t: "point", x: 0, y: 0 }, { id: "rc", t: "point", x: 0, y: 20 },
+      { id: "rl1", t: "line", a: "ra", b: "rb0" }, { id: "rl2", t: "line", a: "rb0", b: "rc" }],
+  }, { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side, dir: "normal" }];
+  close(run(m, doc(bent("one") as Feature[])).props!.volume, 120000 + (40 * 4 + 20 * 4 - 16) * 50);
+  close(run(m, doc(bent("other") as Feature[])).props!.volume, 120000 + (44 * 4 + 24 * 4 - 16) * 50);
+  // A closed sketch is refused.
+  const bad = m.evaluate(doc([...base, rect("q", 0, 0, 10, 10, { std: "XZ" }), { id: "rb", type: "rib", name: "Rib1", sketch: "q", thickness: { v: 4 }, side: "mid", dir: "parallel" }]));
+  assert.equal(bad.statuses.find(s => s.id === "rb")?.code, "E-RIB-OPEN");
+});
+
+test("split line: a projected circle splits the top and bottom faces, or only the picked one (FR-FT-084)", async () => {
+  const m = new Modeller(await occ());
+  const base: Feature[] = [rect("s", 0, 0, 40, 40), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, circle("c", 0, 0, 5, { plane: "p" })];
+  const all = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  close(all.props!.volume, 32000);
+  assert.equal(all.body!.faces.length, 8);
+  assert.equal(all.body!.names.filter(n => n === "x:end").length, 2);
+  const one = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [{ name: "x:end" }] }]));
+  assert.equal(one.body!.faces.length, 7);
+  close(one.props!.volume, 32000);
+  // A sketch that misses the part is an error.
+  const miss = m.evaluate(doc([...base.slice(0, 3), circle("c", 100, 0, 5, { plane: "p" }), { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  assert.equal(miss.statuses.find(s => s.id === "sp")?.code, "E-SPL-MISS");
+});

@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
@@ -155,6 +155,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "helix") features.push(f.sketch);
   if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push("sketch" in f.path ? f.path.sketch : f.path.helix); }
   if (f.type === "loft") features.push(...f.profiles);
+  if (f.type === "rib") features.push(f.sketch);
+  if (f.type === "split") { features.push(f.sketch); faces.push(...f.faces.map(x => x.name)); }
   return { faces, features };
 }
 
