@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.54.1] - 2026-11-07
+
+### Fixed
+- The Vault tab could fail to draw for a moment while it re-read the vault (the file list and their status were updated separately). The two are now swapped in together.
+
 ## [1.54.0] - 2026-11-07
 
 ### Added
@@ -538,7 +543,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.54.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.54.1...HEAD
+[1.54.1]: https://github.com/kothf/step-viewer/compare/v1.54.0...v1.54.1
 [1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
