@@ -95,15 +95,20 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       // only the faces it makes, as a plain triangle list.
       let preview: { position: number[]; status: unknown } | null = null;
       if (r.previewAt != null) {
-        const fid = r.doc.features[r.previewAt]?.id;
+        const pf = r.doc.features[r.previewAt];
+        const fid = pf?.id;
         const pr = modeller.evaluate({ ...r.doc, rollback: r.previewAt + 1 });
         const status = pr.statuses[r.previewAt];
         const position: number[] = [];
-        if (pr.body && fid && status?.ok) {
-          const m = modeller.mesh(pr.body, "preview", r.color, r.quality);
+        // A cut shows the material it removes (the body before it minus the body after it).
+        const cut = (pf?.type === "extrude" || pf?.type === "revolve") && pf.op === "cut";
+        const before = cut && pr.body && status?.ok && status.code !== "suppressed" ? modeller.evaluate({ ...r.doc, rollback: r.previewAt }).body : null;
+        const shown = cut ? (before && pr.body ? modeller.removed(before, pr.body) : null) : pr.body;
+        if (shown && fid && status?.ok) {
+          const m = modeller.mesh(shown, "preview", r.color, r.quality);
           const P = m.attributes.position.array, I = m.index.array;
-          pr.body.names.forEach((n, i) => {
-            if (!n.startsWith(`${fid}:`)) return;
+          shown.names.forEach((n, i) => {
+            if (!cut && !n.startsWith(`${fid}:`)) return;
             const fr = m.brep_faces[i];
             for (let t = fr.first; t <= fr.last; t++) for (let k = 0; k < 3; k++) { const v = I[t * 3 + k]; position.push(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]); }
           });

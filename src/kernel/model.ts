@@ -421,6 +421,9 @@ export class Modeller {
     return this.carry(mk, [a, b], mk.Shape(), fid);
   }
 
+  /** The material a cut took away: the body before it minus the body after it (the cut preview). */
+  removed(before: Named, after: Named): Named { return this.bool("cut", before, after, "removed"); }
+
   private round(f: Feature & { type: "fillet" | "chamfer" }, prev: Named | null): Named {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");

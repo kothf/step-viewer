@@ -1814,6 +1814,53 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.19.4: revolve angle handle, cut preview of the removed material ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 60000 });
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 10 × 10 square 10 mm from a construction axis, revolved 90°.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Revolve", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), P("q", 0, 10), { id: "ax", t: "line", a: "o", b: "q", cons: true }, P("a", 10, 0), P("b", 20, 0), P("c", 20, 10), P("d", 10, 10), { id: "l1", t: "line", a: "a", b: "b" }, { id: "l2", t: "line", a: "b", b: "c" }, { id: "l3", t: "line", a: "c", b: "d" }, { id: "l4", t: "line", a: "d", b: "a" }] }, { id: "r", type: "revolve", name: "Revolve1", sketch: "s", op: "boss", axis: "ax", angle: { v: Math.PI / 2 } }); }); });
+    await idle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0.2, 1, 0.6), false); v.fit(false); v.camera.zoom *= 0.6; v.camera.updateProjectionMatrix(); v.invalidate(); });
+    await mp.click('#mc-tree .ft-row[data-id="r"]');
+    await mp.waitForTimeout(300);
+    const st = await mp.evaluate(() => { const a = window.__sv.modeller.arrow; return a?.ang ? { head: a.ang.head.position.toArray(), c: a.ang.c.toArray(), u: a.ang.u.toArray(), r: a.ang.r.toArray(), label: document.querySelector("#mc-layer .mc-handle")?.textContent } : null; });
+    // Drag the grip round the axis from 90° to 180° (Rodrigues rotation of the 0° radius).
+    const at = q => { const [ux, uy, uz] = st.u, [rx, ry, rz] = st.r, c = Math.cos(q), s = Math.sin(q), d = ux * rx + uy * ry + uz * rz, cr = [uy * rz - uz * ry, uz * rx - ux * rz, ux * ry - uy * rx]; return [0, 1, 2].map(i => st.c[i] + [rx, ry, rz][i] * c + cr[i] * s + [ux, uy, uz][i] * d * (1 - c)); };
+    if (st) {
+      const h = await scr(st.head);
+      await mp.mouse.move(h[0], h[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 12; i++) { const s = await scr(at(Math.PI / 2 + (Math.PI / 2 * i) / 12)); await mp.mouse.move(s[0], s[1]); await mp.waitForTimeout(30); }
+      await mp.mouse.up();
+      await idle();
+    }
+    const rv = await mp.evaluate(() => ({ a: Math.round(window.__sv.model.store.doc.features[1].angle.v * 180 / Math.PI), v: window.__sv.model.last().props.volume, mode: window.__sv.model.mode().kind, label: window.__sv.model.store.undoLabel }));
+    check(st?.label === "90°" && rv.a === 180 && near(rv.v, Math.PI * 300 * 10 / 2, 1e-3) && rv.mode === "none" && rv.label === "Edit Revolve1", `model 1.19.4: dragging the revolve handle round the axis sets the angle (${st?.label} → ${JSON.stringify(rv)})`);
+    // Cut preview: a Ø6 × 4 blind cut into the ring from its flat side shows the removed material in yellow.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Cut", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("o2", 0, -15), { id: "c2", t: "circle", c: "o2", r: 3 }] }, { id: "k", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "blind", depth: { v: 4 } }); }); });
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("k"));
+    await mp.waitForTimeout(300);
+    await idle();
+    await mp.waitForTimeout(300);
+    const cp = await mp.evaluate(() => { const l = window.__sv.model.last(); const P = l.preview?.position ?? []; let vol = 0; for (let i = 0; i < P.length; i += 9) { const [ax, ay, az, bx, by, bz, cx, cy, cz] = P.slice(i, i + 9); vol += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6; } return { tris: P.length / 9, vol: Math.abs(vol), drawn: window.__sv.modeller.decor.children.some(c => c.userData.cutPreview) }; });
+    check(cp.drawn && near(cp.vol, Math.PI * 9 * 4, 0.05 * Math.PI * 9 * 4), `model 1.19.4: an open cut previews the material it removes (${JSON.stringify(cp)} vs ${(Math.PI * 36).toFixed(2)} mm³)`);
+    await mp.keyboard.press("Escape");
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

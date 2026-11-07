@@ -208,6 +208,7 @@ const EN: Tab[] = [
 <ul>
   <li><b>Extrude</b> and <b>Cut</b> use a closed sketch: blind depth, mid plane, through all or up to a face or plane, with a second direction and reverse. A cut goes into the material; <b>Flip side to cut</b> keeps what is inside the profile instead.</li>
   <li>Drag the orange arrow on the model to set the depth with the mouse (Shift: finer steps). Select an extrude in the tree and drag its arrow to change it at once.</li>
+  <li>A revolve has an orange grip at the end of its sweep: drag it round the axis to set the angle (1° steps, Shift: 0.1°). A cut shows the material it removes as a see-through yellow body while it is open.</li>
   <li><b>Plane</b> makes a reference plane offset from a plane or flat face, or at an angle about a straight edge. Sketch on it like on the standard planes.</li>
   <li><b>Revolve</b> turns a sketch around one of its lines (a construction line is taken first), by any angle.</li>
   <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges (or pick an edge first), and set the size. A chamfer can use two distances or a distance and an angle; <b>Keep features that fit</b> skips edges a fillet cannot round.</li>
@@ -391,6 +392,7 @@ const RU: Tab[] = [
 <ul>
   <li><b>Вытягивание</b> и <b>Вырез</b> строятся по замкнутому эскизу: на глубину, от средней плоскости, насквозь или до грани или плоскости, со вторым направлением и обратным направлением. Вырез идёт в материал; <b>Сменить сторону выреза</b> оставляет то, что внутри контура.</li>
   <li>Перетащите оранжевую стрелку на модели, чтобы задать глубину мышью (Shift: мельче шаг). Выберите вытягивание в дереве и тяните его стрелку, чтобы сразу изменить его.</li>
+  <li>У вращения есть оранжевый маркер в конце дуги: тяните его вокруг оси, чтобы задать угол (шаг 1°, Shift: 0,1°). Вырез, пока он открыт, показывает удаляемый материал полупрозрачным жёлтым телом.</li>
   <li><b>Плоскость</b> создаёт справочную плоскость со смещением от плоскости или плоской грани либо под углом вокруг прямого ребра. На ней можно рисовать эскиз, как на стандартных плоскостях.</li>
   <li><b>Вращение</b> поворачивает эскиз вокруг одного из его отрезков (сначала берётся вспомогательный) на любой угол.</li>
   <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) либо выберите ребро заранее и задайте размер. Фаска бывает с двумя расстояниями или с расстоянием и углом; <b>Сохранять подходящие</b> пропускает рёбра, которые скругление не может обработать.</li>
