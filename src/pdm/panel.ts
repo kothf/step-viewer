@@ -1,10 +1,11 @@
 // The Vault tab (FR-PDM-002, 080): create or open a vault, list its files with their state, version and lock,
 // and the commands Check out, Check in, Undo check-out, Get latest, History (open a version, roll back),
 // Add files, Save the open part to the vault, the audit trail and the integrity check.
-import { t } from "../i18n";
+import { onLangChange, t } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
 import { unzipLimited, zip } from "../model/zip";
-import { fsaDir, Vault, VaultError, type FileRec, type VDir } from "./vault";
+import { fsaDir, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
+import { PART_NUMBER, ROLES, type CardField, type Role } from "./workflow";
 
 export interface VaultHost {
   /** Opens bytes as a document (a part, or any file the viewer reads). */
@@ -18,6 +19,19 @@ export interface VaultHost {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+/** A vault message in the interface language. */
+const tm = (m: Msg) => t(m.key, m.p);
+/** State, transition and role names: the default workflow's are translated, a user's own are shown as typed (FR-PDM-083). */
+const tn = (s: string) => t(s);
+const errText = (e: unknown) => (e instanceof VaultError ? t(e.key, e.params) : t("Vault error: {err}", { err: (e as Error).message }));
+const download = (name: string, data: BlobPart, type: string) => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+const csvOf = (rows: (string | number)[][]) => rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(",")).join("\n");
 const fmtSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 ** 2).toFixed(1)} MB`);
 
 type PickerWindow = Window & { showDirectoryPicker?: (o?: unknown) => Promise<FileSystemDirectoryHandle> };
@@ -36,8 +50,14 @@ export class VaultPanel {
   private sel: string | null = null;
   /** The vault file the open part came from. */
   private openId: string | null = null;
+  /** Search results shown instead of all files (FR-PDM-042), with what was searched. */
+  private found: { ids: Set<string>; label: string } | null = null;
 
-  constructor(private host: HTMLElement, private app: VaultHost) { void this.render(); }
+  constructor(private host: HTMLElement, private app: VaultHost) {
+    void this.render();
+    // Interpolated text (revision labels, counts) is rebuilt in the new language.
+    onLangChange(() => { if (this.vault) void this.render(); });
+  }
 
   get user() { return storage.get("mc:vaultUser") || "User"; }
   private get computer() {
@@ -70,7 +90,7 @@ export class VaultPanel {
     try { h = await w.showDirectoryPicker({ mode: "readwrite", id: "mc-vault" }); } catch { return; }
     const dir = fsaDir(h);
     try { await this.use(create ? await Vault.create(dir, h.name, this.user, this.computer) : await Vault.open(dir, this.user, this.computer)); }
-    catch (e) { toast(t((e as Error).message), true); }
+    catch (e) { toast(errText(e), true); }
   }
 
   /** Opens a vault given its directory (tests, and the folder picker). */
@@ -106,7 +126,7 @@ export class VaultPanel {
   private rec(id: string) { return this.files.find(f => f.id === id)!; }
 
   private async run(work: () => Promise<unknown>) {
-    try { await work(); } catch (e) { toast(e instanceof VaultError ? t(e.message) : t("Vault error: {err}", { err: (e as Error).message }), true); }
+    try { await work(); } catch (e) { toast(errText(e), true); }
     await this.refresh();
   }
 
@@ -144,13 +164,13 @@ export class VaultPanel {
       await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data);
       if (f.kind === "part" && !version) { this.openId = id; this.tieOpen(f); }
       else this.openId = null;
-    } catch (e) { toast(t((e as Error).message), true); }
+    } catch (e) { toast(errText(e), true); }
   }
 
   private tieOpen(f: FileRec) {
     const v = this.vault!, st = this.state.get(f.id);
     const mine = !!st?.mine;
-    const label = `v${v.latest(f).n}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}`;
+    const label = `v${v.latest(f).n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}`;
     this.app.setVault({
       label, readOnly: !mine,
       save: async bytes => { await v.saveWorking(f.id, bytes); await this.refresh(); },
@@ -204,11 +224,19 @@ export class VaultPanel {
     if (!v) return;
     const f = await v.file(id);
     const log = await v.auditTrail(id);
-    const rows = [...f.versions].reverse().map(x => `<tr><td>v${x.n}</td><td>${esc(fmtDate(x.at))}</td><td translate="no">${esc(x.user)}</td><td translate="no">${esc(x.comment)}</td><td>${fmtSize(x.size)}</td><td class="v-acts">${x.purged ? `<span class="muted">${esc(t("purged"))}</span>` : `<button class="btn small" data-open="${x.n}">${esc(t("Open"))}</button>${x.n !== v.latest(f).n ? `<button class="btn small" data-rb="${x.n}">${esc(t("Roll back"))}</button>` : ""}`}</td></tr>`).join("");
-    const events = log.map(e => `<li>${esc(fmtDate(e.at))} · <span translate="no">${esc(e.user)}</span> · ${esc(t(e.action))}${e.version ? ` v${e.version}` : ""}</li>`).join("");
-    const d = this.dialog(t("History of {name}", { name: f.path }), `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Version"))}</th><th>${esc(t("Date"))}</th><th>${esc(t("User"))}</th><th>${esc(t("Comment"))}</th><th>${esc(t("Size"))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><h4>${esc(t("Events"))}</h4><ul class="v-log">${events}</ul>`, [[t("Close"), "cancel"]]);
+    const rows = [...f.versions].reverse().map(x => `<tr><td>v${x.n}</td><td>${esc(fmtDate(x.at))}</td><td translate="no">${esc(x.user)}</td><td translate="no">${esc(x.comment)}</td><td>${fmtSize(x.size)}</td><td translate="no">${esc(x.rev ?? "")}</td><td>${esc(tn(x.state))}</td><td class="v-acts">${x.purged ? `<span class="muted">${esc(t("purged"))}</span>` : `<button class="btn small" data-open="${x.n}">${esc(t("Open"))}</button>${x.n !== v.latest(f).n ? `<button class="btn small" data-rb="${x.n}">${esc(t("Roll back"))}</button>` : ""}`}</td></tr>`).join("");
+    const events = log.map(e => `<li>${esc(fmtDate(e.at))} · <span translate="no">${esc(e.user)}</span> · ${esc(t(e.action))}${e.version ? ` v${e.version}` : ""}${e.action === "transition" && e.details ? ` · <span translate="no">${esc(e.details)}</span>` : ""}</li>`).join("");
+    const vs = f.versions.filter(x => !x.purged).map(x => `<option value="${x.n}">v${x.n}${x.rev ? ` (${esc(x.rev)})` : ""}</option>`).join("");
+    const cmp = f.versions.filter(x => !x.purged).length > 1 ? `<div class="row v-cmp"><span>${esc(t("Compare"))}</span><select name="ca" aria-label="${esc(t("First version"))}">${vs}</select><select name="cb" aria-label="${esc(t("Second version"))}">${vs.replace(`value="${v.latest(f).n}"`, `value="${v.latest(f).n}" selected`)}</select><button class="btn small" data-cmp>${esc(t("Compare"))}</button></div>` : "";
+    const d = this.dialog(t("History of {name}", { name: f.path }), `${cmp}<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Version"))}</th><th>${esc(t("Date"))}</th><th>${esc(t("User"))}</th><th>${esc(t("Comment"))}</th><th>${esc(t("Size"))}</th><th>${esc(t("Revision"))}</th><th>${esc(t("State"))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><h4>${esc(t("Events"))}</h4><ul class="v-log">${events}</ul>`, [[t("Close"), "cancel"]]);
     d.el.querySelectorAll<HTMLElement>("[data-open]").forEach(b => b.addEventListener("click", () => { d.el.close(); void this.openFile(id, +b.dataset.open!); }));
     d.el.querySelectorAll<HTMLElement>("[data-rb]").forEach(b => b.addEventListener("click", () => { d.el.close(); void this.rollBack(id, +b.dataset.rb!); }));
+    d.el.querySelector<HTMLElement>("[data-cmp]")?.addEventListener("click", e => {
+      e.preventDefault();
+      const a = +d.el.querySelector<HTMLSelectElement>('[name="ca"]')!.value, b = +d.el.querySelector<HTMLSelectElement>('[name="cb"]')!.value;
+      d.el.close();
+      void this.compareDlg(id, Math.min(a, b), Math.max(a, b));
+    });
   }
 
   async auditTrail() {
@@ -235,7 +263,7 @@ export class VaultPanel {
     const r = await v.verify();
     const ok = !r.missing.length && !r.corrupt.length;
     const list = (title: string, xs: string[]) => (xs.length ? `<p><b>${esc(title)}</b></p><ul class="v-log">${xs.slice(0, 50).map(x => `<li translate="no">${esc(x)}</li>`).join("")}</ul>` : "");
-    this.dialog(t("Integrity check"), `<p>${esc(ok ? t("The vault is sound: {f} files, {o} stored objects.", { f: r.files, o: r.objects }) : t("Problems found in the vault."))}</p>${list(t("Missing versions"), r.missing)}${list(t("Damaged versions"), r.corrupt)}${r.orphans.length ? `<p class="muted">${esc(t("{n} stored objects are not used by any version.", { n: r.orphans.length }))}</p>` : ""}`, [[t("Close"), "cancel"]]);
+    this.dialog(t("Integrity check"), `${r.broken.length ? `<p><b>${esc(t("Broken references"))}</b></p><ul class="v-log">${r.broken.slice(0, 50).map(x => `<li translate="no">${esc(x)}</li>`).join("")}</ul>` : ""}<p>${esc(ok ? t("The vault is sound: {f} files, {o} stored objects.", { f: r.files, o: r.objects }) : t("Problems found in the vault."))}</p>${list(t("Missing versions"), r.missing)}${list(t("Damaged versions"), r.corrupt)}${r.orphans.length ? `<p class="muted">${esc(t("{n} stored objects are not used by any version.", { n: r.orphans.length }))}</p>` : ""}`, [[t("Close"), "cancel"]]);
   }
 
   /** Export vault (FR-PDM-007): a ZIP of everything, or of the latest versions only. */
@@ -273,7 +301,7 @@ export class VaultPanel {
       for (let i = 2; names.has(name); i++) name = `${base} (${i})`;
       const dir = await ws.dir(name, true);
       await this.use(await Vault.importEntries(dir!, entries, this.user, this.computer));
-    } catch (e) { toast(e instanceof VaultError ? t(e.message) : t("Vault error: {err}", { err: (e as Error).message }), true); }
+    } catch (e) { toast(errText(e), true); }
   }
 
   /** Storage report with Purge old versions (FR-PDM-008). */
@@ -291,6 +319,305 @@ export class VaultPanel {
     const keep = Math.max(1, +(d.el.querySelector<HTMLInputElement>('[name="keep"]')?.value ?? 5) || 5);
     if (!await confirmModal(t("Delete the content of all but the last {n} versions of every file?", { n: keep }), t("Purge"))) return;
     await this.run(async () => { const freed = await v.purge(keep); toast(t("Purged: {size} freed", { size: fmtSize(freed) }), "success"); });
+  }
+
+  // ---------- lifecycle (FR-PDM-031..034, 082) ----------
+
+  private cardSummary(f: FileRec) {
+    const v = this.vault!;
+    const rel = v.released(f);
+    const rows = v.cardFields(f.kind).filter(x => f.card?.[x.name]).slice(0, 5).map(x => `<dt>${esc(t(x.name))}</dt><dd translate="no">${esc(f.card![x.name])}</dd>`).join("");
+    return `<dl class="v-card">${rows}${rel ? `<dt>${esc(t("Released"))}</dt><dd translate="no">${esc(rel.rev ?? "")} · v${rel.n}${rel.approvedBy ? ` · ${esc(rel.approvedBy)}` : ""}</dd>` : ""}</dl>`;
+  }
+
+  /**
+   * Change state (FR-PDM-082): lists the file and its referenced files that can take the same transition, with
+   * problems and warnings, before anything is written.
+   */
+  async transitionDlg(id: string, name: string, comment?: string, withRefs?: string[]) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const tr = v.transitionsOf(f).find(x => x.name === name);
+    if (!tr) return;
+    // Referenced files in the same state can go along (release an assembly with its parts).
+    const tree = await v.contains(id, undefined, "latest");
+    const refs: FileRec[] = [];
+    const walk = (n: TreeNode) => { for (const c of n.children) { const r = this.files.find(x => x.id === c.id); if (r && r.state === f.state && !refs.includes(r) && r.id !== id) refs.push(r); if (!c.cycle) walk(c); } };
+    walk(tree);
+    if (comment === undefined) {
+      const render = async (ids: string[]) => {
+        const chk = await v.checkTransition(ids, name, "x");
+        return chk.map(c => `<li translate="no"><b>${esc(c.path)}</b> · v${c.version}${c.problems.map(p => `<div class="v-bad">${esc(tm(p))}</div>`).join("")}${c.warnings.map(p => `<div class="v-warn">${esc(tm(p))}</div>`).join("")}</li>`).join("");
+      };
+      const d = this.dialog(t("{name}: {from} → {to}", { name: tn(name), from: tn(tr.from), to: tn(tr.to) }), `
+        ${refs.length ? `<p>${esc(t("Referenced files in the same state:"))}</p>${refs.map(r => `<label class="chk" translate="no"><input type="checkbox" name="ref" value="${r.id}" checked /> ${esc(r.path)}</label>`).join("")}` : ""}
+        <ul class="v-log v-check">${await render([id, ...refs.map(r => r.id)])}</ul>
+        <label class="v-lbl">${esc(tr.comment ? t("Comment (required)") : t("Comment"))}<textarea name="comment" rows="2" maxlength="500"></textarea></label>`, [[t("Cancel"), "cancel"], [tn(name), "ok"]]);
+      d.el.querySelectorAll<HTMLInputElement>('[name="ref"]').forEach(c => c.addEventListener("change", async () => {
+        const ids = [id, ...[...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value)];
+        d.el.querySelector(".v-check")!.innerHTML = await render(ids);
+      }));
+      if (await d.done !== "ok") return;
+      comment = d.el.querySelector<HTMLTextAreaElement>('[name="comment"]')!.value;
+      withRefs = [...d.el.querySelectorAll<HTMLInputElement>('[name="ref"]:checked')].map(x => x.value);
+    }
+    const ids = [id, ...(withRefs ?? [])];
+    await this.run(async () => {
+      const labels = await v.transition(ids, name, comment!);
+      const rev = labels[id];
+      toast(rev ? t("{name}: {state}, revision {rev}", { name: f.path, state: tn(tr.to), rev }) : t("{name}: {state}", { name: f.path, state: tn(tr.to) }), "success");
+    });
+    if (this.openId && ids.includes(this.openId)) await this.openFile(this.openId);
+  }
+
+  // ---------- data card and numbering (FR-PDM-040/041) ----------
+
+  async dataCard(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id), editable = !!this.state.get(id)?.mine;
+    const input = (fd: CardField) => {
+      const val = f.card?.[fd.name] ?? "", nm = `c:${fd.name}`, dis = editable ? "" : " disabled";
+      if (fd.type === "list") return `<select name="${esc(nm)}"${dis}><option value=""></option>${(fd.options ?? []).map(o => `<option${o === val ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+      if (fd.type === "checkbox") return `<input type="checkbox" name="${esc(nm)}"${val === "true" ? " checked" : ""}${dis} />`;
+      if (fd.type === "user") return `<select name="${esc(nm)}"${dis}><option value=""></option>${v.info.users.map(o => `<option${o === val ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+      return `<input name="${esc(nm)}" type="${fd.type === "number" ? "text" : fd.type === "date" ? "date" : "text"}"${fd.type === "number" ? ' inputmode="decimal"' : ""} value="${esc(val)}" maxlength="200"${dis} />`;
+    };
+    const fields = v.cardFields(f.kind);
+    const body = `<p translate="no">${esc(f.path)}</p>${editable ? "" : `<p class="muted">${esc(t("Check the file out to edit its data card."))}</p>`}
+      <div class="v-form">${fields.map(fd => `<label><span>${esc(t(fd.name))}${fd.required ? " *" : ""}</span>${input(fd)}${fd.name === PART_NUMBER && editable ? `<button class="btn small" data-num>${esc(t("New number"))}</button>` : ""}</label>`).join("")}</div>`;
+    const d = this.dialog(t("Data card"), body, editable ? [[t("Cancel"), "cancel"], [t("Save"), "ok"]] : [[t("Close"), "cancel"]]);
+    d.el.querySelector<HTMLElement>("[data-num]")?.addEventListener("click", async e => {
+      e.preventDefault();
+      try { const n = await v.issueNumber(f.card); d.el.querySelector<HTMLInputElement>(`[name="c:${PART_NUMBER}"]`)!.value = n; } catch (er) { toast(errText(er), true); }
+    });
+    if (await d.done !== "ok") return;
+    const vals: Record<string, string> = {};
+    for (const fd of fields) {
+      const el = d.el.querySelector<HTMLInputElement>(`[name="c:${CSS.escape(fd.name)}"]`);
+      if (el) vals[fd.name] = el.type === "checkbox" ? String(el.checked) : el.value;
+    }
+    await this.run(async () => {
+      await v.setCard(id, vals);
+      // The open part gets the properties too (its saved copy is the vault's working copy).
+      if (this.openId === id) await this.openFile(id);
+      toast(t("Data card saved"), "success");
+    });
+  }
+
+  // ---------- references (FR-PDM-021/022, 052) ----------
+
+  private treeHtml(n: TreeNode, depth = 0): string {
+    const li = (c: TreeNode): string => `<li translate="no">${c.qty > 1 ? `<b>${c.qty}×</b> ` : ""}${esc(c.path)}${c.missing ? ` <span class="v-bad">${esc(t("missing"))}</span>` : ` · v${c.version}${c.rev ? ` · ${esc(c.rev)}` : ""} · <span translate="yes">${esc(tn(c.state))}</span>`}${c.cycle ? " ↻" : ""}${c.children.length && depth < 20 ? `<ul>${c.children.map(x => li(x)).join("")}</ul>` : ""}</li>`;
+    return `<ul class="v-tree">${depth ? li(n) : n.children.map(li).join("")}</ul>`;
+  }
+
+  async containsDlg(id: string, version?: number, mode: Resolve = "built") {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const tree = await v.contains(id, version, mode);
+    const opts = ([["built", "As checked in"], ["latest", "Latest"], ["released", "Latest released"]] as const).map(([k, l]) => `<option value="${k}"${k === mode ? " selected" : ""}>${esc(t(l))}</option>`).join("");
+    const vers = [...f.versions].reverse().filter(x => !x.purged).map(x => `<option value="${x.n}"${x.n === tree.version ? " selected" : ""}>v${x.n}${x.rev ? ` (${esc(x.rev)})` : ""}</option>`).join("");
+    const bom = await v.bom(id, version, mode);
+    const d = this.dialog(t("Contains: {name}", { name: f.path }), `<div class="row"><select name="ver" aria-label="${esc(t("Version"))}">${vers}</select><select name="mode" aria-label="${esc(t("Components"))}">${opts}</select></div>
+      ${tree.children.length ? `<div class="v-scroll">${this.treeHtml(tree)}</div>
+      <h4>${esc(t("Bill of materials"))}</h4><div class="v-scroll"><table class="v-table v-bom"><thead><tr><th>${esc(t("File"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Revision"))}</th><th>${esc(t("Qty"))}</th></tr></thead><tbody>${bom.map(r => `<tr translate="no"><td>${esc(r.path)}</td><td>${esc(r.partNumber)}</td><td>${esc(r.description)}</td><td>${esc(r.rev ?? "")} v${r.version}</td><td>${r.qty}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${esc(t("This file references no other files."))}</p>`}`,
+      bom.length ? [[t("Export BOM CSV"), "csv"], [t("Close"), "cancel"]] : [[t("Close"), "cancel"]]);
+    const again = () => { d.el.close(); void this.containsDlg(id, +d.el.querySelector<HTMLSelectElement>('[name="ver"]')!.value, d.el.querySelector<HTMLSelectElement>('[name="mode"]')!.value as Resolve); };
+    d.el.querySelectorAll("select").forEach(s => s.addEventListener("change", again));
+    if (await d.done === "csv") download(`${f.path.split("/").pop()}-v${tree.version}-bom.csv`, csvOf([["path", "part number", "description", "revision", "version", "qty"], ...bom.map(r => [r.path, r.partNumber, r.description, r.rev ?? "", r.version, r.qty])]), "text/csv");
+  }
+
+  async whereUsedDlg(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const ups = await v.whereUsed(id);
+    const li = (n: TreeNode): string => `<li translate="no">${esc(n.path)} · ${n.qty}× · ${esc(t("uses v{n}", { n: n.version }))}${n.cycle ? " ↻" : ""}${n.children.length ? `<ul>${n.children.map(li).join("")}</ul>` : ""}</li>`;
+    this.dialog(t("Where used: {name}", { name: f.path }), ups.length ? `<div class="v-scroll"><ul class="v-tree">${ups.map(li).join("")}</ul></div>` : `<p class="muted">${esc(t("No file in the vault uses this file."))}</p>`, [[t("Close"), "cancel"]]);
+  }
+
+  // ---------- compare (FR-PDM-050/052) ----------
+
+  async compareDlg(id: string, a: number, b: number) {
+    const v = this.vault;
+    if (!v) return;
+    try {
+      const c = await v.compare(id, a, b);
+      const table = (head: string[], rows: string[][]) => `<table class="v-table"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr translate="no">${r.map(x => `<td>${esc(x)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      const parts: string[] = [`<p>${esc(c.same ? t("The two versions have the same content.") : t("Size change: {d}", { d: `${c.size >= 0 ? "+" : "−"}${fmtSize(Math.abs(c.size))}` }))}</p>`];
+      if (c.card.length) parts.push(`<h4>${esc(t("Data card"))}</h4>${table([t("Field"), `v${a}`, `v${b}`], c.card.map(x => [x.field, x.from, x.to]))}`);
+      if (c.features) {
+        const ft = c.features;
+        if (ft.added.length) parts.push(`<p><b>${esc(t("Added features"))}:</b> <span translate="no">${esc(ft.added.join(", "))}</span></p>`);
+        if (ft.removed.length) parts.push(`<p><b>${esc(t("Removed features"))}:</b> <span translate="no">${esc(ft.removed.join(", "))}</span></p>`);
+        if (ft.changed.length) parts.push(`<h4>${esc(t("Changed parameters"))}</h4>${table([t("Feature"), t("Parameter"), `v${a}`, `v${b}`], ft.changed.slice(0, 200).map(x => [x.feature, x.param, x.from, x.to]))}`);
+      }
+      if (c.refs.length) {
+        parts.push(`<h4>${esc(t("References"))}</h4>${table([t("File"), `v${a}`, `v${b}`], c.refs.map(x => [x.path, x.from, x.to]))}`);
+        const bc = await v.bomCompare(id, a, b);
+        if (bc.length) parts.push(`<h4>${esc(t("BOM changes"))}</h4>${table([t("File"), t("What changed"), `v${a}`, `v${b}`], bc.map(x => [x.path, t(x.change), x.from, x.to]))}`);
+      }
+      this.dialog(t("Compare v{a} and v{b} of {name}", { a, b, name: c.path }), `<div class="v-scroll">${parts.join("")}</div>`, [[t("Close"), "cancel"]]);
+    } catch (e) { toast(errText(e), true); }
+  }
+
+  // ---------- rename, copy, delete (FR-PDM-023..025) ----------
+
+  async renameDlg(id: string, to?: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    if (to === undefined) {
+      const r = await this.form(t("Rename / move"), `<p class="muted">${esc(t("Use / for folders. Files that use this one get their references updated (a new version each)."))}</p><label class="v-lbl">${esc(t("New path"))}<input name="path" value="${esc(f.path)}" maxlength="240" autofocus translate="no" /></label>`, t("Rename"));
+      if (!r) return;
+      to = (r.path as string).trim();
+    }
+    await this.run(async () => { await v.rename(id, to!); toast(t("Renamed to {name}", { name: to! }), "success"); });
+    if (this.openId === id) await this.openFile(id);
+  }
+
+  async copyTreeDlg(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const tree = await v.contains(id, undefined, "latest");
+    const ids: { id: string; path: string }[] = [];
+    const walk = (n: TreeNode) => { for (const c of n.children) { if (c.id && !ids.some(x => x.id === c.id)) ids.push({ id: c.id, path: c.path }); if (!c.cycle) walk(c); } };
+    walk(tree);
+    const folder = f.path.includes("/") ? `${f.path.split("/").slice(0, -1).join("/")}/copy` : "copy";
+    const r = await this.form(t("Copy tree"), `<p translate="no">${esc(f.path)}</p>
+      ${ids.length ? `<p>${esc(t("Copy these referenced files too (the others stay shared):"))}</p>${ids.map(x => `<label class="chk" translate="no"><input type="checkbox" name="id:${x.id}" checked /> ${esc(x.path)}</label>`).join("")}` : ""}
+      <div class="v-form"><label><span>${esc(t("To folder"))}</span><input name="folder" value="${esc(folder)}" maxlength="200" translate="no" /></label>
+      <label><span>${esc(t("Prefix"))}</span><input name="prefix" maxlength="40" /></label><label><span>${esc(t("Suffix"))}</span><input name="suffix" maxlength="40" /></label>
+      <label><span>${esc(t("Find"))}</span><input name="find" maxlength="40" /></label><label><span>${esc(t("Replace with"))}</span><input name="replace" maxlength="40" /></label></div>
+      <label class="chk"><input type="checkbox" name="renumber" /> ${esc(t("New part numbers from the numbering scheme"))}</label>`, t("Copy"));
+    if (!r) return;
+    await this.run(async () => {
+      const out = await v.copyTree(id, { ids: ids.filter(x => r[`id:${x.id}`]).map(x => x.id), folder: r.folder as string, prefix: r.prefix as string, suffix: r.suffix as string, find: r.find as string, replace: r.replace as string, renumber: !!r.renumber });
+      toast(t("Copied {n} file|Copied {n} files", { n: out.size }), "success");
+      this.sel = out.get(id)?.id ?? this.sel;
+    });
+  }
+
+  async deleteFile(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    const users = await v.usersOf(id);
+    if (users.length) {
+      this.dialog(t("Cannot delete {name}", { name: f.path }), `<p>${esc(t("These files use it:"))}</p><ul class="v-log">${users.map(u => `<li translate="no">${esc(u.path)}</li>`).join("")}</ul>`, [[t("Close"), "cancel"]]);
+      return;
+    }
+    if (!await confirmModal(t("Move {name} to the recycle bin?", { name: f.path }), t("Delete"))) return;
+    await this.run(() => v.remove(id));
+    if (this.sel === id) this.sel = null;
+    if (this.openId === id) { this.app.setVault(null); this.openId = null; }
+    await this.render();
+  }
+
+  async recycleBinDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const bin = await v.recycleBin();
+    const admin = v.has("Admin");
+    const d = this.dialog(t("Recycle bin"), bin.length ? `<table class="v-table"><tbody>${bin.map(f => `<tr><td translate="no">${esc(f.path)}</td><td>${esc(fmtDate(f.deleted!.at))}</td><td class="v-acts"><button class="btn small" data-restore="${f.id}">${esc(t("Restore"))}</button>${admin ? `<button class="btn small" data-destroy="${f.id}">${esc(t("Destroy"))}</button>` : ""}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">${esc(t("The recycle bin is empty."))}</p>`, [[t("Close"), "cancel"]]);
+    d.el.querySelectorAll<HTMLElement>("[data-restore]").forEach(b => b.addEventListener("click", e => { e.preventDefault(); d.el.close(); void this.run(() => v.restore(b.dataset.restore!)); }));
+    d.el.querySelectorAll<HTMLElement>("[data-destroy]").forEach(b => b.addEventListener("click", async e => {
+      e.preventDefault();
+      d.el.close();
+      if (await confirmModal(t("Destroy this file and its history for good?"), t("Destroy"))) await this.run(() => v.destroy(b.dataset.destroy!));
+    }));
+  }
+
+  // ---------- search (FR-PDM-042) ----------
+
+  async find(q: SearchQuery | null, label: string) {
+    const v = this.vault;
+    if (!v) return;
+    this.found = q ? { ids: new Set((await v.search(q)).map(f => f.id)), label } : null;
+    await this.render();
+  }
+
+  async searchDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const fields = v.cardFields("*");
+    const kinds = [...new Set(this.files.map(f => f.kind))].sort();
+    const saved = v.info.searches ?? [];
+    const body = `${saved.length ? `<p class="v-h">${esc(t("Saved searches"))}</p><div class="v-list">${saved.map((s, i) => `<button class="btn small" data-saved="${i}" translate="no">${esc(s.name)}</button>`).join("")}</div>` : ""}
+      <div class="v-form">
+      <label><span>${esc(t("Name or any field"))}</span><input name="text" maxlength="80" /></label>
+      <label><span>${esc(t("State"))}</span><select name="state"><option value=""></option>${v.workflow.states.map(s => `<option value="${esc(s.name)}">${esc(tn(s.name))}</option>`).join("")}</select></label>
+      <label><span>${esc(t("Revision"))}</span><input name="revision" maxlength="10" /></label>
+      <label><span>${esc(t("Checked out by"))}</span><input name="by" maxlength="40" /></label>
+      <label><span>${esc(t("Kind"))}</span><select name="kind"><option value=""></option>${kinds.map(k => `<option value="${esc(k)}">${esc(t(k))}</option>`).join("")}</select></label>
+      <label><span>${esc(t("Changed from"))}</span><input name="from" type="date" /></label><label><span>${esc(t("Changed to"))}</span><input name="to" type="date" /></label>
+      ${fields.map(fd => `<label><span>${esc(t(fd.name))}</span><input name="f:${esc(fd.name)}" maxlength="80" /></label>`).join("")}
+      <label><span>${esc(t("Contains a file with"))}</span><select name="cf">${fields.map(fd => `<option value="${esc(fd.name)}">${esc(t(fd.name))}</option>`).join("")}</select></label>
+      <label><span>${esc(t("equal to"))}</span><input name="cv" maxlength="80" /></label>
+      <label><span>${esc(t("Save as"))}</span><input name="save" maxlength="40" placeholder="${esc(t("optional name"))}" /></label>
+      </div>`;
+    const d = this.dialog(t("Search the vault"), body, [[t("Cancel"), "cancel"], [t("Search"), "ok"]]);
+    let pick: SearchQuery | null = null, pickName = "";
+    d.el.querySelectorAll<HTMLElement>("[data-saved]").forEach(b => b.addEventListener("click", e => { e.preventDefault(); const s = saved[+b.dataset.saved!]; pick = s.q; pickName = s.name; d.el.close("ok"); }));
+    if (await d.done !== "ok") return;
+    if (pick) { await this.find(pick, pickName); return; }
+    const val = (n: string) => d.el.querySelector<HTMLInputElement>(`[name="${CSS.escape(n)}"]`)?.value.trim() ?? "";
+    const q: SearchQuery = { text: val("text"), state: val("state"), revision: val("revision"), checkedOutBy: val("by"), kind: val("kind"), from: val("from"), to: val("to"), fields: Object.fromEntries(fields.map(fd => [fd.name, val(`f:${fd.name}`)]).filter(([, x]) => x)) };
+    if (val("cv")) q.contains = { field: val("cf"), value: val("cv") };
+    const name = val("save");
+    if (name) await this.run(() => v.saveSettings({ searches: [...saved.filter(s => s.name !== name), { name, q }] }, "saved search"));
+    await this.find(q, name || q.text || t("Advanced search"));
+  }
+
+  // ---------- settings (FR-PDM-030/037/040/041) ----------
+
+  async settingsDlg() {
+    const v = this.vault;
+    if (!v) return;
+    const rs = v.revScheme, nb = v.numbering, admin = v.has("Admin");
+    const cards = v.cardFields("*").map(fd => [fd.name, fd.type, (fd.options ?? []).join(";"), fd.required ? "required" : "", fd.prop ?? ""].join(" | ").replace(/( \| )+$/, "")).join("\n");
+    const roles = v.info.users.map(u => `${u}: ${v.rolesOf(u).join(", ")}`).join("\n");
+    const dis = admin ? "" : " disabled";
+    const body = `${admin ? "" : `<p class="muted">${esc(t("Only an Admin can change the vault settings."))}</p>`}
+      <div class="v-form">
+      <label><span>${esc(t("Revision scheme"))}</span><select name="kind"${dis}>${([["letters", "Letters A, B, C …"], ["numbers", "Numbers 01, 02 …"], ["eskd", "ESKD letters О, О1, А, Б …"], ["custom", "Custom list"]] as const).map(([k, l]) => `<option value="${k}"${rs.kind === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label><span>${esc(t("Custom labels"))}</span><input name="labels" value="${esc((rs.labels ?? []).join(", "))}" placeholder="A1, A2, B1"${dis} /></label>
+      <label><span>${esc(t("Pre-release"))}</span><select name="pre"${dis}>${([["none", "None"], ["dash", "-"], ["decimal", "0.1, 0.2 …"], ["x", "X1, X2 …"]] as const).map(([k, l]) => `<option value="${k}"${(rs.pre ?? "none") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+      <label class="chk"><input type="checkbox" name="skip"${rs.skip ? " checked" : ""}${dis} /> ${esc(t("Skip I, O, Q, S, X, Z (ASME Y14.35)"))}</label>
+      <label><span>${esc(t("Numbering pattern"))}</span><input name="pattern" value="${esc(nb.pattern)}" maxlength="60" translate="no"${dis} /></label>
+      <label class="chk"><input type="checkbox" name="onAdd"${nb.onAdd ? " checked" : ""}${dis} /> ${esc(t("Number new files when they are added"))}</label>
+      <label class="chk"><input type="checkbox" name="commentRequired"${v.info.commentRequired ? " checked" : ""}${dis} /> ${esc(t("Check-in needs a comment"))}</label>
+      </div>
+      <p class="muted">${esc(t("Pattern tokens: {YYYY} {YY} {MM} for the date, {0000} for the counter, {Project} or any data card field."))}</p>
+      <label class="v-lbl">${esc(t("Data card fields, one per line: name | type | options;… | required | property"))}<textarea name="cards" rows="5" translate="no"${dis}>${esc(cards)}</textarea></label>
+      <label class="chk"><input type="checkbox" name="shared"${v.info.shared ? " checked" : ""}${dis} /> ${esc(t("Shared vault: users have roles"))}</label>
+      <label class="v-lbl">${esc(t("Roles, one user per line (Designer, Checker, Approver, Admin)"))}<textarea name="roles" rows="3" translate="no"${dis}>${esc(roles)}</textarea></label>
+      <p class="muted">${esc(t("Users and roles identify who did what; they are not security. Anyone who can write to the vault folder can change its files."))}</p>`;
+    const d = this.dialog(t("Vault settings"), body, admin ? [[t("Cancel"), "cancel"], [t("Save"), "ok"]] : [[t("Close"), "cancel"]]);
+    if (await d.done !== "ok") return;
+    const g = (n: string) => d.el.querySelector<HTMLInputElement>(`[name="${n}"]`)!;
+    const types = new Set(["text", "number", "date", "list", "checkbox", "user"]);
+    const fields: CardField[] = g("cards").value.split("\n").map(l => l.split("|").map(x => x.trim())).filter(p => p[0]).map(([name, type, opts, req, prop]) => ({ name, type: (types.has(type) ? type : "text") as CardField["type"], ...(opts ? { options: opts.split(";").map(x => x.trim()).filter(Boolean) } : {}), ...(req === "required" ? { required: true } : {}), ...(prop ? { prop } : {}) }));
+    const roleMap: Record<string, Role[]> = {};
+    for (const l of g("roles").value.split("\n")) {
+      const [u, rs2] = l.split(":");
+      if (u?.trim()) roleMap[u.trim()] = (rs2 ?? "").split(",").map(x => x.trim()).filter((x): x is Role => (ROLES as string[]).includes(x));
+    }
+    await this.run(async () => {
+      await v.saveSettings({
+        revScheme: { kind: g("kind").value as "letters", skip: g("skip").checked, pre: g("pre").value as "none", labels: g("labels").value.split(",").map(x => x.trim()).filter(Boolean) },
+        numbering: { pattern: g("pattern").value.trim() || "MC-{0000}", onAdd: g("onAdd").checked },
+        commentRequired: g("commentRequired").checked,
+        cards: { ...(v.info.cards ?? {}), "*": fields },
+        shared: g("shared").checked,
+        roles: roleMap,
+      });
+      toast(t("Vault settings saved"), "success");
+    });
   }
 
   // ---------- dialogs ----------
@@ -350,20 +677,39 @@ export class VaultPanel {
       const row = (f: FileRec) => {
         const s = this.state.get(f.id)!;
         const lock = f.checkout ? `<span class="v-lock${s.mine ? " mine" : ""}" title="${esc(t("Checked out by {user}", { user: f.checkout.user }))}">🔒 <span translate="no">${esc(f.checkout.user)}</span></span>` : "";
-        return `<button class="v-row${f.id === this.sel ? " sel" : ""}" data-id="${f.id}" aria-pressed="${f.id === this.sel}"><span class="v-name" translate="no">${esc(f.path)}</span><span class="v-meta">${esc(t(f.kind))} · v${v.latest(f).n}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
+        const color = v.stateOf(f.state).color;
+        const pn = f.card?.[PART_NUMBER];
+        return `<button class="v-row${f.id === this.sel ? " sel" : ""}" data-id="${f.id}" aria-pressed="${f.id === this.sel}"><span class="v-name" translate="no">${esc(f.path)}</span><span class="v-meta"><span class="v-state"><i style="background:${esc(color)}"></i>${esc(tn(f.state))}</span>${f.revision ? ` · ${esc(t("Rev {rev}", { rev: f.revision }))}` : ""} · ${esc(t(f.kind))} · v${v.latest(f).n}${pn ? ` · <span translate="no">${esc(pn)}</span>` : ""}${s.modified ? ` · <b>${esc(t("modified"))}</b>` : ""}${s.missing ? ` · ${esc(t("no local copy"))}` : ""} ${lock}</span></button>`;
       };
-      const acts = sel ? `<div class="v-acts row">
+      const trs = sel ? v.transitionsOf(sel) : [];
+      const acts = sel ? `<div class="v-acts">
+        <div class="row">
         <button class="btn small primary" data-a="open">${esc(t("Open"))}</button>
-        ${!sel.checkout ? `<button class="btn small" data-a="co">${esc(t("Check out"))}</button>` : ""}
+        ${!sel.checkout && v.stateOf(sel.state).checkout ? `<button class="btn small" data-a="co">${esc(t("Check out"))}</button>` : ""}
         ${st?.mine ? `<button class="btn small" data-a="ci">${esc(t("Check in"))}</button><button class="btn small" data-a="undo">${esc(t("Undo check-out"))}</button>` : ""}
         <button class="btn small" data-a="latest">${esc(t("Get latest"))}</button>
         <button class="btn small" data-a="hist">${esc(t("History"))}</button>
+        </div>
+        ${trs.length ? `<div class="row v-trs"><span class="muted">${esc(t("Change state"))}:</span>${trs.map(x => `<button class="btn small" data-tr="${esc(x.name)}">${esc(tn(x.name))}</button>`).join("")}</div>` : ""}
+        <div class="row">
+        <button class="btn small" data-a="card">${esc(t("Data card"))}</button>
+        <button class="btn small" data-a="contains">${esc(t("Contains"))}</button>
+        <button class="btn small" data-a="used">${esc(t("Where used"))}</button>
+        <button class="btn small" data-a="rename">${esc(t("Rename / move…"))}</button>
+        <button class="btn small" data-a="copy">${esc(t("Copy tree…"))}</button>
+        <button class="btn small" data-a="del">${esc(t("Delete"))}</button>
+        </div>
+        ${this.cardSummary(sel)}
       </div>` : "";
+      const shown = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
       h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>${user}
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="savepart"${this.app.part() && !this.openId ? "" : " disabled"}>${esc(t("Save part to vault"))}</button></div>
         <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button><button class="btn small" data-a="storage">${esc(t("Storage"))}</button><button class="btn small" data-a="export">${esc(t("Export ZIP"))}</button></div>
+        <div class="row"><button class="btn small" data-a="bin">${esc(t("Recycle bin"))}</button><button class="btn small" data-a="settings">${esc(t("Vault settings"))}</button></div>
+        <div class="row v-search"><input id="v-q" type="search" value="${esc(this.found?.label ?? "")}" placeholder="${esc(t("Search the vault"))}" aria-label="${esc(t("Search the vault"))}" /><button class="btn small" data-a="search">${esc(t("Advanced…"))}</button>${this.found ? `<button class="btn small" data-a="clearq">${esc(t("Clear"))}</button>` : ""}</div>
         <input type="file" id="v-files" multiple hidden /></div>
-        <div class="v-files" role="list" aria-label="${esc(t("Vault files"))}">${this.files.length ? this.files.map(row).join("") : `<p class="muted pad">${esc(t("No files yet: add files or save the open part to the vault."))}</p>`}</div>
+        ${this.found ? `<p class="muted pad v-found">${esc(t("{n} file found|{n} files found", { n: shown.length }))}</p>` : ""}
+        <div class="v-files" role="list" aria-label="${esc(t("Vault files"))}">${shown.length ? shown.map(row).join("") : `<p class="muted pad">${esc(this.found ? t("Nothing found.") : t("No files yet: add files or save the open part to the vault."))}</p>`}</div>
         ${acts}`;
     }
     this.wire();
@@ -404,7 +750,21 @@ export class VaultPanel {
         case "undo": if (id) void this.undoCheckOut(id); break;
         case "latest": if (id) void this.getLatest(id); break;
         case "hist": if (id) void this.history(id); break;
+        case "card": if (id) void this.dataCard(id); break;
+        case "contains": if (id) void this.containsDlg(id); break;
+        case "used": if (id) void this.whereUsedDlg(id); break;
+        case "rename": if (id) void this.renameDlg(id); break;
+        case "copy": if (id) void this.copyTreeDlg(id); break;
+        case "del": if (id) void this.deleteFile(id); break;
+        case "bin": void this.recycleBinDlg(); break;
+        case "settings": void this.settingsDlg(); break;
+        case "search": void this.searchDlg(); break;
+        case "clearq": this.found = null; void this.render(); break;
       }
     }));
+    h.querySelectorAll<HTMLElement>("[data-tr]").forEach(b => b.addEventListener("click", () => { if (this.sel) void this.transitionDlg(this.sel, b.dataset.tr!); }));
+    const q = h.querySelector<HTMLInputElement>("#v-q");
+    q?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); void this.find(q.value.trim() ? { text: q.value } : null, q.value.trim()); } });
+    q?.addEventListener("search", () => { if (!q.value.trim()) void this.find(null, ""); });
   }
 }

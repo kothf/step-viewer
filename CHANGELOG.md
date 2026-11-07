@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.52.0] - 2026-11-07
+
+### Added
+- **Revisions and lifecycle in the vault** (FR-PDM-030..034, 037). Every vault file now has a state: Work in progress, In review, Released, Change pending or Obsolete, shown with a coloured dot in the Vault tab. **Change state** moves a file: Submit for review, Approve, Reject, Change, Submit change and Make obsolete. Approve gives the next revision (A, B, C …) and writes the revision, state, approver and date into a part's properties as a new version. The dialog lists the file and the files it uses in the same state, with what blocks the change and what only warns, before anything is written, so an assembly and its parts can be released together. Only files in Work in progress or Change pending can be checked out. The title shows `v12 · Rev B · Released`.
+- **Data cards and numbering** (FR-PDM-040/041). **Data card** edits the part number, description, material, project and any other fields while the file is checked out. Fields can be text, number, date, list, checkbox or user, can be required for release, and map to the part's properties both ways. **New number** takes the next number from the vault's pattern (for example `MC-{YYYY}-{0000}`), and numbers are never reused. New files can be numbered as they are added.
+- **References, Contains and Where used** (FR-PDM-020..022, 052). The vault records which files an assembly or drawing uses, and the version each was checked in against. **Contains** shows the tree with quantities, as checked in, latest or latest released, with a bill of materials you can save as CSV. **Where used** shows every file above it.
+- **Rename / move, Copy tree and Recycle bin** (FR-PDM-023..025). Renaming or moving a file updates the files that use it, each with a new version. **Copy tree** copies an assembly with the parts you choose into a folder, with a prefix, suffix or find/replace and new part numbers, and points the copies at each other. **Delete** moves a file to the **Recycle bin**, which restores it, and a file still in use cannot be deleted.
+- **Search and compare** (FR-PDM-042, 050). Search the vault by name, any data card field, state, revision, who has it checked out, kind, date, or "contains a file with Material = Aluminium 6061", and save searches. **History** compares two versions: data card, added and removed features, changed parameters (old → new), references and BOM changes.
+- **Vault settings**: revision scheme (letters with or without I, O, Q, S, X, Z, numbers, ESKD letters or your own list, with optional pre-release revisions X1, X2 …), numbering pattern, data card fields, and user roles for a shared vault (Designer, Checker, Approver, Admin).
+
 ## [1.51.0] - 2026-11-07
 
 ### Added
@@ -511,7 +521,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.51.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.52.0...HEAD
+[1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
