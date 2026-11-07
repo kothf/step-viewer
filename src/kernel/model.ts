@@ -12,7 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
-import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
+import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -294,8 +294,14 @@ export class Modeller {
       return mk.Wire();
     };
     const faces = prof.faces.map((pf: ProfileFace) => {
-      const mk = new oc.BRepBuilderAPI_MakeFace_15(wireOf(pf.outer), true);
-      for (const h of pf.holes) mk.Add(wireOf(h));
+      // The outer loop runs counter-clockwise about the sketch normal and holes clockwise, whichever
+      // way the sketch's curves happen to be chained (a hole wire the same way round adds area).
+      const oriented = (loop: Seg[], ccw: boolean) => {
+        const w = wireOf(loop);
+        return (polyArea(loopPolygon(loop)) > 0) === ccw ? w : oc.TopoDS.Wire_1(w.Reversed());
+      };
+      const mk = new oc.BRepBuilderAPI_MakeFace_15(oriented(pf.outer, true), true);
+      for (const h of pf.holes) mk.Add(oriented(h, false));
       const fix = new oc.ShapeFix_Face_2(mk.Face());
       fix.Perform();
       const face = fix.Face();

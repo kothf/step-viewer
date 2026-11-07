@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-11-07
+
+### Added
+- **DXF into a sketch** (FR-SK-040, AT-P2-5): the DXF button in the sketch toolbar imports lines, arcs, circles and polylines (bulges become arcs) into the open sketch, scaled from the file's units. Shared end points join, so closed outlines extrude straight away.
+- **Sketch mirror** (FR-SK-037): select entities and the line to mirror about, then click Mirror. The copies are tied to the originals with symmetric relations (circles also equal), so they follow when the originals change.
+
+### Fixed
+- A sketch region with a hole inside it (a circle in a rectangle, say) could extrude with the hole's volume added instead of removed. Hole contours are now always wound against the outer one.
+
 ## [1.26.0] - 2026-11-07
 
 ### Added
@@ -350,7 +359,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.26.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.27.0...HEAD
+[1.27.0]: https://github.com/kothf/step-viewer/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/kothf/step-viewer/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/kothf/step-viewer/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/kothf/step-viewer/compare/v1.23.0...v1.24.0

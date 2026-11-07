@@ -1122,4 +1122,12 @@ export const RU: Record<string, string> = {
   "{a} can't come before {b}: it uses {b}.": "{a} не может стоять перед {b}: он использует {b}.",
   "Used by the selected feature": "Используется выбранным элементом",
   "Uses the selected feature": "Использует выбранный элемент",
+  "DXF": "DXF",
+  "Mirror entities: select them and a line to mirror about, then click": "Зеркально отразить объекты: выберите их и линию отражения, затем щёлкните",
+  "Import a DXF drawing into the sketch": "Импортировать чертёж DXF в эскиз",
+  "Select the entities to mirror and the line to mirror about (Ctrl+click), then click Mirror.": "Выберите объекты для отражения и линию отражения (Ctrl+щелчок), затем нажмите «Зеркало».",
+  "The DXF file is too large (over 20 MB).": "Файл DXF слишком большой (больше 20 МБ).",
+  "No lines, arcs or circles were found in the DXF file.": "В файле DXF не найдено отрезков, дуг или окружностей.",
+  "Imported {n} entities; {k} other entities were skipped.": "Импортировано объектов: {n}; пропущено других объектов: {k}.",
+  "Imported {n} entities.": "Импортировано объектов: {n}.",
 };

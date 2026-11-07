@@ -288,3 +288,27 @@ test("draft tapers faces about a neutral plane (FR-FT-061)", async () => {
   assert.equal(bad.statuses.at(-1)!.ok, false);
 });
 
+
+test("DXF gasket sketch extrudes with its holes (AT-P2-5)", async () => {
+  const { readDxf } = await import("../../src/sketch/dxf");
+  const { readFileSync } = await import("node:fs");
+  const m = new Modeller(await occ());
+  const ents: SkEnt[] = [];
+  const pts = new Map<string, string>();
+  let k = 0;
+  const point = (q: [number, number]) => {
+    const key = `${Math.round(q[0] * 1e4)},${Math.round(q[1] * 1e4)}`;
+    let id = pts.get(key);
+    if (!id) { id = `p${k++}`; ents.push({ id, t: "point", x: q[0], y: q[1] }); pts.set(key, id); }
+    return id;
+  };
+  for (const s of readDxf(readFileSync("tests/fixtures/dxf/gasket.dxf", "utf8")).shapes) {
+    if (s.t === "line") ents.push({ id: `e${k++}`, t: "line", a: point(s.a), b: point(s.b) });
+    else if (s.t === "circle") ents.push({ id: `e${k++}`, t: "circle", c: point(s.c), r: s.r });
+    else { const at = (a: number): [number, number] => [s.c[0] + s.r * Math.cos(a), s.c[1] + s.r * Math.sin(a)]; ents.push({ id: `e${k++}`, t: "arc", c: point(s.c), a: point(at(s.a0)), b: point(at(s.a1)) }); }
+  }
+  const sk: SketchFeature = { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, ents, rels: [], dims: [] };
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  const r = run(m, doc([sk, ex]));
+  close(r.props!.volume, (3900 + 25 * Math.PI - 32 * Math.PI) * 10, 1e-6);
+});
