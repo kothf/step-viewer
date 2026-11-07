@@ -174,3 +174,14 @@ test("sketch assistant: removals that fix an over-defined sketch (FR-SLV-009)", 
   // A solvable sketch needs nothing.
   assert.deepEqual(repairs(rectangle()), []);
 });
+
+test("intersection relation: a point where two curves cross (FR-SK-051)", () => {
+  // Line y = x from (0,0) to (10,10), circle r 5 round (0,0) fixed; the point starts off both.
+  const s = sk([pt("a", 0, 0), pt("b", 10, 10), ln("l", "a", "b"), pt("c", 0, 0), { id: "k", t: "circle", c: "c", r: 5 }, pt("p", 4.5, 2)],
+    [rel("fix", "l"), rel("fix", "k"), rel("intersection", "p", "l", "k")]);
+  const r = solve(s);
+  assert.equal(r.status, "ok");
+  const [x, y] = P(s, "p")!;
+  near(x, 5 / Math.SQRT2, 1e-6); near(y, 5 / Math.SQRT2, 1e-6);
+  assert.ok(r.defined.has("p"));
+});
