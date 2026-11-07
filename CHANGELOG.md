@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.56.0] - 2026-11-07
+
 ### Added
 - **Rib** (FR-FT-062), in the **Sweep ▾** menu. An open line or arc chain sketched beside the part becomes a wall that runs to the body: thickness on the first side, both sides or the second side, **Parallel to sketch** (a corner gusset) or **Normal to sketch** (ribs across a hollow, sketched above it), with **Flip material side**. It goes the way that meets the body and previews live.
 - **Split Line** (FR-FT-084), in the **Sweep ▾** menu. A sketch is projected along its normal, both ways, and splits the faces it crosses (or only the faces you click), so each piece can take its own colour, draft or mate. The body keeps its shape.
@@ -555,7 +557,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.55.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.56.0...HEAD
+[1.56.0]: https://github.com/kothf/step-viewer/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/kothf/step-viewer/compare/v1.54.1...v1.55.0
 [1.54.1]: https://github.com/kothf/step-viewer/compare/v1.54.0...v1.54.1
 [1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
