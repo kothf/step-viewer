@@ -3,6 +3,7 @@
 // Add files, Save the open part to the vault, the audit trail and the integrity check.
 import { t } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
+import { unzipLimited, zip } from "../model/zip";
 import { fsaDir, Vault, VaultError, type FileRec, type VDir } from "./vault";
 
 export interface VaultHost {
@@ -203,7 +204,7 @@ export class VaultPanel {
     if (!v) return;
     const f = await v.file(id);
     const log = await v.auditTrail(id);
-    const rows = [...f.versions].reverse().map(x => `<tr><td>v${x.n}</td><td>${esc(fmtDate(x.at))}</td><td translate="no">${esc(x.user)}</td><td translate="no">${esc(x.comment)}</td><td>${fmtSize(x.size)}</td><td class="v-acts"><button class="btn small" data-open="${x.n}">${esc(t("Open"))}</button>${x.n !== v.latest(f).n ? `<button class="btn small" data-rb="${x.n}">${esc(t("Roll back"))}</button>` : ""}</td></tr>`).join("");
+    const rows = [...f.versions].reverse().map(x => `<tr><td>v${x.n}</td><td>${esc(fmtDate(x.at))}</td><td translate="no">${esc(x.user)}</td><td translate="no">${esc(x.comment)}</td><td>${fmtSize(x.size)}</td><td class="v-acts">${x.purged ? `<span class="muted">${esc(t("purged"))}</span>` : `<button class="btn small" data-open="${x.n}">${esc(t("Open"))}</button>${x.n !== v.latest(f).n ? `<button class="btn small" data-rb="${x.n}">${esc(t("Roll back"))}</button>` : ""}`}</td></tr>`).join("");
     const events = log.map(e => `<li>${esc(fmtDate(e.at))} · <span translate="no">${esc(e.user)}</span> · ${esc(t(e.action))}${e.version ? ` v${e.version}` : ""}</li>`).join("");
     const d = this.dialog(t("History of {name}", { name: f.path }), `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Version"))}</th><th>${esc(t("Date"))}</th><th>${esc(t("User"))}</th><th>${esc(t("Comment"))}</th><th>${esc(t("Size"))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><h4>${esc(t("Events"))}</h4><ul class="v-log">${events}</ul>`, [[t("Close"), "cancel"]]);
     d.el.querySelectorAll<HTMLElement>("[data-open]").forEach(b => b.addEventListener("click", () => { d.el.close(); void this.openFile(id, +b.dataset.open!); }));
@@ -235,6 +236,61 @@ export class VaultPanel {
     const ok = !r.missing.length && !r.corrupt.length;
     const list = (title: string, xs: string[]) => (xs.length ? `<p><b>${esc(title)}</b></p><ul class="v-log">${xs.slice(0, 50).map(x => `<li translate="no">${esc(x)}</li>`).join("")}</ul>` : "");
     this.dialog(t("Integrity check"), `<p>${esc(ok ? t("The vault is sound: {f} files, {o} stored objects.", { f: r.files, o: r.objects }) : t("Problems found in the vault."))}</p>${list(t("Missing versions"), r.missing)}${list(t("Damaged versions"), r.corrupt)}${r.orphans.length ? `<p class="muted">${esc(t("{n} stored objects are not used by any version.", { n: r.orphans.length }))}</p>` : ""}`, [[t("Close"), "cancel"]]);
+  }
+
+  /** Export vault (FR-PDM-007): a ZIP of everything, or of the latest versions only. */
+  async exportZip(latestOnly?: boolean) {
+    const v = this.vault;
+    if (!v) return;
+    if (latestOnly === undefined) {
+      const r = await this.form(t("Export vault"), `<p>${esc(t("A ZIP backup of the vault: settings, history, audit trail, stored versions and working files. Import it in any browser to carry on."))}</p><label class="chk"><input type="checkbox" name="latest" /> ${esc(t("Latest versions only (smaller)"))}</label>`, t("Export"));
+      if (!r) return;
+      latestOnly = !!r.latest;
+    }
+    try {
+      const entries = await v.exportEntries(latestOnly);
+      const bytes = await zip(entries);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/zip" }));
+      a.download = `${v.info.name}${latestOnly ? "-latest" : ""}.mcadvault.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast(t("Vault exported: {n} files", { n: (await v.files()).length }), "success");
+    } catch (e) { toast(t("Vault error: {err}", { err: (e as Error).message }), true); }
+  }
+
+  /** Import vault (FR-PDM-007): a vault ZIP becomes a new vault in this browser. */
+  async importZip(file: File) {
+    const ws = await workspace();
+    if (!ws) { toast(t("This browser has no private file system; pick a folder instead."), true); return; }
+    try {
+      const entries = await unzipLimited(await file.arrayBuffer());
+      const info = entries.get(".mcadvault/vault.json");
+      if (!info) throw new VaultError("Not a vault backup.");
+      const base = (JSON.parse(new TextDecoder().decode(info)).name as string || "Vault").replace(/[\\/:*?"<>|]/g, "_");
+      const names = new Set((await ws.list()).map(e => e.name));
+      let name = base;
+      for (let i = 2; names.has(name); i++) name = `${base} (${i})`;
+      const dir = await ws.dir(name, true);
+      await this.use(await Vault.importEntries(dir!, entries, this.user, this.computer));
+    } catch (e) { toast(e instanceof VaultError ? t(e.message) : t("Vault error: {err}", { err: (e as Error).message }), true); }
+  }
+
+  /** Storage report with Purge old versions (FR-PDM-008). */
+  async storage() {
+    const v = this.vault;
+    if (!v) return;
+    const rows = await v.storage();
+    const total = rows.reduce((a, r) => a + r.bytes, 0);
+    const body = `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("File"))}</th><th>${esc(t("Versions"))}</th><th>${esc(t("Stored"))}</th><th>${esc(t("Size"))}</th></tr></thead><tbody>${rows.sort((a, b) => b.bytes - a.bytes).map(r => `<tr><td translate="no">${esc(r.path)}</td><td>${r.versions}</td><td>${r.kept}</td><td>${fmtSize(r.bytes)}</td></tr>`).join("")}</tbody></table></div>
+      <p>${esc(t("Total stored: {size}", { size: fmtSize(total) }))}</p>
+      <label class="v-lbl">${esc(t("Purge old versions: keep the last"))}<input type="number" name="keep" min="1" max="999" value="5" /></label>
+      <p class="muted">${esc(t("Purged versions stay in the history but their content is deleted. This cannot be undone."))}</p>`;
+    const d = this.dialog(t("Storage"), body, [[t("Close"), "cancel"], [t("Purge"), "purge"]]);
+    if (await d.done !== "purge") return;
+    const keep = Math.max(1, +(d.el.querySelector<HTMLInputElement>('[name="keep"]')?.value ?? 5) || 5);
+    if (!await confirmModal(t("Delete the content of all but the last {n} versions of every file?", { n: keep }), t("Purge"))) return;
+    await this.run(async () => { const freed = await v.purge(keep); toast(t("Purged: {size} freed", { size: fmtSize(freed) }), "success"); });
   }
 
   // ---------- dialogs ----------
@@ -276,13 +332,16 @@ export class VaultPanel {
     const user = `<label class="v-user">${esc(t("User"))} <input id="v-user" value="${esc(this.user)}" maxlength="40" autocomplete="name" translate="no" /></label>`;
     if (!v) {
       const ws = await workspace();
+      // A re-render (the tab was shown again) keeps a name being typed.
       const names = ws ? (await ws.list()).filter(e => e.kind === "dir").map(e => e.name).sort() : [];
+      const typed = h.querySelector<HTMLInputElement>("#v-name")?.value ?? "";
       const fsa = !!(window as PickerWindow).showDirectoryPicker;
       h.innerHTML = `<div class="pad v-start">
         <p class="muted">${esc(t("A vault keeps every version of your files, with check-out, check-in, history and an audit trail."))}</p>
         ${user}
         ${names.length ? `<p class="v-h">${esc(t("Vaults in this browser"))}</p><div class="v-list">${names.map(n => `<button class="btn small" data-openws="${esc(n)}" translate="no">${esc(n)}</button>`).join("")}</div>` : ""}
-        <div class="row"><input id="v-name" placeholder="${esc(t("Vault name"))}" aria-label="${esc(t("Vault name"))}" maxlength="60" /><button class="btn small primary" data-a="new-ws"${ws ? "" : " disabled"}>${esc(t("New vault"))}</button></div>
+        <div class="row"><input id="v-name" value="${esc(typed)}" placeholder="${esc(t("Vault name"))}" aria-label="${esc(t("Vault name"))}" maxlength="60" /><button class="btn small primary" data-a="new-ws"${ws ? "" : " disabled"}>${esc(t("New vault"))}</button></div>
+        <div class="row"><button class="btn small" data-a="import"${ws ? "" : " disabled"}>${esc(t("Import vault ZIP…"))}</button><input type="file" id="v-zip" accept=".zip" hidden /></div>
         ${fsa ? `<div class="row"><button class="btn small" data-a="new-dir">${esc(t("New vault in a folder…"))}</button><button class="btn small" data-a="open-dir">${esc(t("Open vault folder…"))}</button></div>` : ""}
       </div>`;
     } else {
@@ -302,7 +361,7 @@ export class VaultPanel {
       </div>` : "";
       h.innerHTML = `<div class="pad v-top"><div class="v-title"><b translate="no">${esc(v.info.name)}</b><button class="btn small" data-a="close">${esc(t("Close vault"))}</button></div>${user}
         <div class="row"><button class="btn small" data-a="add">${esc(t("Add files…"))}</button><button class="btn small" data-a="savepart"${this.app.part() && !this.openId ? "" : " disabled"}>${esc(t("Save part to vault"))}</button></div>
-        <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button></div>
+        <div class="row"><button class="btn small" data-a="audit">${esc(t("Audit trail"))}</button><button class="btn small" data-a="verify">${esc(t("Integrity check"))}</button><button class="btn small" data-a="storage">${esc(t("Storage"))}</button><button class="btn small" data-a="export">${esc(t("Export ZIP"))}</button></div>
         <input type="file" id="v-files" multiple hidden /></div>
         <div class="v-files" role="list" aria-label="${esc(t("Vault files"))}">${this.files.length ? this.files.map(row).join("") : `<p class="muted pad">${esc(t("No files yet: add files or save the open part to the vault."))}</p>`}</div>
         ${acts}`;
@@ -321,6 +380,8 @@ export class VaultPanel {
       b.addEventListener("click", () => { this.sel = b.dataset.id!; void this.render(); });
       b.addEventListener("dblclick", () => void this.openFile(b.dataset.id!));
     });
+    const zipIn = h.querySelector<HTMLInputElement>("#v-zip");
+    zipIn?.addEventListener("change", () => { const f = zipIn.files?.[0]; zipIn.value = ""; if (f) void this.importZip(f); });
     const files = h.querySelector<HTMLInputElement>("#v-files");
     files?.addEventListener("change", () => { const l = [...(files.files ?? [])]; files.value = ""; if (l.length) void this.addFiles(l); });
     h.querySelectorAll<HTMLElement>("[data-a]").forEach(b => b.addEventListener("click", () => {
@@ -334,6 +395,9 @@ export class VaultPanel {
         case "savepart": void this.saveOpenPart(); break;
         case "audit": void this.auditTrail(); break;
         case "verify": void this.verify(); break;
+        case "storage": void this.storage(); break;
+        case "export": void this.exportZip(); break;
+        case "import": zipIn?.click(); break;
         case "open": if (id) void this.openFile(id); break;
         case "co": if (id) void this.checkOut(id); break;
         case "ci": if (id) void this.checkIn(id); break;

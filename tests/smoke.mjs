@@ -2668,6 +2668,7 @@ try {
     await mp.waitForSelector("#vault-dlg tbody tr");
     const hist = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => r.cells[0].textContent + ":" + r.cells[3].textContent).join("|"));
     await mp.click('#vault-dlg [data-rb="1"]');
+    await mp.waitForSelector("#confirm[open]");
     await mp.click('#confirm [data-a="ok"]');
     await mp.waitForFunction(() => /v3/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
     await mp.waitForFunction(() => window.__sv.model.store?.doc.features[1]?.depth.v === 10, null, { timeout: 15000 }).catch(() => {});
@@ -2677,6 +2678,53 @@ try {
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
     check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
+    await ctx.close();
+  }
+
+  // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.fill("#v-name", "Backup test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="export"]');
+    // Three versions of one file and a PDF.
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault, b = s => new TextEncoder().encode(s);
+      await p.addFiles([new File(["v1"], "note.txt"), new File(["%PDF"], "spec.pdf")]);
+      const f = (await v.files()).find(x => x.path === "note.txt");
+      for (const x of ["v2", "v3"]) { await v.checkOut(f.id); await v.saveWorking(f.id, b(x)); await v.checkIn(f.id, x); }
+      await p.refresh();
+    });
+    // Export ZIP from the tab (all versions) and import it as a second vault.
+    await mp.click('#vault-panel [data-a="export"]');
+    const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click('#vault-dlg button[value="ok"]')]);
+    const zipPath = await dl.path();
+    const name = dl.suggestedFilename();
+    await mp.click('#vault-panel [data-a="close"]');
+    await mp.waitForSelector('#vault-panel [data-a="import"]');
+    await mp.setInputFiles("#v-zip", zipPath);
+    await mp.waitForFunction(() => window.__sv.vault.vault?.root.name === "Backup test (2)", null, { timeout: 10000 }).catch(() => {});
+    const imported = await mp.evaluate(async () => { const v = window.__sv.vault.vault; const fs = await v.files(); const f = fs.find(x => x.path === "note.txt"); return { root: v.root.name, n: fs.length, v1: new TextDecoder().decode(await v.versionBytes(f.id, 1)), ok: (await v.verify()).missing.length === 0 }; });
+    // Storage report and purge from the tab.
+    await mp.click('#vault-panel [data-a="storage"]');
+    await mp.waitForSelector("#vault-dlg tbody tr");
+    const rep = await mp.evaluate(() => [...document.querySelectorAll("#vault-dlg tbody tr")].map(r => [...r.cells].map(c => c.textContent).join(":")).join("|"));
+    await mp.fill('#vault-dlg [name="keep"]', "1");
+    await mp.click('#vault-dlg button[value="purge"]');
+    await mp.waitForSelector("#confirm[open]");
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(async () => (await window.__sv.vault.vault.storage()).find(r => r.path === "note.txt")?.kept === 1, null, { polling: 200, timeout: 10000 }).catch(() => {});
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|"));
+    check(name === "Backup test.mcadvault.zip" && imported.root === "Backup test (2)" && imported.n === 2 && imported.v1 === "v1" && imported.ok, `vault 1.40: export to ZIP and import as a new vault (${name}, ${JSON.stringify(imported)})`);
+    check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after === "note.txt:1/3:2|spec.pdf:1/1:4", `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
     await ctx.close();
   }
 

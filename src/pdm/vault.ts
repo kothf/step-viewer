@@ -21,7 +21,7 @@ export const STORE = ".mcadvault";
 export const DEFAULT_STATE = "Work in progress";
 
 export interface VaultInfo { format: "mobiuscad-vault"; version: 1; name: string; created: string; users: string[]; commentRequired: boolean }
-export interface VersionRec { n: number; sha: string; size: number; at: string; user: string; comment: string; state: string; rolledBackFrom?: number }
+export interface VersionRec { n: number; sha: string; size: number; at: string; user: string; comment: string; state: string; rolledBackFrom?: number; /** Content dropped by Purge old versions (the row stays in the history). */ purged?: boolean }
 export interface CheckOut { user: string; at: string; computer: string }
 export interface FileRec { id: string; path: string; kind: string; created: string; state: string; versions: VersionRec[]; checkout?: CheckOut }
 export interface LogEntry { at: string; seq?: number; user: string; action: string; file?: string; path?: string; version?: number; details?: string }
@@ -254,6 +254,7 @@ export class Vault {
     const f = await this.file(id);
     const v = f.versions.find(x => x.n === n);
     if (!v) throw new VaultError(`Version ${n} does not exist.`);
+    if (v.purged) throw new VaultError("This version was purged: only its history entry is kept.");
     return this.object(v.sha);
   }
 
@@ -272,6 +273,7 @@ export class Vault {
     if (f.checkout && (f.checkout.user !== this.user || f.checkout.computer !== this.computer)) throw new VaultError(`Checked out by ${f.checkout.user}.`);
     const v = f.versions.find(x => x.n === n);
     if (!v) throw new VaultError(`Version ${n} does not exist.`);
+    if (v.purged) throw new VaultError("This version was purged: only its history entry is kept.");
     const m = this.latest(f).n + 1;
     f.versions.push({ n: m, sha: v.sha, size: v.size, at: new Date().toISOString(), user: this.user, comment: `Rolled back to version ${n}`, state: f.state, rolledBackFrom: n });
     await this.writeWorking(f.path, await this.object(v.sha));
@@ -280,14 +282,90 @@ export class Vault {
     return m;
   }
 
+  // ---------- backup, storage (FR-PDM-007/008) ----------
+
+  /**
+   * Everything needed to rebuild the vault elsewhere, as ZIP entries: settings, file records, the log, the
+   * stored versions (all, or only the latest of each file) and the working copies at their paths.
+   */
+  async exportEntries(latestOnly = false): Promise<{ name: string; data: Uint8Array }[]> {
+    const out: { name: string; data: Uint8Array }[] = [];
+    const files = await this.files();
+    out.push({ name: `${STORE}/vault.json`, data: enc.encode(json(this.info)) });
+    const shas = new Set<string>();
+    for (const f of files) {
+      const rec = latestOnly ? { ...f, versions: f.versions.map(v => (v === this.latest(f) ? v : { ...v, purged: true })) } : f;
+      out.push({ name: `${STORE}/files/${f.id}.json`, data: enc.encode(json(rec)) });
+      for (const v of rec.versions) if (!v.purged) shas.add(v.sha);
+      const w = await this.working(f.path);
+      if (w) out.push({ name: f.path, data: w });
+    }
+    for (const sha of shas) out.push({ name: `${STORE}/objects/${sha}`, data: await this.object(sha) });
+    const log = await this.sub("log");
+    for (const e of await log.list()) { const d = e.kind === "file" && await log.read(e.name); if (d) out.push({ name: `${STORE}/log/${e.name}`, data: d }); }
+    await this.log("export", { details: latestOnly ? "latest versions" : "all versions" });
+    return out;
+  }
+
+  /** Rebuilds a vault from exported entries in an empty directory (FR-PDM-007). */
+  static async importEntries(root: VDir, entries: Map<string, Uint8Array>, user: string, computer: string): Promise<Vault> {
+    if (await root.dir(STORE, false)) throw new VaultError("This folder already holds a vault: open it instead.");
+    if (!entries.get(`${STORE}/vault.json`)) throw new VaultError("Not a vault backup.");
+    for (const [name, data] of entries) {
+      const parts = name.split("/").filter(Boolean);
+      if (!parts.length || parts.some(p => p === "." || p === "..")) continue;
+      let d: VDir | null = root;
+      for (const seg of parts.slice(0, -1)) d = await d!.dir(seg, true);
+      await d!.write(parts[parts.length - 1], data);
+    }
+    const v = await Vault.open(root, user, computer);
+    await v.log("import", { details: `${entries.size} entries` });
+    return v;
+  }
+
+  /** Storage report (FR-PDM-008): bytes kept per file, each stored object counted once. */
+  async storage(): Promise<{ path: string; id: string; versions: number; kept: number; bytes: number }[]> {
+    const seen = new Set<string>();
+    return (await this.files()).map(f => {
+      let bytes = 0;
+      for (const v of f.versions) if (!v.purged && !seen.has(v.sha)) { seen.add(v.sha); bytes += v.size; }
+      return { path: f.path, id: f.id, versions: f.versions.length, kept: f.versions.filter(v => !v.purged).length, bytes };
+    });
+  }
+
+  /**
+   * Purge old versions (FR-PDM-008): keeps the last `keep` versions of each file; older ones keep their row in the
+   * history but lose their content, and objects no version needs any more are deleted. Returns bytes freed.
+   */
+  async purge(keep: number): Promise<number> {
+    keep = Math.max(1, Math.floor(keep));
+    const files = await this.files();
+    for (const f of files) {
+      let changed = false;
+      f.versions.forEach((v, i) => { if (i < f.versions.length - keep && !v.purged) { v.purged = true; changed = true; } });
+      if (changed) await this.saveRec(f);
+    }
+    const used = new Set(files.flatMap(f => f.versions.filter(v => !v.purged).map(v => v.sha)));
+    const objs = await this.sub("objects");
+    let freed = 0;
+    for (const e of await objs.list()) {
+      if (e.kind !== "file" || used.has(e.name)) continue;
+      freed += (await objs.read(e.name))?.length ?? 0;
+      await objs.remove(e.name);
+    }
+    await this.log("purge", { details: `kept the last ${keep} versions, freed ${freed} bytes` });
+    return freed;
+  }
+
   /** Integrity check (FR-PDM-006): stored versions present and matching their hashes, objects nobody uses. */
   async verify(): Promise<{ missing: string[]; corrupt: string[]; orphans: string[]; files: number; objects: number }> {
     const files = await this.files();
-    const used = new Set(files.flatMap(f => f.versions.map(v => v.sha)));
+    const used = new Set(files.flatMap(f => f.versions.filter(v => !v.purged).map(v => v.sha)));
     const objs = await this.sub("objects");
     const have = new Set((await objs.list()).filter(e => e.kind === "file").map(e => e.name));
     const missing: string[] = [], corrupt: string[] = [];
     for (const f of files) for (const v of f.versions) {
+      if (v.purged) continue;
       if (!have.has(v.sha)) { missing.push(`${f.path} v${v.n}`); continue; }
       const d = await objs.read(v.sha);
       if (!d || await sha256(d) !== v.sha) corrupt.push(`${f.path} v${v.n}`);
