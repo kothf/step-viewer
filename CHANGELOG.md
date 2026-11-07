@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-11-07
+
+### Added
+- **Vault backup and storage** (FR-PDM-007/008).
+  - **Export ZIP** saves the whole vault, or only the latest versions: settings, history, audit trail, stored versions and working files.
+  - **Import vault ZIP…** on the Vault tab's start screen turns a backup into a new vault in this browser, so a vault moves between computers.
+  - **Storage** lists the space each file takes, with every stored version counted once. **Purge old versions** keeps the last *n* versions of each file. Older versions stay in the history, marked "purged", but their content is deleted. Purges are logged in the audit trail.
+
 ## [1.39.0] - 2026-11-07
 
 ### Added
@@ -442,7 +450,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.39.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.40.0...HEAD
+[1.40.0]: https://github.com/kothf/step-viewer/compare/v1.39.0...v1.40.0
 [1.39.0]: https://github.com/kothf/step-viewer/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/kothf/step-viewer/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/kothf/step-viewer/compare/v1.36.0...v1.37.0

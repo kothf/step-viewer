@@ -58,3 +58,32 @@ test("vault: versions, check-out/check-in, roll back and the audit trail (FR-PDM
   await objs!.write(await sha256(b("v2")), b("tampered"));
   assert.deepEqual((await v.verify()).corrupt, ["parts/Bracket.mcadprt v2"]);
 });
+
+test("vault: export/import, storage report and purge (FR-PDM-007/008)", async () => {
+  const v = await Vault.create(memDir("A"), "A", "Andrey", "pc1");
+  const f = await v.add("Plate.mcadprt", b("one"));
+  for (const x of ["two", "three", "four"]) { await v.checkOut(f.id); await v.saveWorking(f.id, b(x)); await v.checkIn(f.id, x); }
+  await v.add("drawing.pdf", b("%PDF-1"));
+  // Full backup into another folder.
+  const all = await v.exportEntries();
+  const copy = await Vault.importEntries(memDir("B"), new Map(all.map(e => [e.name, e.data])), "Olga", "pc2");
+  assert.equal((await copy.files()).length, 2);
+  assert.equal(s(await copy.versionBytes(f.id, 2)), "two");
+  assert.equal(s(await copy.working("Plate.mcadprt")), "four");
+  assert.deepEqual((await copy.verify()).missing, []);
+  // Latest only: older versions arrive as purged history rows.
+  const lean = await Vault.importEntries(memDir("C"), new Map((await v.exportEntries(true)).map(e => [e.name, e.data])), "Olga", "pc2");
+  await assert.rejects(lean.versionBytes(f.id, 1), /purged/);
+  assert.equal(s(await lean.versionBytes(f.id, 4)), "four");
+  assert.deepEqual(await lean.verify().then(r => [r.missing, r.corrupt, r.orphans]), [[], [], []]);
+  // Storage report and purge keeping the last 2 versions.
+  const before = await v.storage();
+  assert.deepEqual(before.map(r => [r.path, r.versions, r.kept, r.bytes]), [["drawing.pdf", 1, 1, 6], ["Plate.mcadprt", 4, 4, 3 + 3 + 5 + 4]]);
+  assert.equal(await v.purge(2), 6);
+  const after = await v.storage();
+  assert.deepEqual(after.map(r => [r.kept, r.bytes]), [[1, 6], [2, 9]]);
+  await assert.rejects(v.rollBack(f.id, 1), /purged/);
+  assert.equal(s(await v.versionBytes(f.id, 3)), "three");
+  assert.deepEqual((await v.verify()).missing, []);
+  assert.ok((await v.auditTrail()).some(e => e.action === "purge"));
+});
