@@ -213,6 +213,8 @@ const EN: Tab[] = [
   <li><b>Plane</b> makes a reference plane offset from a plane or flat face, or at an angle about a straight edge. Sketch on it like on the standard planes.</li>
   <li><b>Plane ▾</b> also holds <b>Axis</b> (along a straight edge, the axis of a cylinder or cone, or where two planes meet) and <b>Point</b> (a vertex, an arc centre, the centre of a face or the midpoint of an edge). They follow the model when it changes; hide them from the row menu.</li>
   <li>Press <b>S</b> over the view for the shortcut bar: the part commands, or the sketch tools while sketching. In a sketch, drag from empty space to box-select: left to right takes what is fully inside, right to left anything the box touches.</li>
+  <li>Click a face or an edge of the part for the <b>context toolbar</b> by the cursor: Sketch and Normal to on a flat face, Fillet and Chamfer on an edge, and Edit sketch / Edit feature for the feature that made it. It fades as you move away.</li>
+  <li><b>F5</b> or <b>Filter</b> opens the selection filter: turn faces, edges or vertices off so clicks pick only what you need, in measuring and modelling alike. Clear picks everything again. <b>Alt+click</b> selects the face hidden behind the one under the cursor; Alt+click again at the same spot for the next.</li>
   <li><b>Revolve</b> turns a sketch around one of its lines (a construction line is taken first), by any angle.</li>
   <li><b>Fillet</b> and <b>Chamfer</b>: click edges, or a face for all its edges (or pick an edge first), and set the size. A chamfer can use two distances or a distance and an angle; <b>Keep features that fit</b> skips edges a fillet cannot round.</li>
   <li>The view shows the result while you type; ✓ or <kbd>Enter</kbd> keeps it, ✕ or <kbd>Esc</kbd> cancels.</li>
@@ -244,6 +246,8 @@ ${table([
 <h4>Part modelling</h4>
 ${table([
   ["S", "Shortcut bar at the cursor: the sketch tools, or the part commands"],
+  ["F5", "Selection filter: faces, edges, vertices"],
+  ["Alt+click", "Select other: the next face behind the cursor"],
   ["L R C A P D", "Sketch: line, rectangle, circle, arc, point, dimension (Esc: back to select)"],
   ["G T F", "Sketch: polygon, trim, fillet"],
   ["E O W", "Sketch: extend, offset entities, slot"],
@@ -402,6 +406,8 @@ const RU: Tab[] = [
   <li><b>Плоскость</b> создаёт справочную плоскость со смещением от плоскости или плоской грани либо под углом вокруг прямого ребра. На ней можно рисовать эскиз, как на стандартных плоскостях.</li>
   <li>В меню <b>Плоскость ▾</b> есть также <b>Ось</b> (вдоль прямого ребра, по оси цилиндра или конуса или на пересечении двух плоскостей) и <b>Точка</b> (вершина, центр дуги, центр грани или середина ребра). Они следуют за моделью при изменениях; скрыть их можно из меню строки.</li>
   <li>Нажмите <b>S</b> над видом — появится панель быстрого доступа: команды детали или, в эскизе, инструменты эскиза. В эскизе протяните рамку с пустого места: слева направо выбирается то, что целиком внутри, справа налево — всё, чего касается рамка.</li>
+  <li>Щелчок по грани или ребру детали открывает у курсора <b>контекстную панель</b>: «Эскиз» и «Перпендикулярно» на плоской грани, «Скругление» и «Фаска» на ребре, а также «Изменить эскиз» / «Изменить элемент» для создавшего её элемента. Панель гаснет, когда курсор уходит.</li>
+  <li><b>F5</b> или кнопка <b>«Фильтр»</b> открывает фильтр выбора: отключите грани, рёбра или вершины, чтобы щелчок выбирал только нужное — и при измерении, и при моделировании. «Сбросить» снова разрешает всё. <b>Alt+щелчок</b> выбирает грань, скрытую за гранью под курсором; повторный Alt+щелчок в том же месте — следующую.</li>
   <li><b>Вращение</b> поворачивает эскиз вокруг одного из его отрезков (сначала берётся вспомогательный) на любой угол.</li>
   <li><b>Скругление</b> и <b>Фаска</b>: щёлкайте рёбра или грань (все её рёбра) либо выберите ребро заранее и задайте размер. Фаска бывает с двумя расстояниями или с расстоянием и углом; <b>Сохранять подходящие</b> пропускает рёбра, которые скругление не может обработать.</li>
   <li>Вид показывает результат во время ввода; ✓ или <kbd>Enter</kbd> применяет, ✕ или <kbd>Esc</kbd> отменяет.</li>
@@ -433,6 +439,8 @@ ${table([
 <h4>Моделирование детали</h4>
 ${table([
   ["S", "Панель быстрого доступа у курсора: инструменты эскиза или команды детали"],
+  ["F5", "Фильтр выбора: грани, рёбра, вершины"],
+  ["Alt+щелчок", "Выбрать другое: следующая грань за курсором"],
   ["L R C A P D", "Эскиз: отрезок, прямоугольник, окружность, дуга, точка, размер (Esc — снова выбор)"],
   ["G T F", "Эскиз: многоугольник, отсечь, скругление"],
   ["E O W", "Эскиз: удлинить, смещение объектов, паз"],

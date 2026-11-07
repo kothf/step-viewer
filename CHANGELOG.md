@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-07
+
+### Added
+- **Context toolbar** (FR-UI-026): clicking a face or an edge of a part opens a small bar by the cursor, as in SolidWorks: Sketch and Normal to on a flat face, Fillet and Chamfer on an edge (they start with that edge), and Edit sketch / Edit feature for the feature that made it. It fades as the pointer moves away.
+- **Selection filter** (FR-SEL-003): F5 or the Filter button turns faces, edges or vertices off so clicks pick only what is wanted, in measuring and modelling alike; Clear resets it.
+- **Select other** (FR-SEL-004): Alt+click picks the face hidden behind the one under the cursor; Alt+click again at the same spot for the next.
+
 ## [1.21.0] - 2026-11-07
 
 ### Added
@@ -304,7 +311,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/kothf/step-viewer/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/kothf/step-viewer/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/kothf/step-viewer/compare/v1.19.4...v1.20.0
 [1.19.4]: https://github.com/kothf/step-viewer/compare/v1.19.3...v1.19.4

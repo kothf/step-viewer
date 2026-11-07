@@ -30,6 +30,18 @@ export const SNAP_FILTERS = {
 };
 
 /**
+ * Selection filter (FR-SEL-003): which kinds of entity a click may pick. Point snaps (vertices, centres,
+ * midpoints) count as vertices; with vertices off, an edge is still picked along its length.
+ */
+export const SEL_FILTER = { faces: true, edges: true, vertices: true };
+const POINT_KINDS = new Set<SnapKind>(["vertex", "circleCenter", "midpoint", "quadrant", "intersection"]);
+export function selAllowed(kind: SnapKind) {
+  if (POINT_KINDS.has(kind)) return SEL_FILTER.vertices;
+  if (kind === "onEdge") return SEL_FILTER.edges;
+  return SEL_FILTER.faces;
+}
+
+/**
  * Three stages: BVH raycasts at the cursor and on a small ring around it find
  * the faces near the cursor, the snap features of those faces' edges (and every
  * circle centre, since a hole's centre lies over empty space) are scored in
@@ -108,6 +120,25 @@ export class Snapper {
       }
     }
     return true;
+  }
+
+  /**
+   * Every face along the ray under a screen point, front to back, one per face: Select other
+   * (FR-SEL-004) cycles through them to reach faces hidden behind the front one.
+   */
+  facesUnder(sx: number, sy: number): Snap[] {
+    if (!SEL_FILTER.faces) return [];
+    const v = this.viewer;
+    const out: Snap[] = [];
+    const seen = new Set<string>();
+    for (const h of this.hitsAt(this.ndc(sx, sy), true)) {
+      const part = v.partOf(h.object);
+      const face = part.data.faces[part.triFace[h.faceIndex!]];
+      if (!face || seen.has(`${part.idx}:${face.id}`)) continue;
+      seen.add(`${part.idx}:${face.id}`);
+      out.push({ kind: "onFace", point: h.point.clone(), part, face, normal: this.faceNormal(part, face, h), px: 0 });
+    }
+    return out;
   }
 
   pick(sx: number, sy: number): Snap | null {
@@ -235,6 +266,9 @@ export class Snapper {
     }
 
     // Best first; the first one the camera can actually see wins.
+    if (!SEL_FILTER.faces || !SEL_FILTER.edges || !SEL_FILTER.vertices) {
+      for (let i = cands.length - 1; i >= 0; i--) if (!selAllowed(cands[i].kind)) { sure.delete(cands[i]); cands.splice(i, 1); }
+    }
     cands.sort((a, b) => score(a) - score(b));
     let best: Snap | null = null;
     let tests = 0;
