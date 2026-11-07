@@ -245,6 +245,8 @@ export interface ThreadFeature {
   upToEnd?: boolean;
   pitch?: number;
   internal?: boolean;
+  /** Modelled (helical) thread cut into the body (FR-FT-055) instead of a cosmetic one. */
+  modelled?: boolean;
 }
 
 /** Hole wizard (FR-FT-050..053): holes of one kind at points on a flat face or plane. */

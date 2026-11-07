@@ -1475,6 +1475,7 @@ export class ModelController {
     if (m.kind === "feature" && m.draft.type === "thread") { const i = list.findIndex(x => x.id === m.draft.id); if (i >= 0) list[i] = m.draft; else list.push(m.draft); }
     const segs: number[] = [];
     for (const f of list) {
+      if (f.modelled) continue;
       const ed = f.edge ? this.edgeOf(f.edge) : null;
       const g = ed ? this.threadGeom(ed) : null;
       if (!g) continue;
@@ -2695,7 +2696,7 @@ export class ModelController {
         + `<p class="pm-help muted">${esc(help)}</p>`;
     }
     if (f.type === "thread") {
-      title = t("Cosmetic thread");
+      title = f.modelled ? t("Thread") : t("Cosmetic thread");
       const sizes: [string, string][] = [["", t("Custom")], ...ISO_METRIC.map(h => [h.size, h.size] as [string, string])];
       body = group(t("Thread settings"), `<div class="pm-field"><span>${esc(t("Edge"))}</span><button class="pm-box focus" translate="no">${esc(f.edge ? t("Edge picked") : t("None"))}</button></div>`
           + `<p class="pm-help muted">${esc(f.edge ? (f.internal ? t("Internal thread (in a hole)") : t("External thread (on a shaft)")) : t("Click a round edge of a cylinder."))}</p>`
@@ -2703,7 +2704,9 @@ export class ModelController {
           + numField("diameter", f.internal ? t("Major diameter") : t("Minor diameter"), f.diameter, "length")
           + chk("upToEnd", f.upToEnd, t("Up to the end of the cylinder"))
           + (f.upToEnd ? "" : numField("length", t("Length"), f.length, "length"))
-          + (f.pitch ? `<p class="pm-help muted">${esc(t("Pitch {p} mm", { p: trimNum(f.pitch, 3) }))}</p>` : ""));
+          + (f.pitch ? `<p class="pm-help muted">${esc(t("Pitch {p} mm", { p: trimNum(f.pitch, 3) }))}</p>` : "")
+          + chk("modelled", f.modelled, t("Modelled (helical) thread"))
+          + (f.modelled ? `<p class="pm-help muted">${esc(t("Cuts the real thread form into the body, for 3D printing. Slower to rebuild than a cosmetic thread."))}</p>` : ""));
     }
     if (f.type === "hole") {
       title = t("Hole");
@@ -2903,7 +2906,7 @@ export class ModelController {
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
-        }, k === "end" || k === "op" || k === "sketch");
+        }, k === "end" || k === "op" || k === "sketch" || k === "modelled");
       });
     });
     pm.querySelectorAll<HTMLElement>("[data-rm]").forEach(b => b.addEventListener("click", () => {

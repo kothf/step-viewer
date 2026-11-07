@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-11-07
+
+### Added
+- **Modelled (helical) threads** (FR-FT-055). Tick "Modelled (helical) thread" in the Cosmetic thread panel to cut the real thread form into the part, for 3D printing. It cuts a 60° V groove along a helix at the size's pitch over the thread length (or up to the end of the cylinder). Internal threads cut from the tap drill out to the major diameter, and external threads cut from the shaft in to the minor diameter. The groove starts one pitch outside the end face so it runs out cleanly. It takes several seconds to rebuild, so leave it off while you are still designing.
+
 ## [1.37.0] - 2026-11-07
 
 ### Added
@@ -427,7 +432,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.37.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.38.0...HEAD
+[1.38.0]: https://github.com/kothf/step-viewer/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/kothf/step-viewer/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/kothf/step-viewer/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/kothf/step-viewer/compare/v1.34.0...v1.35.0
