@@ -15,7 +15,12 @@ export type SkEnt =
   | { id: string; t: "line"; a: string; b: string; cons?: boolean }
   | { id: string; t: "circle"; c: string; r: number; cons?: boolean }
   /** Arc counter-clockwise from a to b around c (|ca| = |cb| is implicit). */
-  | { id: string; t: "arc"; c: string; a: string; b: string; cons?: boolean };
+  | { id: string; t: "arc"; c: string; a: string; b: string; cons?: boolean }
+  /**
+   * Ellipse round c: a is the end of the major axis, b the end of the minor one (kept square to it).
+   * With p0/p1 it is an elliptical arc, counter-clockwise from p0 to p1 (FR-SK-018).
+   */
+  | { id: string; t: "ellipse"; c: string; a: string; b: string; p0?: string; p1?: string; cons?: boolean };
 
 export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"

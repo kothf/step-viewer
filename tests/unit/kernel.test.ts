@@ -383,3 +383,26 @@ test("extrude: offset from surface, through all both, thin walls, draft (FR-FT-0
   r = run(m, doc([s1, { ...base, draft: { angle: { v: 5 * Math.PI / 180 }, outward: true } } as Feature]));
   close(r.props!.volume, 6000 * 20 + 160 * ta * 20 * 20 + 4 * ta * ta * 20 ** 3 / 3, 1e-6);
 });
+
+test("ellipse and elliptical arc extrude (FR-SK-018)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // Full ellipse 30 × 10 at 30°, extruded 5.
+  const c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6);
+  const el: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [P("c", 0, 0), P("a", 30 * c, 30 * s), P("b", -10 * s, 10 * c), { id: "e", t: "ellipse", c: "c", a: "a", b: "b" }] };
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 5 } };
+  let r = run(m, doc([el, ex]));
+  close(r.props!.volume, Math.PI * 30 * 10 * 5, 1e-4);
+  // Taller than wide: the minor point further out than the major one still works.
+  const tall: SketchFeature = { ...el, ents: [P("c", 0, 0), P("a", 10, 0), P("b", 0, 25), { id: "e", t: "ellipse", c: "c", a: "a", b: "b" }] };
+  r = run(m, doc([tall, ex]));
+  close(r.props!.volume, Math.PI * 10 * 25 * 5, 1e-4);
+  // Half ellipse: arc from (20,0) ccw to (-20,0) over the top, closed by a line.
+  const half: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [P("c", 0, 0), P("a", 20, 0), P("b", 0, 8), P("s", 20, 0), P("t", -20, 0),
+      { id: "e", t: "ellipse", c: "c", a: "a", b: "b", p0: "s", p1: "t" }, { id: "l", t: "line", a: "t", b: "s" }] };
+  r = run(m, doc([half, ex]));
+  close(r.props!.volume, (Math.PI * 20 * 8 * 5) / 2, 1e-4);
+  assert.equal(r.body!.faces.length, 4);
+});

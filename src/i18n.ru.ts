@@ -1209,4 +1209,10 @@ export const RU: Record<string, string> = {
   "Saved favourite {name}": "Сохранено в избранное: {name}",
   "Choose the favourite to delete first.": "Сначала выберите, что удалить из избранного.",
   "Type a name for the favourite.": "Введите имя для избранного.",
+  "Ellipse": "Эллипс",
+  "Partial ellipse": "Частичный эллипс",
+  "Ellipse: centre, end of the major axis, then a point on it": "Эллипс: центр, конец большой оси, затем точка на нём",
+  "Partial ellipse: centre, major axis, start, then end": "Частичный эллипс: центр, большая ось, начало, затем конец",
+  "Click the centre, the end of the major axis, then a point on the ellipse": "Щёлкните центр, конец большой оси, затем точку на эллипсе",
+  "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)": "Щёлкните центр, конец большой оси, начало, затем конец (против часовой стрелки)",
 };
