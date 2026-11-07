@@ -100,8 +100,9 @@ export class ModelController {
   /** Undo mark taken when a sketch was opened: leaving it merges its steps (FR-UND-003). */
   private sketchMark = 0;
   /** The depth arrow of an extrude (FR-FT-017): its mesh, and the drag in progress. */
-  private arrow: { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean } | null = null;
-  private arrowDrag: { start: number; depth: number; moved: boolean } | null = null;
+  /** Drag handle: the extrude depth arrow, or the revolve angle handle (`ang` set: centre on the axis, unit axis, radius vector at 0°). */
+  private arrow: { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } } | null = null;
+  private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number } | null = null;
 
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
@@ -239,7 +240,8 @@ export class ModelController {
     const doc = this.displayDoc();
     this.setBusy(1);
     const m = this.mode;
-    const previewAt = m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") && m.draft.edges.length ? m.index : undefined;
+    const d = m.kind === "feature" ? m.draft : null;
+    const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && d.edges.length) || ((d.type === "extrude" || d.type === "revolve") && d.op === "cut")) ? m.index : undefined;
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
     this.setBusy(-1);
     if (!r || !this.store) return;
@@ -825,6 +827,7 @@ export class ModelController {
       this.lines(pos, 0xf08c00, 4);
       this.drawRoundPreview(m.draft);
     }
+    if (m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") && m.draft.op === "cut") this.drawCutPreview();
     if (m.kind === "feature" && m.draft.type === "plane" && m.draft.axis) {
       const ed = this.edgeOf(m.draft.axis);
       if (ed) { const pos: number[] = []; pushEdge(pos, ed); this.lines(pos, 0xf08c00, 4); }
@@ -876,16 +879,17 @@ export class ModelController {
 
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
-  /** The extrude being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | null {
+  /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | null {
     const m = this.mode;
-    if (m.kind === "feature") return m.draft.type === "extrude" && (m.draft.end === "blind" || m.draft.end === "mid") ? m.draft : null;
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"));
+    if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     if (m.kind !== "none" || !this.selected) return null;
     const f = this.store?.feature(this.selected);
     const st = this.last?.statuses.find(x => x.id === f?.id);
     const end = this.doc.rollback ?? this.doc.features.length;
     const i = this.doc.features.findIndex(x => x.id === f?.id);
-    return f?.type === "extrude" && (f.end === "blind" || f.end === "mid") && !f.suppressed && st?.ok && i < end ? f : null;
+    return ok(f) && !f.suppressed && st?.ok && i < end ? f : null;
   }
 
   private drawArrow() {
@@ -898,7 +902,9 @@ export class ModelController {
     const pts = sk.ents.filter(e => e.t === "point") as { x: number; y: number }[];
     if (!pts.length) return;
     const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length, cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
-    const base = new THREE.Vector3(...fr.o).addScaledVector(new THREE.Vector3(...fr.x), cx).addScaledVector(new THREE.Vector3(...fr.y), cy);
+    const W = (x: number, y: number) => new THREE.Vector3(...fr.o).addScaledVector(new THREE.Vector3(...fr.x), x).addScaledVector(new THREE.Vector3(...fr.y), y);
+    const base = W(cx, cy);
+    if (f.type === "revolve") { this.drawAngleHandle(f, sk, W); return; }
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
     const tip = base.clone().addScaledVector(dir, mid ? f.depth.v / 2 : f.depth.v);
@@ -915,15 +921,81 @@ export class ModelController {
     shaft.renderOrder = head.renderOrder = 2600;
     this.decor.add(obj);
     this.arrow = { obj, pick, base, dir, scale: 1, mid };
+    this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+  }
+
+  private handleLabel(id: string, num: string, title: string) {
     const label = document.createElement("button");
     label.className = "mc-handle";
-    label.title = t("Drag the arrow to change the depth; click to type it");
+    label.title = title;
     label.addEventListener("click", () => {
-      if (this.mode.kind !== "feature") this.editFeature(f.id);
-      setTimeout(() => ($("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth]"))?.focus(), 0);
+      if (this.mode.kind !== "feature") this.editFeature(id);
+      setTimeout(() => ($("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${num}]`))?.focus(), 0);
     });
     $("#mc-layer").appendChild(label);
     this.sizeArrow();
+  }
+
+  /** Revolve angle handle (FR-FT-030): an arc swept about the axis through the profile's centre, with a grip at the end angle. */
+  private drawAngleHandle(f: RevolveFeature, sk: SketchFeature, W: (x: number, y: number) => THREE.Vector3) {
+    const ax = sk.ents.find(e => e.id === f.axis);
+    if (!ax || ax.t !== "line") return;
+    const pa = sk.ents.find(e => e.id === ax.a), pb = sk.ents.find(e => e.id === ax.b);
+    if (pa?.t !== "point" || pb?.t !== "point") return;
+    const A = W(pa.x, pa.y), u = W(pb.x, pb.y).sub(A);
+    if (u.length() < 1e-9) return;
+    u.normalize().multiplyScalar(f.flip ? -1 : 1);
+    // Profile centre: the points of the sketch other than the axis's own.
+    const pts = sk.ents.filter(e => e.t === "point" && e.id !== ax.a && e.id !== ax.b) as { x: number; y: number }[];
+    if (!pts.length) return;
+    const P = W(pts.reduce((a, p) => a + p.x, 0) / pts.length, pts.reduce((a, p) => a + p.y, 0) / pts.length);
+    const c = A.clone().addScaledVector(u, P.clone().sub(A).dot(u));
+    const r = P.clone().sub(c);
+    if (r.length() < 1e-6) return;
+    const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
+    const arc = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true }));
+    arc.renderOrder = 2600;
+    const head = new THREE.Group();
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 18).translate(0, 0.25, 0), mat);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 10), mat);
+    const pick = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
+    cone.renderOrder = ball.renderOrder = 2600;
+    head.add(cone, ball, pick);
+    const obj = new THREE.Group();
+    obj.add(arc, head);
+    this.decor.add(obj);
+    this.arrow = { obj, pick, base: c, dir: u, scale: 1, mid: !!f.mid, ang: { c, u, r, arc, head } };
+    this.placeAngle(f.angle.v);
+    this.handleLabel(f.id, "angle", t("Drag the handle to change the angle; click to type it"));
+  }
+
+  /** Moves the angle handle's arc and grip to a revolve angle (half of it each way for Mid plane). */
+  private placeAngle(angle: number) {
+    const a = this.arrow?.ang;
+    if (!a) return;
+    const from = this.arrow!.mid ? -angle / 2 : 0, to = this.arrow!.mid ? angle / 2 : angle;
+    const at = (q: number) => a.c.clone().add(a.r.clone().applyAxisAngle(a.u, q));
+    const n = Math.max(8, Math.ceil(((to - from) * 48) / Math.PI));
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= n; i++) pts.push(at(from + ((to - from) * i) / n));
+    a.arc.geometry.dispose();
+    a.arc.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    a.head.position.copy(at(to));
+    // The cone points along the sweep (the tangent at the end).
+    a.head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), a.u.clone().cross(a.r.clone().applyAxisAngle(a.u, to)).normalize());
+  }
+
+  /** Signed angle of the pointer about the revolve axis, from the radius at 0°. */
+  private pointerAngle(e: PointerEvent) {
+    const a = this.arrow!.ang!;
+    const ray = this.ray(e).ray;
+    const den = ray.direction.dot(a.u);
+    let q: THREE.Vector3;
+    if (Math.abs(den) > 1e-6) q = ray.origin.clone().addScaledVector(ray.direction, a.c.clone().sub(ray.origin).dot(a.u) / den).sub(a.c);
+    else q = ray.closestPointToPoint(a.c, new THREE.Vector3()).sub(a.c);
+    q.addScaledVector(a.u, -q.dot(a.u));
+    const x = a.r.clone().normalize(), y = a.u.clone().cross(x);
+    return Math.atan2(q.dot(y), q.dot(x));
   }
 
   /** Keeps the arrow a constant size on screen and its value label beside the tip. */
@@ -931,16 +1003,19 @@ export class ModelController {
     const a = this.arrow;
     if (!a) return;
     const v = this.host.viewer;
-    const px = v.pxWorld(a.obj.position);
+    const holder = a.ang ? a.ang.head : a.obj;
+    const px = v.pxWorld(holder.position);
     a.scale = px * 70;
-    a.obj.scale.setScalar(a.scale);
+    holder.scale.setScalar(a.scale);
     const label = $("#mc-layer").querySelector<HTMLElement>(".mc-handle");
     const f = this.arrowFeature();
     if (label && f) {
-      const s = a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5).project(v.camera);
+      const tip = a.ang ? a.ang.head.position.clone().add(a.ang.head.position.clone().sub(a.ang.c).setLength(a.scale * 0.9)) : a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5);
+      const s = tip.project(v.camera);
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
-      label.textContent = `${trimNum(f.depth.v * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+      label.textContent = f.type === "revolve" ? `${trimNum((f.angle.v * 180) / Math.PI, 2)}°`
+        : `${trimNum(f.depth.v * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
     }
   }
 
@@ -976,12 +1051,18 @@ export class ModelController {
       this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false, instant: true };
       this.renderAll();
     }
-    this.arrowDrag = { start: this.axisParam(e), depth: f.depth.v, moved: false };
-    this.host.viewer.renderer.domElement.style.cursor = "grabbing";
+    this.arrowDrag = f.type === "revolve"
+      ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e) }
+      : { start: this.axisParam(e), depth: f.depth.v, moved: false };
+    const canvas = this.host.viewer.renderer.domElement;
+    canvas.style.cursor = "grabbing";
+    // Keep getting the moves and the release when the pointer leaves the view.
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
   }
 
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
+    if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
     if (m.kind !== "feature" || m.draft.type !== "extrude" || !d || !a) return;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
@@ -997,6 +1078,27 @@ export class ModelController {
     const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth]");
     if (inp) inp.value = trimNum(v * fu, 6);
     a.obj.position.copy(a.base).addScaledVector(a.dir, a.mid ? v / 2 : v);
+    this.sizeArrow();
+    void this.rebuild();
+  }
+
+  /** Dragging the revolve grip: the angle follows the pointer round the axis, unwrapped so it can reach 360°. */
+  private moveAngle(e: PointerEvent, f: RevolveFeature, d: NonNullable<typeof this.arrowDrag>) {
+    const raw = this.pointerAngle(e);
+    let delta = raw - d.raw!;
+    delta -= Math.round(delta / (2 * Math.PI)) * 2 * Math.PI;
+    d.raw = raw;
+    d.depth += delta * (this.arrow!.mid ? 2 : 1);
+    // 1° steps (Shift: 0.1°), between a step and a full turn.
+    const step = ((e.shiftKey ? 0.1 : 1) * Math.PI) / 180;
+    let v = Math.round(d.depth / step) * step;
+    v = Math.min(Math.max(v, step), 2 * Math.PI);
+    if (Math.abs(v - f.angle.v) < 1e-12) return;
+    d.moved = true;
+    f.angle = { v };
+    const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=angle]");
+    if (inp) inp.value = trimNum((v * 180) / Math.PI, 6);
+    this.placeAngle(v);
     this.sizeArrow();
     void this.rebuild();
   }
@@ -1047,6 +1149,25 @@ export class ModelController {
    * Live preview of a fillet or chamfer (SolidWorks style): its new faces in see-through yellow over the
    * body the edges are picked on, and a callout with the size at the first edge (FR-FT-031).
    */
+  /** The material an open cut removes, as a see-through yellow body (SolidWorks' cut preview). */
+  private drawCutPreview() {
+    const pv = this.last?.preview;
+    if (!pv?.position.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pv.position, 3));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+    mesh.renderOrder = 2350;
+    mesh.raycast = () => {};
+    mesh.userData.cutPreview = true;
+    this.decor.add(mesh);
+    // Its outline, so the shape reads through the body.
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0xe8a800, depthTest: false, transparent: true, opacity: 0.9 }));
+    e.renderOrder = 2351;
+    e.raycast = () => {};
+    this.decor.add(e);
+  }
+
   private drawRoundPreview(f: FilletFeature | ChamferFeature) {
     const pv = this.last?.preview;
     if (pv?.position.length && f.edges.length) {
@@ -1422,7 +1543,7 @@ export class ModelController {
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
       const lines = sk?.ents.filter(e => e.t === "line") ?? [];
       body = group(t("Axis of revolution"), `<label class="pm-field"><span>${esc(t("Axis"))}</span><select data-k="axis">${lines.map((l, i) => `<option value="${l.id}"${l.id === f.axis ? " selected" : ""}>${esc(t("Line {n}", { n: i + 1 }))}${l.cons ? ` (${esc(t("construction"))})` : ""}</option>`).join("")}</select></label>`)
-        + group(t("Direction 1"), numField("angle", t("Angle"), f.angle, "angle") + chk("mid", f.mid, t("Mid plane")) + chk("flip", f.flip, t("Reverse direction")))
+        + group(t("Direction 1"), numField("angle", t("Angle"), f.angle, "angle") + chk("mid", f.mid, t("Mid plane")) + chk("flip", f.flip, t("Reverse direction")) + `<p class="pm-help muted">${esc(t("Or drag the orange handle in the view."))}</p>`)
         + group(t("Profile"), sketchSel(f.sketch) + opSel(f.op));
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");

@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.19.4] - 2026-11-07
+
+### Added
+- Revolve angle handle: an orange arc about the axis with a grip at the end angle. Drag it round the axis to set the angle (1° steps, Shift for 0.1°, up to a full turn; Mid plane sweeps both ways). Selecting a revolve in the tree and dragging its grip edits it at once as one undo step, like the extrude arrow.
+- Cut preview: while a cut (extrude or revolve) is open, the material it removes is shown as a see-through yellow body with its outline, as in SolidWorks.
+
+### Fixed
+- Dragging a handle keeps working when the pointer leaves the 3D view; the release is no longer lost.
+
 ## [1.19.3] - 2026-11-07
 
 ### Changed
@@ -273,7 +282,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.3...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.19.4...HEAD
+[1.19.4]: https://github.com/kothf/step-viewer/compare/v1.19.3...v1.19.4
 [1.19.3]: https://github.com/kothf/step-viewer/compare/v1.19.2...v1.19.3
 [1.19.2]: https://github.com/kothf/step-viewer/compare/v1.19.1...v1.19.2
 [1.19.1]: https://github.com/kothf/step-viewer/compare/v1.19.0...v1.19.1

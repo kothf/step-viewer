@@ -840,6 +840,8 @@ export const RU: Record<string, string> = {
   "Missing": "Отсутствует",
   "Face of {name}": "Грань элемента {name}",
   "Drag the arrow to change the depth; click to type it": "Перетащите стрелку, чтобы изменить глубину; щёлкните, чтобы ввести значение",
+  "Drag the handle to change the angle; click to type it": "Перетащите маркер, чтобы изменить угол; щёлкните, чтобы ввести значение",
+  "Or drag the orange handle in the view.": "Или перетащите оранжевый маркер на виде.",
   "3-pt circle": "Окр. по 3 точкам",
   "Circle through three points": "Окружность по трём точкам",
   "3-pt arc": "Дуга по 3 точкам",
