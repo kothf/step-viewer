@@ -2847,6 +2847,21 @@ try {
     await ctx.close();
   }
 
+  // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const pg = await ctx.newPage();
+    await pg.goto(`${origin}/index.html?sw`);
+    await pg.evaluate(async () => { for (let i = 0; i < 240; i++) { const r = await navigator.serviceWorker.getRegistration(); if (r?.active?.state === "activated" && navigator.serviceWorker.controller) return; await new Promise(f => setTimeout(f, 250)); } });
+    const swState = await pg.evaluate(async () => { const ks = (await caches.keys()).filter(k => k.startsWith("mobiuscad-")); const c = ks.length ? await caches.open(ks[0]) : null; const urls = c ? (await c.keys()).map(r => new URL(r.url).pathname) : []; return { caches: ks.length, n: urls.length, index: urls.includes("/index.html"), occt: urls.some(u => u.endsWith("occt-import-js.wasm")), full: urls.some(u => u.endsWith("opencascade.full.wasm")), ctl: !!navigator.serviceWorker.controller }; });
+    await ctx.setOffline(true);
+    let offVer = "";
+    try { await pg.reload({ timeout: 20000 }); await pg.waitForFunction(() => /^v\d+\.\d+\.\d+/.test(document.querySelector("#app-version")?.textContent ?? ""), null, { timeout: 20000 }); offVer = await pg.evaluate(() => document.querySelector("#app-version").textContent); } catch (e) { offVer = String(e).slice(0, 80); }
+    await ctx.setOffline(false);
+    check(swState.caches === 1 && swState.index && swState.occt && !swState.full && swState.n > 10 && swState.ctl && /^v\d/.test(offVer), `1.47: service worker precaches the app and it starts offline (${JSON.stringify(swState)}, ${offVer})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

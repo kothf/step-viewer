@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import credits from "./scripts/credits-plugin.mjs";
+import sw from "./scripts/sw-plugin.mjs";
 
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
@@ -10,7 +11,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   worker: { format: "es" },
   // credits.json + THIRD-PARTY-LICENSES.txt for the About page; occt-import-js is loaded from occt/ at runtime
-  plugins: [credits({
+  plugins: [sw({ version }), credits({
     extra: [
       { dir: "node_modules/occt-import-js", entry: { author: "Viktor Kovács" },
         files: ["node_modules/occt-import-js/dist/license.occt-import-js.txt"], note: "Loaded at runtime from the occt/ folder, unmodified." },

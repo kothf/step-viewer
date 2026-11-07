@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.47.0] - 2026-11-07
+
+### Added
+- **Offline start** (FR-STO-030). A service worker keeps this version's app files and the STEP reader in the browser after the first visit, so MöbiusCAD starts without a network connection. The full OpenCASCADE build (50 MB, for modelling and exact geometry) is kept the first time it loads. Each release gets its own cache and the old one is removed. The page itself is always fetched fresh when online, so new versions show at once. A one-time note says when offline start is ready.
+
 ## [1.46.0] - 2026-11-07
 
 ### Added
@@ -482,7 +487,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.46.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.47.0...HEAD
+[1.47.0]: https://github.com/kothf/step-viewer/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/kothf/step-viewer/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/kothf/step-viewer/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/kothf/step-viewer/compare/v1.43.0...v1.44.0
