@@ -2092,6 +2092,26 @@ try {
     await idle();
     const vSh = await vol(), stSh = await lastSt();
     check(shellFaces === "1 face" && stSh === "shell:ok" && vSh > 15000 && vSh < 30000, `model 1.23: shell 2 mm with the top face open (${shellFaces}, ${Math.round(vSh)}, ${stSh})`);
+    // 1.24: hole wizard: two tapped M6 holes placed by clicking the top face (the shell suppressed first).
+    await mp.evaluate(() => window.__sv.model.store.change("Suppress", d => { d.features.at(-1).suppressed = true; }));
+    await idle();
+    const vNoShell = await vol();
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-c="hole"]');
+    const hA = await world([30, 15, 20]), hB = await world([-30, 15, 20]);
+    await mp.mouse.click(hA[0], hA[1]);
+    await idle();
+    await idle();
+    await mp.mouse.click(hB[0], hB[1]);
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "tapped");
+    await idle();
+    const holePanel = await mp.evaluate(() => ({ n: document.querySelector('#mc-pm [data-focus="pts"]')?.textContent, d: document.querySelector('#mc-pm input[data-num="diameter"]')?.value, td: document.querySelector('#mc-pm input[data-num="threadDepth"]')?.value }));
+    await mp.click("#mc-ok");
+    await idle();
+    const vHole = await vol(), stHole = await lastSt();
+    const pts = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).pts);
+    check(holePanel.n === "2 holes" && holePanel.d === "5" && stHole === "hole:ok" && Math.abs(vNoShell - vHole - 2 * Math.PI * 6.25 * 20) < 1 && pts.every(p => Math.abs(Math.abs(p[0]) - 30) < 1.5 && Math.abs(p[1] - 15) < 1.5), `model 1.24: two tapped M6 holes clicked on the top face (${JSON.stringify(holePanel)}, ${(vNoShell - vHole).toFixed(1)}, ${stHole}, ${JSON.stringify(pts)})`);
     await ctx.close();
   }
 

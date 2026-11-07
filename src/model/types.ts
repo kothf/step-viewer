@@ -196,8 +196,33 @@ export interface CircularPatternFeature {
   skip?: string[];
 }
 
+/** Hole wizard (FR-FT-050..053): holes of one kind at points on a flat face or plane. */
+export interface HoleFeature {
+  id: string; type: "hole"; name: string; suppressed?: boolean;
+  plane?: PlaneRef;
+  /** Hole centres in the plane's frame (x, y). */
+  pts: [number, number][];
+  kind: "simple" | "cbore" | "csink" | "tapped";
+  /** ISO size ("M6") the values were taken from; absent for a custom hole. */
+  size?: string;
+  fit?: "close" | "normal" | "loose";
+  diameter: Num;
+  end: "blind" | "through";
+  depth: Num;
+  /** Flat bottom instead of a 118° drill point. */
+  flat?: boolean;
+  cbDia?: Num;
+  cbDepth?: Num;
+  csDia?: Num;
+  csAngle?: Num;
+  /** Tapped: thread depth (cosmetic thread) and nominal diameter. */
+  threadDepth?: Num;
+  major?: number;
+  pitch?: number;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature
-  | ShellFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature;
+  | ShellFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

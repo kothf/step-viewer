@@ -236,3 +236,32 @@ test("shell, mirror, linear and circular patterns (FR-FT-060, 070-072, 075)", as
   r = run(m, doc([s3, disc, s4, c2, cp]));
   close(r.props!.volume, 900 * Math.PI * 10 - 6 * 9 * Math.PI * 10, 1e-6);
 });
+
+test("hole wizard: simple, counterbore, countersink, tapped; patterned (FR-FT-050..052)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = { face: { name: "f1:end" } };
+  // Two through holes Ø6.6: 120000 − 2·π·3.3²·20.
+  const h1: Feature = { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[-30, 0], [30, 0]], kind: "simple", diameter: { v: 6.6 }, end: "through", depth: { v: 0 } };
+  let r = run(m, doc([s1, ex, h1]));
+  close(r.props!.volume, 120000 - 2 * Math.PI * 3.3 ** 2 * 20, 1e-6);
+  // Counterbore Ø11 × 6.4 over a through Ø6.6.
+  const cb: Feature = { ...h1, kind: "cbore", pts: [[0, 0]], cbDia: { v: 11 }, cbDepth: { v: 6.4 } } as Feature;
+  r = run(m, doc([s1, ex, cb]));
+  close(r.props!.volume, 120000 - Math.PI * (5.5 ** 2 * 6.4 + 3.3 ** 2 * 13.6), 1e-6);
+  // Countersink Ø13.44 at 90°: a cone frustum from r 6.72 down to 3.3 over 3.42 mm.
+  const cs: Feature = { ...h1, kind: "csink", pts: [[0, 0]], csDia: { v: 13.44 }, csAngle: { v: Math.PI / 2 } } as Feature;
+  r = run(m, doc([s1, ex, cs]));
+  const hh = 6.72 - 3.3;
+  close(r.props!.volume, 120000 - Math.PI * (hh / 3 * (6.72 ** 2 + 6.72 * 3.3 + 3.3 ** 2) + 3.3 ** 2 * (20 - hh)), 1e-6);
+  // Blind tapped M6 hole, 12 deep with a 118° point; then a linear pattern of it.
+  const tp: Feature = { id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[0, 0]], kind: "tapped", size: "M6", diameter: { v: 5 }, end: "blind", depth: { v: 12 }, threadDepth: { v: 10 }, major: 6, pitch: 1 };
+  r = run(m, doc([s1, ex, tp]));
+  const tip = 2.5 / Math.tan((59 * Math.PI) / 180);
+  close(r.props!.volume, 120000 - Math.PI * 2.5 ** 2 * (12 + tip / 3), 1e-6);
+  assert.ok(r.frames.h1, "the hole's plane frame");
+  const lp: Feature = { id: "p1", type: "lpattern", name: "LPattern1", features: ["h1"], dir: { edge: { faces: ["f1:side:s1l1", "f1:end"] } }, spacing: { v: 20 }, count: 3 };
+  r = run(m, doc([s1, ex, tp, lp]));
+  close(r.props!.volume, 120000 - 3 * Math.PI * 2.5 ** 2 * (12 + tip / 3), 1e-6);
+});
