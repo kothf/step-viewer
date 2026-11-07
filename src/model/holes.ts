@@ -31,3 +31,27 @@ export const ISO_METRIC: HoleSize[] = [
 ];
 
 export const holeSize = (s: string | undefined) => ISO_METRIC.find(h => h.size === s);
+
+/** A hole for a heat-set threaded insert in plastic (FR-FT-051): straight hole, insert length, wall. */
+export interface InsertSize {
+  size: string;
+  /** Hole diameter for the insert. */
+  hole: number;
+  /** Insert length; the hole goes 1 mm deeper for the displaced plastic. */
+  length: number;
+  /** Least wall around the hole. */
+  wall: number;
+}
+
+/** Common sizes for brass heat-set inserts in 3D-printed parts (makers' recommended holes). */
+export const HEAT_INSERTS: InsertSize[] = [
+  { size: "M2", hole: 3.2, length: 4, wall: 1.3 },
+  { size: "M2.5", hole: 3.6, length: 5.7, wall: 1.5 },
+  { size: "M3", hole: 4, length: 5.7, wall: 1.6 },
+  { size: "M4", hole: 5.6, length: 8.1, wall: 2.1 },
+  { size: "M5", hole: 6.4, length: 9.5, wall: 2.6 },
+  { size: "M6", hole: 8, length: 12.7, wall: 3 },
+  { size: "M8", hole: 9.6, length: 12.7, wall: 3.5 },
+];
+
+export const insertSize = (s: string | undefined) => HEAT_INSERTS.find(h => h.size === s);

@@ -1404,4 +1404,9 @@ export const RU: Record<string, string> = {
   "Click a face of the model where the sketch plane cuts it.": "Щёлкните грань модели, которую пересекает плоскость эскиза.",
   "The sketch plane does not cut that face.": "Плоскость эскиза не пересекает эту грань.",
   "Click model faces: the curves where the sketch plane cuts them are added": "Щёлкайте грани модели: добавляются кривые, по которым их пересекает плоскость эскиза",
+  "Merge points": "Объединить точки",
+  "Merge the two points into one": "Объединить две точки в одну",
+  "Those points cannot meet with the sketch's other relations and dimensions.": "Эти точки не могут совпасть при других взаимосвязях и размерах эскиза.",
+  "Heat-set insert": "Термовставка",
+  "Insert length {l} mm; keep at least {w} mm of wall around the hole (boss Ø {b} mm).": "Длина вставки {l} мм; оставьте вокруг отверстия стенку не меньше {w} мм (бобышка Ø {b} мм).",
 };

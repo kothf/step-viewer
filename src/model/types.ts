@@ -26,7 +26,9 @@ export type SkEnt =
 
 export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"
-  | "equal" | "tangent" | "concentric" | "midpoint" | "fix" | "onCurve" | "symmetric";
+  | "equal" | "tangent" | "concentric" | "midpoint" | "fix" | "onCurve" | "symmetric"
+  /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
+  | "intersection";
 
 export interface SkRel { id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean }
 
@@ -286,7 +288,7 @@ export interface HoleFeature {
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
-  kind: "simple" | "cbore" | "csink" | "tapped";
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert";
   /** ISO size ("M6") the values were taken from; absent for a custom hole. */
   size?: string;
   fit?: "close" | "normal" | "loose";

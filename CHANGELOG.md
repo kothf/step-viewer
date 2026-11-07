@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.50.0] - 2026-11-07
+
+### Added
+- More sketch relations (FR-SK-051). **Intersection** keeps a point where two curves cross: select the point and two lines, circles, arcs or ellipses. **Merge points** appears when two points are selected and joins them into one. The second point is replaced by the first in every curve, relation and dimension, and a curve left with no length goes. The "along X/Y of another point" relation is the existing Horizontal / Vertical on two points.
+- **Heat-set insert** holes in the hole wizard, for brass threaded inserts melted into 3D-printed plastic. Sizes M2 to M8 fill a straight, flat-bottomed hole at the insert makers' usual diameter (M3: Ø4.0 mm), 1 mm deeper than the insert. The panel shows the insert length and the least wall to leave around the hole.
+
 ## [1.49.0] - 2026-11-07
 
 ### Added
@@ -497,7 +503,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.50.0...HEAD
+[1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/kothf/step-viewer/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/kothf/step-viewer/compare/v1.46.0...v1.47.0
