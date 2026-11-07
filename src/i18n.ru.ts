@@ -1169,4 +1169,9 @@ export const RU: Record<string, string> = {
   "Rotate entities about a point": "Повернуть объекты вокруг точки",
   "Scale entities about a point": "Масштабировать объекты относительно точки",
   "The green preview shows where the entities go.": "Зелёный предпросмотр показывает новое положение объектов.",
+  "Revolve type": "Тип поворота",
+  "Angle 2": "Угол 2",
+  "Click a flat face or a plane through the axis, in the view or the tree.": "Щёлкните плоскую грань или плоскость, проходящую через ось, в окне или в дереве.",
+  "Pick the face or plane the revolve goes up to.": "Выберите грань или плоскость, до которой идёт поворот.",
+  "Up to face for a revolve needs a flat face or plane through the axis.": "Для поворота до поверхности нужна плоская грань или плоскость, проходящая через ось.",
 };

@@ -98,6 +98,13 @@ export interface RevolveFeature {
   angle: Num;
   mid?: boolean;
   flip?: boolean;
+  /** Up to face or plane (FR-FT-022): the revolve stops at a plane through the axis. */
+  end?: "blind" | "upto";
+  upTo?: PlaneRef;
+  /** Direction 2: an angle the other way round from the sketch plane (blind only). */
+  angle2?: Num;
+  /** Thin revolve (FR-FT-022): a wall along the profile instead of a solid. */
+  thin?: { t: Num; mode: "inside" | "outside" | "mid" };
 }
 
 export interface FilletFeature {

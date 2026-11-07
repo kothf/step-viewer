@@ -387,16 +387,23 @@ export class Modeller {
       const A = this.w(frame, [pa.x, pa.y]), B = this.w(frame, [pb.x, pb.y]);
       const dirV: V3 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
       if (Math.hypot(...dirV) < 1e-9) throw new FeatureError("E-FT-AXIS", "The axis line has no length.");
-      const angle = Math.min(f.angle.v, Math.PI * 2);
-      if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
       const sgn = f.flip ? -1 : 1;
+      const upto = f.end === "upto";
+      let angle = Math.min(f.angle.v, Math.PI * 2);
+      if (upto) angle = this.revolveUpTo(f, sk, frame, A, mul(unit(dirV), sgn), prev, frames);
+      // Direction 2 (blind only): the profile turns back first, then sweeps both angles.
+      const back = upto ? 0 : f.mid ? angle / 2 : Math.max(0, Math.min(f.angle2?.v ?? 0, Math.PI * 2 - angle));
+      if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
+      if (!f.mid) angle += back;
       const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], new Set([ax.id]));
-      for (let face of faces) {
-        if (f.mid && angle < Math.PI * 2 - 1e-9) {
+      for (let face0 of faces) {
+        let face = f.thin ? this.thinFace(face0, f.thin) : face0;
+        if (back > 1e-9 && angle < Math.PI * 2 - 1e-9) {
           const tr = new oc.gp_Trsf_1();
-          tr.SetRotation_1(new oc.gp_Ax1_2(this.P(A), this.D(dirV)), -sgn * angle / 2);
+          tr.SetRotation_1(new oc.gp_Ax1_2(this.P(A), this.D(dirV)), -sgn * back);
           const mk = new oc.BRepBuilderAPI_Transform_2(face, tr, false);
           face = mk.Shape();
+          face0 = face;
           // Edge names follow the rotated copy.
           for (const pair of edgeEnt) { const m = this.list(mk.Modified(pair[0])); if (m.length) pair[0] = m[0]; }
         }
@@ -642,6 +649,34 @@ export class Modeller {
     });
     let k = 0;
     return { shape: result, faces, names: names.map(x => x ?? `${fid}:new:${k++}`) };
+  }
+
+  /**
+   * Revolve up to face or plane (FR-FT-022): the angle from the profile to the first place where it
+   * meets the target, which must be flat and contain the axis.
+   */
+  private revolveUpTo(f: Feature & { type: "revolve" }, sk: SketchFeature, frame: Frame, A: V3, u: V3, prev: Named | null, frames: Record<string, Frame>): number {
+    if (!f.upTo) throw new FeatureError("E-FT-UPTO", "Pick the face or plane the revolve goes up to.");
+    let target: Frame;
+    try { target = this.planeFrame(f.upTo, prev, frames); }
+    catch (err) {
+      if (err instanceof FeatureError && err.code === "E-FT-NOTPLANAR") throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
+      throw err;
+    }
+    const n = unit(target.n);
+    if (Math.abs(dot(n, u)) > 1e-6 || Math.abs(dot(n, add(A, mul(target.o, -1)))) > 1e-4) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
+    const prof = sketchProfile(sk);
+    if (prof.error) throw new FeatureError(prof.error.code, prof.error.message);
+    const pts = prof.faces.flatMap(pf => pf.outer.flatMap(sg => (sg.kind === "circle" ? [[sg.c[0] - sg.r, sg.c[1]], [sg.c[0] + sg.r, sg.c[1]]] : [sg.a, sg.b]))) as [number, number][];
+    const c = this.w(frame, [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]);
+    const w = add(c, mul(A, -1));
+    const r0 = add(w, mul(u, -dot(w, u)));
+    if (Math.hypot(...r0) < 1e-9) throw new FeatureError("E-RV-UPTO", "Up to face for a revolve needs a flat face or plane through the axis.");
+    // r(θ) = r0 cos θ + (u × r0) sin θ lies in the target plane where a cos θ + b sin θ = 0.
+    const a = dot(r0, n), b = dot(cross(u, r0), n);
+    const t0 = Math.atan2(-a, b);
+    const cands = [t0, t0 + Math.PI].map(x => { let y = x % (Math.PI * 2); if (y < 0) y += Math.PI * 2; return y; }).filter(x => x > 1e-6).sort((x, y) => x - y);
+    return cands[0] ?? Math.PI;
   }
 
   /**

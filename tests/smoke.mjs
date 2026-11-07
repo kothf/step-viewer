@@ -1850,6 +1850,24 @@ try {
     }
     const rv = await mp.evaluate(() => ({ a: Math.round(window.__sv.model.store.doc.features[1].angle.v * 180 / Math.PI), v: window.__sv.model.last().props.volume, mode: window.__sv.model.mode().kind, label: window.__sv.model.store.undoLabel }));
     check(st?.label === "90°" && rv.a === 180 && near(rv.v, Math.PI * 300 * 10 / 2, 1e-3) && rv.mode === "none" && rv.label === "Edit Revolve1", `model 1.19.4: dragging the revolve handle round the axis sets the angle (${st?.label} → ${JSON.stringify(rv)})`);
+    // 1.29 revolve options (FR-FT-022): up to the YZ plane through the axis (a quarter turn), then a 2 mm thin wall; cancelled.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("r"));
+    await mp.waitForSelector('#mc-pm select[data-k="rvEnd"]');
+    await mp.selectOption('#mc-pm select[data-k="rvEnd"]', "upto");
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await mp.waitForFunction(() => window.__sv.model.mode().draft?.upTo, null, { timeout: 10000 });
+    await idle();
+    await mp.waitForTimeout(200);
+    await idle();
+    const vUpto = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.check('#mc-pm input[data-k="thinOn"]');
+    await mp.waitForTimeout(200);
+    await idle();
+    const vThinRv = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.keyboard.press("Escape");
+    await idle();
+    const vBack = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    check(near(vUpto, Math.PI * 300 * 10 / 4, 0.01) && near(vThinRv, 2 * Math.PI * 15 * 64 / 4, 0.01) && near(vBack, Math.PI * 300 * 10 / 2, 0.01), `model 1.29: revolve up to a plane through the axis, thin revolve, cancel restores (${vUpto.toFixed(1)}, ${vThinRv.toFixed(1)}, ${vBack.toFixed(1)})`);
     // Cut preview: a Ø6 × 4 blind cut into the ring from its flat side shows the removed material in yellow.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Cut", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("o2", 0, -15), { id: "c2", t: "circle", c: "o2", r: 3 }] }, { id: "k", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "blind", depth: { v: 4 } }); }); });
     await idle();
