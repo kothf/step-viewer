@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - **Equations** (FR-PAR-001..005): global variables (length, angle or plain number, with a comment) in a panel opened from Σ at the top of the Features tree. Any value box takes a variable's name or an expression of them, like `Width/2 + 5`.
+- **Draft** (FR-FT-061): tapers the picked faces by an angle about a neutral plane (a flat face or a plane); the faces keep their size where they cross it, and Reverse direction tapers the other way.
 - Sketch dimensions have names (`D1@Sketch1`) that other values and variables can use.
 - Expressions are kept with each value and re-evaluated whenever a variable or a referenced dimension changes; sketches whose dimensions change are solved again. Circular references and unknown names are shown as errors next to the variable.
 

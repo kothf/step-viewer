@@ -2139,6 +2139,23 @@ try {
     const dep25 = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.name === "Extrude1").depth.v);
     const okAll = await mp.evaluate(() => window.__sv.model.last().statuses.every(s => s.ok));
     check(eqShown.val === "20 mm" && /Extrude1/.test(eqShown.used ?? "") && /Unknown name/.test(eqErr) && Math.abs(dep25 - 25) < 1e-9 && vH25 > vH20 + 1000 && okAll, `model 1.25: global variable Height drives Extrude1's depth, 20 → 25 mm (${JSON.stringify(eqShown)}, ${eqErr}, ${dep25}, ${Math.round(vH20)} → ${Math.round(vH25)}, ${okAll})`);
+    // 1.26: draft 5° on the front face about Top (XY): a wedge 100 · ½ · 25 · 25·tan 5° comes off.
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-c="draft"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await idle();
+    const front = await world([0, -30, 12]);
+    await mp.mouse.click(front[0], front[1]);
+    await idle();
+    await mp.fill('#mc-pm input[data-num="angle"]', "5");
+    await mp.press('#mc-pm input[data-num="angle"]', "Enter");
+    await idle();
+    const draftPanel = await mp.evaluate(() => ({ plane: document.querySelector('#mc-pm [data-focus="nplane"]')?.textContent, faces: document.querySelector('#mc-pm [data-focus="faces"]')?.textContent }));
+    await mp.click("#mc-ok");
+    await idle();
+    const vDr = await vol(), stDr = await lastSt();
+    const wedge = 100 * 0.5 * 25 * 25 * Math.tan(5 * Math.PI / 180);
+    check(draftPanel.faces === "1 face" && stDr === "draft:ok" && Math.abs(vH25 - vDr - wedge) < 30, `model 1.26: draft 5° on the front face about Top (${JSON.stringify(draftPanel)}, ${stDr}, ${(vH25 - vDr).toFixed(1)} ≈ ${wedge.toFixed(1)})`);
     await ctx.close();
   }
 

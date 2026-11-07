@@ -10,7 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -571,6 +571,43 @@ export class Modeller {
   }
 
   /**
+   * Draft (FR-FT-061): BRepOffsetAPI_DraftAngle tapers each picked face about the neutral plane,
+   * pulling along the plane's normal. Drafted faces keep their names.
+   */
+  private draft(f: DraftFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.plane) throw new FeatureError("E-DRAFT-PLANE", "Pick the neutral plane: a flat face or a plane.");
+    if (!f.faces.length) throw new FeatureError("E-DRAFT-FACES", "Click the faces to draft.");
+    const a = f.angle.v;
+    if (!(Math.abs(a) > 1e-6) || Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
+    const fr = this.planeFrame(f.plane, prev, frames);
+    const n = f.flip ? mul(fr.n, -1) : fr.n;
+    const pln = new oc.gp_Pln_3(this.P(fr.o), this.D(n));
+    const mk = new oc.BRepOffsetAPI_DraftAngle_2(prev.shape);
+    for (const r of f.faces) {
+      const face = this.resolveFace(prev, r);
+      try { mk.Add(oc.TopoDS.Face_1(face), this.D(n), a, pln, true); } catch { /* reported below */ }
+      if (!mk.AddDone()) throw new FeatureError("E-DRAFT-FACE", "A face can't be drafted about this neutral plane: pick faces that cross it, not parallel to it.");
+    }
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-DRAFT-FAIL", "The draft failed: try a smaller angle or fewer faces.");
+    const result = mk.Shape();
+    const faces = this.sub(result, "FACE");
+    const names: (string | null)[] = faces.map(() => null);
+    prev.faces.forEach((pf, i) => {
+      const j = faces.findIndex(x => x.IsSame(pf));
+      if (j >= 0) { names[j] = prev.names[i]; return; }
+      for (const m of [...this.list(mk.Modified(pf)), ...this.list(mk.Generated(pf))]) {
+        const k = faces.findIndex(x => x.IsSame(m));
+        if (k >= 0 && !names[k]) names[k] = prev.names[i];
+      }
+    });
+    let k = 0;
+    return { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${k++}`) };
+  }
+
+  /**
    * Hole wizard (FR-FT-050): each hole is a profile in (radius, depth) revolved about its axis,
    * pointing into the material (against the face normal); all holes are cut in one go.
    */
@@ -827,6 +864,7 @@ export class Modeller {
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
+          else if (f.type === "draft") body = this.draft(f, body, frames);
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
