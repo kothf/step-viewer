@@ -406,3 +406,32 @@ test("ellipse and elliptical arc extrude (FR-SK-018)", async () => {
   close(r.props!.volume, (Math.PI * 20 * 8 * 5) / 2, 1e-4);
   assert.equal(r.body!.faces.length, 4);
 });
+
+test("spline profiles extrude as one exact B-spline face (FR-SK-019)", async () => {
+  const { splineBezier, bezPts } = await import("../../src/sketch/spline");
+  const { polyArea } = await import("../../src/sketch/profile");
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const xy: [number, number][] = [[0, 0], [30, -5], [45, 15], [20, 30], [-5, 18]];
+  // Interpolation passes through every point, and joins are smooth.
+  const bz = splineBezier(xy, true);
+  assert.equal(bz.length, 3 * xy.length + 1);
+  xy.forEach((q, i) => { close(bz[3 * i][0], q[0]); close(bz[3 * i][1], q[1]); });
+  for (let i = 3; i < bz.length - 1; i += 3) {
+    const u = [bz[i][0] - bz[i - 1][0], bz[i][1] - bz[i - 1][1]], v = [bz[i + 1][0] - bz[i][0], bz[i + 1][1] - bz[i][1]];
+    assert.ok(Math.abs(u[0] * v[1] - u[1] * v[0]) < 1e-9 * (1 + Math.hypot(...u) * Math.hypot(...v)));
+  }
+  const area = Math.abs(polyArea(bezPts(bz, 2000).slice(0, -1)));
+  const closed: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [...xy.map((q, i) => P(`p${i}`, q[0], q[1])), { id: "sp", t: "spline", pts: xy.map((_, i) => `p${i}`), closed: true }] };
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 4 } };
+  let r = run(m, doc([closed, ex]));
+  close(r.props!.volume, area * 4, 1e-5);
+  assert.equal(r.body!.faces.length, 3);
+  // Open spline closed by a line.
+  const open: SketchFeature = { ...closed, ents: [...xy.map((q, i) => P(`p${i}`, q[0], q[1])), { id: "sp", t: "spline", pts: xy.map((_, i) => `p${i}`) }, { id: "l", t: "line", a: "p4", b: "p0" }] };
+  const area2 = Math.abs(polyArea(bezPts(splineBezier(xy), 2000)));
+  r = run(m, doc([open, ex]));
+  close(r.props!.volume, area2 * 4, 5e-4); // OCCT's default integration of the planar face along a B-spline edge is ~2e-4 off
+  assert.equal(r.body!.faces.length, 4);
+});

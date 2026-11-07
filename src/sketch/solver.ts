@@ -57,7 +57,8 @@ function fixedSet(sk: SketchFeature) {
     else if (e.t === "line") { fixed.add(e.a); fixed.add(e.b); }
     else if (e.t === "circle") { fixed.add(e.c); fixed.add(`${e.id}#r`); }
     else if (e.t === "arc") { fixed.add(e.c); fixed.add(e.a); fixed.add(e.b); }
-    else if (e.t === "ellipse") for (const q of [e.c, e.a, e.b, e.p0, e.p1]) if (q) fixed.add(q);
+    else if (e.t === "ellipse") { for (const q of [e.c, e.a, e.b, e.p0, e.p1]) if (q) fixed.add(q); }
+    else if (e.t === "spline") for (const q of e.pts) fixed.add(q);
   }
   return fixed;
 }
@@ -85,6 +86,7 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
       : e.t === "line" ? [...pv(e.a), ...pv(e.b)]
       : e.t === "circle" ? [...pv(e.c), ...((rad.get(e.id) ?? -1) >= 0 ? [rad.get(e.id)!] : [])]
       : e.t === "ellipse" ? [e.c, e.a, e.b, e.p0, e.p1].flatMap(q => (q ? pv(q) : []))
+      : e.t === "spline" ? e.pts.flatMap(pv)
       : [...pv(e.c), ...pv(e.a), ...pv(e.b)]);
   }
   const add = (owner: string, t: Term) => { sys.terms.push(t); sys.owner.push(owner); };
