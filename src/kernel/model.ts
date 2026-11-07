@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -272,6 +272,21 @@ export class Modeller {
     const p0 = this.xyz(ad.Value(ad.FirstParameter())), p1 = this.xyz(ad.Value(ad.LastParameter()));
     const hint = f.at ?? f.edge.hint ?? p0;
     return at(d3(p0, hint) <= d3(p1, hint) ? p0 : p1);
+  }
+
+  /** A reference coordinate system (FR-REF-005): o its origin, x/y its axes, n its Z. */
+  private refCsys(f: CsysFeature, body: Named | null, frames: Record<string, Frame>): Frame {
+    const o: V3 = f.origin ? this.vertexPos(f.origin, body, frames) : [0, 0, 0];
+    const u = (v: V3): V3 => mul(v, 1 / (Math.hypot(...v) || 1));
+    let z = f.z ? u(this.lineOf(f.z, body, frames, "the Z direction: an edge, a face or an axis").d) : [0, 0, 1] as V3;
+    if (f.flipZ) z = mul(z, -1);
+    let x = f.x ? u(this.lineOf(f.x, body, frames, "the X direction: an edge, a face or an axis").d) : null;
+    if (!x) x = Math.abs(z[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0];
+    if (f.flipX) x = mul(x, -1);
+    const sq = add(x, mul(z, -dot(x, z)));
+    if (Math.hypot(...sq) < 1e-6) throw new FeatureError("E-REF-PARALLEL", "The X and Z directions are parallel.");
+    x = u(sq);
+    return { o, x, y: cross(z, x), n: z };
   }
 
   // ---------- profiles ----------
@@ -1160,6 +1175,7 @@ export class Modeller {
           else if (f.type === "plane") { frame = this.refPlane(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "axis") { frame = this.refAxis(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "point") { frame = this.refPoint(f, body); frames[f.id] = frame; }
+          else if (f.type === "csys") { frame = this.refCsys(f, body, frames); frames[f.id] = frame; }
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);

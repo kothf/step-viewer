@@ -19,7 +19,7 @@ import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, 
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
-  AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
+  AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
@@ -42,6 +42,7 @@ import { SketchEditor, REL_NAME, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN } from "../sketch/solver";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
+import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { onLangChange, t } from "../i18n";
 
@@ -68,6 +69,8 @@ export interface ModelHost {
   setMaterial?(m: { name: string; density: number } | undefined): void;
   /** Normal to the picked flat face (the view's "8"). */
   normalTo?(normal?: V3): void;
+  /** Makes a coordinate system feature the active measurement and export frame (null: back to global); `src` is its feature id. */
+  setCsys?(c: { name: string; src: string; o: V3; x: V3; z: V3 } | null, quiet?: boolean): void;
   appVersion: string;
 }
 
@@ -81,7 +84,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "base" | "axis" | "upto" | "start" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type Focus = "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
 /** Features whose result mirror and patterns can copy. */
@@ -106,8 +109,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread"];
+const ICONS: Record<string, string> = { thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -278,6 +281,7 @@ export class ModelController {
     if (!this.store) return;
     this.exitMode(false);
     if (this.store.dirty) journalSave(this.doc, this.fileName);
+    if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
     this.vault = null;
     this.renderVaultBar();
@@ -350,6 +354,7 @@ export class ModelController {
     if (!r || !this.store) return;
     this.last = r;
     this.rebuildMs = r.ms.eval + r.ms.mesh;
+    this.syncCsys();
     const first = !this.shownOnce;
     this.shownOnce = true;
     this.host.show(r.data, this.doc.name, first);
@@ -464,7 +469,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread") {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -477,6 +482,7 @@ export class ModelController {
     // Axis and point take a picked edge or face too.
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
+    const csysEdge = type === "csys" ? this.pickedEdge() : null;
     const shellFace = type === "shell" || type === "hole" || type === "draft" ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
@@ -511,6 +517,12 @@ export class ModelController {
       if (refEdge) { pt.edge = this.refOfEdge(refEdge) ?? undefined; pt.mode = refEdge.type === "circle" || refEdge.type === "arc" ? "centre" : "mid"; }
       else if (refFace != null) { const fr = this.faceRef(refFace); if (fr) { pt.mode = "face"; pt.face = fr; } }
       draft = pt;
+    } else if (type === "csys") {
+      const cs: CsysFeature = { id, type: "csys", name: nextName(d, "csys") };
+      // A picked straight edge: the origin at its start, X along it.
+      const er = csysEdge?.type === "line" ? this.refOfEdge(csysEdge) : null;
+      if (er && csysEdge) { cs.origin = { edge: er, at: csysEdge.start }; cs.x = { edge: er }; }
+      draft = cs;
     } else if (type === "hole") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const h: HoleFeature = { id, type: "hole", name: nextName(d, "hole"), pts: [], kind: "simple", size: "M6", fit: "normal", diameter: { v: 6.6 }, end: "through", depth: { v: 10 } };
@@ -549,7 +561,8 @@ export class ModelController {
     const index = end;
     const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" ? "faces" : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
-      : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds") : undefined;
+      : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
+      : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin") : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
     this.renderAll();
@@ -747,9 +760,9 @@ export class ModelController {
       this.store!.change(show ? `Show ${f.name}` : `Hide ${f.name}`, d => { (d.features.find(x => x.id === id) as SketchFeature).hidden = !show; });
       return;
     }
-    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point") return;
+    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point" && f?.type !== "csys") return;
     this.store!.change(f.hidden ? `Show ${f.name}` : `Hide ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature;
+      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature | CsysFeature;
       if (g.hidden) delete g.hidden; else g.hidden = true;
     });
   }
@@ -1061,6 +1074,7 @@ export class ModelController {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "csys") this.pickCsys(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "thread") {
@@ -1405,6 +1419,52 @@ export class ModelController {
     this.draftChanged();
   }
 
+  /** Coordinate system: the origin (a vertex), then the Z and X directions (an edge or a face). */
+  private pickCsys(e: PointerEvent, f: CsysFeature) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const focus = m.focus ?? "origin";
+    if (focus === "origin") {
+      const v = this.pickVertex(e);
+      if (!v) return;
+      f.origin = v;
+      m.focus = f.z ? "cx" : "cz";
+      this.draftChanged();
+      return;
+    }
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    let ref: LineRef | null = null;
+    if (hit?.edge && (hit.edge.type === "line" || hit.edge.type === "circle" || hit.edge.type === "arc")) { const er = this.refOfEdge(hit.edge); if (er) ref = { edge: er }; }
+    else if (hit?.faceId != null) {
+      const face = this.host.viewer.parts[0]?.data.faces[hit.faceId];
+      const fr = this.faceRef(hit.faceId);
+      if (fr && face && (face.type === "plane" || face.type === "cylinder")) ref = { face: fr };
+    }
+    if (!ref) { toast(t("Pick a straight or round edge, or a flat or round face.")); return; }
+    if (focus === "cz") { f.z = ref; if (!f.x) m.focus = "cx"; } else f.x = ref;
+    this.draftChanged();
+  }
+
+  /** The active measurement frame follows its coordinate system feature through rebuilds (FR-REF-005). */
+  private syncCsys() {
+    const src = csys.active?.src;
+    if (!src || !this.store) return;
+    const f = this.store.feature(src);
+    const fr = this.last?.frames[src];
+    const end = this.doc.rollback ?? this.doc.features.length;
+    if (f?.type !== "csys" || f.suppressed || !fr || this.doc.features.indexOf(f) >= end) { this.host.setCsys?.(null, true); return; }
+    this.host.setCsys?.({ name: featureLabel(f.name), src, o: fr.o, x: fr.x, z: fr.n }, true);
+  }
+
+  /** Makes a coordinate system feature the measurement and export frame, or goes back to the global one. */
+  useCsys(id: string | null) {
+    if (!id) { this.host.setCsys?.(null); return; }
+    const f = this.store?.feature(id);
+    const fr = this.last?.frames[id];
+    if (f?.type !== "csys" || !fr) { toast(t("This coordinate system has an error or is rolled back."), true); return; }
+    this.host.setCsys?.({ name: featureLabel(f.name), src: id, o: fr.o, x: fr.x, z: fr.n });
+  }
+
   /** A direction or axis reference in words. */
   private lineLabel(r: LineRef | undefined): string {
     if (!r) return t("None");
@@ -1747,6 +1807,17 @@ export class ModelController {
       if (fr) square(fr, this.selected === f.id ? 0xf08c00 : 0x7c8594, { plane: f.id }, this.selected === f.id ? 0.16 : 0.08, true, onPlane(fr));
     });
     if (draftId) { const fr = this.last?.frames[draftId]; if (fr) square(fr, 0xf08c00, { plane: draftId }, 0.18, false, onPlane(fr)); }
+    // Coordinate systems: a red/green/blue triad.
+    const openCs = m.kind === "feature" && m.draft.type === "csys" ? m.draft.id : null;
+    const css = this.doc.features.slice(0, end).filter(f => f.type === "csys" && !f.suppressed && !f.hidden && f.id !== openCs).map(f => f.id);
+    if (openCs) css.push(openCs);
+    for (const id of css) {
+      const fr = this.last?.frames[id];
+      if (!fr) continue;
+      const o = new THREE.Vector3(...fr.o);
+      const k = this.host.viewer.pxWorld(o) * (id === openCs || this.selected === id ? 60 : 45);
+      ([[fr.x, 0xe03131], [fr.y, 0x2f9e44], [fr.n, 0x1c7ed6]] as [V3, number][]).forEach(([d, col]) => this.lines([...o.toArray(), ...o.clone().addScaledVector(new THREE.Vector3(...d), k).toArray()], col, id === openCs || this.selected === id ? 3 : 2));
+    }
     // Reference axes (dash-dot lines through the model) and points (small crosses).
     const open = m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point") ? m.draft.id : null;
     const list = this.doc.features.slice(0, end).filter(f => (f.type === "axis" || f.type === "point") && !f.suppressed && !f.hidden && f.id !== open);
@@ -2191,7 +2262,7 @@ export class ModelController {
         })()
         + (() => {
           // Reference geometry flyout: Plane ▾ Axis, Point.
-          const refs: [string, string, string][] = [["plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")], ["axis", t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")], ["point", t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")]];
+          const refs: [string, string, string][] = [["plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")], ["axis", t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")], ["point", t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")], ["csys", t("Coordinate system"), t("Coordinate system: an origin and X and Z directions, for measurements and export")]];
           const open = m.kind === "feature" ? m.draft.type : null;
           const cur = refs.find(r => r[0] === open) ?? refs.find(r => r[0] === this.flyLast.get("plane")) ?? refs[0];
           return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="plane" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
@@ -2222,7 +2293,7 @@ export class ModelController {
       }
       if (b.dataset.fly === "plane" && mm.kind !== "sketch") {
         const r = b.getBoundingClientRect();
-        this.showMenu(([["plane", t("Plane")], ["axis", t("Axis")], ["point", t("Point")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("plane", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+        this.showMenu(([["plane", t("Plane")], ["axis", t("Axis")], ["point", t("Point")], ["csys", t("Coordinate system")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("plane", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="plane"]')?.focus());
         return;
       }
@@ -2417,7 +2488,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": this.startFeature(c); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -2578,6 +2649,12 @@ export class ModelController {
           if (pt && tg === "start-vertex") { mm.draft.startVertex = pt; mm.focus = "upto"; this.draftChanged(); return; }
           if (pt && tg === "vertex") { mm.draft.upToVertex = pt; this.draftChanged(); return; }
         }
+        if (mm.kind === "feature" && mm.draft.type === "csys") {
+          const ty = this.store!.feature(id)?.type;
+          const fc = mm.focus ?? "origin";
+          if (ty === "point" && fc === "origin") { mm.draft.origin = { point: id }; mm.focus = mm.draft.z ? "cx" : "cz"; this.draftChanged(); return; }
+          if (ty === "axis" && (fc === "cx" || fc === "cz")) { if (fc === "cz") { mm.draft.z = { axis: id }; if (!mm.draft.x) mm.focus = "cx"; } else mm.draft.x = { axis: id }; this.draftChanged(); return; }
+        }
         if (mm.kind === "feature" && asRef && mm.draft.type === "revolve" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
@@ -2699,7 +2776,8 @@ export class ModelController {
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
-      if (f.type === "plane" || f.type === "axis" || f.type === "point") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
+      if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
+      if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
       items.push([t("Roll back to here"), () => this.setRollback(i)]);
       if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
@@ -2882,6 +2960,16 @@ export class ModelController {
       body = group(t("Selections"), `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode">${opts.map(([v, l]) => `<option value="${v}"${f.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`
         + `<div class="pm-field"><span>${esc(t("Reference"))}</span><button class="pm-box focus" data-k="focus-ref" translate="no">${esc(picked)}</button></div>`)
         + `<p class="pm-help muted">${esc(help)}</p>`;
+    }
+    if (f.type === "csys") {
+      title = t("Coordinate system");
+      const fc = m.focus ?? "origin";
+      const box = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${fc === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
+      body = group(t("Selections"), box("origin", t("Origin"), f.origin ? this.vertexLabel(f.origin) : t("Part origin"))
+          + box("cx", t("X axis"), f.x ? this.lineLabel(f.x) : t("Global X")) + chk("flipX", f.flipX, t("Reverse X direction"))
+          + box("cz", t("Z axis"), f.z ? this.lineLabel(f.z) : t("Global Z")) + chk("flipZ", f.flipZ, t("Reverse Z direction")))
+        + `<p class="pm-help muted">${esc(fc === "origin" ? t("Click near the end of an edge, or a reference point in the tree.") : t("Click a straight or round edge, a flat or round face, or an axis in the tree."))}</p>`
+        + `<p class="pm-help muted">${esc(t("Right-click it in the tree to use it for measurements, mass properties and mesh export."))}</p>`;
     }
     if (f.type === "thread") {
       title = f.modelled ? t("Thread") : t("Cosmetic thread");
@@ -3569,6 +3657,7 @@ const ICON_SVG: Record<string, string> = {
   "sk:point": S('<circle cx="8" cy="8" r="2" fill="currentColor"/>'),
   axis: S('<path d="M2 14 14 2" stroke-dasharray="4 1.5 1 1.5"/>'),
   point: S('<path d="M8 3v10M3 8h10M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
+  csys: S('<path d="M3 13h10M3 13V3M3 13l-1.5 1.5"/><path d="M11 11l2 2-2 2M1.5 5 3 3l1.5 2"/>'),
   plane: S('<path d="M1.5 11 5 4h9.5L11 11z"/><path d="M8 7.5v-6M6.5 3 8 1.5 9.5 3" />'),
   "sk:circle3": S('<circle cx="8" cy="8" r="5.5"/><circle cx="2.5" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="4.3" r="1.1" fill="currentColor"/><circle cx="11" cy="12.6" r="1.1" fill="currentColor"/>'),
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),

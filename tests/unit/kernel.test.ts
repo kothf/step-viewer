@@ -234,6 +234,36 @@ test("reference axes and points (FR-REF-003, FR-REF-004)", async () => {
   assert.equal(bad.statuses.at(-1)!.ok, false);
 });
 
+test("reference coordinate systems (FR-REF-005)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const edge = { faces: ["f1:side:s1l2", "f1:end"] };
+  const feats: Feature[] = [s1, ex,
+    { id: "c0", type: "csys", name: "Coordinate system1" },
+    // At the corner (50, 30, 20); Z the top face's normal, X along the +x top edge (±Y), reversed.
+    { id: "c1", type: "csys", name: "Coordinate system2", origin: { edge, at: [50, 30, 20] }, z: { face: { name: "f1:end" } }, x: { edge }, flipX: true },
+    { id: "p1", type: "point", name: "Point1", mode: "mid", edge },
+    { id: "c2", type: "csys", name: "Coordinate system3", origin: { point: "p1" }, z: { edge }, flipZ: true },
+  ];
+  const r = run(m, doc(feats));
+  const F = r.frames;
+  const R = (v: number[]) => v.map(x => Math.round(x * 1e6) / 1e6 + 0);
+  assert.deepEqual(R(F.c0.o), [0, 0, 0]); assert.deepEqual(R(F.c0.x), [1, 0, 0]); assert.deepEqual(R(F.c0.n), [0, 0, 1]); assert.deepEqual(R(F.c0.y), [0, 1, 0]);
+  assert.deepEqual(R(F.c1.o), [50, 30, 20]); assert.deepEqual(R(F.c1.n), [0, 0, 1]);
+  close(Math.abs(F.c1.x[1]), 1);
+  // Right-handed: y = z × x.
+  const c = F.c1, cr = [c.n[1] * c.x[2] - c.n[2] * c.x[1], c.n[2] * c.x[0] - c.n[0] * c.x[2], c.n[0] * c.x[1] - c.n[1] * c.x[0]];
+  assert.deepEqual(R(c.y), R(cr));
+  assert.deepEqual(R(F.c2.o), [50, 0, 20]); close(Math.abs(F.c2.n[1]), 1);
+  // Flipping X turns it round.
+  const r2 = run(m, doc(feats.map(f => (f.id === "c1" ? { ...f, flipX: false } : f)) as Feature[]));
+  close(r2.frames.c1.x[1], -F.c1.x[1]);
+  // X along Z: an error.
+  const bad = m.evaluate(doc([s1, ex, { id: "c3", type: "csys", name: "Coordinate system4", z: { edge }, x: { edge } } as Feature]));
+  assert.equal(bad.statuses.at(-1)!.ok, false);
+});
+
 test("shell, mirror, linear and circular patterns (FR-FT-060, 070-072, 075)", async () => {
   const m = new Modeller(await occ());
   const s1 = rect("s1", 0, 0, 100, 60);
