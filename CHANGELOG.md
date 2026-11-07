@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - **Linear and circular sketch patterns** (FR-SK-038): select sketch entities and click Linear pattern or Circular pattern in the sketch toolbar. A PropertyManager sets spacing, instances and angle for one or two directions, or the centre, instances and total angle (equal spacing or a fixed step); the green preview updates as you type. Each copy keeps an equal relation to its seed (lines in a linear pattern also stay parallel). A lone point selected with the entities is taken as the circular pattern's centre.
+- **Move, copy, rotate and scale sketch entities** (FR-SK-039): Move (delta X/Y), Rotate (centre and angle) and Scale (centre and factor) with the same live preview. Copy adds transformed copies; in place, Keep relations decides whether relations and dimensions to the rest of the sketch stay (and pull back) or are removed. Dimensions inside a scaled selection scale with it.
 
 ## [1.28.0] - 2026-11-07
 

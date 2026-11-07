@@ -2260,6 +2260,34 @@ try {
     await mp.fill('#mc-pm input[data-p="d"]', "10");
     await mp.press('#mc-pm input[data-p="d"]', "Tab");
     await mp.click('#mc-pm [data-a="pok"]');
+    // Move/copy, rotate, scale (FR-SK-039): a Ø3 at (25,−15) copied 30 mm up, the copy turned 180° about the origin, the original scaled ×2 about its centre.
+    await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      e.sk.ents.push({ id: "pm1", t: "point", x: 25, y: -15 }, { id: "pmc", t: "circle", c: "pm1", r: 1.5 });
+      e.selection = new Set(["pmc"]);
+    });
+    await mp.click('#mc-tools [data-c="skmove"]');
+    await mp.check('#mc-pm input[data-p="copy"]');
+    await mp.fill('#mc-pm input[data-p="dx"]', "0");
+    await mp.press('#mc-pm input[data-p="dx"]', "Tab");
+    await mp.fill('#mc-pm input[data-p="dy"]', "30");
+    await mp.press('#mc-pm input[data-p="dy"]', "Tab");
+    await mp.click('#mc-pm [data-a="pok"]');
+    await mp.click('#mc-tools [data-c="skrot"]');
+    await mp.fill('#mc-pm input[data-p="angle"]', "180");
+    await mp.press('#mc-pm input[data-p="angle"]', "Tab");
+    await mp.click('#mc-pm [data-a="pok"]');
+    await mp.evaluate(() => { window.__sv.model.editor().selection = new Set(["pmc"]); });
+    await mp.click('#mc-tools [data-c="skscale"]');
+    await mp.fill('#mc-pm input[data-p="cx"]', "25");
+    await mp.press('#mc-pm input[data-p="cx"]', "Tab");
+    await mp.fill('#mc-pm input[data-p="cy"]', "-15");
+    await mp.press('#mc-pm input[data-p="cy"]', "Tab");
+    await mp.click('#mc-pm [data-a="pok"]');
+    const xf = await mp.evaluate(() => {
+      const e = window.__sv.model.editor();
+      return e.sk.ents.filter(x => x.t === "circle" && Math.abs(e.sk.ents.find(q => q.id === x.c).y + 15) < 1e-6).map(x => { const p = e.sk.ents.find(q => q.id === x.c); return `${Math.round(p.x)},${x.r}`; }).sort().join(" ");
+    });
     const pat = await mp.evaluate(() => {
       const e = window.__sv.model.editor();
       const cs = e.sk.ents.filter(x => x.t === "circle" && x.r === 1.5).map(x => { const p = e.sk.ents.find(q => q.id === x.c); return `${Math.round(p.x)},${Math.round(p.y)}`; }).sort();
@@ -2274,8 +2302,8 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const vPat = await vol(), stPat = await lastSt();
-    const holes7 = 7 * Math.PI * 2.25 * 10;
-    check(patTitle === "Circular sketch pattern" && pat.cs === "-15,-20 -18,0 -25,-20 -35,-20 0,-18 0,18 18,0" && pat.eq === 5 && pat.st === "ok" && stPat === "extrude:ok" && vBeforePat - vPat > holes7 - 1, `model 1.29: circular and linear sketch patterns, cut through the gasket (${patTitle}, ${pat.cs}, ${pat.eq} equal, ${pat.st}, ${stPat}, ${(vBeforePat - vPat).toFixed(1)} ≥ ${holes7.toFixed(1)})`);
+    const holes7 = 8 * Math.PI * 2.25 * 10 + Math.PI * 9 * 10;
+    check(patTitle === "Circular sketch pattern" && pat.cs === "-15,-20 -18,0 -25,-15 -25,-20 -35,-20 0,-18 0,18 18,0" && xf === "-25,1.5 25,3" && pat.eq === 5 && pat.st === "ok" && stPat === "extrude:ok" && vBeforePat - vPat > holes7 - 1, `model 1.29: sketch patterns, move/copy, rotate and scale, cut through the gasket (${patTitle}, ${pat.cs}, ${xf}, ${pat.eq} equal, ${pat.st}, ${stPat}, ${(vBeforePat - vPat).toFixed(1)} ≥ ${holes7.toFixed(1)})`);
     await ctx.close();
   }
 

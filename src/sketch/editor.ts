@@ -25,7 +25,11 @@ function arcPts(c: V2, r: number, a0: number, a1: number, n = 48): V2[] {
 /** Sketch pattern settings (FR-SK-038): spacing in mm, angles in radians. */
 export type SketchPattern =
   | { kind: "linear"; n: number; d: number; angle: number; n2: number; d2: number; angle2: number }
-  | { kind: "circular"; n: number; total: number; c: V2; centre: string | null; equal: boolean };
+  | { kind: "circular"; n: number; total: number; c: V2; centre: string | null; equal: boolean }
+  /** Move / copy, rotate and scale entities (FR-SK-039): one transform, applied to the selection or to copies. */
+  | { kind: "move"; dx: number; dy: number; copy: boolean; keep: boolean }
+  | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
+  | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
 export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "dim";
 
@@ -1174,40 +1178,42 @@ export class SketchEditor {
   }
 
   /** Starts a pattern of the selection (Linear or Circular), with the panel's defaults. */
-  startPattern(kind: "linear" | "circular"): boolean {
+  startPattern(kind: SketchPattern["kind"]): boolean {
     const { items, centre } = this.patternSeed();
     if (!items.length) { this.host.toast(t("Select the entities to pattern first, then click the pattern tool.")); return false; }
     if (this.tool !== "select") this.setTool("select");
     const c: V2 = centre ? this.pt(centre) : [0, 0];
-    this.pattern = kind === "linear"
-      ? { kind, n: 3, d: 20, angle: 0, n2: 1, d2: 20, angle2: Math.PI / 2 }
-      : { kind, n: 6, total: Math.PI * 2, c, centre, equal: true };
+    this.pattern = kind === "linear" ? { kind, n: 3, d: 20, angle: 0, n2: 1, d2: 20, angle2: Math.PI / 2 }
+      : kind === "circular" ? { kind, n: 6, total: Math.PI * 2, c, centre, equal: true }
+      : kind === "move" ? { kind, dx: 10, dy: 0, copy: false, keep: true }
+      : kind === "rotate" ? { kind, c, centre, angle: Math.PI / 2, copy: false, keep: true }
+      : { kind, c, centre, k: 2, copy: false, keep: true };
     this.render();
     return true;
   }
 
   cancelPattern() { this.pattern = null; this.render(); }
 
-  /** Rigid transforms of the instances (the seed itself left out). */
-  private patternMoves(): ((q: V2) => V2)[] {
+  /** Transforms of the instances (the seed itself left out); k scales radii. */
+  private patternMoves(): { f: (q: V2) => V2; k: number }[] {
     const p = this.pattern;
     if (!p) return [];
-    const out: ((q: V2) => V2)[] = [];
+    const out: { f: (q: V2) => V2; k: number }[] = [];
+    const rot = (c: V2, a: number) => { const co = Math.cos(a), si = Math.sin(a); return (q: V2): V2 => [c[0] + (q[0] - c[0]) * co - (q[1] - c[1]) * si, c[1] + (q[0] - c[0]) * si + (q[1] - c[1]) * co]; };
     if (p.kind === "linear") {
       const u: V2 = [Math.cos(p.angle), Math.sin(p.angle)], v: V2 = [Math.cos(p.angle2), Math.sin(p.angle2)];
       for (let j = 0; j < Math.max(1, p.n2); j++) for (let i = 0; i < Math.max(1, p.n); i++) {
         if (!i && !j) continue;
         const dx = u[0] * p.d * i + v[0] * p.d2 * j, dy = u[1] * p.d * i + v[1] * p.d2 * j;
-        out.push(q => [q[0] + dx, q[1] + dy]);
+        out.push({ f: q => [q[0] + dx, q[1] + dy], k: 1 });
       }
-    } else {
+    } else if (p.kind === "circular") {
       const full = Math.abs(Math.abs(p.total) - Math.PI * 2) < 1e-9;
       const step = p.equal ? p.total / (full ? p.n : Math.max(1, p.n - 1)) : p.total;
-      for (let i = 1; i < p.n; i++) {
-        const a = step * i, co = Math.cos(a), si = Math.sin(a), c = p.c;
-        out.push(q => [c[0] + (q[0] - c[0]) * co - (q[1] - c[1]) * si, c[1] + (q[0] - c[0]) * si + (q[1] - c[1]) * co]);
-      }
-    }
+      for (let i = 1; i < p.n; i++) out.push({ f: rot(p.c, step * i), k: 1 });
+    } else if (p.kind === "move") out.push({ f: q => [q[0] + p.dx, q[1] + p.dy], k: 1 });
+    else if (p.kind === "rotate") out.push({ f: rot(p.c, p.angle), k: 1 });
+    else { const c = p.c, k = p.k; out.push({ f: q => [c[0] + (q[0] - c[0]) * k, c[1] + (q[1] - c[1]) * k], k: Math.abs(k) }); }
     return out;
   }
 
@@ -1215,11 +1221,11 @@ export class SketchEditor {
   private patternPreview(): V2[][] {
     const { items } = this.patternSeed();
     const out: V2[][] = [];
-    for (const mv of this.patternMoves()) {
+    for (const { f: mv, k } of this.patternMoves()) {
       for (const e of items) {
         if (e.t === "point") { const q = mv(this.pt(e.id)), r = this.px(q) * 3; out.push(arcPts(q, r, 0, Math.PI * 2, 12)); }
         else if (e.t === "line") out.push([mv(this.pt(e.a)), mv(this.pt(e.b))]);
-        else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r, 0, Math.PI * 2, 72));
+        else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -1241,8 +1247,9 @@ export class SketchEditor {
     const { items } = this.patternSeed();
     const moves = this.patternMoves();
     if (!p || !items.length || !moves.length) { this.cancelPattern(); return 0; }
+    if (p.kind === "move" || p.kind === "rotate" || p.kind === "scale") return this.applyTransform(p, items, moves[0]);
     const made: string[] = [];
-    for (const mv of moves) {
+    for (const { f: mv } of moves) {
       const map = new Map<string, string>();
       const point = (id: string) => {
         let got = map.get(id);
@@ -1277,6 +1284,54 @@ export class SketchEditor {
     this.render();
     this.emitSel();
     return moves.length;
+  }
+
+  /**
+   * Move, rotate or scale the selection in place, or add transformed copies (no relations).
+   * In place, relations and dimensions tying the selection to other geometry are kept (the solver
+   * then pulls against them) or, with keep off, deleted first.
+   */
+  private applyTransform(p: Extract<SketchPattern, { kind: "move" | "rotate" | "scale" }>, items: SkEnt[], mv: { f: (q: V2) => V2; k: number }): number {
+    const label = p.kind === "move" ? (p.copy ? "Copy entities" : "Move entities") : p.kind === "rotate" ? "Rotate entities" : "Scale entities";
+    const pts = new Set<string>();
+    for (const e of items) { if (e.t === "point") pts.add(e.id); else if (e.t === "line") pts.add(e.a).add(e.b); else if (e.t === "circle") pts.add(e.c); else pts.add(e.c).add(e.a).add(e.b); }
+    pts.delete(ORIGIN);
+    const made: string[] = [];
+    if (p.copy) {
+      const map = new Map<string, string>();
+      const point = (id: string) => {
+        let got = map.get(id);
+        if (!got) { got = uid("p"); const q = mv.f(this.pt(id)); this.sk.ents.push({ id: got, t: "point", x: q[0], y: q[1] }); map.set(id, got); }
+        return got;
+      };
+      for (const e of items) {
+        const cons = e.cons ? { cons: true } : {};
+        if (e.t === "point") { if (e.id !== ORIGIN) made.push(point(e.id)); }
+        else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
+        else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
+        else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
+      }
+    } else {
+      const moved = new Set<string>([...pts, ...items.map(e => e.id)]);
+      if (!p.keep) {
+        const outside = (ids: string[]) => ids.some(x => moved.has(x)) && ids.some(x => !moved.has(x));
+        this.sk.rels = this.sk.rels.filter(r => !(outside(r.e) || (r.t === "fix" && r.e.some(x => moved.has(x)))));
+        this.sk.dims = this.sk.dims.filter(d => !outside(d.e) || d.driven);
+      }
+      for (const id of pts) { const e = this.ent(id) as SkEnt & { t: "point" }; const q = mv.f([e.x, e.y]); e.x = q[0]; e.y = q[1]; }
+      if (mv.k !== 1) {
+        for (const e of items) if (e.t === "circle") e.r *= mv.k;
+        // Scaled lengths: dimensions inside the selection scale with it.
+        for (const d of this.sk.dims) if (d.t !== "angle" && !d.driven && d.e.every(x => moved.has(x)) && !d.val.expr) d.val = { v: d.val.v * mv.k };
+      }
+      made.push(...items.map(e => e.id));
+    }
+    this.pattern = null;
+    this.selection = new Set(made);
+    this.commit(label);
+    this.render();
+    this.emitSel();
+    return 1;
   }
 
   // ---------- DXF import (FR-SK-040) ----------
