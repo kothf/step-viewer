@@ -15,9 +15,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  unit:
+    name: unit tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests (kernel, sketch solver, documents)
+        run: npm run test:unit
+
+  # The browser smoke test in 4 parallel shards (SMOKE_SHARD, see tests/smoke.mjs), about 2 minutes each
+  # instead of 9 minutes in one job. Each job packages the build itself: that takes ~15 s, less than
+  # passing it between jobs as an artifact would.
+  smoke:
+    name: smoke ${{ matrix.shard }}/4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -37,11 +62,21 @@ jobs:
       - name: Browser for the tests
         run: npx playwright install --only-shell chromium || npx playwright install --with-deps --only-shell chromium
 
-      - name: Unit tests (kernel, sketch solver, documents)
-        run: npm run test:unit
-
       - name: Package
         run: npm run package
 
-      - name: Smoke test (packaged build)
+      - name: Smoke test (packaged build), shard ${{ matrix.shard }}/4
+        env:
+          SMOKE_SHARD: ${{ matrix.shard }}/4
         run: npm test
+
+  # One check that is green only when every job above is (the Release workflow reads the whole run's result).
+  test:
+    needs: [unit, smoke]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: All tests passed
+        run: |
+          [ "${{ needs.unit.result }}" = success ] && [ "${{ needs.smoke.result }}" = success ] || { echo "::error::unit: ${{ needs.unit.result }}, smoke: ${{ needs.smoke.result }}"; exit 1; }
