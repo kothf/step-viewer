@@ -808,3 +808,23 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .v-lbl { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .v-lbl textarea { font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
 .mc-ro { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--accent-soft); border-bottom: 1px solid var(--line); font-size: var(--fs-caption); }
+/* Vault lifecycle (1.50: states, revisions, data cards, references) */
+.v-state { white-space: nowrap; }
+.v-state i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: baseline; }
+.v-acts .row { margin-top: 4px; }
+.v-trs { align-items: center; }
+.v-card { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 8px 0 0; font-size: var(--fs-caption); }
+.v-card dt { color: var(--muted); }
+.v-card dd { margin: 0; overflow-wrap: anywhere; }
+.v-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 8px 0; }
+.v-form label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-caption); }
+.v-form input:not([type="checkbox"]), .v-form select, #tab-vault .v-search input, .v-cmp select, #vault-dlg .row select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; min-width: 0; }
+#tab-vault .v-search input { flex: 1; }
+.v-tree { padding-left: 16px; margin: 4px 0; font-size: var(--fs-caption); }
+.v-bad { color: #b91c1c; }
+.v-warn { color: #92400e; }
+:root[data-theme="dark"] .v-bad { color: #fca5a5; }
+:root[data-theme="dark"] .v-warn { color: #fcd34d; }
+.v-found { margin: 0; }
+.v-cmp { align-items: center; gap: 6px; margin-bottom: 8px; }
+@media (max-width: 768px) { .v-form { grid-template-columns: 1fr; } }
