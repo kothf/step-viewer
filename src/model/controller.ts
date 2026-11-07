@@ -11,7 +11,8 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
-import { DocStore, dependants, newPart, nextName, uid } from "./doc";
+import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { ModelKernel, type Rebuild } from "./kernelClient";
@@ -60,7 +61,8 @@ type Mode =
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
   | { kind: "props"; draft: PartDoc }
-  | { kind: "eq"; draft: GlobalVar[] };
+  | { kind: "eq"; draft: GlobalVar[] }
+  | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
 type Focus = "base" | "axis" | "upto" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
@@ -504,6 +506,7 @@ export class ModelController {
       return;
     }
     if (m.kind === "plane") { toast(t("Pick a plane or a flat face for the sketch.")); return; }
+    if (m.kind === "cfg") { this.mode = { kind: "none" }; this.renderAll(); return; }
     if (m.kind === "eq") {
       const names = new Set<string>();
       for (const v of m.draft) {
@@ -617,6 +620,58 @@ export class ModelController {
     this.exitMode(false);
     this.mode = { kind: "eq", draft: structuredClone(this.doc.vars ?? []) };
     this.renderAll();
+  }
+
+  /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
+  editConfigs() {
+    if (!this.store) return;
+    this.exitMode(false);
+    this.mode = { kind: "cfg" };
+    this.renderAll();
+  }
+
+  /** Makes a configuration active; the part rebuilds with its values. */
+  setConfig(name: string) {
+    if (!this.store || (this.doc.config ?? "Default") === name) return;
+    this.store.change(`Configuration ${name}`, d => activate(d, name));
+    this.renderAll();
+    void this.rebuild();
+  }
+
+  /**
+   * Moves a feature (and the sketch only it uses) to before position `to` of the other features
+   * (FR-HIS-006). Refused, with the reason, when a feature would come before something it uses.
+   */
+  moveFeature(id: string, to: number) {
+    if (!this.store) return false;
+    const d = this.doc;
+    const f = d.features.find(x => x.id === id);
+    if (!f) return false;
+    const ids = [id];
+    if (f.type === "extrude" || f.type === "revolve") {
+      const own = d.features.filter(x => (x.type === "extrude" || x.type === "revolve") && x.sketch === f.sketch).length === 1;
+      if (own) ids.unshift(f.sketch);
+    }
+    const next = moved(d.features, ids, to);
+    if (next.every((x, i) => x.id === d.features[i].id)) return false;
+    const bad = orderProblem(next);
+    if (bad) { toast(t("{a} can't come before {b}: it uses {b}.", { a: featureLabel(bad.feature.name), b: featureLabel(bad.parent.name) }), true); return false; }
+    this.store.change(`Move ${f.name}`, dd => { dd.features = moved(dd.features, ids, to); });
+    this.selected = id;
+    this.renderAll();
+    void this.rebuild();
+    return true;
+  }
+
+  /** Position among the other features for a move of `id` to just before (or after) feature `target`. */
+  private dropIndex(id: string, target: string, after: boolean) {
+    const d = this.doc;
+    const f = d.features.find(x => x.id === id)!;
+    const block = new Set([id]);
+    if ((f.type === "extrude" || f.type === "revolve") && d.features.filter(x => (x.type === "extrude" || x.type === "revolve") && x.sketch === f.sketch).length === 1) block.add(f.sketch);
+    const rest = d.features.filter(x => !block.has(x.id));
+    const i = rest.findIndex(x => x.id === target);
+    return i < 0 ? -1 : i + (after ? 1 : 0);
   }
 
   editProps() {
@@ -802,7 +857,7 @@ export class ModelController {
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
-    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props" || m.kind === "eq") {
+    if (m.kind === "feature" || m.kind === "plane" || m.kind === "props" || m.kind === "eq" || m.kind === "cfg") {
       if (k === "escape") { stop(); void this.cancel(); }
       else if (k === "enter" && !tg.closest?.("#mc-tree")) { stop(); this.ok(); }
       return;
@@ -1865,6 +1920,7 @@ export class ModelController {
     let html = row("part", ICONS.part, d.name, "", " ft-root");
     html += `<div class="ft-group" role="group">`;
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
+    html += row("configs", "◇", t("Configuration: {name}", { name: d.config ?? "Default" }), "", " ft-plane");
     html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
@@ -1878,14 +1934,21 @@ export class ModelController {
       const u = users.get(f.id);
       if (f.type === "sketch" && u?.length === 1 && u[0] > i && (u[0] < end) === (i < end)) absorbed.set(i, u[0]);
     });
+    // Parent/child (FR-HIS-007): with a feature selected, what it uses and what uses it are marked.
+    const selF = this.selected ? d.features.find(x => x.id === this.selected) : undefined;
+    const par = new Set(selF ? parents(d, selF) : []);
+    const kids = new Set(selF ? d.features.filter(g => g.id !== selF.id && parents(d, g).includes(selF.id)).map(g => g.id) : []);
     const featRow = (f: Feature, i: number, child: boolean) => {
       const s = st.get(f.id);
+      const rel = par.has(f.id) ? " ft-parent" : kids.has(f.id) ? " ft-child" : "";
+      const relTip = par.has(f.id) ? t("Used by the selected feature") : kids.has(f.id) ? t("Uses the selected feature") : "";
       const editing = (m.kind === "sketch" && m.id === f.id) || (m.kind === "feature" && !m.isNew && m.index === i);
       const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type];
       const badge = s && !s.ok ? `<span class="ft-err" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Error"))}: ${esc(statusText(s))}">⚠</span>`
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
       const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
-      return row(f.id, icon, featureLabel(f.name), badge + tools, `${child ? " child" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}`, ` data-i="${i}"`);
+      const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
+      return row(f.id, icon, featureLabel(f.name), relMark + badge + tools, `${child ? " child" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none"}"`);
     };
     const bar = `<div class="ft-rollback" role="treeitem" tabindex="0" aria-selected="false" aria-label="${esc(t("Rollback bar: drag, or use the arrow keys"))}" title="${esc(t("Rollback bar: drag, or use the arrow keys"))}"></div>`;
     d.features.forEach((f, i) => {
@@ -1900,6 +1963,31 @@ export class ModelController {
   }
 
   private bindTree(box: HTMLElement) {
+    // Drag a feature row onto another to reorder (FR-HIS-006): the upper half drops before it, the lower half after.
+    let dragId: string | null = null;
+    const clearDrop = () => box.querySelectorAll(".drop-before, .drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
+    box.querySelectorAll<HTMLElement>('.ft-row[draggable="true"]').forEach(r => {
+      const id = r.dataset.id!;
+      r.addEventListener("dragstart", e => { dragId = id; e.dataTransfer?.setData("text/plain", id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; r.classList.add("dragging"); });
+      r.addEventListener("dragend", () => { dragId = null; r.classList.remove("dragging"); clearDrop(); });
+      r.addEventListener("dragover", e => {
+        if (!dragId || dragId === id) return;
+        e.preventDefault();
+        const after = e.offsetY > r.offsetHeight / 2;
+        clearDrop();
+        r.classList.add(after ? "drop-after" : "drop-before");
+      });
+      r.addEventListener("dragleave", () => r.classList.remove("drop-before", "drop-after"));
+      r.addEventListener("drop", e => {
+        e.preventDefault();
+        const from = dragId ?? e.dataTransfer?.getData("text/plain");
+        const after = r.classList.contains("drop-after") || (!r.classList.contains("drop-before") && e.offsetY > r.offsetHeight / 2);
+        clearDrop();
+        if (!from || from === id) return;
+        const to = this.dropIndex(from, id, after);
+        if (to >= 0) this.moveFeature(from, to);
+      });
+    });
     box.querySelectorAll<HTMLElement>(".ft-row").forEach(r => {
       const id = r.dataset.id!;
       r.addEventListener("click", e => {
@@ -1933,6 +2021,7 @@ export class ModelController {
         }
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
+        if (id === "configs") { this.editConfigs(); return; }
         this.selected = id;
         this.renderTree();
         this.drawDecor();
@@ -1949,10 +2038,21 @@ export class ModelController {
         const rows = [...box.querySelectorAll<HTMLElement>(".ft-row")];
         const i = rows.indexOf(r);
         const go = (n: HTMLElement) => { n.focus(); this.selected = n.dataset.id!; rows.forEach(x => x.classList.toggle("sel", x === n)); this.drawDecor(); };
-        if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); go(rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]); }
+        if (!e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); go(rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]); }
         else if (e.key === "Home" || e.key === "End") { e.preventDefault(); go(rows[e.key === "Home" ? 0 : rows.length - 1]); }
         else if (e.key === "Enter" && (id === "part" || id === "material")) { e.preventDefault(); this.editProps(); }
         else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
+        else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
+        else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
+          // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
+          e.preventDefault();
+          e.stopPropagation();
+          const fs = this.doc.features;
+          const i = fs.findIndex(x => x.id === id);
+          const nb = fs[i + (e.key === "ArrowUp" ? -1 : 1)];
+          if (nb) { const to = this.dropIndex(id, nb.id, e.key === "ArrowDown"); if (to >= 0 && this.moveFeature(id, to)) $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${id}"]`)?.focus(); }
+          return;
+        }
         else if (e.key === "Enter" && this.store!.feature(id)) { e.preventDefault(); this.editFeature(id); }
         else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = r.getBoundingClientRect(); this.openMenu(id, b.left + 30, b.bottom); }
       });
@@ -2090,6 +2190,7 @@ export class ModelController {
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
     if (m.kind === "props") { this.renderPropsPanel(pm, m.draft); return; }
     if (m.kind === "eq") { this.renderEqPanel(pm, m.draft); return; }
+    if (m.kind === "cfg") { this.renderCfgPanel(pm); return; }
     const f = m.draft;
     const sketches = this.doc.features.slice(0, m.index).filter((x): x is SketchFeature => x.type === "sketch");
     const unit = units.current;
@@ -2405,6 +2506,51 @@ export class ModelController {
     });
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
+  }
+
+  /** Configurations panel: the active one is marked; switching rebuilds at once. */
+  private renderCfgPanel(pm: HTMLElement) {
+    const d = this.doc;
+    const list = d.configs?.length ? d.configs.map(c => c.name) : ["Default"];
+    const act = d.config ?? "Default";
+    const rows = list.map((n, i) => `<div class="cfg-row${n === act ? " on" : ""}" data-i="${i}">
+        <button class="cfg-act" data-c="act" aria-pressed="${n === act}" title="${esc(t("Make active"))}" aria-label="${esc(t("Make active"))}: ${esc(n)}">${n === act ? "●" : "○"}</button>
+        <input type="text" data-c="name" value="${esc(n)}" aria-label="${esc(t("Name"))}" spellcheck="false" translate="no" />
+        ${list.length > 1 ? `<button class="icon" data-c="rm" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))} ${esc(n)}">✕</button>` : ""}
+      </div>`).join("");
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Configurations"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
+      + `<p class="pm-help muted">${esc(t("Each configuration keeps its own dimension and parameter values, variables, suppressed features and material. Change values while a configuration is active to set them for it."))}</p>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Configurations"))}</legend><div class="cfg-list">${rows}</div><button class="btn small" data-a="add">${esc(t("Add configuration"))}</button></fieldset>`;
+    pm.querySelectorAll<HTMLElement>(".cfg-row").forEach(r => {
+      const name = list[+r.dataset.i!];
+      r.querySelector("[data-c=act]")!.addEventListener("click", () => this.setConfig(name));
+      r.querySelector("[data-c=rm]")?.addEventListener("click", async () => {
+        if (!(await confirmModal(t("Delete the configuration “{name}”?", { name }), t("Delete")))) return;
+        this.store!.change(`Delete configuration ${name}`, dd => removeConfig(dd, name));
+        this.renderAll();
+        void this.rebuild();
+      });
+      const inp = r.querySelector<HTMLInputElement>("[data-c=name]")!;
+      const commit = () => {
+        const to = inp.value.trim();
+        if (!to || to === name) { inp.value = name; return; }
+        if (!d.configs?.length) {
+          // Renaming the only (implicit) configuration makes it explicit.
+          this.store!.change("Rename configuration", dd => { addConfig(dd, to); removeConfig(dd, "Default"); });
+        } else if (d.configs.some(c => c.name === to)) { toast(t("There is already a configuration called “{name}”.", { name: to }), true); inp.value = name; return; }
+        else this.store!.change("Rename configuration", dd => { renameConfig(dd, name, to); });
+        this.renderAll();
+      };
+      inp.addEventListener("change", commit);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); commit(); } });
+    });
+    pm.querySelector("[data-a=add]")!.addEventListener("click", () => {
+      const name = nextConfigName(d);
+      this.store!.change(`Add configuration ${name}`, dd => addConfig(dd, name));
+      this.renderAll();
+      pm.querySelector<HTMLInputElement>(".cfg-row.on [data-c=name]")?.select();
+    });
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
   }
 
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */

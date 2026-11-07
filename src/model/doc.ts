@@ -159,3 +159,27 @@ export function parents(doc: PartDoc, f: Feature): string[] {
   for (const n of r.faces) ids.add(n.split(":")[0]);
   return doc.features.filter(g => ids.has(g.id)).map(g => g.id);
 }
+
+/**
+ * Reorder check (FR-HIS-006): the first feature that would come before something it uses,
+ * or null when every feature still follows its parents.
+ */
+export function orderProblem(features: Feature[]): { feature: Feature; parent: Feature } | null {
+  const seen = new Set<string>();
+  const ids = new Set(features.map(f => f.id));
+  for (const f of features) {
+    const r = featureRefs(f);
+    const need = new Set([...r.features, ...r.faces.map(n => n.split(":")[0])]);
+    for (const p of need) if (ids.has(p) && !seen.has(p) && p !== f.id) return { feature: f, parent: features.find(g => g.id === p)! };
+    seen.add(f.id);
+  }
+  return null;
+}
+
+/** Features in a new order: `ids` (kept together, in their order) moved to before index `to` of the others. */
+export function moved(features: Feature[], ids: string[], to: number): Feature[] {
+  const block = features.filter(f => ids.includes(f.id));
+  const rest = features.filter(f => !ids.includes(f.id));
+  rest.splice(Math.max(0, Math.min(rest.length, to)), 0, ...block);
+  return rest;
+}

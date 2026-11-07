@@ -248,6 +248,21 @@ export interface GlobalVar {
   comment?: string;
 }
 
+/** A configuration (FR-CFG-001): a named set of values; the active one's live in the document. */
+export interface PartConfig {
+  name: string;
+  /** Values when this configuration was last left (the active one's are stale until switched away). */
+  state: {
+    nums: Record<string, Num>;
+    ints: Record<string, number>;
+    suppressed: string[];
+    vars: Record<string, string>;
+    material: { name: string; density: number } | null;
+    /** Features that existed then (newer ones keep their suppression when switching). */
+    ids: string[];
+  };
+}
+
 export interface PartDoc {
   schema: 1;
   kind: "part";
@@ -262,6 +277,10 @@ export interface PartDoc {
   rollback: number | null;
   /** Global variables (Equations). */
   vars?: GlobalVar[];
+  /** Configurations; absent: only the default one. */
+  configs?: PartConfig[];
+  /** The active configuration's name. */
+  config?: string;
 }
 
 // ---------- kernel results ----------
