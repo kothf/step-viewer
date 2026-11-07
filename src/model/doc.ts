@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale" };
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
   const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
@@ -139,6 +139,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
   if (f.type === "csys" && f.origin) { if ("point" in f.origin) features.push(f.origin.point); else faces.push(...f.origin.edge.faces); }
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "fillet") for (const x of [...(f.faces1 ?? []), ...(f.faces2 ?? []), ...(f.center ?? [])]) faces.push(x.name);
   const line = (l: LineRef | undefined) => {
     if (!l) return;
     if (l.edge) faces.push(...l.edge.faces);
@@ -158,6 +159,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "rib") features.push(f.sketch);
   if (f.type === "combine") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }
   if (f.type === "bsplit") { plane(f.plane); faces.push(...f.bodies.map(x => x.name)); }
+  if (f.type === "scale") faces.push(...f.bodies.map(x => x.name));
   if (f.type === "delbody") faces.push(...f.bodies.map(x => x.name));
   if (f.type === "movebody") { faces.push(...f.bodies.map(x => x.name)); line(f.axis); }
   if (f.type === "split") { features.push(f.sketch); faces.push(...f.faces.map(x => x.name)); }

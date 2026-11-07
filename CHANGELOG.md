@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.59.0] - 2026-11-07
+
+### Added
+- **Face fillet and full round fillet** (FR-FT-032): the Fillet panel has a **Fillet type**. A face fillet rounds every edge where face set 1 meets face set 2; a full round replaces the centre faces between two parallel side faces with a half round tangent to both (the radius is half the gap). Both preview live.
+- **Scale** (FR-BODY-006), in the **Sweep ▾** menu: scales the picked bodies (all when none are picked) about their centroid or the origin, uniformly or per axis. Faces keep their names, so later features still find them.
+
 ## [1.58.0] - 2026-11-07
 
 ### Added
@@ -568,7 +574,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.58.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.59.0...HEAD
+[1.59.0]: https://github.com/kothf/step-viewer/compare/v1.58.0...v1.59.0
 [1.58.0]: https://github.com/kothf/step-viewer/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/kothf/step-viewer/compare/v1.56.0...v1.57.0
 [1.56.0]: https://github.com/kothf/step-viewer/compare/v1.55.0...v1.56.0

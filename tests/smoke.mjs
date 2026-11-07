@@ -1526,7 +1526,7 @@ try {
     const picked = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await idle();
     const prev = await mp.evaluate(() => ({ tris: (window.__sv.model.last().preview?.position.length ?? 0) / 9, callout: document.querySelector("#mc-layer .mc-callout")?.textContent, groups: [...document.querySelectorAll("#mc-pm legend")].map(l => l.textContent).join("|"), items: document.querySelectorAll("#mc-pm .pm-items li").length }));
-    check(prev.tris > 10 && /Radius: 2 mm/.test(prev.callout ?? "") && prev.groups === "Items to fillet|Fillet parameters|Fillet options" && prev.items === 3, `model: the fillet previews live (yellow faces) while edges are picked, with a radius callout (${JSON.stringify(prev)})`);
+    check(prev.tris > 10 && /Radius: 2 mm/.test(prev.callout ?? "") && prev.groups === "Fillet type|Items to fillet|Fillet parameters|Fillet options" && prev.items === 3, `model: the fillet previews live (yellow faces) while edges are picked, with a radius callout (${JSON.stringify(prev)})`);
     // The fourth (hidden) edge: from the other side.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 1, 0.8), false); });
     await mp.waitForTimeout(200);
@@ -3390,6 +3390,54 @@ try {
     const done = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.type + ":" + f.name).join(",") }));
     check(ib.title === "Imported body" && ib.file && Math.abs(ib.volume - 1000) < 1 && ib.bodies === 1 && /^Check and heal: \d+ free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(heal) && !done.bad && Math.abs(done.v - 1000) < 1 && /import:Imported1/.test(done.f),
       `model 1.58: Insert body reads a STEP cube into the part and Check and heal reports it (FR-FT-130/131) (${JSON.stringify(ib)}, ${heal}, ${JSON.stringify(done)})`);
+    await ctx.close();
+  }
+
+  // --- 1.59: full round fillet and face fillet (FR-FT-032), Scale (FR-BODY-006) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Wall", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -2), P("b", 20, -2), P("c", 20, 2), P("d", -20, 2), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    // Full round: Fillet type, then the three face sets (as clicks would fill them), previewed live.
+    await mp.evaluate(() => window.__sv.modeller.command("fillet"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "full");
+    await settle();
+    const boxes = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .pm-box")].map(b => b.dataset.focus));
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces1 = [{ name: "x:side:l1" }]; m.draft.center = [{ name: "x:end" }]; m.draft.faces2 = [{ name: "x:side:l3" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const pv = await mp.evaluate(() => window.__sv.model.last().preview?.position.length ?? 0);
+    await mp.click("#mc-ok");
+    await settle();
+    const fr = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    const wantFr = 40 * 4 * 10 - (8 - 2 * Math.PI) * 40;
+    check(boxes.join() === "fs1,fc,fs2" && pv > 0 && !fr.bad && Math.abs(fr.v - wantFr) < 0.05,
+      `model 1.59: Full round fillet replaces the top of a 4 mm wall with a half round, previewed live (FR-FT-032) (${boxes}, ${pv}, ${JSON.stringify(fr)} vs ${wantFr.toFixed(3)})`);
+    // Scale ×2 about the origin from the Sweep ▾ menu: volume ×8.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Scale$/ }).click();
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="about"]', "origin");
+    await mp.fill('#mc-pm input[data-num="factor"]', "2");
+    await mp.press('#mc-pm input[data-num="factor"]', "Enter");
+    await settle();
+    const sc = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(!sc.bad && Math.abs(sc.v - 8 * wantFr) < 0.4 && /Scale1/.test(sc.f), `model 1.59: Scale ×2 about the origin multiplies the volume by 8 (FR-BODY-006) (${JSON.stringify(sc)})`);
     await ctx.close();
   }
 
