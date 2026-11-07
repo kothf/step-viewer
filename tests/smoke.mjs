@@ -2148,7 +2148,7 @@ try {
     await mp.mouse.click(front[0], front[1]);
     await idle();
     await mp.fill('#mc-pm input[data-num="angle"]', "5");
-    await mp.press('#mc-pm input[data-num="angle"]', "Enter");
+    await mp.press('#mc-pm input[data-num="angle"]', "Tab");
     await idle();
     const draftPanel = await mp.evaluate(() => ({ plane: document.querySelector('#mc-pm [data-focus="nplane"]')?.textContent, faces: document.querySelector('#mc-pm [data-focus="faces"]')?.textContent }));
     await mp.click("#mc-ok");
