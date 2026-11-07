@@ -70,3 +70,18 @@ test("assembly files: save and open give the same document", async () => {
   const bad = { ...doc, components: [{ ...doc.components[0], part: "missing" }] };
   await assert.rejects(unpackAsm((await packAsm(bad, "test")).buffer as ArrayBuffer), /damaged/);
 });
+
+test("AT-P4-4: interference finds a 1 mm overlap with the right volume; touching is not interference", async () => {
+  const a = new Assembler(await occ());
+  const d = asm();
+  // Block<1> sits on the plate (touching); Block<2> sinks 1 mm into it.
+  d.components[2].tf = translation([25, 5, 4]);
+  const { placed } = a.evaluate(d);
+  const pairs = a.interference(placed);
+  assert.equal(pairs.length, 1);
+  assert.deepEqual([pairs[0].a, pairs[0].b], ["c1", "c3"]);
+  assert.ok(Math.abs(pairs[0].volume - 100) < 1e-6, String(pairs[0].volume));
+  assert.ok(pairs[0].position.length >= 36 * 3);
+  const touching = a.interference(placed, true);
+  assert.equal(touching.length, 2);
+});

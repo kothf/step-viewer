@@ -68,6 +68,11 @@ export class AsmController {
   /** The last mate solve: degrees of freedom and failing mates. */
   solved: SolveResult | null = null;
   mating: MateDraft | null = null;
+  /** Interference detection results while its panel is open (FR-ASM-020). */
+  interfere: { touch: boolean; pairs: { a: string; b: string; volume: number; position: number[] }[] | null; sel: number } | null = null;
+  private overlay = new THREE.Group();
+  /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
+  private volumes = new Map<string, number>();
   private mateDown: { x: number; y: number } | null = null;
   /** Resolves when the rebuild in flight and any queued one are done (tests wait on it). */
   idle: Promise<void> = Promise.resolve();
@@ -76,6 +81,7 @@ export class AsmController {
     this.kernel = new ModelKernel(occtBase);
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     this.bindDom();
+    host.viewer.scene.add(this.overlay);
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
   }
 
@@ -109,6 +115,8 @@ export class AsmController {
     this.selected = null;
     this.moving = null;
     this.mating = null;
+    this.interfere = null;
+    this.clearOverlay();
     this.solved = null;
     this.geo.clear();
     this.centres.clear();
@@ -128,6 +136,8 @@ export class AsmController {
     this.doc = null;
     this.drag = null;
     this.mating = null;
+    this.interfere = null;
+    this.clearOverlay();
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("asm");
     this.host.viewer.emptySize = 1;
@@ -147,6 +157,7 @@ export class AsmController {
     const next = JSON.parse(before) as AsmDoc;
     fn(next);
     this.applySolve(next);
+    if (this.interfere?.pairs) { this.interfere.pairs = null; this.clearOverlay(); }
     if (JSON.stringify(next) === before) { this.renderTree(); return; }
     this.undoStack.push(before);
     if (this.undoStack.length > 100) this.undoStack.shift();
@@ -207,6 +218,137 @@ export class AsmController {
     })();
   }
 
+  // ---------- interference, BOM, STEP (FR-ASM-020/024, AT-P4-4..6) ----------
+
+  /** Interference detection: every overlapping pair with its volume; the overlaps are drawn red. */
+  async runInterference(touch = this.interfere?.touch ?? false) {
+    if (!this.doc) return;
+    if (this.mating) this.cancelMate();
+    this.moving = null;
+    this.interfere = { touch, pairs: null, sel: -1 };
+    this.renderAll();
+    $("#asm-busy").hidden = false;
+    try {
+      const pairs = await this.kernel.interference(this.doc, touch);
+      if (!this.interfere) return;
+      this.interfere.pairs = pairs;
+      this.drawOverlay();
+    } catch (err) { toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true); }
+    finally { $("#asm-busy").hidden = true; }
+    this.renderPanel();
+  }
+
+  closeInterference() {
+    this.interfere = null;
+    this.clearOverlay();
+    this.renderAll();
+  }
+
+  private drawOverlay() {
+    this.clearOverlay();
+    const it = this.interfere;
+    it?.pairs?.forEach((p, i) => {
+      if (!p.position.length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(p.position, 3));
+      const on = it.sel === i || it.sel < 0;
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xe03131, transparent: true, opacity: on ? 0.85 : 0.25, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+      mesh.renderOrder = 10;
+      this.overlay.add(mesh);
+    });
+    this.host.viewer.invalidate();
+  }
+
+  private clearOverlay() {
+    for (const o of [...this.overlay.children]) { this.overlay.remove(o); (o as THREE.Mesh).geometry.dispose(); }
+    this.host.viewer.invalidate();
+  }
+
+  private renderInterference() {
+    const pm = $("#asm-pm"), it = this.interfere!;
+    pm.hidden = false;
+    pm.dataset.id = "interfere";
+    const name = (id: string) => this.comp(id)?.name ?? "?";
+    const vol = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 3 })} mm³`;
+    const rows = it.pairs?.map((p, i) => `<button class="pm-box${it.sel === i ? " focus" : ""}" data-pair="${i}" translate="no">${esc(name(p.a))} ↔ ${esc(name(p.b))}: ${esc(p.volume > 0 ? vol(p.volume) : t("touching"))}</button>`).join("") ?? "";
+    const total = it.pairs?.reduce((s, p) => s + p.volume, 0) ?? 0;
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Interference detection"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Results"))}</legend>`
+      + (it.pairs === null ? `<p class="pm-help muted" role="status">${esc(t("Checking…"))}</p>`
+        : it.pairs.length ? `<p class="pm-help" role="status" data-istatus>${esc(t("{n} interference|{n} interferences", { n: it.pairs.length }))} · ${esc(vol(total))}</p><div class="pm-items">${rows}</div>`
+        : `<p class="pm-help" role="status" data-istatus>${esc(t("No interference."))}</p>`)
+      + `</fieldset><fieldset class="pm-group"><legend>${esc(t("Options"))}</legend><label class="pm-field pm-check"><input type="checkbox" data-a="touch"${it.touch ? " checked" : ""} /> ${esc(t("Treat coincidence as interference"))}</label><p class="pm-help muted">${esc(t("Hidden components are left out."))}</p><button class="btn small" data-a="again">${esc(t("Calculate"))}</button></fieldset>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeInterference());
+    pm.querySelector("[data-a=again]")!.addEventListener("click", () => void this.runInterference());
+    pm.querySelector<HTMLInputElement>("[data-a=touch]")!.addEventListener("change", e => void this.runInterference((e.target as HTMLInputElement).checked));
+    pm.querySelectorAll<HTMLElement>("[data-pair]").forEach(b => b.addEventListener("click", () => { it.sel = it.sel === Number(b.dataset.pair) ? -1 : Number(b.dataset.pair); this.drawOverlay(); this.renderPanel(); }));
+  }
+
+  /** BOM rows (FR-ASM-024): one per part, in the order first used, with quantity and mass. */
+  bom() {
+    if (!this.doc) return [];
+    const rows: { item: number; part: string; number: string; description: string; material: string; qty: number; mass: number | null }[] = [];
+    const at = new Map<string, number>();
+    for (const c of this.doc.components) {
+      if (c.suppressed) continue;
+      let i = at.get(c.part);
+      if (i === undefined) {
+        const p = this.doc.parts[c.part], d = p.doc, v = this.volumes.get(c.part);
+        i = rows.length;
+        at.set(c.part, i);
+        rows.push({ item: i + 1, part: p.name, number: d.props?.partNumber ?? "", description: d.props?.description ?? "", material: d.material?.name ?? "", qty: 0, mass: v !== undefined && d.material ? (v / 1000) * d.material.density / 1000 : null });
+      }
+      rows[i].qty++;
+    }
+    return rows;
+  }
+
+  showBom() {
+    const dlg = $<HTMLDialogElement>("#asm-bom"), rows = this.bom();
+    const kg = (m: number | null) => (m === null ? "" : m.toLocaleString(undefined, { maximumFractionDigits: 4 }));
+    $("#asm-bom-body").innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Part"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Material"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Mass (kg)"))}</th></tr></thead><tbody>`
+      + rows.map(r => `<tr><td>${r.item}</td><td translate="no">${esc(r.part)}</td><td translate="no">${esc(r.number)}</td><td translate="no">${esc(r.description)}</td><td>${esc(r.material ? t(r.material) : "")}</td><td>${r.qty}</td><td>${kg(r.mass)}</td></tr>`).join("") + `</tbody></table>`;
+    const done = () => dlg.close();
+    dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = done;
+    dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => this.bomCsv();
+    dlg.showModal();
+  }
+
+  /** The BOM as CSV (English headers, like the other exports). */
+  bomCsvText() {
+    const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = [["Item", "Part", "Part number", "Description", "Material", "Qty", "Mass (kg)"].join(",")];
+    for (const r of this.bom()) lines.push([r.item, r.part, r.number, r.description, r.material, r.qty, r.mass === null ? "" : r.mass.toFixed(6)].map(q).join(","));
+    return `${lines.join("\r\n")}\r\n`;
+  }
+
+  private bomCsv() {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([this.bomCsvText()], { type: "text/csv" }));
+    a.download = `${this.doc?.name ?? "assembly"}-bom.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  /** STEP of the assembly (AT-P4-6): reopens with one named part per component, in place. */
+  async exportStep() {
+    if (!this.doc) return;
+    $("#asm-busy").hidden = false;
+    try {
+      const bytes = await this.kernel.assemblyStep(this.doc);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "model/step" }));
+      a.download = `${this.doc.name}.step`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast(t("Saved as STEP"), "success");
+    } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
+    finally { $("#asm-busy").hidden = true; }
+  }
+
+  /** The STEP bytes, for tests. */
+  stepBytes() { return this.doc ? this.kernel.assemblyStep(this.doc) : null; }
+
   // ---------- mates (FR-MATE-003/008) ----------
 
   /** Records each part's face geometry in part coordinates from the first shown instance. */
@@ -228,6 +370,7 @@ export class AsmController {
         else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
       });
       this.geo.set(c.part, m);
+      this.volumes.set(c.part, p.data.volume);
       const b0 = p.data.bboxMin, b1 = p.data.bboxMax;
       this.centres.set(c.part, applyPoint(inv, [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2, (b0[2] + b1[2]) / 2]));
     }
@@ -268,6 +411,7 @@ export class AsmController {
   startMate(edit?: Mate) {
     if (!this.doc) return;
     this.moving = null;
+    if (this.interfere) this.closeInterference();
     this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, type: edit.type, align: edit.align, value: edit.value, flip: edit.flip } : {};
     this.renderAll();
     this.drawPicks();
@@ -623,6 +767,9 @@ export class AsmController {
     const b = (c: string, label: string, title: string, dis = false) => `<button class="mc-b" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}><span class="mc-l">${esc(label)}</span></button>`;
     $("#asm-tools").innerHTML = b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
       + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
+      + b("interfere", t("Interference"), t("Interference detection: components whose solids overlap"), this.doc.components.length < 2)
+      + b("bom", t("BOM"), t("Bill of materials: parts and quantities, CSV export"), !this.doc.components.length)
+      + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !this.doc.components.length)
       + b("move", t("Move component"), t("Move or rotate the selected component (or drag it in the view)"), !sel || !!sel.fixed)
       + b("fix", sel?.fixed ? t("Float") : t("Fix"), t("Fix or float the selected component"), !sel)
       + b("undo", t("Undo"), t("Undo (Ctrl+Z)"), !this.undoStack.length) + b("redo", t("Redo"), t("Redo (Ctrl+Y)"), !this.redoStack.length)
@@ -644,6 +791,9 @@ export class AsmController {
     const sel = this.comp(this.selected);
     if (c === "insert") this.insertComponent();
     else if (c === "mate") { if (this.mating) this.cancelMate(); else this.startMate(); }
+    else if (c === "interfere") { if (this.interfere) this.closeInterference(); else void this.runInterference(); }
+    else if (c === "bom") this.showBom();
+    else if (c === "step") void this.exportStep();
     else if (c === "move" && sel) this.moveComponent(sel.id);
     else if (c === "fix" && sel) this.setFixed(sel.id, !sel.fixed);
     else if (c === "undo") this.undo();
@@ -738,6 +888,7 @@ export class AsmController {
 
   private renderPanel() {
     if (this.mating) { this.renderMatePanel(); return; }
+    if (this.interfere) { this.renderInterference(); return; }
     const pm = $("#asm-pm");
     if (pm.dataset.id === "mate") delete pm.dataset.id;
     const c = this.comp(this.moving);

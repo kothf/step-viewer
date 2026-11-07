@@ -853,3 +853,5 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-mates .btn { gap: 4px; }
 .pm-check { display: flex; align-items: center; gap: 6px; }
 .ft-row.ft-mates .ft-ico, .ft-row.ft-mate .ft-ico { color: var(--accent-text); }
+dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(100vw - 32px)); }
+#asm-bom td:first-child { font-family: inherit; font-size: inherit; }
