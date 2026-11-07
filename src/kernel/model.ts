@@ -22,7 +22,7 @@ export class FeatureError extends Error {
 }
 
 /** A body and the names of its faces (parallel arrays). */
-interface Named { shape: any; faces: any[]; names: string[] }
+export interface Named { shape: any; faces: any[]; names: string[] }
 
 /** What a feature added or removed, so mirror and patterns can copy it: its tool solids and how each was applied. */
 type Tool = { shape: Named; op: "fuse" | "cut" };

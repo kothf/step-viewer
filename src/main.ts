@@ -34,6 +34,7 @@ import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
+import { AsmController } from "./asm/controller";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -91,6 +92,22 @@ const modeller = new ModelController({
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
+  leaveOthers: () => asm.close(),
+  appVersion: __APP_VERSION__,
+}, new URL("occt/", document.baseURI).href);
+// Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
+const asm = new AsmController({
+  viewer,
+  vp: vpEl,
+  show: (parts, tree, first) => showModelled(parts, tree, tree.name, first),
+  partAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    const f = faceUnder(x - r.left, y - r.top);
+    return f ? { idx: viewer.parts.indexOf(f.part), point: f.point.toArray() as [number, number, number] } : null;
+  },
+  setDoc: label => setDoc(label, "ready"),
+  selectLeftTab: tab => showLeftTab(tab),
+  leaveOthers: () => { ++loadToken; modeller.close(); },
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 $("#app-version").textContent = `v${__APP_VERSION__}`;
@@ -331,6 +348,7 @@ async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], ap
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
   modeller.close();
+  asm.close();
   if (!append) kernel.clear();
   setPcbMode(true);
   const label = list.length === 1 ? list[0].name : t("{n} PCB files", { n: list.length });
@@ -357,6 +375,8 @@ async function openFiles(files: File[]) {
   if (!files.length) return;
   const partFile = files.find(f => modeller.isPartName(f.name));
   if (partFile) return modeller.openFile(partFile);
+  const asmFile = files.find(f => asm.isAsmName(f.name));
+  if (asmFile) return asm.openFile(asmFile);
   const sw = files.filter(f => isSolidWorksName(f.name));
   if (sw.length) return openSolidWorks(sw);
   const model = files.find(f => is3dName(f.name));
@@ -601,6 +621,7 @@ async function exportBoardStep() {
 function showModel(parts: PartData[], tree: TreeNode, name: string, key: string, t0: number) {
   const result = { parts, tree };
   modeller.close();
+  asm.close();
   resetForNewModel();
   setPcbMode(false);
   $("#back-pcb").hidden = !key.startsWith("sv:pcb:");
@@ -624,6 +645,11 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
 
 /** A modelled part's body after a rebuild: the first time like a newly opened file, later keeping the view and tools. */
 function showPartModel(data: PartData | null, name: string, first: boolean) {
+  showModelled(data ? [data] : [], { name, parts: data ? [0] : [], children: [] }, name, first);
+}
+
+/** Parts the modeller or the assembly built: the first time like a newly opened file, later keeping the view and tools. */
+function showModelled(parts: PartData[], tree: TreeNode, name: string, first: boolean) {
   ++loadToken;
   if (first) {
     resetForNewModel();
@@ -639,7 +665,7 @@ function showPartModel(data: PartData | null, name: string, first: boolean) {
     showEntity(hl.selFace, hl.selEdge, null);
     showEntity(hl.hoverFace, hl.hoverEdge, null);
   }
-  viewer.load(data ? [data] : [], { name, parts: data ? [0] : [], children: [] }, first && !!data);
+  viewer.load(parts, tree, first && parts.length > 0);
   if (!first) remeasure();
   state.fileName = name;
   state.fileKey = "";
@@ -649,7 +675,7 @@ function showPartModel(data: PartData | null, name: string, first: boolean) {
   buildTree();
   renderProps();
   updateHint();
-  if (first && data) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+  if (first && parts.length) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
   if (lastMassRun) runMass();
 }
 
@@ -1695,6 +1721,7 @@ const vaultPanel = new VaultPanel($("#vault-panel"), {
   open: async (name, data) => {
     const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
     if (modeller.isPartName(name)) await modeller.openFile({ name, data: buf });
+    else if (asm.isAsmName(name)) await asm.openFile({ name, data: buf });
     else await openFiles([new File([buf], name)]);
   },
   part: () => (modeller.active ? { name: modeller.partName, bytes: () => modeller.partBytes() } : null),
@@ -2264,4 +2291,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, asm, vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

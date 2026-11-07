@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Assemblies** (FRS 10, P4 slice 1: FR-ASM-001..005, FR-MATE-001/002): **New assembly** next to New part. **Insert component** places a MöbiusCAD part or a STEP, IGES or BREP model; the first one is fixed at the origin, the next float beside it, and the same part inserted again shares its source. Drag a floating component in the view, or type its position and rotation in **Move component**. The assembly tree marks fixed (f) and floating (-) components and hides, fixes/floats and deletes them; undo and redo; mass properties of the whole assembly; save and open `.mcadasm` files (the parts are embedded), also from the vault.
+
 ## [1.61.0] - 2026-11-07
 
 ### Added
