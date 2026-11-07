@@ -1353,4 +1353,8 @@ export const RU: Record<string, string> = {
   "The start face must be parallel to the sketch.": "Грань начала должна быть параллельна эскизу.",
   "The profile starts inside the body: there is no gap up to the next face.": "Профиль начинается внутри тела: до следующей грани нет зазора.",
   "Nothing is in the way: the extrusion never meets the body.": "На пути ничего нет: вытягивание не встречает тело.",
+  // 1.42.0: multiple radius fillet
+  "Default radius": "Радиус по умолчанию",
+  "Multiple radius fillet": "Скругление с разными радиусами",
+  "Type each edge's radius in the list, or click its callout in the view.": "Введите радиус каждого ребра в списке или щёлкните его выноску на модели.",
 };

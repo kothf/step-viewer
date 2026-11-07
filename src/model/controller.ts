@@ -2019,12 +2019,28 @@ export class ModelController {
       mesh.raycast = () => {};
       this.decor.add(mesh);
     }
+    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
+    const size = (v: number) => `${trimNum(v * fu, dec)} ${units.current}`;
+    if (f.type === "fillet" && f.multi) {
+      // Multiple radius: a callout on every edge, each opening its own field.
+      f.edges.forEach((r, i) => {
+        const e = this.edgeOf(r);
+        if (!e) return;
+        const label = document.createElement("button");
+        label.className = "mc-handle mc-callout";
+        label.textContent = `R${i + 1}: ${size(r.r ?? f.radius.v)}`;
+        label.title = t("Click to type the size");
+        label.dataset.at = JSON.stringify(e.mid);
+        label.addEventListener("click", () => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-er="${i}"]`); inp?.focus(); inp?.select(); });
+        $("#mc-layer").appendChild(label);
+      });
+      this.placeCallouts();
+      return;
+    }
     const ed = f.edges.length ? this.edgeOf(f.edges[0]) : null;
     if (!ed) return;
     const label = document.createElement("button");
     label.className = "mc-handle mc-callout";
-    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
-    const size = (v: number) => `${trimNum(v * fu, dec)} ${units.current}`;
     label.textContent = f.type === "fillet" ? `${t("Radius")}: ${size(f.radius.v)}`
       : (f.mode ?? "equal") === "two" ? `${size(f.distance.v)} × ${size(f.distance2?.v ?? f.distance.v)}`
       : (f.mode ?? "equal") === "angle" ? `${size(f.distance.v)} × ${trimNum(((f.angle?.v ?? 0) * 180) / Math.PI, 2)}°`
@@ -2778,10 +2794,12 @@ export class ModelController {
     } else if (f.type === "fillet" || f.type === "chamfer") {
       title = f.type === "fillet" ? t("Fillet") : t("Chamfer");
       const cm = f.type === "chamfer" ? f.mode ?? "equal" : "equal";
-      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((_e, i) => `<li><span>${esc(t("Edge {n}", { n: i + 1 }))}</span><button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
+      const multi = f.type === "fillet" && !!f.multi;
+      const fu = UNITS[unit].f;
+      const items = `<ul class="pm-items" aria-label="${esc(t("Edges"))}">${f.edges.map((e, i) => `<li><span>${esc(t("Edge {n}", { n: i + 1 }))}</span>${multi ? `<span class="pm-in"><input type="text" inputmode="decimal" data-er="${i}" value="${esc(trimNum(((e as { r?: number }).r ?? (f as FilletFeature).radius.v) * fu, 6))}" aria-label="${esc(t("Radius"))} ${esc(t("Edge {n}", { n: i + 1 }))}" spellcheck="false" /><span class="muted">${unit}</span></span>` : ""}<button class="icon" data-rm="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Edge {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>`
         + (f.edges.length ? `<button class="btn small" data-k="clear">${esc(t("Clear edges"))}</button>` : `<p class="pm-help muted">${esc(t("click edges or faces in the view"))}</p>`);
       const sizes = (f.type === "chamfer" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mode"><option value="equal"${cm === "equal" ? " selected" : ""}>${esc(t("Equal distance"))}</option><option value="two"${cm === "two" ? " selected" : ""}>${esc(t("Two distances"))}</option><option value="angle"${cm === "angle" ? " selected" : ""}>${esc(t("Distance and angle"))}</option></select></label>` : "")
-        + (f.type === "fillet" ? numField("radius", t("Radius"), f.radius, "length") : numField("distance", t("Distance"), f.distance, "length"))
+        + (f.type === "fillet" ? numField("radius", multi ? t("Default radius") : t("Radius"), f.radius, "length") + chk("multi", f.multi, t("Multiple radius fillet")) + (multi ? `<p class="pm-help muted">${esc(t("Type each edge's radius in the list, or click its callout in the view."))}</p>` : "") : numField("distance", t("Distance"), f.distance, "length"))
         + (f.type === "chamfer" && cm === "two" ? numField("distance2", t("Distance 2"), f.distance2 ?? { v: f.distance.v }, "length") : "")
         + (f.type === "chamfer" && cm === "angle" ? numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 4 }, "angle") : "")
         + (f.type === "chamfer" && cm !== "equal" ? chk("flip", f.flip, t("Flip direction")) : "");
@@ -2951,6 +2969,7 @@ export class ModelController {
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as "equal" | "two" | "angle"; if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
+        if (f.type === "fillet" && k === "multi") { upd(() => { if (val) f.multi = true; else { delete f.multi; f.edges.forEach(e => delete e.r); } }, true); return; }
         if (f.type === "thread" && k === "size") { upd(() => this.applyThreadSize(f, String(val) || undefined), true); return; }
         if (f.type === "hole" && (k === "kind" || k === "size" || k === "fit")) {
           upd(() => {
@@ -3029,6 +3048,22 @@ export class ModelController {
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled");
       });
+    });
+    pm.querySelectorAll<HTMLInputElement>("input[data-er]").forEach(inp => {
+      const apply = () => {
+        if (f.type !== "fillet") return;
+        let v: number;
+        try { v = evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const e = f.edges[+inp.dataset.er!];
+        if (!e || e.r === v) return;
+        e.r = v;
+        this.drawDecor(); void this.rebuild();
+      };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
     pm.querySelectorAll<HTMLElement>("[data-rm]").forEach(b => b.addEventListener("click", () => {
       if (f.type !== "fillet" && f.type !== "chamfer") return;

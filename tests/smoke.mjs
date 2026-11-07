@@ -1518,6 +1518,30 @@ try {
     const corner = (r, h) => (r * r - (Math.PI * r * r) / 4) * h;
     const v20 = 120000 - Math.PI * 100 * 20 - 4 * corner(5, 20);
     check(picked === 3 && near(fil.v, v20, 1e-3) && !fil.bad.length && fil.n === 5, `model: Fillet R5 on four edges picked in the view (${picked}+1 picks, ${fil.v} vs ${v20.toFixed(3)})`);
+    // 1.42: Multiple radius fillet: edge 1 at 8 mm, a callout per edge; off again restores R5 everywhere.
+    const filId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), filId);
+    await mp.waitForSelector('#mc-pm input[data-k="multi"]');
+    await mp.check('#mc-pm input[data-k="multi"]');
+    await mp.waitForSelector('#mc-pm input[data-er="0"]');
+    await mp.fill('#mc-pm input[data-er="0"]', "8");
+    await mp.press('#mc-pm input[data-er="0"]', "Enter");
+    await idle();
+    const multiUi = await mp.evaluate(() => ({ inputs: document.querySelectorAll("#mc-pm input[data-er]").length, callouts: [...document.querySelectorAll("#mc-layer .mc-callout")].map(c => c.textContent).join("|") }));
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    const filM = await last();
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), filId);
+    await mp.waitForSelector('#mc-pm input[data-k="multi"]');
+    await mp.uncheck('#mc-pm input[data-k="multi"]');
+    await idle();
+    await mp.click("#mc-ok");
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await idle();
+    const filBack = await last();
+    const vMulti = v20 - corner(8, 20) + corner(5, 20);
+    check(multiUi.inputs === 4 && /R1: 8 mm/.test(multiUi.callouts) && /R2: 5 mm/.test(multiUi.callouts) && near(filM.v, vMulti, 1e-3) && near(filBack.v, v20, 1e-3), `model 1.42: multiple radius fillet, one edge at 8 mm (${JSON.stringify(multiUi)}, ${filM.v} vs ${vMulti.toFixed(3)}, back ${filBack.v})`);
     // Edit Extrude1 to 30 mm: the face sketch, the cut and the fillets follow (topological naming).
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.modeller.editFeature(ex.id); });
     await mp.waitForSelector('#mc-pm input[data-num="depth"]');
@@ -2745,10 +2769,12 @@ try {
     await mp.click('#vault-dlg button[value="purge"]');
     await mp.waitForSelector("#confirm[open]");
     await mp.click('#confirm [data-a="ok"]');
-    await mp.waitForFunction(async () => (await window.__sv.vault.vault.storage()).find(r => r.path === "note.txt")?.kept === 1, null, { polling: 200, timeout: 10000 }).catch(() => {});
-    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|"));
+    // The purge ends with a toast (or an error toast); reading storage while it still writes would race it.
+    await mp.waitForFunction(() => [...document.querySelectorAll("#toasts .toast")].some(x => /Purged|error/i.test(x.textContent)), null, { polling: 100, timeout: 20000 }).catch(() => {});
+    const toasts = await mp.evaluate(() => [...document.querySelectorAll("#toasts .toast")].map(x => x.textContent).join(" / "));
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.storage()).map(r => `${r.path}:${r.kept}/${r.versions}:${r.bytes}`).join("|")) + ` [${toasts}]`;
     check(name === "Backup test.mcadvault.zip" && imported.root === "Backup test (2)" && imported.n === 2 && imported.v1 === "v1" && imported.ok, `vault 1.40: export to ZIP and import as a new vault (${name}, ${JSON.stringify(imported)})`);
-    check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after === "note.txt:1/3:2|spec.pdf:1/1:4", `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
+    check(rep === "note.txt:3:3:6 B|spec.pdf:1:1:4 B" && after.startsWith("note.txt:1/3:2|spec.pdf:1/1:4 "), `vault 1.40: storage report and purge old versions (${rep} → ${after})`);
     await ctx.close();
   }
 

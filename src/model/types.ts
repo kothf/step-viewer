@@ -133,7 +133,10 @@ export interface RevolveFeature {
 export interface FilletFeature {
   id: string; type: "fillet"; name: string; suppressed?: boolean;
   radius: Num;
-  edges: EdgeRef[];
+  /** With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). */
+  edges: (EdgeRef & { r?: number })[];
+  /** Multiple radius fillet: each edge can have its own radius. */
+  multi?: boolean;
   /** Keep features that fit: skip edges that cannot be rounded, with a warning. */
   keepFit?: boolean;
 }
