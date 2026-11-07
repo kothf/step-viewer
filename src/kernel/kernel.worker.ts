@@ -164,21 +164,14 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
       post({ id: r.id, ok: true, pairs: assembler.interference(shown, !!r.touch) });
     } else if (r.type === "asmStep") {
-      // Assembly STEP (AT-P4-6): one named, coloured product per shown component, placed.
+      // Assembly STEP (AT-P4-6): one product per part, one named instance per shown component.
       assembler ??= new Assembler(kernel.module);
       const { placed } = assembler.evaluate(r.doc, 1);
-      kernel.meshes = [];
-      const names: string[] = [], colors: [number, number, number][] = [];
-      for (const p of placed) {
-        const comp = r.doc.components.find(c => c.id === p.id)!;
-        if (comp.hidden) continue;
-        const color = (comp.color ?? r.doc.parts[p.part].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number];
-        kernel.meshes.push({ shape: p.body.shape, faces: p.body.faces, name: p.name, color, solid: true });
-        names.push(p.name);
-        colors.push(color);
-      }
-      if (!kernel.meshes.length) throw new Error("There is no body to export yet.");
-      const bytes = kernel.writeStep(kernel.meshes.map((_, i) => i), names, colors).slice();
+      const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
+      if (!shown.length) throw new Error("There is no body to export yet.");
+      const keys = [...new Set(shown.map(p => p.part))];
+      const parts = keys.map(k => ({ key: k, shape: assembler!.sourceBody(k, r.doc)!.shape, name: r.doc.parts[k].name, color: (r.doc.parts[k].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number] }));
+      const bytes = kernel.writeAssemblyStep(r.doc.name, parts, shown.map(p => ({ part: p.part, name: p.name, tf: p.tf }))).slice();
       post({ id: r.id, ok: true, bytes }, [bytes.buffer]);
     } else if (r.type === "partBody") {
       // Insert part (FR-BODY-005): the other part is evaluated on its own, so this part's feature cache stays.

@@ -31,6 +31,9 @@ export class Assembler {
     return s;
   }
 
+  /** A part's evaluated body in its own coordinates (null when it has none). */
+  sourceBody(key: string, doc: AsmDoc): Named | null { return this.source(key, doc).body; }
+
   /** Places every shown, unsuppressed component. */
   evaluate(doc: AsmDoc, quality = 1): { placed: Placed[]; statuses: AsmComponentStatus[] } {
     const oc = this.oc;

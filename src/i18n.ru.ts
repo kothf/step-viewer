@@ -1909,5 +1909,4 @@ export const RU: Record<string, string> = {
   "BOM": "Спецификация",
   "Bill of materials: parts and quantities, CSV export": "Спецификация: детали и количество, экспорт в CSV",
   "Export the assembly as STEP, one named part per component": "Экспорт сборки в STEP, по одной именованной детали на компонент",
-  "Bill of materials": "Спецификация",
 };

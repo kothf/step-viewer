@@ -454,6 +454,38 @@ export class Kernel {
    * A PCB board as a solid: the outline loops (the first is the outside, the rest
    * cut-outs, x/y pairs) extruded from z0 by `thickness`, with drilled holes ([x, y, Ø]) as true cylinders.
    */
+  /**
+   * STEP of an assembly (AT-P4-6): one shared product per part, placed by each component's
+   * transform (3×4 row-major), with the assembly, part and instance names and part colours.
+   */
+  writeAssemblyStep(name: string, parts: { key: string; shape: any; name: string; color: V3 | null }[], comps: { part: string; name: string; tf: number[] }[]): Uint8Array {
+    const oc = this.oc;
+    const doc = new oc.Handle_TDocStd_Document_2(new oc.TDocStd_Document(new oc.TCollection_ExtendedString_2("XmlXCAF", false)));
+    oc.XCAFDoc_DocumentTool.SetLengthUnit_2(doc, 1, oc.UnitsMethods_LengthUnit.UnitsMethods_LengthUnit_Millimeter);
+    const main = doc.get().Main();
+    const st = oc.XCAFDoc_DocumentTool.ShapeTool(main).get();
+    const ct = oc.XCAFDoc_DocumentTool.ColorTool(main).get();
+    const setName = (l: any, n: string) => oc.TDataStd_Name.Set_1(l, new oc.TCollection_ExtendedString_2(n, true));
+    const labels = new Map<string, any>();
+    for (const p of parts) {
+      const l = st.AddShape(p.shape, false, true);
+      setName(l, p.name);
+      if (p.color) ct.SetColor_2(l, new oc.Quantity_Color_3(p.color[0], p.color[1], p.color[2], oc.Quantity_TypeOfColor.Quantity_TOC_RGB), oc.XCAFDoc_ColorType.XCAFDoc_ColorGen);
+      labels.set(p.key, l);
+    }
+    const root = st.NewShape();
+    setName(root, name);
+    for (const c of comps) {
+      const l = labels.get(c.part);
+      if (!l) continue;
+      const t = new oc.gp_Trsf_1();
+      t.SetValues(c.tf[0], c.tf[1], c.tf[2], c.tf[3], c.tf[4], c.tf[5], c.tf[6], c.tf[7], c.tf[8], c.tf[9], c.tf[10], c.tf[11]);
+      setName(st.AddComponent_1(root, l, new oc.TopLoc_Location_2(t)), c.name);
+    }
+    st.UpdateAssemblies();
+    return this.stepOfDoc(doc);
+  }
+
   /** STEP of an XCAF document built elsewhere (a converted SolidWorks model). */
   stepOfDoc(doc: any): Uint8Array {
     const oc = this.oc;

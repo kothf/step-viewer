@@ -3658,6 +3658,55 @@ try {
     await ctx.close();
   }
 
+  // --- 1.63: interference detection, BOM and assembly STEP (FR-ASM-020/024, AT-P4-4..6) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.props.partNumber = "BX-10";
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -5, -5), P("b", 5, -5), P("c", 5, 5), P("d", -5, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const box = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    for (let k = 1; k <= 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "box.mcadprt")), box); await shown(k); }
+    // Second box 1 mm into the first: X = 9 (the first spans -5..5).
+    await mp.evaluate(() => { const a = window.__sv.asm, id = a.doc.components[1].id; a.change(d => { d.components[1].tf = [1, 0, 0, 9, 0, 1, 0, 0, 0, 0, 1, 0]; }); return id; });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="interfere"]');
+    await mp.waitForFunction(() => window.__sv.asm.interfere?.pairs, null, { timeout: 120000 });
+    const inf = await mp.evaluate(() => ({ title: document.querySelector("#asm-pm h3")?.textContent, status: document.querySelector("#asm-pm [data-istatus]")?.textContent, rows: [...document.querySelectorAll("#asm-pm [data-pair]")].map(e => e.textContent), v: window.__sv.asm.interfere.pairs[0]?.volume }));
+    await mp.click("#asm-pm [data-a=ok]");
+    // BOM: one row, quantity 2, mass from the part's material.
+    await mp.click('#asm-tools [data-ac="bom"]');
+    const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
+    await mp.click('#asm-bom [data-a="close"]');
+    // STEP of the assembly reopens with the same names and placements (AT-P4-6).
+    const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
+    await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
+    await mp.waitForFunction(() => !window.__sv.asm.doc && window.__sv.viewer.parts.length === 2, null, { timeout: 120000 });
+    const re = await mp.evaluate(() => { const flat = n => [n.name, ...n.children.flatMap(flat)]; return { tree: flat(window.__sv.viewer.tree), parts: window.__sv.viewer.parts.map(p => ({ name: p.data.name, x: [Math.round(p.data.bboxMin[0] * 1000) / 1000, Math.round(p.data.bboxMax[0] * 1000) / 1000] })) }; });
+    check(inf.title === "Interference detection" && inf.status === "1 interference · 100 mm³" && inf.rows.length === 1 && /^box<1> ↔ box<2>: 100 mm³$/.test(inf.rows[0]) && Math.abs(inf.v - 100) < 1e-6
+      && bom.open && bom.cells.join("|") === "1|box|BX-10||Aluminium 6061|2|0.0027" && bom.csv.split("\r\n")[1] === "1,box,BX-10,,Aluminium 6061,2,0.002700"
+      && re.parts.map(p => p.name).join() === "box,box" && re.tree.includes("Assembly1") && Math.abs(re.parts[1].x[0] - 4) < 1e-3 && Math.abs(re.parts[1].x[1] - 14) < 1e-3,
+      `asm 1.63: interference finds the 1 mm overlap, BOM counts and weighs, assembly STEP reopens placed (FR-ASM-020/024, AT-P4-4..6) (${JSON.stringify({ inf, bom, re })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
