@@ -179,6 +179,8 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
       const c = center(sys, ents, r.e[1]), rr = R(sys, ents, r.e[1]);
       return [term([p, c, rr], x => dist(p(x), c(x)) - rr(x))];
     }
+    case "intersection":
+      return [...relTerms(sys, ents, { ...r, t: "onCurve", e: [r.e[0], r.e[1]] }), ...relTerms(sys, ents, { ...r, t: "onCurve", e: [r.e[0], r.e[2]] })];
     case "horizontal": case "vertical": {
       const k = r.t === "horizontal" ? 1 : 0;
       const [a, b] = r.e.length === 1 ? ends(sys, ents, r.e[0]) : [P(sys, r.e[0]), P(sys, r.e[1])];

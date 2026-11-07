@@ -1710,6 +1710,25 @@ try {
       return { over, rows, shown, after };
     });
     check(assist.over === "conflict" && assist.rows.length >= 2 && assist.rows.includes("xd1") && assist.shown === assist.rows[0] && assist.after.status === "ok" && assist.after.gone, `model 1.48: the sketch assistant lists deletions that fix an over-defined sketch and applies one (${JSON.stringify(assist)})`);
+    // 1.50: Merge points and the Intersection relation (FR-SK-051).
+    const merge = await mp.evaluate(() => {
+      const m = window.__sv.model, ed = m.editor(), orig = structuredClone(ed.sk);
+      const next = structuredClone(ed.sk);
+      next.ents.push({ id: "m1", t: "point", x: 100, y: 100 }, { id: "m2", t: "point", x: 104, y: 100 }, { id: "m3", t: "point", x: 120, y: 120 }, { id: "ml", t: "line", a: "m2", b: "m3" });
+      ed.setSketch(next, ed.frame);
+      ed.select(["m1", "m2"]);
+      m.panel();
+      const btn = !!document.querySelector('#mc-pm [data-a="merge"]');
+      document.querySelector('#mc-pm [data-a="merge"]')?.click();
+      const line = ed.sk.ents.find(e => e.id === "ml");
+      const res = { btn, gone: !ed.sk.ents.some(e => e.id === "m2"), a: line?.a, status: ed.info.status };
+      const ls = ed.sk.ents.filter(e => e.t === "line" && e.id !== "ml");
+      ed.select(["m3", ls[0].id, ls[1].id]);
+      res.inter = ed.validRelations().includes("intersection");
+      ed.setSketch(orig, ed.frame); ed.commit("Restore"); m.panel();
+      return res;
+    });
+    check(merge.btn && merge.gone && merge.a === "m1" && merge.status === "ok" && merge.inter, `model 1.50: Merge points joins two points into one; a point and two lines offer Intersection (${JSON.stringify(merge)})`);
     // Ctrl+8: normal to the sketch.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); });
     await mp.keyboard.press("Control+8");
@@ -2540,6 +2559,13 @@ try {
     const favIdx = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-ui="fav"] option')].find(o => o.textContent === "M8 cbore")?.value);
     await mp.selectOption('#mc-pm select[data-ui="fav"]', favIdx ?? "");
     const favApplied = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { kind: d.kind, size: d.size, cb: d.cbDia?.v }; });
+    // 1.50: heat-set insert holes: M2–M8 sizes, M4 is a Ø5.6 flat-bottomed hole 9.1 mm deep, with the wall hint.
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "insert");
+    await idle();
+    await mp.selectOption('#mc-pm select[data-k="size"]', "M4");
+    await idle();
+    const ins = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { sizes: [...document.querySelectorAll('#mc-pm select[data-k="size"] option')].map(o => o.value).filter(Boolean).join(","), d: d.diameter.v, depth: d.depth.v, end: d.end, flat: d.flat, fit: !!document.querySelector('#mc-pm select[data-k="fit"]'), hint: document.querySelector("#mc-pm [data-insert]")?.textContent }; });
+    check(ins.sizes === "M2,M2.5,M3,M4,M5,M6,M8" && ins.d === 5.6 && Math.abs(ins.depth - 9.1) < 1e-9 && ins.end === "blind" && ins.flat && !ins.fit && /8\.1 mm.*2\.1 mm.*9\.8 mm/.test(ins.hint ?? ""), `model 1.50: heat-set insert hole presets (${JSON.stringify(ins)})`);
     await mp.keyboard.press("Escape");
     check(favIdx != null && favApplied.kind === "cbore" && favApplied.size === "M8" && favApplied.cb === 15, `model 1.33: a saved hole favourite applies type, size and counterbore (${favIdx}, ${JSON.stringify(favApplied)})`);
     await ctx.close();

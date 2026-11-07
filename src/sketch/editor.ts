@@ -81,12 +81,12 @@ const COLORS = {
 
 const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
-  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹",
+  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕",
 };
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
-  onCurve: "On curve", symmetric: "Symmetric",
+  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection",
 };
 
 export class SketchEditor {
@@ -749,6 +749,7 @@ export class SketchEditor {
     if (total === 2 && n("point") === 1 && n("ellipse") === 1) out.push("coincident", "concentric");
     if (total === 2 && n("ellipse") + circ === 2 && n("ellipse")) out.push("concentric");
     if (total === 3 && n("line") >= 1 && (n("point") === 2 || n("line") === 3)) out.push("symmetric");
+    if (total === 3 && n("point") === 1 && n("line") + circ + n("ellipse") === 2) out.push("intersection");
     if (total >= 1 && !this.selection.has(ORIGIN)) out.push("fix");
     return [...new Set(out)];
   }
@@ -763,7 +764,7 @@ export class SketchEditor {
       const axis = lines.find(id => (this.ent(id) as SkEnt & { cons?: boolean }).cons) ?? lines.at(-1)!;
       e = [...e.filter(id => id !== axis), axis];
     }
-    if (kind === "midpoint" || kind === "coincident") e.sort((a, b) => (kindOf(a) === "point" ? -1 : 0) - (kindOf(b) === "point" ? -1 : 0));
+    if (kind === "midpoint" || kind === "coincident" || kind === "intersection") e.sort((a, b) => (kindOf(a) === "point" ? -1 : 0) - (kindOf(b) === "point" ? -1 : 0));
     const rels: SkRel[] = kind === "fix" ? [{ id: uid("r"), t: "fix", e }] : [{ id: uid("r"), t: kind === "coincident" && kindOf(e[1]) !== "point" ? "onCurve" : kind, e }];
     if (kind === "tangent" && e.every(id => kindOf(id) === "circle" || kindOf(id) === "arc")) {
       // Inside or outside: whichever is closer now.
@@ -779,6 +780,45 @@ export class SketchEditor {
     if (r.redundant) this.host.toast(t("The sketch already had that relation (redundant)."), "warn");
     this.commit(`Add ${REL_NAME[kind].toLowerCase()} relation`);
     this.render();
+  }
+
+  /** Two points selected (not the origin): they can be merged into one (FR-SK-051). */
+  canMerge(): boolean {
+    const ids = [...this.selection];
+    return ids.length === 2 && !ids.includes(ORIGIN) && ids.every(id => this.ent(id)?.t === "point");
+  }
+
+  /** Merge points (FR-SK-051): the second point is replaced by the first everywhere, then removed. */
+  mergePoints() {
+    if (!this.canMerge()) return false;
+    const [keep, drop] = [...this.selection];
+    const probe = tryAdd(this.sk, { rel: { id: uid("r"), t: "coincident", e: [keep, drop] } });
+    if (!probe.ok) { this.host.toast(t("Those points cannot meet with the sketch's other relations and dimensions."), "error"); return false; }
+    const next: SketchFeature = structuredClone(probe.sketch);
+    next.rels = next.rels.filter(r => !(r.t === "coincident" && r.e.includes(keep) && r.e.includes(drop)));
+    const sw = (id: string) => (id === drop ? keep : id);
+    for (const e of next.ents) {
+      const o = e as unknown as Record<string, unknown>;
+      for (const k of ["a", "b", "c", "p0", "p1"]) if (typeof o[k] === "string") o[k] = sw(o[k] as string);
+      if (e.t === "spline") e.pts = e.pts.map(sw);
+    }
+    for (const r of next.rels) r.e = r.e.map(sw);
+    for (const d of next.dims) d.e = d.e.map(sw);
+    // Relations and dimensions left between a point and itself mean nothing now.
+    next.rels = next.rels.filter(r => new Set(r.e).size === r.e.length);
+    next.dims = next.dims.filter(d => new Set(d.e).size === d.e.length);
+    // A line or arc between the two points has no length left: it goes, with what refers to it.
+    const gone = new Set([drop, ...next.ents.filter(e => (e.t === "line" || e.t === "arc") && e.a === e.b).map(e => e.id)]);
+    next.ents = next.ents.filter(e => !gone.has(e.id));
+    next.rels = next.rels.filter(r => !r.e.some(x => gone.has(x)));
+    next.dims = next.dims.filter(d => !d.e.some(x => gone.has(x)));
+    this.sk = next;
+    this.selection = new Set([keep]);
+    this.info = solve(this.sk);
+    this.commit("Merge points");
+    this.render();
+    this.emitSel();
+    return true;
   }
 
   toggleConstruction() {
