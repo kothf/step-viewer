@@ -708,3 +708,38 @@ test("split line: a projected circle splits the top and bottom faces, or only th
   const miss = m.evaluate(doc([...base.slice(0, 3), circle("c", 100, 0, 5, { plane: "p" }), { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
   assert.equal(miss.statuses.find(s => s.id === "sp")?.code, "E-SPL-MISS");
 });
+
+test("multibody: new body, split by a plane and combine back (AT-P3-3), subtract, delete, move and copy (FRS 9.10)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  // Split at x = 5 (a plane through the Right plane offset 5): two bodies, volume kept.
+  const pl: Feature = { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 5 } };
+  const sp: Feature = { id: "b", type: "bsplit", name: "Split1", plane: { plane: "p" }, bodies: [] };
+  const r1 = run(m, doc([...box, pl, sp]));
+  close(r1.props!.volume, 8000);
+  assert.equal(r1.props!.bodies, 2);
+  // Combine them back (add): one body, same volume.
+  const left = { name: "x:side:sl4" }, right = { name: "x:side:sl2" };
+  const r2 = run(m, doc([...box, pl, sp, { id: "c", type: "combine", name: "Combine1", op: "add", main: left, tools: [right] }]));
+  close(r2.props!.volume, 8000);
+  assert.equal(r2.props!.bodies, 1);
+  // A boss that does not merge is a second body, even where it overlaps; subtract it from the first.
+  const cyl: Feature[] = [circle("k", 20, 0, 5, { face: { name: "x:end" } }), { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false }];
+  const r3 = run(m, doc([...box, ...cyl]));
+  assert.equal(r3.props!.bodies, 2);
+  close(r3.props!.volume, 8000 + Math.PI * 250);
+  const r4 = run(m, doc([...box, ...cyl, { id: "c", type: "combine", name: "Combine1", op: "subtract", main: { name: "x:start" }, tools: [{ name: "e:end" }] }]));
+  assert.equal(r4.props!.bodies, 1);
+  close(r4.props!.volume, 8000);
+  // Delete the cylinder body; keep only it.
+  close(run(m, doc([...box, ...cyl, { id: "d", type: "delbody", name: "Body-Delete/Keep1", bodies: [{ name: "e:end" }] }])).props!.volume, 8000);
+  close(run(m, doc([...box, ...cyl, { id: "d", type: "delbody", name: "Body-Delete/Keep1", bodies: [{ name: "e:end" }], keep: true }])).props!.volume, Math.PI * 250);
+  // Move the box 100 along x: names hold, so a later feature still finds its end face; copy doubles it.
+  const mv = run(m, doc([...box, { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "x:end" }], dx: { v: 100 }, dy: { v: 0 }, dz: { v: 0 } },
+    circle("k2", 100, 0, 3, { face: { name: "x:end" } }), { id: "h", type: "extrude", name: "Cut1", sketch: "k2", op: "cut", end: "blind", depth: { v: 4 } }]));
+  close(mv.props!.volume, 8000 - Math.PI * 36);
+  close(mv.props!.com[0], 100, 1e-3);
+  const cp = run(m, doc([...box, { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "x:end" }], copy: true, dx: { v: 0 }, dy: { v: 50 }, dz: { v: 0 } }]));
+  assert.equal(cp.props!.bodies, 2);
+  close(cp.props!.volume, 16000);
+});

@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Multibody parts** (FRS 9.10). Extrude and revolve bosses have **Merge result** (on by default); off makes a new body. New in the **Sweep ▾** menu: **Combine** (add, subtract the tools from a main body, or keep the common part), **Split** (cut bodies by a plane into separate bodies; split and combine back keeps the volume, AT-P3-3), **Body-Move/Copy** (translate and rotate about an axis, or copy) and **Body-Delete/Keep**. Bodies are picked by clicking any face of them, and the panels show how many bodies the part has.
+
 ## [1.56.0] - 2026-11-07
 
 ### Added
