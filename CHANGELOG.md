@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.53.0] - 2026-11-07
+
+### Added
+- **Shared vault on a synced folder** (FR-PDM-070/071). Locks are written as their own records, so two people checking out the same file over a slow sync never overwrite each other. The earlier check-out wins and the later one is shown to both. A check-in over a version someone else checked in meanwhile is refused, and you can **save your work as a new file** or **discard** it. An Admin can **break a lock** (logged with a reason). Shared vaults also keep every file record, so a sync conflict loses nothing.
+- **Change requests and change orders** (FR-PDM-053). **Request change…** on a file records a title, the reason, the affected files and who to notify. **Change orders** lists them. **Approve** moves the released files to Change pending, **Reject** needs a comment, and **Close and release** takes every file through review to its next revision together and writes the order number on the released versions.
+- **Release packages** (FR-PDM-054). Files released together, or by a change order, are recorded as a package. **Export ZIP** saves those exact versions as `name_revB.ext` files with a list.
+- **Notifications** (FR-PDM-061). The **Notifications** button counts what others did since your last visit (check-ins, releases, change orders) and what was addressed to you or your role.
+- **Workflow editor** (FR-PDM-035). Edit the states (colour, can be checked out, released, obsolete) and the transitions (next revision, role, comment, released references, required fields), export and import the workflow as JSON, or reset it to the default.
+
 ## [1.52.0] - 2026-11-07
 
 ### Added
@@ -521,7 +530,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.52.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.53.0...HEAD
+[1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
