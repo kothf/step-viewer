@@ -5,16 +5,114 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.51.0] - 2026-11-07
+## [1.64.0] - 2026-11-07
 
 ### Added
-- **Drawings** (FRS section 11, FR-DRW-001/002/003/010/011/016/030/031). The new sheet button next to New part opens a drawing of the open part or STEP / IGES / BREP model in its own workspace. It starts with the **standard 3 views** (front, top and side, lined up) at a standard scale that fits the sheet.
+- **Drawings** (FRS section 11, FR-DRW-001/002/003/010/011/016/030/031). **New drawing** in the New ▾ menu opens a drawing of the open part or STEP / IGES / BREP model in its own workspace. It starts with the **standard 3 views** (front, top and side, lined up) at a standard scale that fits the sheet.
 - **Model view ▾** places any orientation (the six sides, isometric, or the current 3D view). The view follows the cursor with its real lines as a preview, as in SolidWorks. After the click, moving around it and clicking adds **projected views** in first or third angle (diagonal ones give isometric views); Esc or ✓ ends.
 - Views are computed by OpenCASCADE's exact hidden-line removal in a worker. Lines and arcs stay exact, hidden edges are dashed, and back edges that lie under visible ones are left out. Per view: scale (sheet, parent's or own), display style (hidden lines dashed, removed, or wireframe), tangent edges (visible, thin or removed) and an optional label.
 - Drag views to move them: projected views follow their parent, and a side or top view only slides along its alignment.
 - **Sheets**: A4–A0 and ANSI A–E, landscape or portrait, first angle (ISO) or third angle (ANSI), with a frame, zone marks and an ISO 7200 or ANSI title block. The title block fills itself from the part (title, part number, revision, author, material, mass from the part's material) and from the sheet (scale, size, sheet n/m); every field can be typed over. Double-click the title block to edit it. More sheets go in tabs below the sheet.
 - A drawing of a modelled part is associative: change the part and the views update.
 - **Save** (Ctrl+S) writes a `.mcaddrw` file that holds the model too, so it opens on its own. **Export**: PDF of all sheets at their real size (vector, with an embedded DejaVu Sans font, so Cyrillic text works), SVG or DXF R12 of a sheet (millimetres, one layer per line type with HIDDEN and CENTER linetypes), and printing at 1:1 through the browser (Ctrl+P). Undo and redo cover every change.
+## [1.63.0] - 2026-11-07
+
+### Added
+- **Interference detection** (FR-ASM-020, AT-P4-4) in the assembly bar: every pair of shown components whose solids overlap, with the overlap volume, listed in the panel and drawn red in the view (click a pair to pick it out). Option to treat touching faces as interference.
+- **Bill of materials** (FR-ASM-024, AT-P4-5): one row per part with item number, part number, description, material, quantity and mass, and CSV export.
+- **Assembly STEP export** (AT-P4-6): a STEP assembly with each part once and one named instance per shown component, in place; it reopens in the viewer with the same placements.
+- **Component patterns** (FR-ASM-022): **Pattern** makes linear copies of components along a flat face's normal or a cylinder's axis, or circular copies about a cylinder's axis (count, spacing or total angle with equal spacing, reverse). The copies are previewed see-through before ✓, follow their seeds, are listed under the pattern in the tree and counted in the BOM.
+- **Exploded views** (FR-ASM-023): **Explode** builds a named view in steps (components, direction, distance), with **Auto explode** to start from; the view explodes and collapses animated from the Exploded views folder in the tree, and is saved in the assembly.
+
+## [1.62.0] - 2026-11-07
+
+### Added
+- **Assemblies** (FRS 10: FR-ASM-001..005, FR-MATE-001/002): **New assembly** in the new ▾ menu beside New part, and on the start card. **Insert component** places a MöbiusCAD part or a STEP, IGES or BREP model; the first one is fixed at the origin, the next float beside it, and the same part inserted again shares its source. Drag a floating component in the view, or type its position and rotation in **Move component**. The assembly tree marks fixed (f) and floating (-) components and hides, fixes/floats and deletes them; undo and redo; mass properties of the whole assembly; save and open `.mcadasm` files (the parts are embedded), also from the vault.
+- **Mates** (FR-MATE-003/006/008/009, AT-P4-1..3): **Mate** picks a flat or cylindrical face on each of two components and previews the likely mate at once (quick mate). Coincident, parallel, perpendicular, tangent, concentric, lock, distance and angle, with alignment and flip. The mate solver moves components as little as possible, reports each component's remaining degrees of freedom ((f), (-), (+) or fully defined in the tree, and the assembly's state in the bar) and refuses a conflicting mate without moving anything. Mated components drag only along their free directions. The Mates folder edits, flips, suppresses and deletes mates. When a part's geometry changes, its mates are solved again.
+
+## [1.61.0] - 2026-11-07
+
+### Added
+- **Insert part** (FR-BODY-005): **Insert body** also takes a MöbiusCAD part (`.mcadprt`). The part is rebuilt on its own and its result goes in as a body, kept in this part's file (a broken link, as in SolidWorks), with Check and heal available.
+
+### Fixed
+- Parts that use reference geometry, holes, patterns, sweeps, body features or any feature beyond sketches, extrudes, revolves, fillets and chamfers can be opened again from `.mcadprt` files. Before this, opening them stopped with "Unknown feature type".
+
+## [1.60.0] - 2026-11-07
+
+### Added
+- **Solid Bodies folder** (FR-BODY-001) at the top of the Features tree: every body of the part with **show/hide**, **colour** and **delete** (which adds a Body-Delete/Keep feature); double-click to rename. Bodies are named after the feature that made them and keep their settings through later features. Hidden bodies leave the view but still count in the mass properties.
+
+## [1.59.0] - 2026-11-07
+
+### Added
+- **Face fillet and full round fillet** (FR-FT-032): the Fillet panel has a **Fillet type**. A face fillet rounds every edge where face set 1 meets face set 2; a full round replaces the centre faces between two parallel side faces with a half round tangent to both (the radius is half the gap). Both preview live.
+- **Scale** (FR-BODY-006), in the **Sweep ▾** menu: scales the picked bodies (all when none are picked) about their centroid or the origin, uniformly or per axis. Faces keep their names, so later features still find them.
+
+## [1.58.0] - 2026-11-07
+
+### Added
+- **Insert body** (FR-FT-130/131, AT-P3-4), in the **Sweep ▾** menu: a STEP, IGES or BREP file goes into the part as an **Imported** feature (kept in the part file, so it opens without the original). **Check and heal** sews faces whose edges are closer than the tolerance, fixes the shape and closes shells into solids, and reports free edges and validity before and after. A file with faces but no solids is healed from the start. The imported body joins the part as its own body.
+
+## [1.57.0] - 2026-11-07
+
+### Added
+- **Multibody parts** (FRS 9.10). Extrude and revolve bosses have **Merge result** (on by default); off makes a new body. New in the **Sweep ▾** menu: **Combine** (add, subtract the tools from a main body, or keep the common part), **Split** (cut bodies by a plane into separate bodies; split and combine back keeps the volume, AT-P3-3), **Body-Move/Copy** (translate and rotate about an axis, or copy) and **Body-Delete/Keep**. Bodies are picked by clicking any face of them, and the panels show how many bodies the part has.
+- **Variable radius fillet** (FR-FT-032): each edge goes from a start radius to an end radius, typed in the list or by clicking the callouts at the edge ends.
+
+## [1.56.0] - 2026-11-07
+
+### Added
+- **Rib** (FR-FT-062), in the **Sweep ▾** menu. An open line or arc chain sketched beside the part becomes a wall that runs to the body: thickness on the first side, both sides or the second side, **Parallel to sketch** (a corner gusset) or **Normal to sketch** (ribs across a hollow, sketched above it), with **Flip material side**. It goes the way that meets the body and previews live.
+- **Split Line** (FR-FT-084), in the **Sweep ▾** menu. A sketch is projected along its normal, both ways, and splits the faces it crosses (or only the faces you click), so each piece can take its own colour, draft or mate. The body keeps its shape.
+- **3MF export** (Export → 3MF) for 3D printing: each body as a closed mesh in millimetres with its colour, written in the active coordinate system like the other mesh exports. It reads back into MöbiusCAD as the same solid.
+
+## [1.55.0] - 2026-11-07
+
+### Added
+- **Helix/Spiral** (FR-FT-083). In the new **Sweep ▾** menu: a helix on the circle of a sketch, set by pitch and revolutions, height and revolutions, or height and pitch, with start angle, clockwise, reverse direction and taper. It is exact (a line on a cylinder or cone) and drawn in the view while you edit it.
+- **Sweep and Cut-Sweep** (FR-FT-080/081). A closed profile sketch, or a **circular profile** of a set diameter that needs no sketch, moved along a helix or a sketch path (lines, arcs, splines joined end to end); Follow path or Keep normal constant. A Ø2 circle along a 10-turn helix gives a spring whose volume matches π·r²·L to 1e-4. The result previews live; a cut shows the material it removes.
+- **Loft and Cut-Loft** (FR-FT-082). Through two or more closed profiles in order, smooth or with straight (ruled) sections, optionally closed back to the first. Profiles are picked in the panel; the last two unused sketches are offered first.
+
+## [1.54.1] - 2026-11-07
+
+### Fixed
+- The Vault tab could fail to draw for a moment while it re-read the vault (the file list and their status were updated separately). The two are now swapped in together.
+
+## [1.54.0] - 2026-11-07
+
+### Added
+- **Converted edges follow the model** (FR-SK-064). Convert entities now adds an **On edge** relation: the copied lines, arcs and circles move with their model edge whenever the part rebuilds, and features made from the sketch follow. When the edge is gone, the relation turns **dangling**: the curve keeps its place and is drawn in olive, the sketch gets a warning in the tree, and the sketch panel offers **Re-attach** (click the new edge, or drag the dangling glyph onto it) or **Delete dangling relations** to keep the curves free.
+- **Dimension names** (FR-SK-065). Hovering a dimension shows its full name, such as `D1@Sketch2`, as equations use it. Select one dimension to rename it in the sketch panel; expressions that use it follow, and so do expressions using a renamed sketch. **Show dimension names** puts the names next to the values.
+- **Draggable dimension text** (FR-SK-066). Drag a dimension's value to move it; the position is stored with the sketch. Ordinate values move with their row.
+- **Edit sketch plane** (FR-SK-007). Right-click a sketch in the tree: pick another plane or flat face, the sketch shows there live in orange, and ✓ moves it. On edge curves on the new plane follow their edges again, or dangle if they no longer resolve.
+
+## [1.53.0] - 2026-11-07
+
+### Added
+- **Shared vault on a synced folder** (FR-PDM-070/071). Locks are written as their own records, so two people checking out the same file over a slow sync never overwrite each other. The earlier check-out wins and the later one is shown to both. A check-in over a version someone else checked in meanwhile is refused, and you can **save your work as a new file** or **discard** it. An Admin can **break a lock** (logged with a reason). Shared vaults also keep every file record, so a sync conflict loses nothing.
+- **Change requests and change orders** (FR-PDM-053). **Request change…** on a file records a title, the reason, the affected files and who to notify. **Change orders** lists them. **Approve** moves the released files to Change pending, **Reject** needs a comment, and **Close and release** takes every file through review to its next revision together and writes the order number on the released versions.
+- **Release packages** (FR-PDM-054). Files released together, or by a change order, are recorded as a package. **Export ZIP** saves those exact versions as `name_revB.ext` files with a list.
+- **Notifications** (FR-PDM-061). The **Notifications** button counts what others did since your last visit (check-ins, releases, change orders) and what was addressed to you or your role.
+- **Workflow editor** (FR-PDM-035). Edit the states (colour, can be checked out, released, obsolete) and the transitions (next revision, role, comment, released references, required fields), export and import the workflow as JSON, or reset it to the default.
+
+## [1.52.0] - 2026-11-07
+
+### Added
+- **Revisions and lifecycle in the vault** (FR-PDM-030..034, 037). Every vault file now has a state: Work in progress, In review, Released, Change pending or Obsolete, shown with a coloured dot in the Vault tab. **Change state** moves a file: Submit for review, Approve, Reject, Change, Submit change and Make obsolete. Approve gives the next revision (A, B, C …) and writes the revision, state, approver and date into a part's properties as a new version. The dialog lists the file and the files it uses in the same state, with what blocks the change and what only warns, before anything is written, so an assembly and its parts can be released together. Only files in Work in progress or Change pending can be checked out. The title shows `v12 · Rev B · Released`.
+- **Data cards and numbering** (FR-PDM-040/041). **Data card** edits the part number, description, material, project and any other fields while the file is checked out. Fields can be text, number, date, list, checkbox or user, can be required for release, and map to the part's properties both ways. **New number** takes the next number from the vault's pattern (for example `MC-{YYYY}-{0000}`), and numbers are never reused. New files can be numbered as they are added.
+- **References, Contains and Where used** (FR-PDM-020..022, 052). The vault records which files an assembly or drawing uses, and the version each was checked in against. **Contains** shows the tree with quantities, as checked in, latest or latest released, with a bill of materials you can save as CSV. **Where used** shows every file above it.
+- **Rename / move, Copy tree and Recycle bin** (FR-PDM-023..025). Renaming or moving a file updates the files that use it, each with a new version. **Copy tree** copies an assembly with the parts you choose into a folder, with a prefix, suffix or find/replace and new part numbers, and points the copies at each other. **Delete** moves a file to the **Recycle bin**, which restores it, and a file still in use cannot be deleted.
+- **Search and compare** (FR-PDM-042, 050). Search the vault by name, any data card field, state, revision, who has it checked out, kind, date, or "contains a file with Material = Aluminium 6061", and save searches. **History** compares two versions: data card, added and removed features, changed parameters (old → new), references and BOM changes.
+- **Vault settings**: revision scheme (letters with or without I, O, Q, S, X, Z, numbers, ESKD letters or your own list, with optional pre-release revisions X1, X2 …), numbering pattern, data card fields, and user roles for a shared vault (Designer, Checker, Approver, Admin).
+
+## [1.51.0] - 2026-11-07
+
+### Added
+- **Ordinate and centerline diameter dimensions** in the sketcher (FR-SK-063). Horizontal and Vertical ordinate, in the Dimension ▾ menu, dimension a row of points from one base: click the base, where the values go, then each point. The base shows 0. A dimension from a centerline to a point or a parallel line, placed on the far side of the centerline, becomes a ⌀ diameter (twice the distance), as SolidWorks does for revolve profiles.
+
+### Changed
+- Polygon moved into the Rectangle ▾ menu of the sketch toolbar (still on G), so the toolbar keeps to two rows with the new Dimension ▾ menu.
 
 ## [1.50.0] - 2026-11-07
 
@@ -514,7 +612,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.51.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.64.0...HEAD
+[1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0
+[1.63.0]: https://github.com/kothf/step-viewer/compare/v1.62.0...v1.63.0
+[1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
+[1.61.0]: https://github.com/kothf/step-viewer/compare/v1.60.0...v1.61.0
+[1.60.0]: https://github.com/kothf/step-viewer/compare/v1.59.0...v1.60.0
+[1.59.0]: https://github.com/kothf/step-viewer/compare/v1.58.0...v1.59.0
+[1.58.0]: https://github.com/kothf/step-viewer/compare/v1.57.0...v1.58.0
+[1.57.0]: https://github.com/kothf/step-viewer/compare/v1.56.0...v1.57.0
+[1.56.0]: https://github.com/kothf/step-viewer/compare/v1.55.0...v1.56.0
+[1.55.0]: https://github.com/kothf/step-viewer/compare/v1.54.1...v1.55.0
+[1.54.1]: https://github.com/kothf/step-viewer/compare/v1.54.0...v1.54.1
+[1.54.0]: https://github.com/kothf/step-viewer/compare/v1.53.0...v1.54.0
+[1.53.0]: https://github.com/kothf/step-viewer/compare/v1.52.0...v1.53.0
+[1.52.0]: https://github.com/kothf/step-viewer/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/kothf/step-viewer/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/kothf/step-viewer/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/kothf/step-viewer/compare/v1.48.0...v1.49.0

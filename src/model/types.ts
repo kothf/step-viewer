@@ -30,7 +30,13 @@ export type RelKind =
   /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
   | "intersection";
 
-export interface SkRel { id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean }
+export interface SkRel {
+  id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
+  /** "On edge" (fix only, FR-SK-064): the model edge a converted curve follows on every rebuild. */
+  ext?: EdgeRef;
+  /** Set by the rebuild when `ext` no longer resolves: the curve keeps its place, shown as dangling. */
+  dangling?: boolean;
+}
 
 export type DimKind = "distance" | "hdistance" | "vdistance" | "radius" | "diameter" | "angle";
 
@@ -46,6 +52,10 @@ export interface SkDim {
   pos?: V2;
   /** Angle: the quadrant chosen when placed (flips line directions). */
   flip?: [boolean, boolean];
+  /** Distance to a centerline shown and driven as a diameter (twice the distance), for revolve profiles. */
+  dia?: boolean;
+  /** Ordinate dimension (horizontal/vertical distance from the base e[0]); pos holds the row of the values. */
+  ord?: boolean;
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, or a reference plane feature. */
@@ -85,6 +95,8 @@ export interface ExtrudeFeature {
   id: string; type: "extrude"; name: string; suppressed?: boolean;
   sketch: string;
   op: "boss" | "cut";
+  /** Boss only: false makes a new body instead of joining the ones it touches (FR-FT-006). */
+  merge?: boolean;
   end: EndKind;
   depth: Num;
   /** Second direction depth (blind only); 0 or absent: one direction. */
@@ -118,6 +130,8 @@ export interface RevolveFeature {
   id: string; type: "revolve"; name: string; suppressed?: boolean;
   sketch: string;
   op: "boss" | "cut";
+  /** Boss only: false makes a new body (FR-FT-006). */
+  merge?: boolean;
   /** A line of the sketch (usually construction) used as the axis. */
   axis: string;
   angle: Num;
@@ -135,12 +149,25 @@ export interface RevolveFeature {
 export interface FilletFeature {
   id: string; type: "fillet"; name: string; suppressed?: boolean;
   radius: Num;
-  /** With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). */
-  edges: (EdgeRef & { r?: number })[];
+  /**
+   * With `multi`, an edge's own radius `r` (mm) replaces `radius` (FR-FT-031). With `variable`, `r` is
+   * the radius at the end nearer `at` (world mm; the edge's first vertex when unset) and `r2` at the other.
+   */
+  edges: (EdgeRef & { r?: number; r2?: number; at?: V3 })[];
+  /** Variable radius fillet (FR-FT-032): each edge goes from `r` to `r2`. */
+  variable?: boolean;
   /** Multiple radius fillet: each edge can have its own radius. */
   multi?: boolean;
   /** Keep features that fit: skip edges that cannot be rounded, with a warning. */
   keepFit?: boolean;
+  /**
+   * Fillet type (FR-FT-032): edges (unset), a face fillet that rounds where face set 1 meets face set 2,
+   * or a full round that replaces the centre faces with a half cylinder touching side 1 and side 2.
+   */
+  kind?: "face" | "full";
+  faces1?: FaceRef[];
+  faces2?: FaceRef[];
+  center?: FaceRef[];
 }
 
 export interface ChamferFeature {
@@ -307,8 +334,145 @@ export interface HoleFeature {
   pitch?: number;
 }
 
+/**
+ * Helix / spiral curve (FR-FT-083): round the circle of a sketch, starting on it at the start angle and
+ * running along the sketch normal (reversed: the other way). Two of height, pitch and revolutions set it.
+ */
+export interface HelixFeature {
+  id: string; type: "helix"; name: string; suppressed?: boolean;
+  sketch: string;
+  /** Which values define it; the third follows. */
+  mode: "pitchRev" | "heightRev" | "heightPitch";
+  pitch: Num;
+  revs: Num;
+  height: Num;
+  /** Taper angle (outward positive): the radius grows by height·tan(taper). */
+  taper?: Num;
+  /** Start angle from the sketch's x axis. */
+  start?: Num;
+  /** Clockwise (left-handed) instead of counter-clockwise about the direction it runs. */
+  cw?: boolean;
+  reverse?: boolean;
+  hidden?: boolean;
+}
+
+/** Sweep path: an open (or closed) chain of a sketch's curves, or a helix feature. */
+export type SweepPath = { sketch: string } | { helix: string };
+
+/**
+ * Sweep (FR-FT-080/081): a closed profile sketch, or a circle of the given diameter (circular profile),
+ * moved along a path. Boss adds material, cut removes it.
+ */
+export interface SweepFeature {
+  id: string; type: "sweep"; name: string; suppressed?: boolean;
+  op: "boss" | "cut";
+  /** Profile sketch; absent with `circular`. */
+  profile?: string;
+  /** Circular profile: diameter, centred on the start of the path and square to it. */
+  circular?: Num;
+  path?: SweepPath;
+  /** Follow path (the profile turns with the path's frame) or keep normal constant. */
+  orient?: "follow" | "normal";
+}
+
+/** Loft (FR-FT-082): through two or more closed profiles in order. */
+export interface LoftFeature {
+  id: string; type: "loft"; name: string; suppressed?: boolean;
+  op: "boss" | "cut";
+  profiles: string[];
+  /** Straight (ruled) sections between profiles instead of a smooth surface. */
+  ruled?: boolean;
+  /** Close loft: back from the last profile to the first (needs three or more). */
+  close?: boolean;
+}
+
+/**
+ * Rib (FR-FT-062): an open sketch chain given a thickness and extended to the body. `dir` parallel
+ * grows it in the sketch plane (thickness along the sketch normal), normal grows it along the normal
+ * (thickness in the plane). `side` puts the thickness on both sides of the curve or one; `flip`
+ * tries the other direction first.
+ */
+export interface RibFeature {
+  id: string; type: "rib"; name: string; suppressed?: boolean;
+  sketch: string;
+  thickness: Num;
+  side: "mid" | "one" | "other";
+  dir: "parallel" | "normal";
+  flip?: boolean;
+}
+
+/**
+ * Split line (FR-FT-084): the sketch's curves projected along its normal (both ways) split the faces
+ * they cross; `faces` limits it to those faces (empty: every face the projection meets). The body
+ * keeps its shape; the pieces are separate faces for colours, drafts and mates.
+ */
+export interface SplitFeature {
+  id: string; type: "split"; name: string; suppressed?: boolean;
+  sketch: string;
+  faces: FaceRef[];
+}
+
+/*
+ * Multibody (FRS 9.10). A body is named by any face on it (a FaceRef): the solid that holds that
+ * face, so body picks follow the persistent face names.
+ */
+/** Combine (FR-BODY-002): add, subtract the tools from the main body, or keep what they share. */
+export interface CombineFeature {
+  id: string; type: "combine"; name: string; suppressed?: boolean;
+  op: "add" | "subtract" | "common";
+  main?: FaceRef;
+  tools: FaceRef[];
+}
+/** Split body (FR-BODY-003, AT-P3-3): cut the bodies (all it crosses, or the picked ones) by a plane into separate bodies. */
+export interface SplitBodyFeature {
+  id: string; type: "bsplit"; name: string; suppressed?: boolean;
+  plane?: PlaneRef;
+  bodies: FaceRef[];
+}
+/** Delete/Keep bodies (FR-BODY-001): remove the picked bodies, or keep only them. */
+export interface DeleteBodyFeature {
+  id: string; type: "delbody"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  keep?: boolean;
+}
+/** Move/Copy body (FR-BODY-004): rotate about an axis, then translate; `copy` adds the moved copies. */
+export interface MoveBodyFeature {
+  id: string; type: "movebody"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  copy?: boolean;
+  dx: Num; dy: Num; dz: Num;
+  axis?: LineRef;
+  angle?: Num;
+}
+
+/** Scale (FR-BODY-006): bodies (all when none picked) scaled about the origin or each body's centroid. */
+export interface ScaleFeature {
+  id: string; type: "scale"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  about: "origin" | "centroid";
+  /** Per axis factors `fx`/`fy`/`fz` instead of one `factor`. */
+  axes?: boolean;
+  factor: Num;
+  fx?: Num; fy?: Num; fz?: Num;
+}
+
+/**
+ * Imported body (FR-FT-130, FR-BODY-005): the exact B-rep of a STEP/IGES/BREP file, kept as BREP text
+ * in the document. Faces are named `<id>:f<i>` in the file's order. `heal` (FR-FT-131) sews the faces
+ * with `tol` and fixes the result into solids; the rebuild reports the check before and after.
+ */
+export interface ImportFeature {
+  id: string; type: "import"; name: string; suppressed?: boolean;
+  file: string;
+  brep: string;
+  heal?: boolean;
+  tol?: Num;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
-  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature;
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
@@ -367,6 +531,8 @@ export interface PartDoc {
   config?: string;
   /** Standard planes hidden in the view (they are shown by default). */
   stdHidden?: ("XY" | "XZ" | "YZ")[];
+  /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
+  bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
 }
 
 // ---------- kernel results ----------
@@ -374,6 +540,7 @@ export interface PartDoc {
 export interface FeatureStatus { id: string; ok: boolean; code?: string; message?: string; warning?: string }
 
 /** Mass properties of the body for density 1 (mm units): volume, area, centre of mass, principal moments (mm⁵) and axes. */
-export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3] }
+/** `bodies`: how many solid bodies the part has (FRS 9.10). */
+export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number }
 
 export const SCHEMA = 1;

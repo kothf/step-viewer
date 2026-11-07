@@ -18,10 +18,12 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale" };
+/** Every feature type this version knows: a file with another one needs a newer app. */
+export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
 export function nextName(doc: PartDoc, type: FeatureType, cut = false) {
-  const base = cut ? (type === "revolve" ? "Revolve cut" : "Cut") : BASE[type];
+  const base = cut ? (type === "revolve" ? "Revolve cut" : type === "sweep" ? "Cut-Sweep" : type === "loft" ? "Cut-Loft" : "Cut") : BASE[type];
   let n = 1;
   const names = new Set(doc.features.map(f => f.name));
   while (names.has(`${base}${n}`)) n++;
@@ -61,6 +63,13 @@ export class DocStore {
     this.emit(label);
     return true;
   }
+
+  /**
+   * Updates the document in place without an undo step or a change event: results the rebuild
+   * derives from it (On edge curves that followed the model). Undo goes back to a document the
+   * next rebuild derives the same way.
+   */
+  amend(fn: (d: PartDoc) => void) { fn(this.doc); }
 
   /** Replaces the document without an undo step (opening a file). */
   reset(doc: PartDoc) {
@@ -132,6 +141,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
   if (f.type === "csys" && f.origin) { if ("point" in f.origin) features.push(f.origin.point); else faces.push(...f.origin.edge.faces); }
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "fillet") for (const x of [...(f.faces1 ?? []), ...(f.faces2 ?? []), ...(f.center ?? [])]) faces.push(x.name);
   const line = (l: LineRef | undefined) => {
     if (!l) return;
     if (l.edge) faces.push(...l.edge.faces);
@@ -145,6 +155,16 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
+  if (f.type === "helix") features.push(f.sketch);
+  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push("sketch" in f.path ? f.path.sketch : f.path.helix); }
+  if (f.type === "loft") features.push(...f.profiles);
+  if (f.type === "rib") features.push(f.sketch);
+  if (f.type === "combine") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }
+  if (f.type === "bsplit") { plane(f.plane); faces.push(...f.bodies.map(x => x.name)); }
+  if (f.type === "scale") faces.push(...f.bodies.map(x => x.name));
+  if (f.type === "delbody") faces.push(...f.bodies.map(x => x.name));
+  if (f.type === "movebody") { faces.push(...f.bodies.map(x => x.name)); line(f.axis); }
+  if (f.type === "split") { features.push(f.sketch); faces.push(...f.faces.map(x => x.name)); }
   return { faces, features };
 }
 

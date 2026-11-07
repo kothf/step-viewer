@@ -6,13 +6,20 @@
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
-import type { BodyProps, FeatureStatus, Frame, PartDoc, V3 } from "./types";
+import type { AsmDoc, AsmComponentStatus } from "../asm/types";
+import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
   frames: Record<string, Frame>;
+  /** Sketches whose On edge curves the rebuild moved or marked dangling (FR-SK-064). */
+  sketches?: Record<string, SketchFeature>;
+  /** Points along curve features (helix), for the view. */
+  curves?: Record<string, V3[]>;
   data: PartData | null;
   faceNames: string[];
+  /** The part's solid bodies, shown or hidden (FR-BODY-001). */
+  bodies?: { key: string; ref: FaceRef; volume: number }[];
   props: BodyProps | null;
   /** Faces made by the previewed feature, and its status (fillet and chamfer previews). */
   preview?: { position: number[]; status?: FeatureStatus } | null;
@@ -108,6 +115,36 @@ export class ModelKernel {
       }
     }
     this.running = false;
+  }
+
+  /** Reads a STEP/IGES/BREP file into BREP text for an imported body (FR-FT-130). */
+  async importBody(buffer: ArrayBuffer, name: string): Promise<{ brep: string; solids: number; faces: number }> {
+    await this.start();
+    return this.call<{ brep: string; solids: number; faces: number }>({ type: "importBody", buffer, name });
+  }
+
+  /** Evaluates another part document into BREP text for an inserted part (FR-BODY-005). */
+  async partBody(doc: PartDoc): Promise<{ brep: string; solids: number; faces: number }> {
+    await this.start();
+    return this.call<{ brep: string; solids: number; faces: number }>({ type: "partBody", doc });
+  }
+
+  /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }> {
+    await this.start();
+    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
+  }
+
+  /** Overlapping component pairs, with the overlap volume and triangles (FR-ASM-020). */
+  async interference(doc: AsmDoc, touch = false): Promise<{ a: string; b: string; volume: number; position: number[] }[]> {
+    await this.start();
+    return (await this.call<{ pairs: { a: string; b: string; volume: number; position: number[] }[] }>({ type: "asmInterfere", doc, touch })).pairs;
+  }
+
+  /** STEP of the assembly: one product per shown component (AT-P4-6). */
+  async assemblyStep(doc: AsmDoc): Promise<Uint8Array> {
+    await this.start();
+    return (await this.call<{ bytes: Uint8Array }>({ type: "asmStep", doc })).bytes;
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

@@ -18,6 +18,17 @@ export function namesIn(src: string): string[] {
   return [...src.matchAll(/[a-z_а-я][\w@.а-я]*/gi)].map(m => m[0]).filter(n => !/^(pi|sin|cos|tan|asin|acos|atan|atan2|sqrt|abs|min|max|round|floor|ceil|mm|cm|um|m|in|ft|deg|rad|мм|см|м|град|e)$/i.test(n));
 }
 
+/** An expression with the name `from` (a whole name, such as "D1@Sketch1") replaced by `to`. */
+export function renameIn(src: string, from: string, to: string): string {
+  return src.replace(/[a-z_а-я][\w@.а-я]*/gi, m => (m === from ? to : m));
+}
+
+/** Renames a name in every expression of the document: variables, dimensions and feature values. */
+export function renameEverywhere(doc: PartDoc, from: string, to: string) {
+  for (const v of doc.vars ?? []) v.expr = renameIn(v.expr, from, to);
+  for (const tg of exprTargets(doc)) tg.num.expr = renameIn(tg.num.expr!, from, to);
+}
+
 /**
  * Global variables in dependency order. A variable that refers to itself through others
  * (a circular reference) or to an unknown name gets an error instead of a value.

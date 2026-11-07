@@ -9,6 +9,7 @@ import type { Annotations } from "./Annotations";
 import { formatMeasurement, type Measurement } from "./measure";
 import { units } from "./units";
 import { csys } from "./csys";
+import { zip } from "../model/zip";
 
 export function download(blob: Blob, name: string) {
   const a = document.createElement("a");
@@ -47,7 +48,52 @@ function exportScene(v: Viewer) {
   return root;
 }
 
-export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb", baseName: string) {
+/**
+ * 3MF (FR-STO-021): one object per visible part, in millimetres, with its colour as a base material.
+ * Vertices are welded so slicers see closed shells.
+ */
+export async function to3mf(scene: THREE.Object3D): Promise<Uint8Array> {
+  const objs: string[] = [], items: string[] = [], mats: string[] = [];
+  let id = 1;
+  const f = (x: number) => (Math.abs(x) < 1e-12 ? "0" : String(Math.round(x * 1e6) / 1e6));
+  const xml = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  scene.updateMatrixWorld(true);
+  scene.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const pos = m.geometry.getAttribute("position");
+    const idx = m.geometry.getIndex();
+    const key = new Map<string, number>(), verts: string[] = [], remap: number[] = [];
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+      const k = `${f(v.x)},${f(v.y)},${f(v.z)}`;
+      let j = key.get(k);
+      if (j == null) { j = verts.length; key.set(k, j); verts.push(`<vertex x="${f(v.x)}" y="${f(v.y)}" z="${f(v.z)}"/>`); }
+      remap.push(j);
+    }
+    const tris: string[] = [];
+    const n = idx ? idx.count : pos.count;
+    for (let t = 0; t + 2 < n; t += 3) {
+      const a = remap[idx ? idx.getX(t) : t], b = remap[idx ? idx.getX(t + 1) : t + 1], c = remap[idx ? idx.getX(t + 2) : t + 2];
+      if (a !== b && b !== c && a !== c) tris.push(`<triangle v1="${a}" v2="${b}" v3="${c}"/>`);
+    }
+    if (!tris.length) return;
+    const col = ((m.material as THREE.MeshStandardMaterial).color ?? new THREE.Color(0.7, 0.7, 0.7)).getHexString().toUpperCase();
+    mats.push(`<base name="${xml(m.name || `Part${id}`)}" displaycolor="#${col}FF"/>`);
+    const oid = id++;
+    objs.push(`<object id="${oid + 1}" type="model" name="${xml(m.name || `Part${oid}`)}" pid="1" pindex="${mats.length - 1}"><mesh><vertices>${verts.join("")}</vertices><triangles>${tris.join("")}</triangles></mesh></object>`);
+    items.push(`<item objectid="${oid + 1}"/>`);
+  });
+  const model = `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">MöbiusCAD</metadata><resources><basematerials id="1">${mats.join("")}</basematerials>${objs.join("")}</resources><build>${items.join("")}</build></model>`;
+  return zip([
+    { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>` },
+    { name: "3D/3dmodel.model", data: model },
+  ]);
+}
+
+export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb" | "3mf", baseName: string) {
   const scene = exportScene(v);
   // Mesh exports are written in the active coordinate system (FR-REF-005).
   const c = csys.active;
@@ -59,6 +105,9 @@ export async function exportMesh(v: Viewer, format: "stl" | "obj" | "glb", baseN
   if (format === "stl") {
     const data = new STLExporter().parse(scene, { binary: true }) as DataView;
     download(new Blob([data.buffer as ArrayBuffer], { type: "model/stl" }), `${baseName}.stl`);
+  } else if (format === "3mf") {
+    const bytes = await to3mf(scene);
+    download(new Blob([bytes as BlobPart], { type: "model/3mf" }), `${baseName}.3mf`);
   } else if (format === "obj") {
     download(new Blob([new OBJExporter().parse(scene)], { type: "text/plain" }), `${baseName}.obj`);
   } else {

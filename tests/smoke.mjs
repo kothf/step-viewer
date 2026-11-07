@@ -7,7 +7,7 @@
  * Opens public CAX-IF / sample STEP files that ship with occt-import-js
  * (node_modules/occt-import-js/test/testfiles) and checks parsing, topology,
  * measurements, sections, mass properties and the tree.
- * Set CHROMIUM_PATH to use a specific browser binary.
+ * Set CHROMIUM_PATH to use a specific browser binary, SMOKE_SHARD=i/n to run one shard (see inShard).
  */
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
@@ -101,6 +101,14 @@ const origin = `http://localhost:${server.address().port}`;
 let failures = 0;
 const check = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
+// Shards: SMOKE_SHARD=i/n runs only the blocks marked inShard(k) with (k - 1) % n + 1 === i (CI runs
+// 1/4 … 4/4 as parallel jobs); unset, every block runs. A block must not rely on what another block
+// left behind (blocks 1 and 2 hold several sections that share `page`). A new section goes in its own
+// `if (inShard(k)) { … }` block, k = the shard with the shortest time (printed at the end of a run).
+const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
+if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
+const inShard = k => (k - 1) % shardN + 1 === shardI;
+const started = Date.now();
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -114,6 +122,7 @@ async function open(file, kernel = false) {
 }
 
 try {
+  if (inShard(1)) { // these sections share `page`: keep them together
   // --- a 10 mm cube: exact topology and every basic measurement ---
   await open("cube-10x10mm/Cube 10x10.stp");
   // --- branding: name, header logo, favicon and web manifest ---
@@ -1178,7 +1187,9 @@ try {
     check(/pcb/.test(tipsSeen) && /model/.test(tipsSeen) && off.hidden && off.v === "off" && quiet, `hints: each tip once, Turn off tips stops them (${JSON.stringify({ tipsSeen, off, quiet })})`);
     await ctx.close();
   }
+  }
 
+  if (inShard(2)) { // these sections share `page`: keep them together
   // --- exact geometry: the full kernel reads the file again; values switch to the B-rep ---
   {
     await open("rounded-cube/rounded-cube.step", true);
@@ -1362,6 +1373,15 @@ try {
     await page.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 30000 });
     const tmf = await page.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { planes: d.faces.filter(f => f.type === "plane").length, vol: d.volume, box: [0, 1, 2].map(k => d.bboxMax[k] - d.bboxMin[k]) }; });
     check(tmf.planes === 6 && near(tmf.vol, 800, 1e-6) && tmf.box.join() === "20,10,4", `3MF: a 20×10×4 block, 6 planar faces, V=${tmf.vol}`);
+    // 3MF export (FR-STO): written in millimetres with colours, it reads back as the same closed block.
+    const [d3] = await Promise.all([page.waitForEvent("download"), page.$eval('[data-export="3mf"]', el => el.click())]);
+    const b3 = await readFile(await d3.path());
+    await page.evaluate(() => { window.__sv.viewer.parts[0].data.__old = true; });
+    await page.setInputFiles("#file-input", { name: "back.3mf", mimeType: "model/3mf", buffer: b3 });
+    await page.waitForFunction(() => document.querySelector("#loading").hidden && window.__sv.viewer.parts[0]?.data && !window.__sv.viewer.parts[0].data.__old, null, { timeout: 30000 });
+    const t2 = await page.evaluate(() => { const d = window.__sv.viewer.parts[0].data; return { planes: d.faces.filter(f => f.type === "plane").length, vol: d.volume, box: [0, 1, 2].map(k => +(d.bboxMax[k] - d.bboxMin[k]).toFixed(6)) }; });
+    check(/\.3mf$/.test(d3.suggestedFilename()) && b3.subarray(0, 2).toString() === "PK" && t2.planes === 6 && near(t2.vol, 800, 1e-6) && t2.box.join() === "20,10,4",
+      `3MF export: ${d3.suggestedFilename()} reads back as the 20×10×4 block (${t2.planes} planes, V=${t2.vol})`);
   }
 
   // --- PCB board body as a STEP solid ---
@@ -1398,9 +1418,10 @@ try {
   });
   check(perf.objs === 270000 && loadS < 30, `pcb perf: ${perf.objs} objects load in ${loadS.toFixed(1)} s`);
   check(perf.move < 16, `pcb perf: snap + overlay per mouse move ${perf.move.toFixed(2)} ms (full redraw ${perf.render.toFixed(0)} ms)`);
+  }
 
   // --- Part modelling (FRS P1): new part, sketch with dimensions, extrude, cut on a face, fillet, edit, undo, save/open, STEP, recovery, RU ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1505,7 +1526,7 @@ try {
     const picked = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await idle();
     const prev = await mp.evaluate(() => ({ tris: (window.__sv.model.last().preview?.position.length ?? 0) / 9, callout: document.querySelector("#mc-layer .mc-callout")?.textContent, groups: [...document.querySelectorAll("#mc-pm legend")].map(l => l.textContent).join("|"), items: document.querySelectorAll("#mc-pm .pm-items li").length }));
-    check(prev.tris > 10 && /Radius: 2 mm/.test(prev.callout ?? "") && prev.groups === "Items to fillet|Fillet parameters|Fillet options" && prev.items === 3, `model: the fillet previews live (yellow faces) while edges are picked, with a radius callout (${JSON.stringify(prev)})`);
+    check(prev.tris > 10 && /Radius: 2 mm/.test(prev.callout ?? "") && prev.groups === "Fillet type|Items to fillet|Fillet parameters|Fillet options" && prev.items === 3, `model: the fillet previews live (yellow faces) while edges are picked, with a radius callout (${JSON.stringify(prev)})`);
     // The fourth (hidden) edge: from the other side.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(-1, 1, 0.8), false); });
     await mp.waitForTimeout(200);
@@ -1648,7 +1669,7 @@ try {
   }
 
   // --- Part modelling 1.19.0 (FRS P1 rest): empty-state planes, polygon, drag arrow, rollback bar, rename, menu, reference plane, up to face, trim, sketch fillet, views, properties ---
-  {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1681,7 +1702,7 @@ try {
     const onTop = await mp.evaluate(() => ({ kind: window.__sv.model.mode().kind, plane: window.__sv.model.store.doc.features[0]?.plane, empty: document.querySelector("#mc-empty").hidden }));
     check(rows0.startsWith("Part1|Material <not specified>|Configuration: Default|Equations|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
     // Polygon: six equal sides on a construction circle.
-    await mp.click('[data-c="sk:polygon"]');
+    await mp.keyboard.press("g");
     await click([0, 0]);
     { const [x, y] = await toPage([30, 0], true); await mp.mouse.move(x, y); await mp.waitForTimeout(60); }
     const cursorTxt = await mp.evaluate(() => document.querySelector("#sk-layer .sk-cursor")?.textContent);
@@ -1729,6 +1750,27 @@ try {
       return res;
     });
     check(merge.btn && merge.gone && merge.a === "m1" && merge.status === "ok" && merge.inter, `model 1.50: Merge points joins two points into one; a point and two lines offer Intersection (${JSON.stringify(merge)})`);
+    // 1.51: ordinate dimensions from a base, and a diameter about a centerline (FR-SK-063).
+    const ordDia = await mp.evaluate(async () => {
+      const m = window.__sv.model, ed = m.editor(), orig = structuredClone(ed.sk);
+      const next = structuredClone(ed.sk);
+      next.ents.push({ id: "o1", t: "point", x: 130, y: 50 }, { id: "o2", t: "point", x: 160, y: 70 }, { id: "o3", t: "point", x: 175, y: 45 },
+        { id: "c1", t: "point", x: 220, y: 0 }, { id: "c2", t: "point", x: 220, y: 30 }, { id: "cl", t: "line", a: "c1", b: "c2", cons: true }, { id: "dp", t: "point", x: 232, y: 15 });
+      ed.setSketch(next, ed.frame);
+      const tick = () => new Promise(r => setTimeout(r, 30));
+      ed.setTool("hord");
+      ed.ordClick([130, 50]); ed.ordClick([145, 30]); ed.ordClick([160, 70]); await tick(); ed.closeInput(false); ed.ordClick([175, 45]); await tick(); ed.closeInput(false);
+      const ords = ed.sk.dims.filter(d => d.ord).map(d => `${d.t}:${d.e.join("-")}:${Math.round(d.val.v)}:${Math.round(d.pos[1])}`);
+      const zero = [...document.querySelectorAll(".sk-dim.ord0")].map(e => e.textContent);
+      ed.setTool("dim");
+      ed.dimClick([232, 15], {}); ed.dimClick([220, 20], {}); ed.dimClick([205, 15], {}); await tick(); ed.closeInput(false);
+      const dd = ed.sk.dims.find(d => d.e.includes("dp"));
+      const dia = { e: dd?.e.join("-"), dia: !!dd?.dia, v: dd && Math.round(dd.val.v), label: [...document.querySelectorAll(".sk-dim")].find(e => e.dataset.id === dd?.id)?.textContent };
+      ed.setTool("select");
+      ed.setSketch(orig, ed.frame); ed.commit("Restore"); m.panel();
+      return { ords, zero, dia };
+    });
+    check(ordDia.ords.join() === "hdistance:o1-o2:30:30,hdistance:o1-o3:45:30" && ordDia.zero.join() === "0" && ordDia.dia.e === "cl-dp" && ordDia.dia.dia && ordDia.dia.v === 24 && ordDia.dia.label === "⌀24", `model 1.51: horizontal ordinate dimensions from a base, and a ⌀ dimension about a centerline (${JSON.stringify(ordDia)})`);
     // Ctrl+8: normal to the sketch.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); });
     await mp.keyboard.press("Control+8");
@@ -1920,7 +1962,7 @@ try {
   }
 
   // --- Part modelling 1.19.4: revolve angle handle, cut preview of the removed material ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -1985,7 +2027,7 @@ try {
   }
 
   // --- Part modelling 1.20.0: slot, extend, split, sketch chamfer, offset and convert entities, sketch-bar flyouts ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2054,7 +2096,7 @@ try {
   }
 
   // --- Part modelling 1.21.0: reference axes and points, S shortcut bar, sketch box selection ---
-  {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2572,7 +2614,7 @@ try {
   }
 
   // --- Part modelling 1.34.0: ellipse and partial ellipse in sketches (FR-SK-018) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2641,7 +2683,7 @@ try {
   }
 
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2684,7 +2726,7 @@ try {
   }
 
   // --- Part modelling 1.37.0: sketch Show/Hide, visible main planes, Normal to (N), hole snapping to the origin ---
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2779,7 +2821,7 @@ try {
   }
 
   // --- Part modelling 1.38.0: modelled (helical) thread from the thread panel (FR-FT-055) ---
-  {
+  if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2811,7 +2853,7 @@ try {
   }
 
   // --- 1.39.0: local vault in the browser: save a part, check in, read-only bar, history, roll back, audit trail (FR-PDM) ---
-  {
+  if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2864,13 +2906,13 @@ try {
     const vBack = await vol();
     const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).join(","));
     const chk = await mp.evaluate(async () => { const r = await window.__sv.vault.vault.verify(); return `${r.files}/${r.objects}/${r.missing.length + r.corrupt.length}`; });
-    check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
+    check(/Part1\.mcadprt/.test(row1) && /v1/.test(row1) && /Andrey/.test(row1) && /v1 · .*checked out/.test(title1) && dirty === true && hist === "v2:Twice as deep|v1:Added" && Math.abs(vBack - 4000) < 1e-3, `vault 1.39: save to vault, check in, read-only, history and roll back (${row1}, ${title1}, ${dirty}, ${hist}, ${vBack})`);
     check(audit === "create vault,add,check out,check in,roll back" && chk === "1/2/0", `vault 1.39: audit trail and integrity check (${audit}, ${chk})`);
     await ctx.close();
   }
 
   // --- 1.40.0: vault export to ZIP and import, storage report and purge (FR-PDM-007/008) ---
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const mp = await ctx.newPage();
     mp.on("pageerror", e => errors.push(e.message));
@@ -2924,7 +2966,7 @@ try {
   }
 
   // --- Drawings (FRS 11, FR-DRW-001/002/003/010/011/016/030/031): standard 3 views, model and projected views, drag, title block, export, .mcaddrw, associative update, RU, axe ---
-  {
+  if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const dp = await ctx.newPage();
     dp.on("pageerror", e => errors.push(e.message));
@@ -2943,7 +2985,7 @@ try {
     const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
     await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
     await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
-    await dp.click("#new-drawing");
+    await dp.click("#new-more"); await dp.click("#new-drawing");
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
@@ -3004,7 +3046,7 @@ try {
     await dp.click('#drw [data-a="back"]');
     await dp.evaluate(() => window.__sv.modeller.store.change("Width", d => { const e = d.features[0].ents; e[1].x = 70; e[2].x = 70; }));
     await dp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
-    await dp.click("#new-drawing");
+    await dp.click("#new-more"); await dp.click("#new-drawing");
     await dp.waitForTimeout(400);
     await ready();
     const fb2 = await box(v3[0].id);
@@ -3041,8 +3083,171 @@ try {
     await ctx.close();
   }
 
+  // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
+    await mp.fill("#v-name", "Lifecycle test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Lifecycle test") await mp.fill("#v-name", "Lifecycle test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="settings"]');
+    await mp.evaluate(async () => { await window.__sv.vault.addFiles([new File(["bracket"], "bracket.txt"), new File(["spare"], "spare.txt")]); });
+    const rowText = n => mp.evaluate(i => document.querySelectorAll("#vault-panel .v-row")[i]?.textContent.replace(/\s+/g, " ").trim() ?? "", n);
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
+    const row0 = await rowText(0);
+    // Data card: check out, fill the part number, check in.
+    await mp.click("#vault-panel .v-row >> nth=0");
+    await mp.click('#vault-panel [data-a="co"]');
+    await mp.waitForSelector('#vault-panel [data-a="ci"]');
+    await mp.click('#vault-panel [data-a="card"]');
+    await mp.fill('#vault-dlg [name="c:Part number"]', "BR-001");
+    await mp.fill('#vault-dlg [name="c:Description"]', "Bracket");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /BR-001/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    await mp.click('#vault-panel [data-a="ci"]');
+    await mp.fill('#vault-dlg textarea[name="comment"]', "numbered");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForSelector('#vault-panel [data-a="co"]');
+    // Submit for review, then Approve: revision A, Released, no check-out any more.
+    await mp.click('#vault-panel [data-tr="Submit for review"]');
+    await mp.waitForSelector("#vault-dlg .v-check li");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForSelector('#vault-panel [data-tr="Approve"]');
+    const checks = await mp.evaluate(() => { document.querySelector('#vault-panel [data-tr="Approve"]').click(); return true; });
+    await mp.waitForSelector("#vault-dlg .v-check li");
+    const dlgTitle = await mp.textContent("#vault-dlg-title");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => /Rev A/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""));
+    const row1 = await rowText(0);
+    const canCheckOut = await mp.$('#vault-panel [data-a="co"]') !== null;
+    // Search by part number.
+    await mp.fill("#v-q", "br-001");
+    await mp.press("#v-q", "Enter");
+    await mp.waitForSelector("#vault-panel .v-found");
+    const found = await mp.evaluate(() => [...document.querySelectorAll("#vault-panel .v-row .v-name")].map(x => x.textContent).join("|"));
+    await mp.click('#vault-panel [data-a="clearq"]');
+    // Rename / move into a folder.
+    await mp.click("#vault-panel .v-row >> nth=0");
+    await mp.click('#vault-panel [data-a="rename"]');
+    await mp.fill('#vault-dlg [name="path"]', "parts/bracket.txt");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => [...document.querySelectorAll("#vault-panel .v-name")].some(x => x.textContent === "parts/bracket.txt"));
+    // Delete the spare file to the recycle bin and restore it.
+    await mp.click('#vault-panel .v-row:has-text("spare.txt")');
+    await mp.click('#vault-panel [data-a="del"]');
+    await mp.waitForSelector("#confirm[open]");
+    await mp.click('#confirm [data-a="ok"]');
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 1);
+    await mp.click('#vault-panel [data-a="bin"]');
+    await mp.waitForSelector("#vault-dlg [data-restore]");
+    await mp.click("#vault-dlg [data-restore]");
+    await mp.waitForFunction(() => document.querySelectorAll("#vault-panel .v-row").length === 2);
+    const audit = await mp.evaluate(async () => (await window.__sv.vault.vault.auditTrail()).map(e => e.action).filter(a => /transition|data card|move|rename|delete|restore/.test(a)).join(","));
+    // Russian: state and revision are translated.
+    await mp.click("#lang-btn");
+    await mp.waitForFunction(() => /Выпущен/.test(document.querySelector("#vault-panel .v-row")?.textContent ?? ""), null, { timeout: 5000 }).catch(() => {});
+    const ruRow = await rowText(0);
+    await mp.click("#lang-btn");
+    check(/Work in progress/.test(row0) && checks && /Approve/.test(dlgTitle) && /Released/.test(row1) && /Rev A/.test(row1) && /BR-001/.test(row1) && !canCheckOut, `vault P4: data card, Submit for review and Approve give revision A (${row0} → ${row1}; ${dlgTitle})`);
+    check(found === "bracket.txt" && audit === "data card,transition,transition,move,delete,restore", `vault P4: search, move, recycle bin and audit (${found}; ${audit})`);
+    check(/Выпущен/.test(ruRow) && /Ред\. A/.test(ruRow), `vault P4: lifecycle in Russian (${ruRow})`);
+    await ctx.close();
+  }
+
+  // --- PDM vault thread (FRS 12.5 P5): change order, release package, workflow editor, notifications ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#t-vault");
+    await mp.waitForSelector("#v-name");
+    await mp.waitForTimeout(300);
+    await mp.fill("#v-name", "Team test");
+    await mp.waitForTimeout(100);
+    if (await mp.inputValue("#v-name") !== "Team test") await mp.fill("#v-name", "Team test");
+    await mp.click('#vault-panel [data-a="new-ws"]');
+    await mp.waitForSelector('#vault-panel [data-a="changes"]');
+    // Two released files (one transition on both: a release package).
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      await p.addFiles([new File(["arm"], "arm.txt"), new File(["pin"], "pin.txt")]);
+      const ids = (await v.files()).map(f => f.id);
+      await v.transition(ids, "Submit for review");
+      await v.transition(ids, "Approve");
+      await p.refresh();
+    });
+    // Request a change on arm.txt from the tab, approve it, then close it.
+    await mp.click('#vault-panel .v-row:has-text("arm.txt")');
+    await mp.click('#vault-panel [data-a="eco"]');
+    await mp.fill('#vault-dlg [name="title"]', "Longer arm");
+    await mp.fill('#vault-dlg [name="reason"]', "Clash");
+    await mp.click('#vault-dlg button[value="ok"]');
+    // Waits for an async condition in the page (waitForFunction treats a promise as truthy).
+    const until = async (fn, ms = 10000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; await mp.waitForTimeout(100)) if (await mp.evaluate(fn)) return true; return false; };
+    await until(async () => (await window.__sv.vault.vault.changes()).length === 1);
+    await mp.click('#vault-panel [data-a="changes"]');
+    await mp.waitForSelector("#vault-dlg [data-eco-ok]");
+    await mp.click("#vault-dlg [data-eco-ok]");
+    await mp.waitForSelector("#vault-dlg [data-eco-close]");
+    const pending = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}`).join("|"));
+    await mp.click("#vault-dlg [data-eco-close]");
+    await until(async () => (await window.__sv.vault.vault.changes())[0].state === "Closed");
+    // The list reopens once the order is closed.
+    await mp.waitForSelector("#vault-dlg[open] [data-eco-ok], #vault-dlg[open] tbody tr", { timeout: 10000 }).catch(() => {});
+    await mp.waitForTimeout(300);
+    const after = await mp.evaluate(async () => (await window.__sv.vault.vault.files()).map(f => `${f.path}:${f.state}:${f.revision}`).join("|"));
+    await mp.evaluate(() => document.querySelector("#vault-dlg")?.open && document.querySelector("#vault-dlg").close());
+    // Release packages: two (the joint release and the change order), exported as a ZIP.
+    await mp.click('#vault-panel [data-a="packages"]');
+    await mp.waitForSelector("#vault-dlg [data-zip]");
+    const pkgs = await mp.$$eval("#vault-dlg [data-zip]", x => x.length);
+    const [dl] = await Promise.all([mp.waitForEvent("download"), mp.click("#vault-dlg [data-zip] >> nth=0")]);
+    const zipName = dl.suggestedFilename();
+    await mp.click('#vault-dlg button[value="cancel"]');
+    // Workflow editor: add a state, save; it is in the settings.
+    await mp.click('#vault-panel [data-a="workflow"]');
+    await mp.waitForSelector("#vault-dlg [data-add-s]");
+    await mp.click("#vault-dlg [data-add-s]");
+    await mp.waitForSelector('#vault-dlg [data-s="5"]');
+    await mp.fill('#vault-dlg [data-s="5"] [name="name"]', "Archived");
+    await mp.click('#vault-dlg button[value="ok"]');
+    await mp.waitForFunction(() => window.__sv.vault.vault.info.workflow?.states.some(s => s.name === "Archived"), null, { timeout: 5000 }).catch(() => {});
+    const states = await mp.evaluate(() => window.__sv.vault.vault.info.workflow?.states.map(s => s.name).join(",") ?? "");
+    // Notifications: another user's check-in shows up with a count.
+    await mp.evaluate(async () => {
+      const p = window.__sv.vault, v = p.vault;
+      v.user = "Olga";
+      const f = (await v.files()).find(x => x.path === "arm.txt");
+      await v.transition([f.id], "Change");
+      v.user = "Andrey";
+      await p.refresh();
+    });
+    const badge = await mp.evaluate(() => document.querySelector('#vault-panel [data-a="notes"] .v-badge')?.textContent ?? "");
+    await mp.click('#vault-panel [data-a="notes"]');
+    await mp.waitForSelector("#vault-dlg .v-log li");
+    const note = await mp.textContent("#vault-dlg .v-log li");
+    check(/arm\.txt:Change pending/.test(pending) && /pin\.txt:Released/.test(pending) && after === "arm.txt:Released:B|pin.txt:Released:A", `vault P5: change request, approve, close and release (${pending} → ${after})`);
+    check(pkgs === 2 && /\.zip$/.test(zipName) && /Archived/.test(states) && badge === "1" && /Olga/.test(note), `vault P5: release packages, workflow editor and notifications (${pkgs}, ${zipName}, ${states}, ${badge}, ${note})`);
+    await ctx.close();
+  }
+
   // 1.47: offline start (FR-STO-030): the service worker precaches the app; a reload offline still starts it.
-  {
+  if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const pg = await ctx.newPage();
     await pg.goto(`${origin}/index.html?sw`);
@@ -3056,6 +3261,709 @@ try {
     await ctx.close();
   }
 
+  // --- 1.53: sketch: converted edges follow the model and dangle (FR-SK-064), dimension names (065), draggable text (066), edit sketch plane (007) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    const s3x = () => mp.evaluate(() => { const sk = window.__sv.model.store.doc.features.find(f => f.id === "s3"); const st = window.__sv.model.last().statuses.find(s => s.id === "s3"); return { xs: sk.ents.filter(e => e.t === "point").map(e => Math.round(Math.abs(e.x) * 1000) / 1000), dangling: sk.rels.filter(r => r.dangling).length, code: st?.code ?? "", ok: st?.ok }; });
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Block", d => {
+        d.features.push(
+          { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -50, -30), P("b", 50, -30), P("c", 50, 30), P("d", -50, 30), L("s1l1", "a", "b"), L("s1l2", "b", "c"), L("s1l3", "c", "d"), L("s1l4", "d", "a")] },
+          { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+          { id: "s3", type: "sketch", name: "Sketch3", hidden: false, plane: { face: { name: "f1:end" } }, dims: [], ents: [P("q1", 40, -10), P("q2", 40, 10), L("ln", "q1", "q2")], rels: [{ id: "r1", t: "fix", e: ["ln"], ext: { faces: ["f1:end", "f1:side:s1l2"] } }] });
+      });
+    });
+    await settle();
+    const a1 = await s3x();
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { for (const e of d.features[0].ents) if (e.t === "point") e.x = Math.sign(e.x) * 70; }));
+    await settle();
+    const a2 = await s3x();
+    check(a1.xs.every(x => Math.abs(x - 50) < 1e-6) && !a1.dangling && a2.xs.every(x => Math.abs(x - 70) < 1e-6) && !a2.dangling && a2.ok, `model 1.53: a converted edge follows the model when it changes (FR-SK-064) (${JSON.stringify(a1)} → ${JSON.stringify(a2)})`);
+    // The edge goes: the relation dangles, the line stays, the sketch warns.
+    await mp.evaluate(() => window.__sv.model.store.change("Lose edge", d => { d.features.find(f => f.id === "s3").rels[0].ext.faces = ["f1:end", "f9:side:zz"]; }));
+    await settle();
+    const a3 = await s3x();
+    check(a3.dangling === 1 && a3.code === "warning" && a3.xs.every(x => Math.abs(x - 70) < 1e-6), `model 1.53: a lost edge leaves a dangling relation and a warning (${JSON.stringify(a3)})`);
+    // In the sketch: the dangling glyph and panel; Re-attach by clicking the block's right top edge.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForFunction(() => window.__sv.model.editor());
+    await settle();
+    const ui = await mp.evaluate(() => ({ glyph: !!document.querySelector("#sk-layer .sk-rel.dangling"), box: !!document.querySelector("#mc-pm .pm-dangling [data-reattach]"), name: document.querySelector("#sk-layer .sk-rel.dangling")?.title ?? "" }));
+    await mp.click("#mc-pm .pm-dangling [data-reattach]");
+    const edgeAt = await mp.evaluate(() => {
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const q = new (v.camera.position.constructor)(70, 15, 20).project(v.camera);
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    });
+    await mp.mouse.move(edgeAt[0], edgeAt[1]); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const re = await mp.evaluate(() => { const ed = window.__sv.model.editor(), r = ed.sk.rels.find(x => x.id === "r1"); return { dangling: !!r.dangling, faces: r.ext?.faces.join("|"), tool: ed.tool, box: !!document.querySelector("#mc-pm .pm-dangling") }; });
+    check(ui.glyph && ui.box && /On edge/.test(ui.name) && !re.dangling && /f1:side:s1l2/.test(re.faces ?? "") && re.tool === "select" && !re.box, `model 1.53: Re-attach puts a dangling curve back on a clicked model edge (${JSON.stringify(ui)}, ${JSON.stringify(re)})`);
+    // Dimension text drags and is stored; the full name shows on hover and can be renamed; expressions follow (FR-SK-065/066).
+    await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), next = structuredClone(ed.sk);
+      next.ents.push({ id: "w1", t: "point", x: -30, y: 0 }, { id: "w2", t: "point", x: 0, y: 0 }, { id: "wl", t: "line", a: "w1", b: "w2" });
+      next.dims.push({ id: "dd", name: "D1", t: "distance", e: ["wl"], val: { v: 30 }, pos: [-15, 6] });
+      ed.setSketch(next, ed.frame); ed.commit("Add");
+      window.__sv.model.store.change("Var", d => { d.vars = [{ name: "half", kind: "length", expr: "D1@Sketch3 / 2" }]; });
+    });
+    await settle();
+    const lab = await mp.evaluate(() => { const el = [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd"); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, title: el.title }; });
+    await mp.mouse.move(lab.x, lab.y); await mp.mouse.down(); await mp.mouse.move(lab.x + 30, lab.y + 30, { steps: 4 }); await mp.mouse.move(lab.x + 60, lab.y + 60, { steps: 4 }); await mp.mouse.up();
+    await mp.waitForTimeout(100);
+    const moved = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const d = ed.sk.dims.find(x => x.id === "dd"); const st = window.__sv.model.store.doc.features.find(f => f.id === "s3").dims.find(x => x.id === "dd"); return { pos: d.pos, stored: st.pos, input: !!document.querySelector(".sk-input"), v: d.val.v }; });
+    check(lab.title === "D1@Sketch3" && Math.hypot(moved.pos[0] + 15, moved.pos[1] - 6) > 3 && JSON.stringify(moved.pos) === JSON.stringify(moved.stored) && !moved.input && moved.v === 30, `model 1.53: dimension text drags and stays where it is put; hover shows D1@Sketch3 (FR-SK-065/066) (${lab.title}, ${JSON.stringify(moved)})`);
+    await mp.evaluate(() => { window.__sv.model.editor().select(["dd"]); window.__sv.model.panel(); });
+    await mp.fill('#mc-pm input[data-a="dimname"]', "Width");
+    await mp.press('#mc-pm input[data-a="dimname"]', "Enter");
+    await mp.evaluate(() => document.querySelector('#mc-pm input[data-a="dimname"]')?.dispatchEvent(new Event("change")));
+    await mp.waitForTimeout(100);
+    await mp.check('#mc-pm input[data-a="shownames"]');
+    const ren = await mp.evaluate(() => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === "dd").name, varExpr: window.__sv.model.store.doc.vars?.[0]?.expr, shown: [...document.querySelectorAll("#sk-layer .sk-dim .sk-dname")].map(e => e.textContent).join(","), title: [...document.querySelectorAll("#sk-layer .sk-dim")].find(e => e.dataset.id === "dd")?.title }));
+    check(ren.name === "Width" && ren.varExpr === "Width@Sketch3 / 2" && ren.shown.includes("Width") && ren.title === "Width@Sketch3", `model 1.53: renaming a dimension updates expressions that use it; names can be shown (${JSON.stringify(ren)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    // Edit sketch plane (FR-SK-007): move Sketch3 from the block's top face to Top; its curves keep following the edge.
+    await mp.evaluate(() => window.__sv.modeller.editSketchPlane("s3"));
+    await mp.waitForSelector('#mc-pm [data-std="XY"]');
+    await mp.click('#mc-pm [data-std="XY"]');
+    await settle();
+    const live = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { kind: m.kind, plane: m.edit?.plane, cur: document.querySelector('#mc-pm [data-a="cur"]')?.textContent, doc: window.__sv.model.store.doc.features.find(f => f.id === "s3").plane }; });
+    await mp.click('#mc-pm [data-a="ok"]');
+    await settle();
+    const pl = await mp.evaluate(() => ({ plane: window.__sv.model.store.doc.features.find(f => f.id === "s3").plane, kind: window.__sv.model.mode().kind, undo: window.__sv.model.store.undoLabel }));
+    const a4 = await s3x();
+    check(live.kind === "plane" && live.plane?.std === "XY" && "face" in live.doc && pl.plane.std === "XY" && pl.kind === "none" && pl.undo === "Edit sketch plane" && !a4.dangling && a4.ok, `model 1.53: Edit sketch plane previews and moves the sketch to another plane (FR-SK-007) (${JSON.stringify(live)}, ${JSON.stringify(pl)}, ${JSON.stringify(a4)})`);
+    await ctx.close();
+  }
+
+  // --- 1.56: rib (FR-FT-062) from the Sweep ▾ menu: an L bracket's corner gusset, previewed live, panel in Russian ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Bracket", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const rect = (id, x0, y0, x1, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + "a", x0, y0), P(id + "b", x1, y0), P(id + "c", x1, y1), P(id + "d", x0, y1), Ln(id + "1", id + "a", id + "b"), Ln(id + "2", id + "b", id + "c"), Ln(id + "3", id + "c", id + "d"), Ln(id + "4", id + "d", id + "a")] });
+      d.features.push(rect("Sketch1", -50, -30, 50, 30), { id: "bx", type: "extrude", name: "Extrude1", sketch: "Sketch1", op: "boss", end: "blind", depth: { v: 10 } },
+        rect("Sketch2", -50, -30, -40, 30), { id: "wx", type: "extrude", name: "Extrude2", sketch: "Sketch2", op: "boss", end: "blind", depth: { v: 60 } },
+        { id: "rs", type: "sketch", name: "Sketch3", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("ra", -40, 50), P("rb", 40, 10), Ln("rl", "ra", "rb")] });
+    }));
+    await settle();
+    const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Rib")');
+    await settle();
+    const r0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { type: m.draft?.type, sketch: m.draft?.sketch, title: document.querySelector("#mc-pm h3")?.textContent, live: window.__sv.model.last().props.volume }; });
+    await mp.fill('#mc-pm input[data-num="thickness"]', "4");
+    await mp.press('#mc-pm input[data-num="thickness"]', "Tab");
+    await settle();
+    const live4 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click("#mc-ok");
+    await settle();
+    const rib = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(r0.type === "rib" && r0.sketch === "rs" && r0.title === "Rib" && Math.abs(r0.live - v0 - 8000) < 1e-3 && Math.abs(live4 - v0 - 6400) < 1e-3 && Math.abs(rib.v - v0 - 6400) < 1e-3 && !rib.bad && /Rib1/.test(rib.names),
+      `model 1.56: Rib from an open line fills the bracket's corner, previewed live (FR-FT-062) (${JSON.stringify(r0)}, ${v0}, ${live4}, ${JSON.stringify(rib)})`);
+    // Split line (FR-FT-084): a circle on Top, clear of the rib, splits the base's top and bottom faces; the volume stays.
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 20, y: 15 }, { id: "k", t: "circle", c: "o", r: 6 }] }); }));
+    await settle();
+    const nf0 = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Split Line")');
+    await settle();
+    const sp0 = await mp.evaluate(() => ({ sketch: window.__sv.model.mode().draft?.sketch, count: document.querySelector("#mc-pm .pm-count")?.textContent, faces: window.__sv.model.last().faceNames.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sp = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, faces: window.__sv.model.last().faceNames.length }));
+    check(sp0.sketch === "cs" && sp0.count === "All faces it crosses" && sp0.faces === nf0 + 2 && sp.faces === nf0 + 2 && !sp.bad && Math.abs(sp.v - rib.v) < 1e-6,
+      `model 1.56: Split Line splits the faces a projected circle crosses, previewed live (FR-FT-084) (${nf0}, ${JSON.stringify(sp0)}, ${JSON.stringify(sp)})`);
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "rib").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, opts: [...document.querySelectorAll('#mc-pm select[data-k="dir"] option')].map(o => o.textContent).join("|") }));
+    check(ru.title === "Ребро" && ru.opts === "Параллельно эскизу|Перпендикулярно эскизу", `model 1.56: rib panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- 1.57: multibody (FRS 9.10, AT-P3-3): split a body by a plane and combine it back, a boss that does not merge ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 5 } });
+    }));
+    await settle();
+    const menu = async label => { await mp.click('#mc-tools [data-fly="sweep"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${label}$`) }).click(); await settle(); };
+    // Split: the plane picked (as a click on it would), previewed as two bodies.
+    await menu("Split");
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.plane = { plane: "p" }; m.focus = "bodies"; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const sp0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, bodies: window.__sv.model.last().props.bodies, status: [...document.querySelectorAll("#mc-pm .pm-help")].map(e => e.textContent).find(x => /The part has/.test(x)) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sp = await mp.evaluate(() => window.__sv.model.last().props);
+    // Combine (add) the two pieces back into one body: AT-P3-3, volume kept.
+    await menu("Combine");
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.main = { name: "x:side:l4" }; m.draft.tools = [{ name: "x:side:l2" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cb = await mp.evaluate(() => ({ ...window.__sv.model.last().props, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(sp0.title === "Split" && sp0.bodies === 2 && sp0.status === "The part has 2 bodies" && sp.bodies === 2 && Math.abs(sp.volume - 8000) < 1e-6 && cb.bodies === 1 && Math.abs(cb.volume - 8000) < 1e-6 && !cb.bad && /Split1,Combine1/.test(cb.names),
+      `model 1.57: Split a body by a plane into two and Combine them back, volume kept (AT-P3-3) (${JSON.stringify(sp0)}, ${sp.bodies}/${sp.volume}, ${JSON.stringify(cb)})`);
+    // Extrude panel: Merge result, on by default; off makes a second body.
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 4 }] }); }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.command("extrude"));
+    await settle();
+    const on = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="merge"]')?.checked);
+    await mp.click('#mc-pm input[data-k="merge"]');
+    await settle();
+    const mb = await mp.evaluate(() => ({ merge: window.__sv.model.mode().draft?.merge, bodies: window.__sv.model.last().props.bodies }));
+    await mp.click("#mc-ok");
+    await settle();
+    check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // Variable radius fillet on a corner edge: callouts at both ends, the end radius typed in the list.
+    const v1 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.evaluate(() => window.__sv.modeller.command("fillet"));
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.edges = [{ faces: ["x:side:l1", "x:side:l2"] }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click('#mc-pm input[data-k="variable"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-er2="0"]', "4");
+    await mp.press('#mc-pm input[data-er2="0"]', "Enter");
+    await settle();
+    const vf = await mp.evaluate(() => ({ calls: [...document.querySelectorAll("#mc-layer .mc-callout")].map(e => e.textContent), d: window.__sv.model.mode().draft, v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    await mp.click("#mc-ok");
+    await settle();
+    vf.v = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    const removed = v1 - vf.v, want = (1 - Math.PI / 4) * 10 * (4 + 8 + 16) / 3;
+    check(vf.d.variable && vf.d.edges[0].r2 === 4 && vf.d.edges[0].at && vf.calls.length === 2 && /^R1a: 2/.test(vf.calls[0]) && /^R1b: 4/.test(vf.calls[1]) && !vf.bad && Math.abs(removed - want) / want < 0.03,
+      `model 1.57: Variable radius fillet from 2 to 4 mm, callouts at both ends (FR-FT-032) (${JSON.stringify(vf.calls)}, ${removed.toFixed(3)} vs ${want.toFixed(3)})`);
+    await ctx.close();
+  }
+
+  // --- 1.58: Insert body (FR-FT-130/131): a STEP cube into a new part, then Check and heal ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    const bytes = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
+    await mp.evaluate(b => window.__sv.modeller.importBodyFile(new File([new Uint8Array(b)], "Cube 10x10.stp")), bytes);
+    await mp.waitForFunction(() => window.__sv.model.mode().kind !== "none", null, { timeout: 120000 });
+    await settle();
+    const ib = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, file: document.querySelector("#mc-pm")?.textContent.includes("Cube 10x10.stp"), ...window.__sv.model.last().props }));
+    await mp.click('#mc-pm input[data-k="heal"]');
+    await settle();
+    const heal = await mp.evaluate(() => document.querySelector("#mc-pm [data-heal]")?.textContent ?? "");
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.type + ":" + f.name).join(",") }));
+    check(ib.title === "Imported body" && ib.file && Math.abs(ib.volume - 1000) < 1 && ib.bodies === 1 && /^Check and heal: \d+ free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(heal) && !done.bad && Math.abs(done.v - 1000) < 1 && /import:Imported1/.test(done.f),
+      `model 1.58: Insert body reads a STEP cube into the part and Check and heal reports it (FR-FT-130/131) (${JSON.stringify(ib)}, ${heal}, ${JSON.stringify(done)})`);
+    await ctx.close();
+  }
+
+  // --- 1.59: full round fillet and face fillet (FR-FT-032), Scale (FR-BODY-006) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Wall", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -2), P("b", 20, -2), P("c", 20, 2), P("d", -20, 2), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    // Full round: Fillet type, then the three face sets (as clicks would fill them), previewed live.
+    await mp.evaluate(() => window.__sv.modeller.command("fillet"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "full");
+    await settle();
+    const boxes = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .pm-box")].map(b => b.dataset.focus));
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces1 = [{ name: "x:side:l1" }]; m.draft.center = [{ name: "x:end" }]; m.draft.faces2 = [{ name: "x:side:l3" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const pv = await mp.evaluate(() => window.__sv.model.last().preview?.position.length ?? 0);
+    await mp.click("#mc-ok");
+    await settle();
+    const fr = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    const wantFr = 40 * 4 * 10 - (8 - 2 * Math.PI) * 40;
+    check(boxes.join() === "fs1,fc,fs2" && pv > 0 && !fr.bad && Math.abs(fr.v - wantFr) < 0.05,
+      `model 1.59: Full round fillet replaces the top of a 4 mm wall with a half round, previewed live (FR-FT-032) (${boxes}, ${pv}, ${JSON.stringify(fr)} vs ${wantFr.toFixed(3)})`);
+    // Scale ×2 about the origin from the Sweep ▾ menu: volume ×8.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Scale$/ }).click();
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="about"]', "origin");
+    await mp.fill('#mc-pm input[data-num="factor"]', "2");
+    await mp.press('#mc-pm input[data-num="factor"]', "Enter");
+    await settle();
+    const sc = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(!sc.bad && Math.abs(sc.v - 8 * wantFr) < 0.4 && /Scale1/.test(sc.f), `model 1.59: Scale ×2 about the origin multiplies the volume by 8 (FR-BODY-006) (${JSON.stringify(sc)})`);
+    await ctx.close();
+  }
+
+  // --- 1.60: Solid Bodies folder (FR-BODY-001): list, hide, colour, rename, delete ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Two bodies", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 40, y: 0 }, { id: "cc", t: "circle", c: "c0", r: 5 }] },
+        { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
+    }));
+    await settle();
+    const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
+    // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
+    await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
+    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
+    await settle();
+    const hid = await mp.evaluate(() => ({ faces: window.__sv.model.last().faceNames, v: window.__sv.model.last().props.volume, cls: document.querySelector('#mc-tree .ft-row[data-id="body:e"]').className }));
+    // Colour the box, rename it by double-click.
+    await mp.evaluate(() => window.__sv.modeller.setBody("x", { color: [1, 0, 0] }));
+    await settle();
+    const red = await mp.evaluate(() => window.__sv.viewer.parts[0].data.faces.filter(f => f.color && f.color[0] === 1 && f.color[1] === 0).length);
+    await mp.dblclick('#mc-tree .ft-row[data-id="body:x"] .ft-name');
+    await mp.keyboard.press("ControlOrMeta+a");
+    await mp.keyboard.type("Base plate");
+    await mp.keyboard.press("Enter");
+    await settle();
+    const nm = await mp.evaluate(() => [window.__sv.model.store.doc.bodies?.x?.name, document.querySelector('#mc-tree .ft-row[data-id="body:x"] .ft-name')?.textContent]);
+    // Delete the cylinder: a Body-Delete/Keep feature, one body left.
+    await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
+    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bdel"]');
+    await settle();
+    const del = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, f: window.__sv.model.store.doc.features.map(f => f.name).join(","), bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(t0.folder === "Solid Bodies (2)" && t0.rows.join() === "Extrude1,Extrude2" && t0.faces === 9 && hid.faces.length === 6 && !hid.faces.some(n => n.startsWith("e:")) && Math.abs(hid.v - (8000 + Math.PI * 250)) < 0.1 && / sup/.test(hid.cls)
+      && red === 6 && nm[0] === "Base plate" && nm[1] === "Base plate" && del.n === 1 && /Body-Delete\/Keep1/.test(del.f) && !del.bad,
+      `model 1.60: Solid Bodies folder lists, hides, colours, renames and deletes bodies (FR-BODY-001) (${JSON.stringify({ t0, hid: { n: hid.faces.length, v: hid.v, cls: hid.cls }, red, nm, del })})`);
+    // Insert part (FR-BODY-005): this part saved, then inserted into itself as a second body.
+    await mp.evaluate(async () => { const b = await window.__sv.modeller.partBytes(); window.__sv.modeller.importBodyFile(new File([b], "plate.mcadprt")); });
+    await mp.waitForFunction(() => window.__sv.model.mode().kind === "feature", null, { timeout: 120000 });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const ip = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, v: window.__sv.model.last().props.volume, f: window.__sv.model.store.doc.features.at(-1)?.file, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(ip.n === 2 && Math.abs(ip.v - 16000) < 0.1 && ip.f === "plate.mcadprt" && !ip.bad, `model 1.61: Insert part puts a saved part in as a body (FR-BODY-005) (${JSON.stringify(ip)})`);
+    await ctx.close();
+  }
+
+  // --- 1.62: assemblies (FRS 10, FR-ASM-001..005, FR-MATE-001/002): new assembly, insert parts and a STEP model, move, hide, undo, save and reopen ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await idle();
+    const part = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    // New assembly closes the part; the Assembly tab and bar take over.
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden }));
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
+    await shown(2);
+    const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "Cube 10x10.stp")), cube);
+    await shown(3);
+    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent }));
+    // Move the second plate by typing its pose: X = 100, 90° about Z.
+    await mp.click("#asm-tree .ft-comp >> nth=1");
+    await mp.click('#asm-tools [data-ac="move"]');
+    await mp.fill('#asm-pm input[data-pose="x"]', "100");
+    await mp.fill('#asm-pm input[data-pose="rz"]', "90");
+    await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
+    await shown(3);
+    const mv = await mp.evaluate(() => { const c = window.__sv.asm.doc.components[1], d = window.__sv.viewer.parts[1].data; return { tf: c.tf.map(v => Math.round(v * 1e6) / 1e6), min: d.bboxMin.map(v => Math.round(v * 1e3) / 1e3), max: d.bboxMax.map(v => Math.round(v * 1e3) / 1e3), pm: document.querySelector("#asm-pm").hidden }; });
+    // Hide the cube from its row (it still counts in the mass properties), then undo.
+    await mp.hover("#asm-tree .ft-comp >> nth=2");
+    await mp.click('#asm-tree .ft-comp >> nth=2 >> [data-a="hide"]');
+    await shown(2);
+    const hid = await mp.evaluate(() => window.__sv.asm.props?.volume);
+    await mp.keyboard.press("ControlOrMeta+z");
+    await shown(3);
+    // Save to bytes and reopen: the same components and poses.
+    const re = await mp.evaluate(async () => {
+      const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
+      const before = sig();
+      const b = await window.__sv.asm.bytes();
+      await window.__sv.asm.openFile({ name: "rig.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) });
+      return { same: sig() === before, doc: document.querySelector("#st-doc, .doc-name")?.textContent ?? "" };
+    });
+    await shown(3);
+    // Opening a part leaves the assembly.
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
+    const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
+    check(!swap.model && swap.tab === "true" && swap.bar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+      && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
+      && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
+      `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
+    await ctx.close();
+  }
+
+  // --- 1.62: mates (FR-MATE-003/006/008/009, AT-P4-1/3): pick faces in the view, preview, DOF, conflict refused, constrained drag ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    // Two parts: a plate with a ⌀6 hole at (5, 0), and a ⌀6 × 20 pin.
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await idle();
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const plate = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a"), P("h", 5, 0), { id: "hc", t: "circle", c: "h", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    const pin = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), { id: "c", t: "circle", c: "o", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }]);
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(2);
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(200);
+    // Screen point of a world point, and a point on a vertical cylinder facing the camera.
+    const onCyl = (axis, r, out = true) => mp.evaluate(([a, rr, o]) => {
+      const v = window.__sv.viewer, c = v.camera;
+      c.updateMatrixWorld();
+      const h = [c.position.x - a[0], c.position.y - a[1]], l = Math.hypot(h[0], h[1]), s = o ? 1 : -1;
+      const p = [a[0] + (s * rr * h[0]) / l, a[1] + (s * rr * h[1]) / l, a[2]];
+      const V = c.matrixWorldInverse.elements, Pm = c.projectionMatrix.elements;
+      const mul = (M, x) => [0, 1, 2, 3].map(i => M[i] * x[0] + M[4 + i] * x[1] + M[8 + i] * x[2] + M[12 + i] * x[3]);
+      const q = mul(Pm, mul(V, [...p, 1])), rect = v.renderer.domElement.getBoundingClientRect();
+      return [rect.left + ((q[0] / q[3] + 1) / 2) * rect.width, rect.top + ((1 - q[1] / q[3]) / 2) * rect.height];
+    }, [axis, r, out]);
+    await mp.click('#asm-tools [data-ac="mate"]');
+    const pinAt = await mp.evaluate(() => window.__sv.asm.doc.components[1].tf.filter((_, i) => i % 4 === 3));
+    const p1 = await onCyl([pinAt[0], pinAt[1], pinAt[2] + 12], 3, true);
+    await mp.mouse.click(p1[0], p1[1]);
+    const p2 = await onCyl([5, 0, 9.3], 3, false);
+    await mp.mouse.click(p2[0], p2[1]);
+    await mp.waitForTimeout(100);
+    const pick = await mp.evaluate(() => { const m = window.__sv.asm.mating, g = window.__sv.viewer.parts[1].group.position; return { a: m.a?.comp, b: m.b?.comp, type: m.type, title: document.querySelector("#asm-pm h3")?.textContent, boxes: [...document.querySelectorAll("#asm-pm .pm-box")].map(e => e.textContent), moved: Math.hypot(g.x, g.y, g.z) > 1, picks: window.__sv.viewer.parts.reduce((s, p) => s + p.group.children.filter(o => o.userData.matePick).length, 0) }; });
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(2);
+    // Coincident: plate top on the pin's bottom face (picked by name), then close the panel with ✓.
+    const ref = await mp.evaluate(() => {
+      const a = window.__sv.asm, d = a.doc, faces = (k, f) => [...a.geo.get(k).entries()].find(([, g]) => f(g))?.[0];
+      return { top: faces(d.components[0].part, g => g.k === "plane" && g.n[2] > 0.99 && Math.abs(g.p[2] - 10) < 1e-6), bottom: faces(d.components[1].part, g => g.k === "plane" && g.n[2] < -0.99) };
+    });
+    await mp.evaluate(r => { const a = window.__sv.asm; Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } }); a.setMateType("coincident"); a.okMate(); }, ref);
+    await shown(2);
+    await mp.click("#asm-pm [data-a=ok]");
+    const m2 = await mp.evaluate(() => { const a = window.__sv.asm, t = a.doc.components[1].tf; return { n: a.doc.mates.length, types: a.doc.mates.map(m => m.type).join(), dof: a.solved.dof[a.doc.components[1].id], at: [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4), mark: document.querySelectorAll("#asm-tree .ft-comp .ft-name")[1].textContent, rows: document.querySelectorAll("#asm-tree .ft-mate").length, status: document.querySelector("#asm-status").textContent, panel: document.querySelector("#asm-pm").hidden }; });
+    // A conflicting distance mate is refused and nothing moves (AT-P4-3).
+    const conflict = await mp.evaluate(r => { const a = window.__sv.asm; a.startMate(); Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } }); a.setMateType("distance"); a.mating.value = 5; a.okMate(); return { n: a.doc.mates.length, problem: a.mating?.problem ?? "", err: document.querySelector("#asm-pm [data-mstatus]")?.className }; }, ref);
+    await mp.evaluate(() => window.__sv.asm.cancelMate());
+    // Dragging the mated pin sideways: it cannot leave the hole axis (FR-MATE-001).
+    const p3 = await onCyl([5, 0, 20], 3, true);
+    await mp.mouse.move(p3[0], p3[1]);
+    await mp.mouse.down();
+    await mp.mouse.move(p3[0] + 60, p3[1] + 10, { steps: 5 });
+    await mp.mouse.up();
+    await shown(2);
+    const drag = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4); });
+    // Delete the coincident mate from the tree: the pin can slide along the axis again.
+    await mp.hover("#asm-tree .ft-mate >> nth=1");
+    await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
+    await shown(2);
+    const after = await mp.evaluate(() => ({ n: window.__sv.asm.doc.mates.length, dof: window.__sv.asm.solved.dof[window.__sv.asm.doc.components[1].id] }));
+    const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
+    check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
+      && m2.n === 2 && m2.types === "concentric,coincident" && m2.dof === 1 && Math.abs(m2.at[0] - 5) < 1e-3 && Math.abs(m2.at[1]) < 1e-3 && Math.abs(m2.at[2] - 10) < 1e-3 && m2.mark === "(-) pin<1>" && m2.rows === 2 && m2.status === "2 components · Under defined" && m2.panel
+      && conflict.n === 2 && /over-defined/.test(conflict.problem) && conflict.err === "pm-err"
+      && Math.abs(drag[0] - 5) < 1e-3 && Math.abs(drag[1]) < 1e-3 && Math.abs(drag[2] - 10) < 1e-3 && after.n === 1 && after.dof === 2 && re === "concentric",
+      `asm 1.62: mates picked in the view, previewed, DOF, conflict refused, constrained drag, delete (FR-MATE-003/008, AT-P4-1/3) (${JSON.stringify({ pick, m2, conflict, drag, after, re })})`);
+    await ctx.close();
+  }
+
+  // --- 1.63: interference detection, BOM and assembly STEP (FR-ASM-020/024, AT-P4-4..6) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.props.partNumber = "BX-10";
+      d.material = { name: "Aluminium 6061", density: 2.7 };
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -5, -5), P("b", 5, -5), P("c", 5, 5), P("d", -5, 5), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const box = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    for (let k = 1; k <= 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "box.mcadprt")), box); await shown(k); }
+    // Second box 1 mm into the first: X = 9 (the first spans -5..5).
+    await mp.evaluate(() => { const a = window.__sv.asm, id = a.doc.components[1].id; a.change(d => { d.components[1].tf = [1, 0, 0, 9, 0, 1, 0, 0, 0, 0, 1, 0]; }); return id; });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="interfere"]');
+    await mp.waitForFunction(() => window.__sv.asm.interfere?.pairs, null, { timeout: 120000 });
+    const inf = await mp.evaluate(() => ({ title: document.querySelector("#asm-pm h3")?.textContent, status: document.querySelector("#asm-pm [data-istatus]")?.textContent, rows: [...document.querySelectorAll("#asm-pm [data-pair]")].map(e => e.textContent), v: window.__sv.asm.interfere.pairs[0]?.volume }));
+    await mp.click("#asm-pm [data-a=ok]");
+    // BOM: one row, quantity 2, mass from the part's material.
+    await mp.click('#asm-tools [data-ac="bom"]');
+    const bom = await mp.evaluate(() => ({ open: document.querySelector("#asm-bom").open, cells: [...document.querySelectorAll("#asm-bom tbody td")].map(e => e.textContent), csv: window.__sv.asm.bomCsvText() }));
+    await mp.click('#asm-bom [data-a="close"]');
+    // STEP of the assembly reopens with the same names and placements (AT-P4-6).
+    const step = [...await mp.evaluate(async () => [...await window.__sv.asm.stepBytes()])];
+    await mp.setInputFiles("#file-input", { name: "rig.step", mimeType: "model/step", buffer: Buffer.from(step) });
+    await mp.waitForFunction(() => !window.__sv.asm.doc && window.__sv.viewer.parts.length === 2, null, { timeout: 120000 });
+    const re = await mp.evaluate(() => { const flat = n => [n.name, ...n.children.flatMap(flat)]; return { tree: flat(window.__sv.viewer.tree), parts: window.__sv.viewer.parts.map(p => ({ name: p.data.name, x: [Math.round(p.data.bboxMin[0] * 1000) / 1000, Math.round(p.data.bboxMax[0] * 1000) / 1000] })) }; });
+    check(inf.title === "Interference detection" && inf.status === "1 interference · 100 mm³" && inf.rows.length === 1 && /^box<1> ↔ box<2>: 100 mm³$/.test(inf.rows[0]) && Math.abs(inf.v - 100) < 1e-6
+      && bom.open && bom.cells.join("|") === "1|box|BX-10||Aluminium 6061|2|0.0027" && bom.csv.split("\r\n")[1] === "1,box,BX-10,,Aluminium 6061,2,0.002700"
+      && re.parts.map(p => p.name).join() === "box,box" && re.tree.includes("Assembly1") && Math.abs(re.parts[1].x[0] - 4) < 1e-3 && Math.abs(re.parts[1].x[1] - 14) < 1e-3,
+      `asm 1.63: interference finds the 1 mm overlap, BOM counts and weighs, assembly STEP reopens placed (FR-ASM-020/024, AT-P4-4..6) (${JSON.stringify({ inf, bom, re })})`);
+    await ctx.close();
+  }
+
+  // --- 1.63: component patterns and exploded views (FR-ASM-022/023, AT-P4-5) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const plate = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -20), P("b", 20, -20), P("c", 20, 20), P("d", -20, 20), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a"), P("h", 0, 0), { id: "hc", t: "circle", c: "h", r: 4 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }]);
+    const pin = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), { id: "c", t: "circle", c: "o", r: 2 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(2);
+    // The pin at (12, 0, 5); a circular pattern of 4 about the plate's hole axis.
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 12, 0, 1, 0, 0, 0, 0, 1, 5]; }));
+    await shown(2);
+    await mp.click("#asm-tree .ft-comp >> nth=1");
+    await mp.click('#asm-tools [data-ac="pattern"]');
+    await mp.click('#asm-pm [data-pk="circular"]');
+    await mp.evaluate(() => { const a = window.__sv.asm, d = a.doc, hole = [...a.geo.get(d.components[0].part).entries()].find(([, g]) => g.k === "axis")[0]; a.patterning.dir = { comp: d.components[0].id, face: hole }; a.drawPatternPreview(); a.renderAll(); });
+    const pv = await mp.evaluate(() => ({ title: document.querySelector("#asm-pm h3")?.textContent, ghosts: window.__sv.asm.overlay.children.length, seeds: document.querySelector('#asm-pm [data-focus="seeds"]')?.textContent }));
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(5);
+    const pat = await mp.evaluate(() => {
+      const v = window.__sv.viewer.parts.map(p => { const c = [(p.data.bboxMin[0] + p.data.bboxMax[0]) / 2, (p.data.bboxMin[1] + p.data.bboxMax[1]) / 2]; return c.map(x => Math.round(x * 1000) / 1000); });
+      return { name: window.__sv.asm.doc.patterns[0].name, inst: [...document.querySelectorAll("#asm-tree .ft-inst .ft-name")].map(e => e.textContent), at: v.slice(1), bom: window.__sv.asm.bom().map(r => `${r.part}:${r.qty}`).join() };
+    });
+    // Auto explode, then collapse from the tree.
+    await mp.click('#asm-tools [data-ac="explode"]');
+    await mp.click('#asm-pm [data-a="auto"]');
+    const steps = await mp.evaluate(() => window.__sv.asm.exploding.steps.length);
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(5);
+    await mp.waitForTimeout(100);
+    const ex = await mp.evaluate(() => ({ row: document.querySelector("#asm-tree .ft-explode")?.className, moved: window.__sv.viewer.parts.slice(1).every(p => p.group.position.length() > 5), plate: window.__sv.viewer.parts[0].group.position.length() }));
+    await mp.hover("#asm-tree .ft-explode");
+    await mp.click('#asm-tree .ft-explode [data-a="xp"]');
+    await mp.waitForTimeout(800);
+    const col = await mp.evaluate(() => ({ exploded: window.__sv.asm.exploded, back: window.__sv.viewer.parts.every(p => p.group.position.length() < 1e-6) }));
+    const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "p.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return [window.__sv.asm.doc.patterns?.length, window.__sv.asm.doc.explodes?.[0]?.steps.length]; });
+    await shown(5);
+    check(pv.title === "Circular component pattern" && pv.ghosts === 3 && pv.seeds === "pin<1>" && pat.name === "CircPattern1" && pat.inst.join() === "pin<2>,pin<3>,pin<4>"
+      && JSON.stringify(pat.at) === JSON.stringify([[12, 0], [0, 12], [-12, 0], [0, -12]]) && pat.bom === "plate:1,pin:4"
+      && steps === 4 && / on/.test(ex.row) && ex.moved && ex.plate < 1e-9 && col.exploded === null && col.back && re[0] === 1 && re[1] === 4,
+      `asm 1.63: circular component pattern previewed and counted in the BOM, auto explode and collapse (FR-ASM-022/023, AT-P4-5) (${JSON.stringify({ pv, pat, steps, ex, col, re })})`);
+    await ctx.close();
+  }
+
+  // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "c0", r: 10 }] }); }));
+    await settle();
+    // Helix from the flyout: on the circle sketch, drawn in the view while the panel is open.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Helix/Spiral")');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="pitch"]', "5");
+    await mp.press('#mc-pm input[data-num="pitch"]', "Tab");
+    await mp.fill('#mc-pm input[data-num="revs"]', "10");
+    await mp.press('#mc-pm input[data-num="revs"]', "Tab");
+    await settle();
+    const hx = await mp.evaluate(() => { const m = window.__sv.model.mode(), c = window.__sv.model.last().curves ?? {}; const pts = Object.values(c)[0] ?? []; return { kind: m.kind, type: m.draft?.type, sketch: m.draft?.sketch, title: document.querySelector("#mc-pm h3")?.textContent, n: pts.length, top: pts.at(-1)?.[2], drawn: window.__sv.modeller.decor.children.length }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(hx.type === "helix" && hx.sketch === "s1" && hx.title === "Helix/Spiral" && hx.n > 100 && Math.abs(hx.top - 50) < 1e-6 && hx.drawn > 0, `model 1.55: Helix/Spiral on a sketch circle, previewed in the view (FR-FT-083) (${JSON.stringify(hx)})`);
+    // Sweep: along the helix with a circular profile Ø2 (a spring, AT-P3-1).
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Sweep")');
+    await settle();
+    const sw0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { path: m.draft?.path, circ: m.draft?.circular?.v }; });
+    await mp.fill('#mc-pm input[data-num="circular"]', "2");
+    await mp.press('#mc-pm input[data-num="circular"]', "Tab");
+    await settle();
+    const live = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.click("#mc-ok");
+    await settle();
+    const L = 10 * Math.hypot(2 * Math.PI * 10, 5);
+    const spring = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(sw0.path?.helix && Math.abs(spring.v - Math.PI * L) / (Math.PI * L) < 1e-4 && Math.abs(live - spring.v) < 1e-6 && !spring.bad && /Sweep1/.test(spring.names), `model 1.55: Sweep with a circular profile along the helix makes a spring, previewed live (AT-P3-1) (${JSON.stringify(sw0)}, ${live}, ${JSON.stringify(spring)} vs ${(Math.PI * L).toFixed(2)})`);
+    // Loft between a square and a circle 50 mm apart (AT-P3-2), picked by default as the last two unused sketches.
+    await mp.evaluate(() => window.__sv.model.store.change("Profiles", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push(
+        { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "sq", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 40, -20), P("b", 80, -20), P("c", 80, 20), P("d", 40, 20), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "ci", type: "sketch", name: "Sketch3", plane: { plane: "p1" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 60, y: 0 }, { id: "k", t: "circle", c: "o", r: 15 }] });
+    }));
+    await settle();
+    const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Loft")');
+    await settle();
+    const lp = await mp.evaluate(() => ({ profiles: window.__sv.model.mode().draft?.profiles, rows: document.querySelectorAll('#mc-pm select[data-k^="lp"]').length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const loft = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    const lv = loft.v - v0;
+    check(JSON.stringify(lp.profiles) === '["sq","ci"]' && lp.rows === 3 && !loft.bad && lv > Math.PI * 225 * 50 && lv < 1600 * 50, `model 1.55: Loft through a square and a circle (AT-P3-2) (${JSON.stringify(lp)}, ${lv.toFixed(1)})`);
+    // In Russian: the panel and the flyout.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "helix").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, legends: [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Спираль" && !/[A-Za-z]{2}/.test(ru.legends), `model 1.55: helix panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);
@@ -3064,5 +3972,5 @@ try {
   await browser.close();
   server.close();
 }
-console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
+console.log(`${shardN > 1 ? `\nshard ${shardI}/${shardN}: ` : "\n"}${failures ? `${failures} check(s) failed` : "all checks passed"} in ${Math.round((Date.now() - started) / 1000)} s`);
 process.exit(failures ? 1 : 0);

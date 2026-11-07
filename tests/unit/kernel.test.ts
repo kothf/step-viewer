@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
+import type { Feature, FilletFeature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import { occ } from "./occ";
 
 const rect = (id: string, cx: number, cy: number, w: number, h: number, plane: SketchFeature["plane"] = { std: "XY" }): SketchFeature => {
@@ -543,4 +543,327 @@ test("multiple radius fillet: each edge its own radius (FR-FT-031)", async () =>
   // Off: every edge takes the feature's radius again.
   r = run(m, doc([s1, ex, { id: "f2", type: "fillet", name: "Fillet1", radius: { v: 5 }, edges } as Feature]));
   close(r.props!.volume, 120000 - 2 * corner(5), 1e-6);
+});
+
+test("converted curves follow their model edge and dangle when it is gone (FR-SK-064)", async () => {
+  const m = new Modeller(await occ());
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 0, 0, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  // A boss on the hole's top edge (converted circle, drawn too small) and a line on the block's right top edge (drawn off).
+  const s3: SketchFeature = {
+    id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "f1:end" } }, dims: [],
+    ents: [
+      { id: "c0", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "c0", r: 3 },
+      { id: "q1", t: "point", x: 40, y: -10 }, { id: "q2", t: "point", x: 40, y: 10 }, { id: "ln", t: "line", a: "q1", b: "q2", cons: true },
+    ],
+    rels: [
+      { id: "r1", t: "fix", e: ["c"], ext: { faces: ["f1:end", "f2:side:s2k"] } },
+      { id: "r2", t: "fix", e: ["ln"], ext: { faces: ["f1:end", "f1:side:s1l2"] } },
+    ],
+  };
+  const boss: Feature = { id: "f3", type: "extrude", name: "Boss", sketch: "s3", op: "boss", end: "blind", depth: { v: 5 } };
+  let r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, s2, cut, s3, boss]));
+  const moved = r.sketches.s3;
+  assert.ok(moved, "the sketch follows the model");
+  const circ = moved.ents.find(e => e.id === "c") as SkEnt & { t: "circle" };
+  close(circ.r, 5);
+  const pts = moved.ents.filter(e => e.id === "q1" || e.id === "q2") as (SkEnt & { t: "point" })[];
+  for (const p of pts) close(Math.abs(p.x), 50);
+  close(Math.abs(pts[0].y - pts[1].y), 60);
+  // The boss uses the moved circle: it fills the hole's top with a 5 mm cylinder of radius 5.
+  close(r.props!.volume, 120000 - 500 * Math.PI + 125 * Math.PI);
+  assert.ok(!moved.rels.some(x => x.dangling));
+
+  // Wider block: the line moves with its edge.
+  r = run(m, doc([rect("s1", 0, 0, 140, 60), ex, s2, cut, s3, boss]));
+  for (const p of r.sketches.s3.ents.filter(e => e.id === "q1" || e.id === "q2") as (SkEnt & { t: "point" })[]) close(Math.abs(p.x), 70);
+
+  // The edge is gone (no hole any more): dangling, the circle stays, and the sketch warns.
+  const noHole = structuredClone(s3);
+  noHole.rels[0].ext = { faces: ["f1:end", "f9:side:x"] };
+  r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, noHole, boss]));
+  const dg = r.sketches.s3;
+  assert.equal(dg.rels.find(x => x.id === "r1")!.dangling, true);
+  assert.ok(!dg.rels.find(x => x.id === "r2")!.dangling);
+  close((dg.ents.find(e => e.id === "c") as SkEnt & { t: "circle" }).r, 3);
+  const st = r.statuses.find(s => s.id === "s3")!;
+  assert.equal(st.code, "warning");
+  // Evaluated again from the moved sketch: nothing more to change (no rebuild loop).
+  const again = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex, dg, boss]));
+  assert.equal(again.sketches.s3, undefined);
+});
+
+test("helix and circular-profile sweep: a spring (AT-P3-1, FR-FT-081/083)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = circle("s1", 0, 0, 10, { std: "XY" });
+  const hx: Feature = { id: "h1", type: "helix", name: "Helix1", sketch: "s1", mode: "pitchRev", pitch: { v: 5 }, revs: { v: 10 }, height: { v: 50 } };
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 2 }, path: { helix: "h1" } };
+  const r = run(m, doc([s1, hx, sw]));
+  const L = 10 * Math.hypot(2 * Math.PI * 10, 5);
+  close(r.props!.volume, Math.PI * L, 1e-4);
+  // The helix curve for the view: starts on the circle, ends 50 mm up.
+  const pts = r.curves.h1;
+  close(Math.hypot(pts[0][0], pts[0][1]), 10);
+  close(pts.at(-1)![2], 50);
+  // Height and revolutions, reversed, with taper: ends 30 mm down, wider.
+  const hx2: Feature = { ...hx, mode: "heightRev", height: { v: 30 }, revs: { v: 3 }, reverse: true, taper: { v: (5 * Math.PI) / 180 } };
+  const r2 = m.evaluate(doc([s1, hx2]));
+  const end = r2.curves.h1.at(-1)!;
+  close(end[2], -30);
+  close(Math.hypot(end[0], end[1]), 10 + 30 * Math.tan((5 * Math.PI) / 180), 1e-6);
+});
+
+test("loft between a square and a circle (AT-P3-2, FR-FT-082)", async () => {
+  const m = new Modeller(await occ());
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } };
+  const sq = rect("s1", 0, 0, 40, 40);
+  const ci = circle("s2", 0, 0, 15, { plane: "p1" });
+  const lf: Feature = { id: "l1", type: "loft", name: "Loft1", op: "boss", profiles: ["s1", "s2"] };
+  const r = run(m, doc([sq, pl, ci, lf]));
+  const v = r.props!.volume;
+  // Between the frustum-like bounds: more than the cylinder of the circle, less than the square prism.
+  assert.ok(v > Math.PI * 225 * 50 && v < 1600 * 50, `${v}`);
+  assert.ok(r.body!.names.includes("l1:start") && r.body!.names.includes("l1:end"), r.body!.names.join());
+  // Ruled loft: straight sections, a cut through it removes material.
+  const ruled: Feature = { ...lf, ruled: true };
+  run(m, doc([sq, pl, ci, ruled]));
+});
+
+test("sweep a profile along a sketch path, boss and cut (FR-FT-080)", async () => {
+  const m = new Modeller(await occ());
+  // Path on Front (XZ): a line up 40 then a quarter arc R20; profile: a 6×4 rectangle on Top at the path start.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const path: SketchFeature = { id: "ps", type: "sketch", name: "Path", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+    P("a", 0, 0), P("b", 0, 40), P("c", 20, 40), P("d", 20, 60),
+    { id: "pl", t: "line", a: "a", b: "b" }, { id: "pa", t: "arc", c: "c", a: "d", b: "b" },
+  ] };
+  const prof = rect("pr", 0, 0, 6, 4);
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "ps" } };
+  const r = run(m, doc([path, prof, sw]));
+  const L = 40 + (Math.PI / 2) * 20;
+  close(r.props!.volume, 24 * L, 1e-3);
+  assert.ok(r.body!.names.some(n => n.startsWith("w1:side:prl")), r.body!.names.join());
+  // Keep normal constant along a straight path is the same prism.
+  const straight: SketchFeature = { ...path, ents: [P("a", 0, 0), P("b", 0, 40), { id: "pl", t: "line", a: "a", b: "b" }] };
+  const r2 = run(m, doc([straight, prof, { ...sw, orient: "normal" } as Feature]));
+  close(r2.props!.volume, 24 * 40, 1e-6);
+  // A circular cut swept through a block.
+  const blk = rect("b", 0, 0, 30, 30);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "b", op: "boss", end: "blind", depth: { v: 30 } };
+  const cut: Feature = { id: "w2", type: "sweep", name: "Cut-Sweep1", op: "cut", circular: { v: 4 }, path: { sketch: "ps" } };
+  const r3 = run(m, doc([blk, ex, straight, cut]));
+  close(r3.props!.volume, 27000 - Math.PI * 4 * 30, 1e-4);
+});
+
+test("rib: parallel to sketch fills an L bracket's corner, normal to sketch spans a channel (FR-FT-062)", async () => {
+  const m = new Modeller(await occ());
+  const line = (id: string, plane: SketchFeature["plane"], a: [number, number], b: [number, number]): SketchFeature => ({
+    id, type: "sketch", name: id, plane, rels: [], dims: [],
+    ents: [{ id: `${id}a`, t: "point", x: a[0], y: a[1] }, { id: `${id}b`, t: "point", x: b[0], y: b[1] }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }],
+  });
+  const base: Feature[] = [
+    rect("b", 0, 0, 100, 60), { id: "bx", type: "extrude", name: "Base", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("w", -45, 0, 10, 60), { id: "wx", type: "extrude", name: "Wall", sketch: "w", op: "boss", end: "blind", depth: { v: 60 } },
+  ];
+  // Diagonal from the wall (x = -40, z = 50) to the base (x = 40, z = 10): a 80 × 40 triangle, 4 thick.
+  const r1 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "parallel" }]));
+  close(r1.props!.volume, 90000 + 6400);
+  // One side: the same volume, all of it on one side of the sketch plane.
+  const r2 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "one", dir: "parallel" }]));
+  close(r2.props!.volume, 90000 + 6400);
+  // Flip with nowhere to go the other way still finds the body.
+  const r3 = run(m, doc([...base, line("r", { std: "XZ" }, [-40, 50], [40, 10]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "parallel", flip: true }]));
+  close(r3.props!.volume, 90000 + 6400);
+  // A channel: walls at both ends; a line across the top, run down to the floor: 80 × 50 × 4.
+  const chan: Feature[] = [...base, rect("w2", 45, 0, 10, 60), { id: "w2x", type: "extrude", name: "Wall2", sketch: "w2", op: "boss", end: "blind", depth: { v: 60 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 60 } }];
+  const r4 = run(m, doc([...chan, line("r", { plane: "p" }, [-45, 0], [45, 0]), { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "normal" }]));
+  close(r4.props!.volume, 120000 + 16000);
+  // A bent chain on one side or the other: n × the start direction is "one" (the inside of this bend).
+  const bent = (side: "one" | "other"): SketchFeature[] | Feature[] => [...chan, {
+    id: "r", type: "sketch", name: "r", plane: { plane: "p" }, rels: [], dims: [],
+    ents: [{ id: "ra", t: "point", x: -45, y: 0 }, { id: "rb0", t: "point", x: 0, y: 0 }, { id: "rc", t: "point", x: 0, y: 20 },
+      { id: "rl1", t: "line", a: "ra", b: "rb0" }, { id: "rl2", t: "line", a: "rb0", b: "rc" }],
+  }, { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side, dir: "normal" }];
+  close(run(m, doc(bent("one") as Feature[])).props!.volume, 120000 + (40 * 4 + 20 * 4 - 16) * 50);
+  close(run(m, doc(bent("other") as Feature[])).props!.volume, 120000 + (44 * 4 + 24 * 4 - 16) * 50);
+  // A closed sketch is refused.
+  const bad = m.evaluate(doc([...base, rect("q", 0, 0, 10, 10, { std: "XZ" }), { id: "rb", type: "rib", name: "Rib1", sketch: "q", thickness: { v: 4 }, side: "mid", dir: "parallel" }]));
+  assert.equal(bad.statuses.find(s => s.id === "rb")?.code, "E-RIB-OPEN");
+});
+
+test("split line: a projected circle splits the top and bottom faces, or only the picked one (FR-FT-084)", async () => {
+  const m = new Modeller(await occ());
+  const base: Feature[] = [rect("s", 0, 0, 40, 40), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } }, circle("c", 0, 0, 5, { plane: "p" })];
+  const all = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  close(all.props!.volume, 32000);
+  assert.equal(all.body!.faces.length, 8);
+  assert.equal(all.body!.names.filter(n => n === "x:end").length, 2);
+  const one = run(m, doc([...base, { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [{ name: "x:end" }] }]));
+  assert.equal(one.body!.faces.length, 7);
+  close(one.props!.volume, 32000);
+  // A sketch that misses the part is an error.
+  const miss = m.evaluate(doc([...base.slice(0, 3), circle("c", 100, 0, 5, { plane: "p" }), { id: "sp", type: "split", name: "Split Line1", sketch: "c", faces: [] }]));
+  assert.equal(miss.statuses.find(s => s.id === "sp")?.code, "E-SPL-MISS");
+});
+
+test("multibody: new body, split by a plane and combine back (AT-P3-3), subtract, delete, move and copy (FRS 9.10)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  // Split at x = 5 (a plane through the Right plane offset 5): two bodies, volume kept.
+  const pl: Feature = { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 5 } };
+  const sp: Feature = { id: "b", type: "bsplit", name: "Split1", plane: { plane: "p" }, bodies: [] };
+  const r1 = run(m, doc([...box, pl, sp]));
+  close(r1.props!.volume, 8000);
+  assert.equal(r1.props!.bodies, 2);
+  // Combine them back (add): one body, same volume.
+  const left = { name: "x:side:sl4" }, right = { name: "x:side:sl2" };
+  const r2 = run(m, doc([...box, pl, sp, { id: "c", type: "combine", name: "Combine1", op: "add", main: left, tools: [right] }]));
+  close(r2.props!.volume, 8000);
+  assert.equal(r2.props!.bodies, 1);
+  // A boss that does not merge is a second body, even where it overlaps; subtract it from the first.
+  const cyl: Feature[] = [circle("k", 20, 0, 5, { face: { name: "x:end" } }), { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false }];
+  const r3 = run(m, doc([...box, ...cyl]));
+  assert.equal(r3.props!.bodies, 2);
+  close(r3.props!.volume, 8000 + Math.PI * 250);
+  const r4 = run(m, doc([...box, ...cyl, { id: "c", type: "combine", name: "Combine1", op: "subtract", main: { name: "x:start" }, tools: [{ name: "e:end" }] }]));
+  assert.equal(r4.props!.bodies, 1);
+  close(r4.props!.volume, 8000);
+  // Delete the cylinder body; keep only it.
+  close(run(m, doc([...box, ...cyl, { id: "d", type: "delbody", name: "Body-Delete/Keep1", bodies: [{ name: "e:end" }] }])).props!.volume, 8000);
+  close(run(m, doc([...box, ...cyl, { id: "d", type: "delbody", name: "Body-Delete/Keep1", bodies: [{ name: "e:end" }], keep: true }])).props!.volume, Math.PI * 250);
+  // Move the box 100 along x: names hold, so a later feature still finds its end face; copy doubles it.
+  const mv = run(m, doc([...box, { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "x:end" }], dx: { v: 100 }, dy: { v: 0 }, dz: { v: 0 } },
+    circle("k2", 100, 0, 3, { face: { name: "x:end" } }), { id: "h", type: "extrude", name: "Cut1", sketch: "k2", op: "cut", end: "blind", depth: { v: 4 } }]));
+  close(mv.props!.volume, 8000 - Math.PI * 36);
+  close(mv.props!.com[0], 100, 1e-3);
+  const cp = run(m, doc([...box, { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "x:end" }], copy: true, dx: { v: 0 }, dy: { v: 50 }, dz: { v: 0 } }]));
+  assert.equal(cp.props!.bodies, 2);
+  close(cp.props!.volume, 16000);
+});
+
+test("variable radius fillet: an edge going from 1 to 4 mm (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const edge = { faces: ["x:side:sl1", "x:side:sl2"] as [string, string] };
+  const vol = (f: Partial<FilletFeature>) => run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [edge], ...f } as Feature])).props!.volume;
+  const full = 8000;
+  // A linear radius r(z) from 1 at the bottom to 4 at the top: (1 - π/4)·∫r² dz = (1 - π/4)·10·(1 + 4 + 16)/3.
+  const up = full - vol({ variable: true, edges: [{ ...edge, r: 1, r2: 4, at: [20, -10, 0] }] });
+  const down = full - vol({ variable: true, edges: [{ ...edge, r: 1, r2: 4, at: [20, -10, 10] }] });
+  const want = (1 - Math.PI / 4) * 70;
+  assert.ok(Math.abs(up - want) / want < 0.03, `${up} vs ${want}`);
+  assert.ok(Math.abs(down - want) / want < 0.03, `${down} vs ${want}`);
+  // Constant 1 and 4 bound it.
+  assert.ok(up > (1 - Math.PI / 4) * 10 && up < (1 - Math.PI / 4) * 160);
+});
+
+test("imported body with a gap: check and heal reports it and closes it (FR-FT-130/131, AT-P3-4)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  // A 10 mm cube as six loose faces, the top one 0.02 mm too high: a shell with a gap.
+  const P = (x: number, y: number, z: number) => new oc.gp_Pnt_3(x, y, z);
+  const quad = (a: number[][]) => {
+    const w = new oc.BRepBuilderAPI_MakePolygon_4(P(a[0][0], a[0][1], a[0][2]), P(a[1][0], a[1][1], a[1][2]), P(a[2][0], a[2][1], a[2][2]), P(a[3][0], a[3][1], a[3][2]), true).Wire();
+    return new oc.BRepBuilderAPI_MakeFace_15(w, true).Face();
+  };
+  const z1 = 10.02;
+  const quads = [
+    [[0, 0, 0], [0, 10, 0], [10, 10, 0], [10, 0, 0]], [[0, 0, z1], [10, 0, z1], [10, 10, z1], [0, 10, z1]],
+    [[0, 0, 0], [10, 0, 0], [10, 0, 10], [0, 0, 10]], [[0, 10, 0], [0, 10, 10], [10, 10, 10], [10, 10, 0]],
+    [[0, 0, 0], [0, 0, 10], [0, 10, 10], [0, 10, 0]], [[10, 0, 0], [10, 10, 0], [10, 10, 10], [10, 0, 10]],
+  ];
+  const comp = new oc.TopoDS_Compound(), b = new oc.BRep_Builder();
+  b.MakeCompound(comp);
+  for (const q of quads) b.Add(comp, quad(q));
+  oc.BRepTools.Write_4(comp, "/gap.brep", false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+  const brep = oc.FS.readFile("/gap.brep", { encoding: "utf8" });
+  const imp = (heal: boolean): Feature => ({ id: "i", type: "import", name: "Imported1", file: "gap.brep", brep, heal, tol: { v: 0.1 } });
+  // As read: faces only, no volume.
+  const raw = m.evaluate(doc([imp(false)]));
+  assert.equal(raw.body!.faces.length, 6);
+  // Healed: the report names the gap, then one closed valid solid of ~1000 mm³.
+  const r = m.evaluate(doc([imp(true)]));
+  const st = r.statuses.find(s => s.id === "i")!;
+  assert.equal(st.code, "warning");
+  const mm = st.warning!.match(/^Check and heal: (\d+) free edges before, (\d+) after; (valid|not valid) before, (valid|not valid) after; (\d+) solid bodies\.$/);
+  assert.ok(mm, st.warning);
+  assert.ok(+mm![1] > 0 && +mm![2] === 0 && mm![4] === "valid" && mm![5] === "1", st.warning);
+  close(m.props(r.body!).volume, 1000, 0.01);
+  // A cut on the healed body works.
+  const cut = run(m, doc([imp(true), circle("k", 5, 5, 2, { std: "XY" }), { id: "c", type: "extrude", name: "Cut1", sketch: "k", op: "cut", end: "through", depth: { v: 1 }, flip: true }]));
+  assert.ok(cut.props!.volume < 1000 - Math.PI * 4 * 9);
+});
+
+test("full round fillet: a 4 mm wall's top becomes a half cylinder tangent to both sides (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const wall: Feature[] = [rect("s", 0, 0, 40, 4), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r = run(m, doc([...wall, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [], kind: "full", faces1: [{ name: "x:side:sl1" }], center: [{ name: "x:end" }], faces2: [{ name: "x:side:sl3" }] } as Feature]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  // Removed: the 4×2 strip on top minus the half disc of radius 2, along 40 mm.
+  close(r.props!.volume, 40 * 4 * 10 - (8 - 2 * Math.PI) * 40, 1e-4);
+  assert.ok(r.body!.names.some(n => n.startsWith("f:round:")));
+  assert.ok(!r.body!.names.includes("x:end"));
+  // Sides that are not parallel are refused.
+  const bad = m.evaluate(doc([...wall, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 1 }, edges: [], kind: "full", faces1: [{ name: "x:side:sl1" }], center: [{ name: "x:end" }], faces2: [{ name: "x:side:sl2" }] } as Feature]));
+  assert.equal(bad.statuses[2].code, "E-FT-FULLROUND");
+});
+
+test("face fillet: rounds where the top face meets the side faces (FR-FT-032)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r = run(m, doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [], kind: "face", faces1: [{ name: "x:end" }], faces2: [{ name: "x:side:sl1" }, { name: "x:side:sl3" }] } as Feature]));
+  assert.ok(r.statuses.every(s => s.ok), JSON.stringify(r.statuses));
+  close(r.props!.volume, 8000 - (1 - Math.PI / 4) * 4 * 40 * 2, 1e-4);
+  assert.equal(r.body!.names.filter(n => n.startsWith("f:fillet:")).length, 2);
+  const apart = m.evaluate( doc([...box, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [], kind: "face", faces1: [{ name: "x:end" }], faces2: [{ name: "x:start" }] } as Feature]));
+  assert.equal(apart.statuses[2].code, "E-FT-FACESETS");
+});
+
+test("scale: uniform about the origin, per axis about the centroid (FR-BODY-006)", async () => {
+  const m = new Modeller(await occ());
+  const box: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }];
+  const u = run(m, doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 2 } } as Feature]));
+  close(u.props!.volume, 64000, 1e-6);
+  close(u.props!.com[2], 10, 1e-6);
+  assert.ok(u.body!.names.includes("x:end"));
+  const a = run(m, doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [{ name: "x:end" }], about: "centroid", axes: true, factor: { v: 1 }, fx: { v: 0.5 }, fy: { v: 1 }, fz: { v: 3 } } as Feature]));
+  close(a.props!.volume, 8000 * 1.5, 1e-6);
+  close(a.props!.com[2], 5, 1e-6);
+  const z = m.evaluate( doc([...box, { id: "k", type: "scale", name: "Scale1", bodies: [], about: "origin", factor: { v: 0 } } as Feature]));
+  assert.equal(z.statuses[2].code, "E-BDY-SCALE");
+});
+
+test("bodies folder: keys by the feature that made each body, stable through later features (FR-BODY-001)", async () => {
+  const m = new Modeller(await occ());
+  const base: Feature[] = [rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } },
+    circle("k", 40, 0, 5, { std: "XY" }), { id: "e", type: "extrude", name: "Extrude2", sketch: "k", op: "boss", end: "blind", depth: { v: 10 }, merge: false }];
+  const d = doc(base);
+  const a = m.evaluate(d);
+  const info = m.bodyInfo(a.body!, d);
+  assert.deepEqual(info.map(b => b.key), ["x", "e"]);
+  close(info[0].volume, 8000);
+  close(info[1].volume, Math.PI * 250, 1e-4);
+  // A fillet on the box keeps its key; a copy of the cylinder is a body made by the Move/Copy.
+  const more = doc([...base, { id: "f", type: "fillet", name: "Fillet1", radius: { v: 2 }, edges: [{ faces: ["x:side:sl1", "x:side:sl2"] }] } as Feature,
+    { id: "mv", type: "movebody", name: "Body-Move/Copy1", bodies: [{ name: "e:side:kk" }], copy: true, dx: { v: 0 }, dy: { v: 30 }, dz: { v: 0 } } as Feature]);
+  const b = m.evaluate(more);
+  assert.deepEqual(b.statuses.filter(s => !s.ok), []);
+  assert.deepEqual(m.bodyInfo(b.body!, more).map(x => x.key), ["x", "e", "mv"]);
+});
+
+test("insert part: another part's result as BREP text goes in as a body (FR-BODY-005)", async () => {
+  const m = new Modeller(await occ());
+  const other = doc([rect("s", 0, 0, 40, 20), { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+  const r = m.evaluate(other);
+  const text = new Modeller(await occ()).brepText(r.body!);
+  assert.equal(text.solids, 1);
+  assert.equal(text.faces, 6);
+  const here = doc([circle("k", 0, 0, 5, { std: "XY" }), { id: "c", type: "extrude", name: "Extrude1", sketch: "k", op: "boss", end: "blind", depth: { v: 30 } },
+    { id: "i", type: "import", name: "Imported1", file: "plate.mcadprt", brep: text.brep } as Feature]);
+  const out = run(m, here);
+  assert.equal(out.props!.bodies, 2);
+  close(out.props!.volume, 8000 + Math.PI * 25 * 30, 1e-6);
 });
