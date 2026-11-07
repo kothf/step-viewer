@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-11-07
+
+### Added
+- **Configurations** (FR-CFG-001/002): variants of a part from ◇ at the top of the Features tree. Each keeps its own dimension and parameter values, instance counts, variables, suppressed features and material; switching rebuilds the part, and undo can switch back.
+- **Reorder features** (FR-HIS-006): drag a feature in the tree onto another, or press Alt+↑/↓. A sketch used only by the moved feature goes with it. A move that would put a feature before something it uses is refused with the reason.
+- **Parent/child marks** (FR-HIS-007): with a feature selected, ↑ marks the features it uses and ↓ the ones that use it.
+
 ## [1.25.0] - 2026-11-07
 
 ### Added
@@ -343,7 +350,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.25.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.26.0...HEAD
+[1.26.0]: https://github.com/kothf/step-viewer/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/kothf/step-viewer/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/kothf/step-viewer/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/kothf/step-viewer/compare/v1.22.0...v1.23.0

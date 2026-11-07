@@ -1433,7 +1433,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForSelector("#mc-bar:not([hidden])");
     const start = await mp.evaluate(() => ({ tab: document.querySelector("#t-features").getAttribute("aria-selected"), rows: [...document.querySelectorAll("#mc-tree .ft-name")].map(e => e.textContent) }));
-    check(start.tab === "true" && start.rows.join("|") === "Part1|Material <not specified>|Equations|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
+    check(start.tab === "true" && start.rows.join("|") === "Part1|Material <not specified>|Configuration: Default|Equations|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
     // Sketch on Top: corner rectangle from the origin, then 100 × 60 by dimensions (AT-P1-1 style).
     await mp.click('[data-c="sketch"]');
     await mp.click('#mc-pm [data-std="XY"]');
@@ -1630,7 +1630,7 @@ try {
     await idle();
     await mp.waitForTimeout(500);
     const onTop = await mp.evaluate(() => ({ kind: window.__sv.model.mode().kind, plane: window.__sv.model.store.doc.features[0]?.plane, empty: document.querySelector("#mc-empty").hidden }));
-    check(rows0.startsWith("Part1|Material <not specified>|Equations|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
+    check(rows0.startsWith("Part1|Material <not specified>|Configuration: Default|Equations|Top (XY)") && onTop.kind === "sketch" && onTop.plane?.std === "XY" && onTop.empty, `model 1.19: an empty part offers the three planes; Top starts a sketch (${rows0}, ${JSON.stringify(onTop)})`);
     // Polygon: six equal sides on a construction circle.
     await mp.click('[data-c="sk:polygon"]');
     await click([0, 0]);
@@ -2156,6 +2156,37 @@ try {
     const vDr = await vol(), stDr = await lastSt();
     const wedge = 100 * 0.5 * 25 * 25 * Math.tan(5 * Math.PI / 180);
     check(draftPanel.faces === "1 face" && stDr === "draft:ok" && Math.abs(vH25 - vDr - wedge) < 30, `model 1.26: draft 5° on the front face about Top (${JSON.stringify(draftPanel)}, ${stDr}, ${(vH25 - vDr).toFixed(1)} ≈ ${wedge.toFixed(1)})`);
+    // 1.26: reorder: Alt+↑ moves Draft1 above Hole1 (independent); dragging it above Extrude1 (its parent) is refused.
+    const fid = n => mp.evaluate(n => window.__sv.model.store.doc.features.find(f => f.name === n).id, n);
+    const order = () => mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    const drId = await fid("Draft1"), exId = await fid("Extrude1");
+    await mp.click(`#mc-tree .ft-row[data-id="${drId}"]`);
+    const relMarks = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row.ft-parent .ft-name")].map(e => e.textContent).join(","));
+    await mp.focus(`#mc-tree .ft-row[data-id="${drId}"]`);
+    await mp.keyboard.press("Alt+ArrowUp");
+    await idle();
+    const ord1 = await order(), vMv = await vol();
+    await mp.dragAndDrop(`#mc-tree .ft-row[data-id="${drId}"]`, `#mc-tree .ft-row[data-id="${exId}"]`, { targetPosition: { x: 20, y: 2 } });
+    await idle();
+    const ord2 = await order();
+    const refused = await mp.evaluate(() => [...document.querySelectorAll(".toast")].map(e => e.textContent).join(" | "));
+    check(/Draft1,Hole1$/.test(ord1) && Math.abs(vMv - vDr) < 1 && ord2 === ord1 && /Draft1 can't come before Extrude1/.test(refused) && /Extrude1/.test(relMarks), `model 1.26: reorder with Alt+↑ works; a drag above the parent is refused (${ord1}, ${Math.round(vMv)}, ${refused}, marks ${relMarks})`);
+    // 1.26: configurations: a second one with Height 15; switching back restores the 25 mm part.
+    await mp.click('#mc-tree .ft-row[data-id="configs"]');
+    await mp.click('#mc-pm [data-a="add"]');
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Height 15", d => { d.vars[0].expr = "15"; }));
+    await idle();
+    const vCfg2 = await vol();
+    const cfgRows = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .cfg-row input")].map(e => e.value).join(","));
+    await mp.click('#mc-pm .cfg-row[data-i="0"] [data-c="act"]');
+    await idle();
+    const vCfg1 = await vol(), cfgLabel = await mp.evaluate(() => document.querySelector('#mc-tree .ft-row[data-id="configs"] .ft-name')?.textContent);
+    await mp.click('#mc-pm .cfg-row[data-i="1"] [data-c="act"]');
+    await idle();
+    const vCfg2b = await vol();
+    await mp.click('#mc-pm [data-a="ok"]');
+    check(cfgRows === "Default,Config2" && Math.abs(vCfg1 - vMv) < 1 && vCfg2 < vCfg1 - 1000 && Math.abs(vCfg2b - vCfg2) < 1 && cfgLabel === "Configuration: Default", `model 1.26: configurations Default (25 mm) and Config2 (15 mm) switch the part (${cfgRows}, ${Math.round(vCfg1)} / ${Math.round(vCfg2)} / ${Math.round(vCfg2b)}, ${cfgLabel})`);
     await ctx.close();
   }
 

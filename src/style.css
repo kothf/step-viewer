@@ -752,3 +752,16 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .eq-c { grid-column: 1 / -1; }
 .eq-used { list-style: none; margin: 0; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
 .eq-used code { font-size: 11px; }
+/* 1.26.0: reorder by dragging, parent/child marks, configurations */
+.ft-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.ft-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.ft-row.dragging { opacity: .5; }
+.ft-rel { font-size: 11px; font-weight: 700; padding: 0 2px; }
+.ft-row.ft-parent .ft-rel { color: var(--accent-text); }
+.ft-row.ft-child .ft-rel { color: #7c3aed; }
+:root[data-theme="dark"] .ft-row.ft-child .ft-rel { color: #c4b5fd; }
+.cfg-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.cfg-row { display: flex; align-items: center; gap: 4px; }
+.cfg-row input { flex: 1; min-width: 0; font-size: 12px; }
+.cfg-row.on input { font-weight: 600; }
+.cfg-act { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-size: 14px; padding: 2px 4px; }
