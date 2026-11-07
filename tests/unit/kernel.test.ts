@@ -312,3 +312,37 @@ test("DXF gasket sketch extrudes with its holes (AT-P2-5)", async () => {
   const r = run(m, doc([sk, ex]));
   close(r.props!.volume, (3900 + 25 * Math.PI - 32 * Math.PI) * 10, 1e-6);
 });
+
+test("extrude: offset from surface, through all both, thin walls, draft (FR-FT-012/014/015)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const base: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Offset from surface: 5 mm short of a plane 30 mm up.
+  const pl: Feature = { id: "pl", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } };
+  let r = run(m, doc([pl, s1, { ...base, end: "offset", upTo: { plane: "pl" }, upToOffset: { v: 5 } } as Feature]));
+  close(r.props!.volume, 6000 * 25, 1e-6);
+  r = run(m, doc([pl, s1, { ...base, end: "offset", upTo: { plane: "pl" }, upToOffset: { v: 5 }, reverseOffset: true } as Feature]));
+  close(r.props!.volume, 6000 * 35, 1e-6);
+  // Through all both: a ⌀10 hole from a sketch on a mid plane cuts the whole height.
+  const mid: Feature = { id: "pm", type: "plane", name: "Plane2", base: { std: "XY" }, mode: "offset", offset: { v: 10 } };
+  const s2 = circle("s2", 0, 0, 5, { plane: "pm" });
+  const cut: Feature = { id: "c1", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  r = run(m, doc([s1, base, mid, s2, cut]));
+  close(r.props!.volume, 120000 - Math.PI * 25 * 10, 1e-6);
+  r = run(m, doc([s1, base, mid, s2, { ...cut, end: "through2" } as Feature]));
+  close(r.props!.volume, 120000 - Math.PI * 25 * 20, 1e-6);
+  // Thin walls 2 mm: inside (sharp inner corners), outside (round outer corners), centred.
+  r = run(m, doc([s1, { ...base, thin: { t: { v: 2 }, mode: "inside" } } as Feature]));
+  close(r.props!.volume, (6000 - 96 * 56) * 20, 1e-6);
+  r = run(m, doc([s1, { ...base, thin: { t: { v: 2 }, mode: "outside" } } as Feature]));
+  close(r.props!.volume, (640 + 4 * Math.PI) * 20, 1e-6);
+  r = run(m, doc([s1, { ...base, thin: { t: { v: 2 }, mode: "mid" } } as Feature]));
+  close(r.props!.volume, (636 + Math.PI) * 20, 1e-6);
+  // Draft 5° inward: ∫ (100 − 2z·tan a)(60 − 2z·tan a) dz over 0..20.
+  const ta = Math.tan(5 * Math.PI / 180);
+  const frustum = 6000 * 20 - 160 * ta * 20 * 20 + 4 * ta * ta * 20 ** 3 / 3;
+  r = run(m, doc([s1, { ...base, draft: { angle: { v: 5 * Math.PI / 180 } } } as Feature]));
+  close(r.props!.volume, frustum, 1e-6);
+  r = run(m, doc([s1, { ...base, draft: { angle: { v: 5 * Math.PI / 180 }, outward: true } } as Feature]));
+  close(r.props!.volume, 6000 * 20 + 160 * ta * 20 * 20 + 4 * ta * ta * 20 ** 3 / 3, 1e-6);
+});

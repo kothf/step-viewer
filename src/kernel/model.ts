@@ -10,7 +10,7 @@
 //
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, SketchFeature, V3 } from "../model/types";
+import type { AxisFeature, BodyProps, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, V3 } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 
@@ -100,6 +100,15 @@ export class Modeller {
     const map = new oc.TopTools_IndexedMapOfShape_1();
     oc.TopExp.MapShapes_1(shape, kind === "FACE" ? A.TopAbs_FACE : A.TopAbs_EDGE, map);
     for (let i = 1; i <= map.Extent(); i++) out.push(kind === "FACE" ? oc.TopoDS.Face_1(map.FindKey(i)) : oc.TopoDS.Edge_1(map.FindKey(i)));
+    return out;
+  }
+
+  private subWires(shape: any): any[] {
+    const oc = this.oc;
+    const out: any[] = [];
+    const map = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_WIRE, map);
+    for (let i = 1; i <= map.Extent(); i++) out.push(oc.TopoDS.Wire_1(map.FindKey(i)));
     return out;
   }
 
@@ -339,26 +348,36 @@ export class Modeller {
     if (sk.suppressed) throw new FeatureError("E-FT-PARENT", "The feature's sketch is suppressed.");
     const frame = frames[sk.id] ?? this.frameOf(sk, prev, frames);
     let tools: Named[] = [];
-    if (f.type === "extrude" && f.end === "upto") {
+    if (f.type === "extrude" && (f.end === "upto" || f.end === "offset")) {
       tools = this.upTo(f, sk, frame, prev, frames);
     } else if (f.type === "extrude") {
       // A cut goes into the material (against the sketch normal); Reverse direction flips either.
       const dir = (f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1);
       let d1 = f.depth.v, d2 = f.depth2?.v ?? 0;
       if (f.end === "mid") { d2 = d1 / 2; d1 = d1 / 2; }
-      if (f.end === "through") {
+      if (f.end === "through" || f.end === "through2") {
         if (!prev) throw new FeatureError("E-FT-NOBODY", "Through all needs a body to cut.");
         d1 = this.size(prev.shape) * 2 + 1;
-        d2 = f.op === "cut" ? 0 : 0;
+        // Through all both: as far again behind the sketch plane.
+        d2 = f.end === "through2" ? d1 : 0;
       }
       if (!(d1 + d2 > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
       const off = mul(frame.n, -d2 * dir);
       const { faces, edgeEnt } = this.profileFaces(sk, frame, off);
-      for (const face of faces) {
+      for (const face0 of faces) {
+        const face = f.thin ? this.thinFace(face0, f.thin) : face0;
         const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(frame.n, (d1 + d2) * dir)), false, true);
         mk.Build(new oc.Message_ProgressRange_1());
         if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The extrusion failed.");
-        tools.push(this.nameSweep(mk, f.id, edgeEnt, mk.Shape()));
+        let t = this.nameSweep(mk, f.id, edgeEnt, mk.Shape());
+        // Draft while extruding: the side faces taper about the sketch plane, away from it.
+        if (f.draft && Math.abs(f.draft.angle.v) > 1e-9) {
+          const a = f.draft.angle.v;
+          if (Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
+          const sides = t.faces.filter((_x, i) => t.names[i].includes(":side:") || t.names[i].includes(":new:"));
+          t = this.applyDraft(t, sides, mul(frame.n, dir), f.draft.outward ? -a : a, add(this.w(frame, [0, 0]), off), f.id);
+        }
+        tools.push(t);
       }
     } else {
       const ax = sk.ents.find(e => e.id === f.axis);
@@ -420,8 +439,16 @@ export class Modeller {
     const c = this.w(frame, mid);
     const den = dot(frame.n, target.n);
     if (Math.abs(den) < 1e-9) throw new FeatureError("E-FT-UPTO", "The face is parallel to the extrusion direction.");
-    const s = dot(add(target.o, mul(c, -1)), target.n) / den;
+    let s = dot(add(target.o, mul(c, -1)), target.n) / den;
     if (Math.abs(s) < 1e-7) throw new FeatureError("E-FT-ZERO", "The face is in the sketch plane.");
+    if (f.end === "offset") {
+      // Offset from surface: stop short of the face by the distance (past it when reversed).
+      const o = (f.upToOffset?.v ?? 0) * (f.reverseOffset ? -1 : 1);
+      const s2 = s - Math.sign(s) * o;
+      if (Math.abs(s2) < 1e-7 || Math.sign(s2) !== Math.sign(s)) throw new FeatureError("E-FT-OFFSET", "The offset is larger than the distance to the face.");
+      target = { ...target, o: add(target.o, mul(target.n, (s2 - s) * den)) };
+      s = s2;
+    }
     const dir = Math.sign(s);
     const big = Math.abs(s) * 2 + (prev ? this.size(prev.shape) : 0) * 2 + 10;
     const { faces, edgeEnt } = this.profileFaces(sk, frame);
@@ -581,7 +608,6 @@ export class Modeller {
    * pulling along the plane's normal. Drafted faces keep their names.
    */
   private draft(f: DraftFeature, prev: Named | null, frames: Record<string, Frame>): Named {
-    const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.plane) throw new FeatureError("E-DRAFT-PLANE", "Pick the neutral plane: a flat face or a plane.");
     if (!f.faces.length) throw new FeatureError("E-DRAFT-FACES", "Click the faces to draft.");
@@ -589,10 +615,15 @@ export class Modeller {
     if (!(Math.abs(a) > 1e-6) || Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
     const fr = this.planeFrame(f.plane, prev, frames);
     const n = f.flip ? mul(fr.n, -1) : fr.n;
-    const pln = new oc.gp_Pln_3(this.P(fr.o), this.D(n));
+    return this.applyDraft(prev, f.faces.map(r => this.resolveFace(prev, r)), n, a, fr.o, f.id);
+  }
+
+  /** Tapers faces of a body by an angle about the plane through `o` normal to the pull direction `n`; faces keep their names. */
+  private applyDraft(prev: Named, picked: any[], n: V3, a: number, o: V3, fid: string): Named {
+    const oc = this.oc;
+    const pln = new oc.gp_Pln_3(this.P(o), this.D(n));
     const mk = new oc.BRepOffsetAPI_DraftAngle_2(prev.shape);
-    for (const r of f.faces) {
-      const face = this.resolveFace(prev, r);
+    for (const face of picked) {
       try { mk.Add(oc.TopoDS.Face_1(face), this.D(n), a, pln, true); } catch { /* reported below */ }
       if (!mk.AddDone()) throw new FeatureError("E-DRAFT-FACE", "A face can't be drafted about this neutral plane: pick faces that cross it, not parallel to it.");
     }
@@ -610,7 +641,46 @@ export class Modeller {
       }
     });
     let k = 0;
-    return { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${k++}`) };
+    return { shape: result, faces, names: names.map(x => x ?? `${fid}:new:${k++}`) };
+  }
+
+  /**
+   * Thin feature (FR-FT-015): the profile face becomes a band of thickness t along its boundary,
+   * inside it, outside it or centred on it (2D offsets of the face's wires, then a face boolean).
+   */
+  private thinFace(face: any, thin: { t: Num; mode: "inside" | "outside" | "mid" }): any {
+    const oc = this.oc;
+    const t = thin.t.v;
+    if (!(t > 1e-6)) throw new FeatureError("E-FT-ZERO", "The wall thickness must be more than 0.");
+    const offsetFace = (d: number) => {
+      if (Math.abs(d) < 1e-12) return face;
+      const mk = new oc.BRepOffsetAPI_MakeOffset_2(oc.TopoDS.Face_1(face), oc.GeomAbs_JoinType.GeomAbs_Arc, false);
+      try { mk.Perform(d, 0); } catch { /* reported below */ }
+      if (!mk.IsDone()) throw new FeatureError("E-FT-THIN", "The wall is too thick for this profile.");
+      const wires = this.subWires(mk.Shape());
+      if (!wires.length) throw new FeatureError("E-FT-THIN", "The wall is too thick for this profile.");
+      // The largest wire is the outer boundary; the others are holes.
+      const area = (w: any) => { const f = new oc.BRepBuilderAPI_MakeFace_15(w, true).Face(); const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(f, p, false, false); return Math.abs(p.Mass()); };
+      const sized = wires.map((w: any) => ({ w, a: area(w) })).sort((x: { a: number }, y: { a: number }) => y.a - x.a);
+      const mf = new oc.BRepBuilderAPI_MakeFace_15(sized[0].w, true);
+      for (const h of sized.slice(1)) mf.Add(h.w);
+      const fix = new oc.ShapeFix_Face_2(mf.Face());
+      fix.Perform();
+      return fix.Face();
+    };
+    const outer = thin.mode === "outside" ? offsetFace(t) : thin.mode === "mid" ? offsetFace(t / 2) : face;
+    const inner = thin.mode === "outside" ? face : thin.mode === "mid" ? offsetFace(-t / 2) : offsetFace(-t);
+    const cut = new oc.BRepAlgoAPI_Cut_3(outer, inner, new oc.Message_ProgressRange_1());
+    if (!cut.IsDone() || cut.HasErrors()) throw new FeatureError("E-FT-THIN", "The wall is too thick for this profile.");
+    const faces = this.sub(cut.Shape(), "FACE");
+    if (!faces.length) throw new FeatureError("E-FT-THIN", "The wall is too thick for this profile.");
+    if (faces.length === 1) return faces[0];
+    // Several bands (a profile with holes): one compound face set.
+    const b = new oc.BRep_Builder();
+    const comp = new oc.TopoDS_Compound();
+    b.MakeCompound(comp);
+    for (const x of faces) b.Add(comp, x);
+    return comp;
   }
 
   /**

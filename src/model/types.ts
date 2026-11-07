@@ -65,7 +65,7 @@ export interface EdgeRef { faces: [string, string]; hint?: V3 }
 
 // ---------- features ----------
 
-export type EndKind = "blind" | "through" | "mid" | "upto";
+export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2";
 
 export interface ExtrudeFeature {
   id: string; type: "extrude"; name: string; suppressed?: boolean;
@@ -80,6 +80,13 @@ export interface ExtrudeFeature {
   upTo?: PlaneRef;
   /** Cut: keep the material outside the profile instead (flip side to cut). */
   outside?: boolean;
+  /** Offset from surface: the distance short of the face (or past it, reversed). */
+  upToOffset?: Num;
+  reverseOffset?: boolean;
+  /** Thin feature (FR-FT-015): a wall of this thickness along the profile instead of a solid. */
+  thin?: { t: Num; mode: "inside" | "outside" | "mid" };
+  /** Draft while extruding (FR-FT-014): the side faces taper by this angle (outward: they flare). */
+  draft?: { angle: Num; outward?: boolean };
 }
 
 export interface RevolveFeature {

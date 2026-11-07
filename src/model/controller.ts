@@ -536,7 +536,7 @@ export class ModelController {
     const f = m.draft;
     if ((f.type === "fillet" || f.type === "chamfer") && !f.edges.length) { toast(t("Pick at least one edge."), true); return; }
     if (f.type === "revolve" && !f.axis) { toast(t("Pick a line of the sketch as the axis."), true); return; }
-    if (f.type === "extrude" && f.end === "upto" && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
+    if (f.type === "extrude" && (f.end === "upto" || f.end === "offset") && !f.upTo) { toast(t("Pick the face or plane the extrusion goes up to."), true); return; }
     if (f.type === "plane" && f.mode === "angle" && !f.axis) { toast(t("Pick a straight edge to turn the plane about."), true); return; }
     if (f.type === "axis" && !(f.mode === "edge" ? f.edge : f.mode === "cylinder" ? f.face : (f.planes?.length ?? 0) >= 2)) { toast(t(f.mode === "planes" ? "Pick two planes or flat faces." : f.mode === "edge" ? "Pick a straight edge." : "Pick a cylindrical or conical face."), true); return; }
     if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
@@ -831,7 +831,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
         else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
-      } else if (m.kind === "feature" && m.draft.type === "extrude" && m.draft.end === "upto") {
+      } else if (m.kind === "feature" && m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset")) {
         const r = this.pickRef(e);
         if (r) { m.draft.upTo = r; this.draftChanged(); }
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
@@ -1189,7 +1189,7 @@ export class ModelController {
       if (f.type !== "sketch" || f.suppressed || used.has(f.id) || (m.kind === "sketch" && m.id === f.id)) return;
       this.lines(sketchSegments(f, this.frameOf(f)), dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
     });
-    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && m.draft.end === "upto")));
+    const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (m.draft.end === "upto" || m.draft.end === "offset"))));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
@@ -2025,7 +2025,7 @@ export class ModelController {
         // Planes picked from the tree while a command needs one.
         const asRef: PlaneRef | null = id.startsWith("std:") ? { std: id.slice(4) as "XY" } : this.store!.feature(id)?.type === "plane" ? { plane: id } : null;
         if (mm.kind === "feature" && asRef && mm.draft.type === "plane" && mm.focus !== "axis" && mm.draft.id !== id) { mm.draft.base = asRef; this.draftChanged(); return; }
-        if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && mm.draft.end === "upto") { mm.draft.upTo = asRef; this.draftChanged(); return; }
+        if (mm.kind === "feature" && asRef && mm.draft.type === "extrude" && (mm.draft.end === "upto" || mm.draft.end === "offset")) { mm.draft.upTo = asRef; this.draftChanged(); return; }
         if (mm.kind === "feature" && asRef && mm.draft.type === "axis" && mm.draft.mode === "planes") { mm.draft.planes = [...(mm.draft.planes ?? []), asRef].slice(-2); this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "hole" && asRef && (mm.focus === "hplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.draft.pts = []; mm.focus = "pts"; this.draftChanged(); return; }
         if (mm.kind === "feature" && mm.draft.type === "draft" && asRef && (mm.focus === "nplane" || !mm.draft.plane)) { mm.draft.plane = asRef; mm.focus = "faces"; this.draftChanged(); return; }
@@ -2234,15 +2234,21 @@ export class ModelController {
     const opSel = (op: string) => `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op"><option value="boss"${op === "boss" ? " selected" : ""}>${esc(t("Add material"))}</option><option value="cut"${op === "cut" ? " selected" : ""}>${esc(t("Remove material"))}</option></select></label>`;
     if (f.type === "extrude") {
       title = f.op === "cut" ? t("Cut") : t("Extrude");
-      const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end"><option value="blind"${f.end === "blind" ? " selected" : ""}>${esc(t("Blind"))}</option><option value="mid"${f.end === "mid" ? " selected" : ""}>${esc(t("Mid plane"))}</option><option value="through"${f.end === "through" ? " selected" : ""}>${esc(t("Through all"))}</option><option value="upto"${f.end === "upto" ? " selected" : ""}>${esc(t("Up to face or plane"))}</option></select></label>`;
+      const ends: [string, string][] = [["blind", t("Blind")], ["mid", t("Mid plane")], ["through", t("Through all")], ...(f.op === "cut" ? [["through2", t("Through all - both")] as [string, string]] : []), ["upto", t("Up to face or plane")], ["offset", t("Offset from surface")]];
+      const endSel = `<label class="pm-field"><span>${esc(t("End condition"))}</span><select data-k="end">${ends.map(([v, l]) => `<option value="${v}"${f.end === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+      const upto = f.end === "upto" || f.end === "offset";
+      const thinSel = f.thin ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="thinMode">${([["inside", t("Inside the profile")], ["outside", t("Outside the profile")], ["mid", t("Mid-plane")]] as const).map(([v, l]) => `<option value="${v}"${f.thin!.mode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` + numField("thin.t", t("Thickness"), f.thin.t, "length") : "";
       body = group(t("From"), sketchSel(f.sketch) + opSel(f.op))
         + group(t("Direction 1"), endSel
-          + (f.end === "upto" ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box focus" data-k="focus-upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
-          + (f.end === "through" || f.end === "upto" ? "" : numField("depth", t("Depth"), f.depth, "length"))
-          + (f.end === "upto" ? "" : chk("flip", f.flip, t("Reverse direction")))
+          + (upto ? `<div class="pm-field"><span>${esc(t("Up to"))}</span><button class="pm-box focus" data-k="focus-upto" aria-label="${esc(t("Up to"))}: ${esc(this.refLabel(f.upTo))}" translate="no">${esc(this.refLabel(f.upTo))}</button></div><p class="pm-help muted">${esc(t("Click a flat face or a plane in the view or the tree."))}</p>` : "")
+          + (f.end === "offset" ? numField("upToOffset", t("Offset distance"), f.upToOffset ?? { v: 5 }, "length") + chk("reverseOffset", f.reverseOffset, t("Reverse offset")) : "")
+          + (f.end === "through" || f.end === "through2" || upto ? "" : numField("depth", t("Depth"), f.depth, "length"))
+          + (upto ? "" : chk("flip", f.flip, t("Reverse direction")))
           + (f.op === "cut" ? chk("outside", f.outside, t("Flip side to cut (keep inside the profile)")) : "")
+          + (f.end === "blind" || f.end === "mid" ? chk("draftOn", !!f.draft, t("Draft on/off")) + (f.draft ? numField("draft.angle", t("Draft angle"), f.draft.angle, "angle") + chk("draftOut", f.draft.outward, t("Draft outward")) : "") : "")
           + (f.end === "blind" || f.end === "mid" ? `<p class="pm-help muted">${esc(t("Or drag the orange arrow in the view."))}</p>` : ""))
-        + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "");
+        + (f.end === "blind" ? group(t("Direction 2"), chk("dir2", !!(f.depth2 && f.depth2.v > 0), t("Direction 2")) + (f.depth2 && f.depth2.v > 0 ? numField("depth2", t("Depth 2"), f.depth2, "length") : "")) : "")
+        + group(t("Thin feature"), chk("thinOn", !!f.thin, t("Thin feature")) + thinSel);
     } else if (f.type === "revolve") {
       title = t("Revolve");
       const sk = this.store.feature(f.sketch) as SketchFeature | undefined;
@@ -2373,10 +2379,13 @@ export class ModelController {
         if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
-        const cur = (f as unknown as Record<string, Num | undefined>)[key];
+        // "thin.t" and "draft.angle" live one level down.
+        const [k0, k1] = key.split(".");
+        const host = (k1 ? (f as unknown as Record<string, Record<string, Num>>)[k0] : f) as unknown as Record<string, Num | undefined>;
+        const cur = host?.[k1 ?? k0];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
         upd(() => {
-          (f as unknown as Record<string, Num>)[key] = n;
+          (host as Record<string, Num>)[k1 ?? k0] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
         }, f.type === "hole");
@@ -2431,6 +2440,15 @@ export class ModelController {
           upd(() => { if (val) { m.focus = "dir2"; f.spacing2 ??= { v: f.spacing.v }; f.count2 ??= 2; } else { delete f.dir2; delete f.spacing2; delete f.count2; delete f.flip2; if (m.focus === "dir2") m.focus = "dir"; } }, true);
           return;
         }
+        if (f.type === "extrude" && (k === "thinOn" || k === "thinMode" || k === "draftOn" || k === "draftOut")) {
+          upd(() => {
+            if (k === "thinOn") { if (val) f.thin = { t: { v: 2 }, mode: "inside" }; else delete f.thin; }
+            if (k === "thinMode" && f.thin) f.thin.mode = val as "inside" | "outside" | "mid";
+            if (k === "draftOn") { if (val) f.draft = { angle: { v: (5 * Math.PI) / 180 } }; else delete f.draft; }
+            if (k === "draftOut" && f.draft) { if (val) f.draft.outward = true; else delete f.draft.outward; }
+          }, true);
+          return;
+        }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
         if (k === "sketch" && f.type === "revolve") {
           const sk = this.store!.feature(String(val)) as SketchFeature;
@@ -2441,7 +2459,11 @@ export class ModelController {
         upd(() => {
           if (typeof val === "boolean" && !val) delete g[k]; else g[k] = val;
           if (k === "op" && val !== "cut") delete g.outside;
-          if (k === "end" && val !== "upto") delete g.upTo;
+          if (k === "end" && val !== "upto" && val !== "offset") delete g.upTo;
+          if (k === "end" && val === "offset") g.upToOffset ??= { v: 5 };
+          if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
+          if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
+          if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
         }, k === "end" || k === "op" || k === "sketch");
       });
     });

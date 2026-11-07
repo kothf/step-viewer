@@ -2216,6 +2216,26 @@ try {
     const vDxf = await vol(), stDxf = await lastSt();
     const gasket = 3900 - 23 * Math.PI;
     check(dxfEnts === "4,4,2" && mir.c.includes("[-10,4]") && mir.sym === 1 && stDxf === "extrude:ok" && Math.abs(vDxf - vBeforeDxf - gasket * 10) < 1, `model 1.27: DXF gasket into a sketch, a mirrored hole, extruded 10 mm (${dxfEnts}, ${mir.c}, ${mir.sym}, ${stDxf}, ${(vDxf - vBeforeDxf).toFixed(1)} ≈ ${(gasket * 10).toFixed(1)})`);
+    // 1.28: the gasket extrude as a 2 mm thin wall, then solid again with a 5° draft (exact values in the unit tests).
+    const gid = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.dblclick(`#mc-tree .ft-row[data-id="${gid}"] .ft-name`);
+    await idle();
+    await mp.check('#mc-pm input[data-k="thinOn"]');
+    await idle();
+    const thinUi = await mp.evaluate(() => ({ mode: document.querySelector('#mc-pm select[data-k="thinMode"]')?.value, t: document.querySelector('#mc-pm input[data-num="thin.t"]')?.value }));
+    await mp.click("#mc-ok");
+    await idle();
+    const vThin = await vol(), stThin = await lastSt();
+    await mp.dblclick(`#mc-tree .ft-row[data-id="${gid}"] .ft-name`);
+    await idle();
+    await mp.uncheck('#mc-pm input[data-k="thinOn"]');
+    await idle();
+    await mp.check('#mc-pm input[data-k="draftOn"]');
+    await idle();
+    await mp.click("#mc-ok");
+    await idle();
+    const vDraftEx = await vol(), stDraftEx = await lastSt();
+    check(thinUi.mode === "inside" && thinUi.t === "2" && stThin === "extrude:ok" && vThin - vBeforeDxf > 1000 && vThin - vBeforeDxf < gasket * 10 - 1000 && stDraftEx === "extrude:ok" && vDraftEx - vBeforeDxf < gasket * 10 - 100 && vDraftEx - vBeforeDxf > gasket * 10 * 0.8, `model 1.28: thin wall and draft on an extrude (${JSON.stringify(thinUi)}, ${stThin}, ${(vThin - vBeforeDxf).toFixed(0)}, ${stDraftEx}, ${(vDraftEx - vBeforeDxf).toFixed(0)} of ${(gasket * 10).toFixed(0)})`);
     await ctx.close();
   }
 
