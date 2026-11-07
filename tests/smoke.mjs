@@ -1586,6 +1586,28 @@ try {
     await idle();
     const reopened = await last();
     check(recov0 && reopened.n === 5 && near(reopened.v, v30, 1e-3), `model: the saved file opens again with 5 features and the same volume (${reopened.v})`);
+    // 1.44: the save made a snapshot; after suppressing the fillet, Restore brings the saved part back, Open as copy opens it under a new id.
+    await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.type === "fillet"); window.__sv.modeller.toggleSuppress(f.id); });
+    await idle();
+    await mp.click('#mc-tools [data-fly="save"]');
+    await mp.click('#mc-menu button:has-text("Snapshots…")');
+    await mp.waitForSelector("#mc-snaps[open] [data-snap-restore]");
+    const snapRows = await mp.evaluate(() => document.querySelectorAll("#mc-snaps tbody tr").length);
+    await mp.click('#mc-snaps [data-snap-restore="0"]');
+    // Restore reads the snapshot first, then changes the part: wait for the fillet to come back.
+    await mp.waitForFunction(() => !window.__sv.model.store.doc.features.find(f => f.type === "fillet").suppressed);
+    await mp.waitForFunction(v => Math.abs((window.__sv.model.last()?.props?.volume ?? 0) - v) < 1, v30, { timeout: 30000 }).catch(() => {});
+    await idle();
+    const restored = await last();
+    const idBefore = await mp.evaluate(() => window.__sv.model.store.doc.id);
+    await mp.click('#mc-tools [data-fly="save"]');
+    await mp.click('#mc-menu button:has-text("Snapshots…")');
+    await mp.waitForSelector("#mc-snaps[open] [data-snap-copy]");
+    await mp.click('#mc-snaps [data-snap-copy="0"]');
+    await mp.waitForFunction(id => window.__sv.model.store.doc.id !== id, idBefore);
+    await idle();
+    const copy = await mp.evaluate(() => ({ name: document.querySelector("#doc-name").textContent, n: window.__sv.model.store.doc.features.length }));
+    check(snapRows >= 1 && near(restored.v, v30, 1e-3) && restored.n === 5 && /\(copy\)/.test(copy.name) && copy.n === 5, `model 1.44: save snapshots, Restore and Open as copy (${snapRows} rows, ${restored.v}, ${JSON.stringify(copy)})`);
     // Autosave journal: an unsaved change is offered after a reload.
     await mp.evaluate(() => { const ex = window.__sv.model.store.doc.features.find(f => f.type === "extrude"); window.__sv.model.store.change("Rename", d => { d.features.find(f => f.id === ex.id).name = "Base"; }); });
     await mp.waitForTimeout(1200);
@@ -1835,6 +1857,20 @@ try {
     await mp.waitForTimeout(300);
     const massTxt = await mp.evaluate(() => document.querySelector("#mass-out").textContent);
     check(/Principal moments.*kg·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
+    // 1.43: mass property override (FR-MAT-004): 1.25 kg and a centre of mass replace the calculated values.
+    await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
+    await mp.waitForSelector("#mc-pm input[data-p=ovr]");
+    await mp.check("#mc-pm input[data-p=ovr]");
+    await mp.waitForSelector("#mc-pm input[data-p=ovrMass]");
+    await mp.fill("#mc-pm input[data-p=ovrMass]", "1.25");
+    await mp.press("#mc-pm input[data-p=ovrMass]", "Tab");
+    for (const [i, v] of [[0, "1"], [1, "2"], [2, "3"]]) { await mp.fill(`#mc-pm input[data-p=ovrCom][data-i="${i}"]`, v); await mp.press(`#mc-pm input[data-p=ovrCom][data-i="${i}"]`, "Tab"); }
+    await mp.click("#mc-ok");
+    await idle();
+    await mp.evaluate(() => document.querySelector("#mass-run").click());
+    await mp.waitForTimeout(300);
+    const ovrTxt = await mp.evaluate(() => ({ out: document.querySelector("#mass-out").textContent, doc: JSON.stringify(window.__sv.model.store.doc.massOverride) }));
+    check(/1\.2500 kg \(overridden\)/.test(ovrTxt.out) && /\(overridden\)/.test(ovrTxt.out.split("Centre of mass")[1] ?? "") && ovrTxt.doc === '{"mass":1.25,"com":[1,2,3]}', `model 1.43: mass property override replaces mass and centre of mass (${ovrTxt.doc}, ${ovrTxt.out.match(/Mass[^S]*/)?.[0]})`);
     check(ax1.length === 0 && ax2.length === 0, `model 1.19: 0 WCAG 2.1 AA violations with the sketch and properties panels open${ax1.length + ax2.length ? ": " + [...ax1, ...ax2].join(" | ") : ""}`);
     check(ru1.length === 0 && ru2.length === 0, `model 1.19 i18n: new tools, relations list and properties in Russian${ru1.length + ru2.length ? ": " + [...ru1, ...ru2].slice(0, 8).join(" | ") : ""}`);
     await ctx.close();

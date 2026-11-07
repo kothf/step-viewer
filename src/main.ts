@@ -2106,6 +2106,15 @@ function massRows(): [string, string][] {
     ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((r.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
   ];
   if (r.openParts.length) rows.push(["Warning", t("{n} open shells: volume not reliable", { n: r.openParts.length })]);
+  // Mass property override of a modelled part (FR-MAT-004): entered values replace the calculated ones.
+  const ovr = whole && modeller.active ? modeller.massOverride() : null;
+  if (ovr && (ovr.mass !== undefined || ovr.com)) {
+    const sfx = ` (${t("overridden")})`;
+    for (const row of rows) {
+      if (row[0] === "Mass" && ovr.mass !== undefined) row[1] = fmtMass(ovr.mass * 1000) + sfx;
+      if (row[0] === "Centre of mass" && ovr.com) row[1] = fmtVec(new THREE.Vector3(...ovr.com)) + sfx;
+    }
+  }
   // Modelled parts: exact principal moments of inertia from the kernel (FR-MAT-002).
   const mp = whole && modeller.active ? modeller.bodyProps() : null;
   if (mp?.moments && mp.axes) {
@@ -2125,7 +2134,8 @@ function runMass() {
   lastMassRun = { r, n: parts.length, whole: parts.length === viewer.parts.length, density };
   lastMass = withLang("en", massRows);
   renderMass();
-  hl.com.position.copy(r.com);
+  const ovr = lastMassRun.whole && modeller.active ? modeller.massOverride() : null;
+  hl.com.position.copy(ovr?.com ? new THREE.Vector3(...ovr.com) : r.com);
   hl.com.visible = $<HTMLInputElement>("#com-show").checked;
   viewer.invalidate();
 }
