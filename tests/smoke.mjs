@@ -3498,6 +3498,166 @@ try {
     await ctx.close();
   }
 
+  // --- 1.62: assemblies (FRS 10, FR-ASM-001..005, FR-MATE-001/002): new assembly, insert parts and a STEP model, move, hide, undo, save and reopen ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await mp.waitForTimeout(150);
+    await idle();
+    const part = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    // New assembly closes the part; the Assembly tab and bar take over.
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden }));
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
+    await shown(2);
+    const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "Cube 10x10.stp")), cube);
+    await shown(3);
+    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent }));
+    // Move the second plate by typing its pose: X = 100, 90° about Z.
+    await mp.click("#asm-tree .ft-comp >> nth=1");
+    await mp.click('#asm-tools [data-ac="move"]');
+    await mp.fill('#asm-pm input[data-pose="x"]', "100");
+    await mp.fill('#asm-pm input[data-pose="rz"]', "90");
+    await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
+    await shown(3);
+    const mv = await mp.evaluate(() => { const c = window.__sv.asm.doc.components[1], d = window.__sv.viewer.parts[1].data; return { tf: c.tf.map(v => Math.round(v * 1e6) / 1e6), min: d.bboxMin.map(v => Math.round(v * 1e3) / 1e3), max: d.bboxMax.map(v => Math.round(v * 1e3) / 1e3), pm: document.querySelector("#asm-pm").hidden }; });
+    // Hide the cube from its row (it still counts in the mass properties), then undo.
+    await mp.hover("#asm-tree .ft-comp >> nth=2");
+    await mp.click('#asm-tree .ft-comp >> nth=2 >> [data-a="hide"]');
+    await shown(2);
+    const hid = await mp.evaluate(() => window.__sv.asm.props?.volume);
+    await mp.keyboard.press("ControlOrMeta+z");
+    await shown(3);
+    // Save to bytes and reopen: the same components and poses.
+    const re = await mp.evaluate(async () => {
+      const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
+      const before = sig();
+      const b = await window.__sv.asm.bytes();
+      await window.__sv.asm.openFile({ name: "rig.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) });
+      return { same: sig() === before, doc: document.querySelector("#st-doc, .doc-name")?.textContent ?? "" };
+    });
+    await shown(3);
+    // Opening a part leaves the assembly.
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
+    const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
+    check(!swap.model && swap.tab === "true" && swap.bar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+      && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
+      && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
+      `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
+    await ctx.close();
+  }
+
+  // --- 1.62: mates (FR-MATE-003/006/008/009, AT-P4-1/3): pick faces in the view, preview, DOF, conflict refused, constrained drag ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    // Two parts: a plate with a ⌀6 hole at (5, 0), and a ⌀6 × 20 pin.
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await idle();
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const plate = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a"), P("h", 5, 0), { id: "hc", t: "circle", c: "h", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    const pin = await makePart([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), { id: "c", t: "circle", c: "o", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }]);
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(2);
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(200);
+    // Screen point of a world point, and a point on a vertical cylinder facing the camera.
+    const onCyl = (axis, r, out = true) => mp.evaluate(([a, rr, o]) => {
+      const v = window.__sv.viewer, c = v.camera;
+      c.updateMatrixWorld();
+      const h = [c.position.x - a[0], c.position.y - a[1]], l = Math.hypot(h[0], h[1]), s = o ? 1 : -1;
+      const p = [a[0] + (s * rr * h[0]) / l, a[1] + (s * rr * h[1]) / l, a[2]];
+      const V = c.matrixWorldInverse.elements, Pm = c.projectionMatrix.elements;
+      const mul = (M, x) => [0, 1, 2, 3].map(i => M[i] * x[0] + M[4 + i] * x[1] + M[8 + i] * x[2] + M[12 + i] * x[3]);
+      const q = mul(Pm, mul(V, [...p, 1])), rect = v.renderer.domElement.getBoundingClientRect();
+      return [rect.left + ((q[0] / q[3] + 1) / 2) * rect.width, rect.top + ((1 - q[1] / q[3]) / 2) * rect.height];
+    }, [axis, r, out]);
+    await mp.click('#asm-tools [data-ac="mate"]');
+    const pinAt = await mp.evaluate(() => window.__sv.asm.doc.components[1].tf.filter((_, i) => i % 4 === 3));
+    const p1 = await onCyl([pinAt[0], pinAt[1], pinAt[2] + 12], 3, true);
+    await mp.mouse.click(p1[0], p1[1]);
+    const p2 = await onCyl([5, 0, 9.3], 3, false);
+    await mp.mouse.click(p2[0], p2[1]);
+    await mp.waitForTimeout(100);
+    const pick = await mp.evaluate(() => { const m = window.__sv.asm.mating, g = window.__sv.viewer.parts[1].group.position; return { a: m.a?.comp, b: m.b?.comp, type: m.type, title: document.querySelector("#asm-pm h3")?.textContent, boxes: [...document.querySelectorAll("#asm-pm .pm-box")].map(e => e.textContent), moved: Math.hypot(g.x, g.y, g.z) > 1, picks: window.__sv.viewer.parts.reduce((s, p) => s + p.group.children.filter(o => o.userData.matePick).length, 0) }; });
+    await mp.click("#asm-pm [data-a=ok]");
+    await shown(2);
+    // Coincident: plate top on the pin's bottom face (picked by name), then close the panel with ✓.
+    const ref = await mp.evaluate(() => {
+      const a = window.__sv.asm, d = a.doc, faces = (k, f) => [...a.geo.get(k).entries()].find(([, g]) => f(g))?.[0];
+      return { top: faces(d.components[0].part, g => g.k === "plane" && g.n[2] > 0.99 && Math.abs(g.p[2] - 10) < 1e-6), bottom: faces(d.components[1].part, g => g.k === "plane" && g.n[2] < -0.99) };
+    });
+    await mp.evaluate(r => { const a = window.__sv.asm; Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } }); a.setMateType("coincident"); a.okMate(); }, ref);
+    await shown(2);
+    await mp.click("#asm-pm [data-a=ok]");
+    const m2 = await mp.evaluate(() => { const a = window.__sv.asm, t = a.doc.components[1].tf; return { n: a.doc.mates.length, types: a.doc.mates.map(m => m.type).join(), dof: a.solved.dof[a.doc.components[1].id], at: [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4), mark: document.querySelectorAll("#asm-tree .ft-comp .ft-name")[1].textContent, rows: document.querySelectorAll("#asm-tree .ft-mate").length, status: document.querySelector("#asm-status").textContent, panel: document.querySelector("#asm-pm").hidden }; });
+    // A conflicting distance mate is refused and nothing moves (AT-P4-3).
+    const conflict = await mp.evaluate(r => { const a = window.__sv.asm; a.startMate(); Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } }); a.setMateType("distance"); a.mating.value = 5; a.okMate(); return { n: a.doc.mates.length, problem: a.mating?.problem ?? "", err: document.querySelector("#asm-pm [data-mstatus]")?.className }; }, ref);
+    await mp.evaluate(() => window.__sv.asm.cancelMate());
+    // Dragging the mated pin sideways: it cannot leave the hole axis (FR-MATE-001).
+    const p3 = await onCyl([5, 0, 20], 3, true);
+    await mp.mouse.move(p3[0], p3[1]);
+    await mp.mouse.down();
+    await mp.mouse.move(p3[0] + 60, p3[1] + 10, { steps: 5 });
+    await mp.mouse.up();
+    await shown(2);
+    const drag = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4); });
+    // Delete the coincident mate from the tree: the pin can slide along the axis again.
+    await mp.hover("#asm-tree .ft-mate >> nth=1");
+    await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
+    await shown(2);
+    const after = await mp.evaluate(() => ({ n: window.__sv.asm.doc.mates.length, dof: window.__sv.asm.solved.dof[window.__sv.asm.doc.components[1].id] }));
+    const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
+    check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
+      && m2.n === 2 && m2.types === "concentric,coincident" && m2.dof === 1 && Math.abs(m2.at[0] - 5) < 1e-3 && Math.abs(m2.at[1]) < 1e-3 && Math.abs(m2.at[2] - 10) < 1e-3 && m2.mark === "(-) pin<1>" && m2.rows === 2 && m2.status === "2 components · Under defined" && m2.panel
+      && conflict.n === 2 && /over-defined/.test(conflict.problem) && conflict.err === "pm-err"
+      && Math.abs(drag[0] - 5) < 1e-3 && Math.abs(drag[1]) < 1e-3 && Math.abs(drag[2] - 10) < 1e-3 && after.n === 1 && after.dof === 2 && re === "concentric",
+      `asm 1.62: mates picked in the view, previewed, DOF, conflict refused, constrained drag, delete (FR-MATE-003/008, AT-P4-1/3) (${JSON.stringify({ pick, m2, conflict, drag, after, re })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

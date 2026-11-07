@@ -6,6 +6,7 @@
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
+import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
@@ -126,6 +127,12 @@ export class ModelKernel {
   async partBody(doc: PartDoc): Promise<{ brep: string; solids: number; faces: number }> {
     await this.start();
     return this.call<{ brep: string; solids: number; faces: number }>({ type: "partBody", doc });
+  }
+
+  /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }> {
+    await this.start();
+    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
   }
 
   async step(name: string, color: V3): Promise<Uint8Array> {

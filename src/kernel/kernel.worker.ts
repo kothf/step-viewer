@@ -8,6 +8,8 @@ import { Kernel, type PartProbe } from "./occ";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
 import { Modeller } from "./model";
+import { Assembler } from "./assembly";
+import type { AsmDoc } from "../asm/types";
 import { analyzeMesh } from "../topology";
 import { applyPatch, probe } from "./patch";
 import type { PartDoc } from "../model/types";
@@ -22,6 +24,8 @@ export type KernelRequest =
   | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
   | { id: number; type: "partBody"; doc: PartDoc }
+  /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
+  | { id: number; type: "asm"; doc: AsmDoc; quality: number }
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
@@ -37,6 +41,7 @@ function parasolidReader() {
 
 let kernel: Kernel | null = null;
 let modeller: Modeller | null = null;
+let assembler: Assembler | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[] } | null = null;
 let heap: () => number = () => 0;
@@ -133,6 +138,24 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         preview = { position, status };
       }
       post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+    } else if (r.type === "asm") {
+      assembler ??= new Assembler(kernel.module);
+      const t0 = performance.now();
+      const { placed, statuses } = assembler.evaluate(r.doc, r.quality);
+      const parts = [];
+      kernel.meshes = [];
+      for (const p of placed) {
+        const comp = r.doc.components.find(c => c.id === p.id)!;
+        if (comp.hidden) continue;
+        const color = (comp.color ?? r.doc.parts[p.part].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number];
+        const data = analyzeMesh(p.mesh());
+        data.name = p.name;
+        data.color = color;
+        kernel.meshes.push({ shape: p.body.shape, faces: p.body.faces, name: p.name, color, solid: true });
+        applyPatch(data, kernel.exact(kernel.meshes.length - 1, probe(data)));
+        parts.push({ id: p.id, data, faces: p.body.names });
+      }
+      post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
     } else if (r.type === "partBody") {
       // Insert part (FR-BODY-005): the other part is evaluated on its own, so this part's feature cache stays.
       const other = new Modeller(kernel.module).evaluate(r.doc);

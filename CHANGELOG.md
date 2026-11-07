@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.62.0] - 2026-11-07
+
+### Added
+- **Assemblies** (FRS 10: FR-ASM-001..005, FR-MATE-001/002): **New assembly** in the new ▾ menu beside New part, and on the start card. **Insert component** places a MöbiusCAD part or a STEP, IGES or BREP model; the first one is fixed at the origin, the next float beside it, and the same part inserted again shares its source. Drag a floating component in the view, or type its position and rotation in **Move component**. The assembly tree marks fixed (f) and floating (-) components and hides, fixes/floats and deletes them; undo and redo; mass properties of the whole assembly; save and open `.mcadasm` files (the parts are embedded), also from the vault.
+- **Mates** (FR-MATE-003/006/008/009, AT-P4-1..3): **Mate** picks a flat or cylindrical face on each of two components and previews the likely mate at once (quick mate). Coincident, parallel, perpendicular, tangent, concentric, lock, distance and angle, with alignment and flip. The mate solver moves components as little as possible, reports each component's remaining degrees of freedom ((f), (-), (+) or fully defined in the tree, and the assembly's state in the bar) and refuses a conflicting mate without moving anything. Mated components drag only along their free directions. The Mates folder edits, flips, suppresses and deletes mates. When a part's geometry changes, its mates are solved again.
+
 ## [1.61.0] - 2026-11-07
 
 ### Added
@@ -587,7 +593,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.61.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.62.0...HEAD
+[1.62.0]: https://github.com/kothf/step-viewer/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/kothf/step-viewer/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/kothf/step-viewer/compare/v1.59.0...v1.60.0
 [1.59.0]: https://github.com/kothf/step-viewer/compare/v1.58.0...v1.59.0

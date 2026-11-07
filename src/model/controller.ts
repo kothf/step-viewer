@@ -72,6 +72,8 @@ export interface ModelHost {
   normalTo?(normal?: V3): void;
   /** Makes a coordinate system feature the active measurement and export frame (null: back to global); `src` is its feature id. */
   setCsys?(c: { name: string; src: string; o: V3; x: V3; z: V3 } | null, quiet?: boolean): void;
+  /** Another document kind gives way (an open assembly closes). */
+  leaveOthers?(): void;
   appVersion: string;
 }
 
@@ -263,6 +265,7 @@ export class ModelController {
   }
 
   private load(doc: PartDoc, fileName: string, handle: FileSystemFileHandle | null) {
+    this.host.leaveOthers?.();
     this.exitMode(false);
     this.vault = null;
     this.renderVaultBar();
