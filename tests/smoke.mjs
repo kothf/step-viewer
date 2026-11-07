@@ -3083,6 +3083,111 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: section, detail and auxiliary views (FR-DRW-012/013/014, AT-P5-2) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwsec", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-07T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const views = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => JSON.parse(JSON.stringify(v))));
+    const [front, top] = await views();
+    // Sheet point of a model point (u, w) of a view, then the screen point.
+    const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
+    const scr = (x, y) => dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+    // Section ▾ Vertical: the cutting line follows the cursor over the front view; click through the hole, place the view on the left.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="v"]');
+    let [x, y] = await at(front.id, 10, 5);
+    await dp.mouse.move(x - 5, y); await dp.mouse.move(x, y);
+    const cutPreview = await dp.evaluate(() => document.querySelectorAll("#drw .drw-cut").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await scr(front.x - 110, front.y + 25);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    let vs = await views();
+    const sec = vs.find(v => v.kind === "section");
+    const secProj = await dp.evaluate(i => window.__sv.drw.proj(i), sec?.id);
+    const area = l => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
+    const cutArea = (secProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    let prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, r: p.r, pen: p.pen })));
+    const hatchN = prims.filter(p => p.layer === "HATCH").length, texts = prims.filter(p => p.t === "t").map(p => p.s);
+    check(cutPreview > 0 && sec && sec.letter === "A" && sec.look === -1 && Math.abs(sec.line[0] - 10) < 0.05 && sec.line[0] === sec.line[2] && Math.abs(sec.y - front.y) < 0.02 && sec.x < front.x,
+      `drawing: section view from a vertical cutting line through the hole, placed on the left and lined up with the front view (${JSON.stringify(sec && { line: sec.line, look: sec.look, x: sec.x, y: sec.y })}, front ${front.x},${front.y})`);
+    check(Math.abs(cutArea - (60 * 20 - 16 * 20)) < 0.5 && hatchN > 20 && texts.includes("SECTION A-A") && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "A").length === 2 && prims.some(p => p.layer === "ANNOT" && p.pen === "center"),
+      `drawing: section A-A is hatched over the cut faces (area ${cutArea.toFixed(2)} mm² = 60×20 − 16×20), with its label and a lettered cutting line on the front view (${hatchN} hatch lines)`);
+    // Drag: the section view only slides along its viewing direction. Flip: it looks the other way and moves to the other side.
+    [x, y] = await scr(sec.x, sec.y);
+    const [ex, ey] = await scr(sec.x - 10, sec.y + 20);
+    await dp.mouse.move(x, y); await dp.mouse.down(); await dp.mouse.move((x + ex) / 2, (y + ey) / 2); await dp.mouse.move(ex, ey); await dp.mouse.up();
+    vs = await views();
+    const dragged = vs.find(v => v.id === sec.id);
+    await dp.click('#drw [data-a="flip"]');
+    await ready();
+    vs = await views();
+    const flipped = vs.find(v => v.id === sec.id);
+    check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
+      `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
+    await dp.keyboard.press("Control+z");
+    // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
+    await dp.click('#drw [data-a="detail"]');
+    [x, y] = await at(top.id, 10.6, 0.5);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top.id, 25, 0);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await scr(330, 230);
+    await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const det = vs.find(v => v.kind === "detail");
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, r: p.r, pen: p.pen })));
+    const detTexts = prims.filter(p => p.t === "t").map(p => p.s);
+    check(det && det.letter === "B" && det.parent === top.id && det.c.join(",") === "10,0" && Math.abs(det.r - 15) < 0.05 && prims.some(p => p.t === "a" && p.layer === "VISIBLE" && Math.abs(p.r - 16) < 1e-6) && detTexts.includes("DETAIL B") && detTexts.includes("Scale 2:1") && detTexts.includes("B"),
+      `drawing: detail view B of the hole at 2:1 (centre snapped, circle Ø32 on the sheet, label and circle on the parent) (${JSON.stringify(det && { c: det.c, r: det.r })})`);
+    // Auxiliary: click the front view's top edge, place the view above it, square to the edge.
+    await dp.click('#drw [data-a="aux"]');
+    [x, y] = await at(front.id, -30, 20);
+    await dp.mouse.move(x, y + 2); await dp.mouse.move(x, y);
+    const edgeHi = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await scr(front.x + 30, front.y + 55);
+    await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const aux = vs.find(v => v.kind === "aux");
+    const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
+    check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === 1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
+      `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // DXF has the hatch on its own layer; Russian labels; a saved drawing keeps the views.
+    await dp.click('#drw [data-a="export"]');
+    const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
+    const dxfT = (await readFile(await dl.path())).toString();
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(200);
+    const ru = await dp.evaluate(() => ({ t: window.__sv.drw.prims().filter(x => x.t === "t").map(x => x.s), tb: document.querySelector('#drw [data-a="section"]').textContent }));
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(/\nHATCH\n/.test(dxfT) && ru.t.includes("A-A") && ru.t.includes("Масштаб 2:1") && /Сечение/.test(ru.tb), `drawing: DXF hatch layer; Russian section/detail labels (${ru.t.filter(s => /^[A-C]/.test(s) || /Масштаб/.test(s)).join(" / ")}, ${ru.tb.trim()})`);
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

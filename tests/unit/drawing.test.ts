@@ -92,3 +92,58 @@ test("sheet output: SVG, DXF layers and linetypes, title block fields", async ()
   assert.match(svg, /width="420mm" height="297mm"/);
   assert.match(svg, />BLK-1</);
 });
+
+test("section through the hole: the cut faces are the block's middle slice minus the hole", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { oc, shape } = await block();
+  const s = section(oc, shape, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
+  const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
+  const total = s.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
+  assert.ok(Math.abs(total - (100 * 20 - 10 * 20)) < 1e-6, `cut area ${total}`);
+  assert.equal(s.cut!.length, 2);
+  assert.equal(s.hid.length, 0);
+});
+
+test("section/aux directions: a view from the right of a line is the third-angle right view; flipping looks the other way", async () => {
+  const { projectedDir, sideView, lookDir, viewDir, viewReq, ORIENTS } = await import("../../src/drawing/views");
+  const r = (v: number[]) => v.map(x => Math.round(x * 1e6) / 1e6 + 0);
+  const front = ORIENTS.front;
+  for (const q of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+    const a = sideView(front, q), b = projectedDir(front, q, "third");
+    assert.deepEqual(r(a.dir), r(b.dir), `dir for ${q}`);
+    assert.deepEqual(r(a.up), r(b.up), `up for ${q}`);
+  }
+  // A vertical cutting line drawn top to bottom: look +1 puts the view on the right (it looks left, at the model's −X side kept).
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [
+    { id: "f", name: "F", orient: "front" as const, x: 100, y: 100 },
+    { id: "a", name: "A", kind: "section" as const, parent: "f", line: [10, 30, 10, -30] as [number, number, number, number], look: 1 as const, x: 250, y: 100 }] };
+  assert.deepEqual(lookDir(sheet.views[1]), [1, 0]);
+  assert.deepEqual(r(viewDir(sheet, sheet.views[1]).dir), [1, 0, 0]);
+  const req = viewReq(sheet, sheet.views[1]);
+  assert.deepEqual(r(req.p!), [10, 0, 30]);
+  // Detail views reuse their parent's projection.
+  const det = { id: "d", name: "D", kind: "detail" as const, parent: "a", c: [0, 0] as [number, number], r: 5, x: 0, y: 0 };
+  assert.equal(viewReq({ ...sheet, views: [...sheet.views, det] }, det).key, req.key);
+});
+
+test("detail clipping and section hatching", async () => {
+  const { clipToCircle, hatch, nextLetter } = await import("../../src/drawing/compose");
+  const out = clipToCircle([{ k: "l", c: 0, p: [-10, 0, 10, 0] }, { k: "l", c: 0, p: [20, 20, 30, 30] },
+    { k: "a", c: 0, o: [0, 0], r: 10, a0: 0, a1: Math.PI }], [0, 0], 5);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0].k === "l" && out[0].p.map(v => Math.round(v * 1e9) / 1e9), [-5, 0, 5, 0]);
+  const arc = clipToCircle([{ k: "a", c: 0, o: [10, 0], r: 10, a0: 0, a1: 2 * Math.PI }], [0, 0], 10);
+  assert.equal(arc.length, 1);
+  assert.ok(arc[0].k === "a" && Math.abs(arc[0].a1 - arc[0].a0 - 2 * Math.PI / 3) < 1e-9);
+  // A 10 × 10 square with a 4 × 4 hole: 45° lines 1 mm apart, total length ≈ area / gap.
+  const sq = [0, 0, 10, 0, 10, 10, 0, 10], hole = [3, 3, 7, 3, 7, 7, 3, 7];
+  const len = hatch([sq, hole], 1).reduce((t, h) => t + Math.hypot(h[2] - h[0], h[3] - h[1]), 0);
+  assert.ok(Math.abs(len - 84) < 3, `hatch length ${len}`);
+  for (const h of hatch([sq, hole], 1)) {
+    const mx = (h[0] + h[2]) / 2, my = (h[1] + h[3]) / 2;
+    assert.ok(!(mx > 3.01 && mx < 6.99 && my > 3.01 && my < 6.99), "no hatch in the hole");
+  }
+  const sh = (letters: string[]) => [{ id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: letters.map((l, i) => ({ id: `v${i}`, name: "", x: 0, y: 0, letter: l })) }];
+  assert.equal(nextLetter(sh([])), "A");
+  assert.equal(nextLetter(sh(["A", "B", "C", "D", "E", "F", "G", "H"])), "J");
+});

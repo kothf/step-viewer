@@ -28,6 +28,19 @@ export interface DrawingView {
   tangent?: TangentEdges;
   /** Show the label under the view (projected and model views have none by default). */
   label?: boolean;
+  /** Section, detail and auxiliary views (FR-DRW-012/013/014): made from `parent`; `side` is unused. */
+  kind?: "section" | "detail" | "aux";
+  /** Section: cutting line; aux: the edge viewed square-on. In the parent's view axes, model mm: [u1, v1, u2, v2]. */
+  line?: [number, number, number, number];
+  /** Section / aux: the view looks from this side of the line (+1: left of u1→u2, −1: right). */
+  look?: 1 | -1;
+  /** Detail: circle centre (parent's view axes, model mm) and radius (model mm). */
+  c?: [number, number];
+  r?: number;
+  /** Letter of a section, detail or auxiliary view (A, B, …). */
+  letter?: string;
+  /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. */
+  hatch?: { gap?: number; angle?: number };
 }
 
 export interface Sheet {

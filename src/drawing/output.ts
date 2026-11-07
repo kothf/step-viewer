@@ -27,7 +27,7 @@ export function svgBody(prims: Prim[], H: number, color = "#000"): string {
     } else if (p.t === "p") {
       let d = "";
       for (let i = 0; i < p.p.length; i += 2) d += `${i ? "L" : "M"}${f(p.p[i])} ${f(H - p.p[i + 1])}`;
-      parts.push(`<path d="${d}${p.closed ? "Z" : ""}" fill="none" ${style(p.pen)} stroke-linejoin="round" data-l="${p.layer}"/>`);
+      parts.push(`<path d="${d}${p.closed || p.fill ? "Z" : ""}" fill="${p.fill ? color : "none"}" ${style(p.pen)} stroke-linejoin="round" data-l="${p.layer}"/>`);
     } else {
       parts.push(`<text x="${f(p.x)}" y="${f(H - p.y)}" font-size="${f(p.h * FONT_K)}" text-anchor="${p.al === "l" ? "start" : p.al === "c" ? "middle" : "end"}"${p.bold ? ' font-weight="bold"' : ""} fill="${color}" data-l="${p.layer}">${escXml(p.s)}</text>`);
     }
@@ -49,7 +49,7 @@ const LTYPES: Record<string, { desc: string; pat: number[] }> = {
 };
 const LAYERS: Record<string, { color: number; lt: string }> = {
   VISIBLE: { color: 7, lt: "CONTINUOUS" }, TANGENT: { color: 8, lt: "CONTINUOUS" }, HIDDEN: { color: 5, lt: "HIDDEN" },
-  CENTER: { color: 1, lt: "CENTER" }, FORMAT: { color: 7, lt: "CONTINUOUS" }, TEXT: { color: 7, lt: "CONTINUOUS" }, SKETCH: { color: 3, lt: "CONTINUOUS" },
+  CENTER: { color: 1, lt: "CENTER" }, HATCH: { color: 8, lt: "CONTINUOUS" }, ANNOT: { color: 4, lt: "CONTINUOUS" }, FORMAT: { color: 7, lt: "CONTINUOUS" }, TEXT: { color: 7, lt: "CONTINUOUS" }, SKETCH: { color: 3, lt: "CONTINUOUS" },
 };
 
 /** DXF R12 in millimetres, one layer per line type. */
@@ -84,6 +84,11 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
     else if (p.t === "a") {
       if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) { g(0, "CIRCLE"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); }
       else { g(0, "ARC"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); g(50, p.a0 * 180 / Math.PI); g(51, p.a1 * 180 / Math.PI); }
+    } else if (p.t === "p" && p.fill && p.p.length >= 6 && p.p.length <= 8) {
+      // A filled arrowhead: SOLID takes its corners in Z order (1, 2, 4, 3).
+      const q = p.p, k = q.length / 2, c = (i: number) => [q[2 * Math.min(i, k - 1)], q[2 * Math.min(i, k - 1) + 1]];
+      g(0, "SOLID"); g(8, p.layer);
+      [c(0), c(1), c(3), c(2)].forEach((pt, i) => { g(10 + i, pt[0]); g(20 + i, pt[1]); g(30 + i, 0); });
     } else if (p.t === "p") {
       g(0, "POLYLINE"); g(8, p.layer); o.push(66, 1); g(10, 0); g(20, 0); g(30, 0); o.push(70, p.closed ? 1 : 0);
       for (let i = 0; i < p.p.length; i += 2) { g(0, "VERTEX"); g(8, p.layer); g(10, p.p[i]); g(20, p.p[i + 1]); g(30, 0); }
@@ -146,7 +151,8 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
         usePen(p.pen);
         const segs: number[][] = [];
         for (let j = 2; j < p.p.length; j += 2) segs.push([p.p[j] - p.p[j - 2], -(p.p[j + 1] - p.p[j - 1])]);
-        doc.lines(segs, p.p[0], H - p.p[1], [1, 1], "S", !!p.closed);
+        if (p.fill) doc.setFillColor(0, 0, 0);
+        doc.lines(segs, p.p[0], H - p.p[1], [1, 1], p.fill ? "FD" : "S", !!p.closed || !!p.fill);
       } else {
         doc.setFontSize(p.h * FONT_K / 0.3528);
         doc.text(p.s, p.x, H - p.y, { align: p.al === "l" ? "left" : p.al === "c" ? "center" : "right", baseline: "alphabetic" });
