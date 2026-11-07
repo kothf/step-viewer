@@ -16,7 +16,7 @@ import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from 
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { ModelKernel, type Rebuild } from "./kernelClient";
-import type {
+import type { FeatureFolder,
   AxisFeature, ChamferFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3,
 } from "./types";
@@ -198,7 +198,13 @@ export class ModelController {
       this.store = new DocStore(doc);
       this.store.onChange(why => this.changed(why));
       // Equations: every change re-evaluates the kept expressions (FR-PAR-002/003).
-      this.store.normalize = d => { refreshExprs(d, units.current); };
+      this.store.normalize = d => {
+        refreshExprs(d, units.current);
+        // Folders and the freeze bar follow the features: gone ids drop out, empty folders go.
+        const have = new Set(d.features.map(f => f.id));
+        if (d.folders) { for (const g of d.folders) g.ids = g.ids.filter(x => have.has(x)); d.folders = d.folders.filter(g => g.ids.length); if (!d.folders.length) delete d.folders; }
+        if (d.freezeAfter && !have.has(d.freezeAfter)) delete d.freezeAfter;
+      };
     }
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
@@ -362,6 +368,7 @@ export class ModelController {
   async editSketch(id: string, entry = JSON.stringify(this.doc), isNew = false, mark = this.store?.mark() ?? 0) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
+    if (!isNew && this.isFrozen(id)) { this.frozenToast(); return; }
     this.exitMode(false);
     this.sketchMark = mark;
     this.host.clearPick();
@@ -486,6 +493,7 @@ export class ModelController {
     const i = this.doc.features.findIndex(f => f.id === id);
     const f = this.doc.features[i];
     if (!f) return;
+    if (this.isFrozen(id)) { this.frozenToast(); return; }
     if (f.type === "sketch") { void this.editSketch(id); return; }
     this.exitMode(false);
     this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false };
@@ -588,9 +596,44 @@ export class ModelController {
     if (this.store) { this.renderAll(); this.renderEmpty(); }
   }
 
+  /** Features before this index are frozen (FR-HIS-024). */
+  private frozenCount() { const d = this.doc; return d.freezeAfter ? d.features.findIndex(f => f.id === d.freezeAfter) + 1 : 0; }
+  private isFrozen(id: string) { const i = this.doc.features.findIndex(f => f.id === id); return i >= 0 && i < this.frozenCount(); }
+  private frozenToast() { toast(t("This feature is above the freeze bar. Move the bar above it to change it."), true); }
+
+  /** Freezes the features up to and including `id` (null: unfreeze all). */
+  setFreeze(id: string | null) {
+    if (!this.store) return;
+    if (this.mode.kind !== "none") this.exitMode(false);
+    if (id && this.doc.rollback != null && this.doc.features.findIndex(f => f.id === id) >= this.doc.rollback) { toast(t("Roll forward past the feature before freezing it."), true); return; }
+    this.store.change(id ? "Freeze" : "Unfreeze", d => { if (id) d.freezeAfter = id; else delete d.freezeAfter; });
+  }
+
+  /** Puts a feature into a folder (a new one when `folder` is null), out of any other. */
+  addToFolder(id: string, folder: string | null) {
+    if (!this.store) return;
+    const f = this.store.feature(id);
+    if (!f) return;
+    this.store.change(folder ? "Add to folder" : "Add to new folder", d => {
+      const fs = d.folders ?? (d.folders = []);
+      for (const g of fs) g.ids = g.ids.filter(x => x !== id);
+      if (folder) fs.find(g => g.id === folder)?.ids.push(id);
+      else {
+        let n = 1;
+        while (fs.some(g => g.name === `Folder${n}`)) n++;
+        fs.push({ id: uid("fd"), name: `Folder${n}`, ids: [id] });
+      }
+    });
+  }
+  removeFromFolder(id: string) { this.store?.change("Remove from folder", d => { for (const g of d.folders ?? []) g.ids = g.ids.filter(x => x !== id); }); }
+  deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
+  /** Folders collapsed in the tree (view state, not saved). */
+  private closedFolders = new Set<string>();
+
   /** Moves the rollback bar: features from `index` on are not evaluated (null: none). */
   setRollback(index: number | null) {
     if (!this.store) return;
+    if (index != null && index < this.frozenCount()) { toast(t("The rollback bar can't go above the freeze bar."), true); return; }
     if (this.mode.kind !== "none") this.exitMode(false);
     const n = this.doc.features.length;
     const rb = index == null || index >= n ? null : Math.max(0, index);
@@ -599,6 +642,11 @@ export class ModelController {
   }
 
   rename(id: string, name: string) {
+    if (id.startsWith("folder:")) {
+      const g = this.doc.folders?.find(x => `folder:${x.id}` === id), v = name.trim();
+      if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.folders!.find(x => x.id === g.id)!.name = v; });
+      return;
+    }
     const f = this.store?.feature(id);
     const v = name.trim();
     if (!f || !v || v === featureLabel(f.name)) return;
@@ -677,6 +725,8 @@ export class ModelController {
     }
     const next = moved(d.features, ids, to);
     if (next.every((x, i) => x.id === d.features[i].id)) return false;
+    const fz = this.frozenCount();
+    if (fz && next.some((x, i) => (i < fz) !== (d.features.findIndex(y => y.id === x.id) < fz))) { this.frozenToast(); return false; }
     const bad = orderProblem(next);
     if (bad) { toast(t("{a} can't come before {b}: it uses {b}.", { a: featureLabel(bad.feature.name), b: featureLabel(bad.parent.name) }), true); return false; }
     this.store.change(`Move ${f.name}`, dd => { dd.features = moved(dd.features, ids, to); });
@@ -707,6 +757,7 @@ export class ModelController {
   toggleSuppress(id: string) {
     const f = this.store?.feature(id);
     if (!f) return;
+    if (this.isFrozen(id)) { this.frozenToast(); return; }
     this.store!.change(f.suppressed ? `Unsuppress ${f.name}` : `Suppress ${f.name}`, d => {
       const g = d.features.find(x => x.id === id)!;
       if (g.suppressed) delete g.suppressed; else g.suppressed = true;
@@ -716,6 +767,7 @@ export class ModelController {
   async deleteFeature(id: string) {
     const f = this.store?.feature(id);
     if (!f) return;
+    if (this.isFrozen(id)) { this.frozenToast(); return; }
     const deps = dependants(this.doc, id);
     if (deps.length && !(await confirmModal(
       t("{name} is used by {list}. Delete them too?", { name: featureLabel(f.name), list: deps.map(x => featureLabel(x.name)).join(", ") }),
@@ -1977,15 +2029,33 @@ export class ModelController {
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
       const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
-      return row(f.id, icon, featureLabel(f.name), relMark + badge + tools, `${child ? " child" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none"}"`);
+      const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
+      return row(f.id, icon, featureLabel(f.name), relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
     };
+    // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
+    const frozen = this.frozenCount();
+    const folderOf = new Map<string, FeatureFolder>();
+    for (const g of d.folders ?? []) for (const x of g.ids) folderOf.set(x, g);
+    const shownFolder = new Set<string>();
+    let inFolder = false;
+    const freezeBar = `<div class="ft-freeze" role="separator" aria-label="${esc(t("Freeze bar"))}" title="${esc(t("Freeze bar: the features above it are not rebuilt"))}"><span>❄ ${esc(t("Freeze bar"))}</span></div>`;
     const bar = `<div class="ft-rollback" role="treeitem" tabindex="0" aria-selected="false" aria-label="${esc(t("Rollback bar: drag, or use the arrow keys"))}" title="${esc(t("Rollback bar: drag, or use the arrow keys"))}"></div>`;
     d.features.forEach((f, i) => {
       if (i === end) html += bar;
+      if (i === frozen && frozen > 0) html += freezeBar;
       if (absorbed.has(i)) return;
+      const g = folderOf.get(f.id);
+      inFolder = !!g;
+      if (g && !shownFolder.has(g.id)) {
+        shownFolder.add(g.id);
+        const open = !this.closedFolders.has(g.id);
+        html += row(`folder:${g.id}`, open ? "▾" : "▸", g.name, `<span class="muted ft-count">${g.ids.length}</span>`, " ft-folder", ` aria-expanded="${open}"`);
+      }
+      if (g && this.closedFolders.has(g.id)) return;
       html += featRow(f, i, false);
       for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
     });
+    if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
     this.bindTree(box);
@@ -2049,6 +2119,8 @@ export class ModelController {
           this.draftChanged();
           return;
         }
+        // A folder row opens or closes it.
+        if (id.startsWith("folder:")) { this.toggleFolder(id.slice(7)); return; }
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
         if (id === "configs") { this.editConfigs(); return; }
@@ -2060,6 +2132,7 @@ export class ModelController {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
+        if (id.startsWith("folder:")) { this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -2073,6 +2146,8 @@ export class ModelController {
         else if (e.key === "Enter" && (id === "part" || id === "material")) { e.preventDefault(); this.editProps(); }
         else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
+        else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
+        else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();
@@ -2135,6 +2210,10 @@ export class ModelController {
     const end = this.doc.rollback ?? this.doc.features.length;
     const items: ([string, () => void] | null)[] = [];
     if (id === "part" || id === "material") items.push([t("Properties…"), () => this.editProps()]);
+    if (id.startsWith("folder:")) {
+      items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
+    }
     if (id.startsWith("std:") || f?.type === "plane") items.push([t("Sketch on this plane"), () => void this.createSketch(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (f) {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
@@ -2146,6 +2225,18 @@ export class ModelController {
       items.push([t("Roll back to here"), () => this.setRollback(i)]);
       if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
       if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+      items.push([t("Freeze up to here"), () => this.setFreeze(f.id)]);
+      if (this.doc.freezeAfter) items.push([t("Unfreeze all"), () => this.setFreeze(null)]);
+      items.push(null);
+      // Folders: a new one, the neighbour's (the row above or below), or out of its folder.
+      const fd = this.doc.folders ?? [];
+      const mine = fd.find(g => g.ids.includes(f.id));
+      items.push([t("Add to new folder"), () => this.addToFolder(f.id, null)]);
+      for (const nb of [this.doc.features[i - 1], this.doc.features[i + 1]]) {
+        const g = nb && fd.find(x => x.ids.includes(nb.id));
+        if (g && g !== mine && !items.some(it => it?.[0] === t("Add to {name}", { name: g.name }))) items.push([t("Add to {name}", { name: g.name }), () => this.addToFolder(f.id, g.id)]);
+      }
+      if (mine) items.push([t("Remove from folder"), () => this.removeFromFolder(f.id)]);
       items.push(null);
       items.push([t("Delete"), () => void this.deleteFeature(f.id)]);
     }
@@ -2174,14 +2265,21 @@ export class ModelController {
   private closeMenu() { const m = document.getElementById("mc-menu"); if (m && !m.hidden) { m.hidden = true; m.innerHTML = ""; } }
 
   /** Rename in place (F2, or the menu). */
+  private toggleFolder(fid: string) {
+    if (this.closedFolders.has(fid)) this.closedFolders.delete(fid); else this.closedFolders.add(fid);
+    this.selected = `folder:${fid}`;
+    this.renderTree();
+  }
+
   startRename(id: string) {
+    const folder = id.startsWith("folder:") ? this.doc.folders?.find(g => `folder:${g.id}` === id) : undefined;
     const f = this.store?.feature(id);
     const row = $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`);
     const name = row?.querySelector<HTMLElement>(".ft-name");
-    if (!f || !row || !name) return;
+    if ((!f && !folder) || !row || !name) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
-    inp.value = featureLabel(f.name);
+    inp.value = folder ? folder.name : featureLabel(f!.name);
     inp.setAttribute("aria-label", t("New name"));
     inp.setAttribute("translate", "no");
     name.replaceWith(inp);

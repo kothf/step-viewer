@@ -948,10 +948,13 @@ export class Modeller {
     const failed = new Set<string>();
     const next: CacheEntry[] = [];
     this.tools = new Map();
+    // Freeze bar (FR-HIS-024): features up to it keep their cached result even when they changed.
+    const frozen = doc.freezeAfter ? doc.features.findIndex(f => f.id === doc.freezeAfter) + 1 : 0;
     doc.features.forEach((f, i) => {
       if (i >= end) { statuses.push({ id: f.id, ok: true, code: "rolled-back" }); return; }
-      chain = `${chain}|${JSON.stringify(f)}`;
       const hit = this.cache[i];
+      const keep = i < frozen && hit && hit.status.id === f.id && next.length === i;
+      chain = keep ? hit.key : `${chain}|${JSON.stringify(f)}`;
       if (hit && hit.key === chain) {
         next.push(hit);
         statuses.push(hit.status);

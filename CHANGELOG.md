@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-11-07
+
+### Added
+- **Folders in the Features tree** (FR-HIS-009): right-click a feature and choose Add to new folder, or add it to the folder of the feature above or below. A click on the folder opens or closes it (also Enter, ← and →), double-click or F2 renames it, and deleting a folder keeps its features.
+- **Freeze bar** (FR-HIS-024): Freeze up to here on a feature's menu keeps that feature and everything above it as built; they are not rebuilt and can't be edited, suppressed, deleted or moved until you choose Unfreeze all. Features below the bar still rebuild on the frozen body.
+
 ## [1.29.0] - 2026-11-07
 
 ### Added
@@ -373,7 +379,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.29.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.30.0...HEAD
+[1.30.0]: https://github.com/kothf/step-viewer/compare/v1.29.0...v1.30.0
 [1.29.0]: https://github.com/kothf/step-viewer/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/kothf/step-viewer/compare/v1.27.0...v1.28.0
 [1.27.0]: https://github.com/kothf/step-viewer/compare/v1.26.0...v1.27.0

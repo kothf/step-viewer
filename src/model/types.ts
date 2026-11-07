@@ -277,6 +277,8 @@ export interface PartConfig {
   };
 }
 
+export interface FeatureFolder { id: string; name: string; ids: string[] }
+
 export interface PartDoc {
   schema: 1;
   kind: "part";
@@ -293,6 +295,10 @@ export interface PartDoc {
   vars?: GlobalVar[];
   /** Configurations; absent: only the default one. */
   configs?: PartConfig[];
+  /** Tree folders (FR-HIS-009): user groups of features, by id. */
+  folders?: FeatureFolder[];
+  /** Freeze bar (FR-HIS-024): this feature and the ones before it are not re-evaluated. */
+  freezeAfter?: string;
   /** The active configuration's name. */
   config?: string;
 }
