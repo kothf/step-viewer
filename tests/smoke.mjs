@@ -2304,7 +2304,7 @@ try {
     const topS = await world([30, 15, 20]);
     await mp.mouse.click(topS[0], topS[1]);
     await idle();
-    const shellFaces = await mp.evaluate(() => document.querySelector("#mc-pm .pm-count")?.textContent);
+    const shellFaces = await mp.evaluate(() => document.querySelector('#mc-pm [data-focus="faces"]')?.textContent);
     await mp.click("#mc-ok");
     await idle();
     const vSh = await vol(), stSh = await lastSt();
@@ -5713,6 +5713,82 @@ try {
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.88: Intersect panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- 1.97: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two stacked 100 × 60 × 10 blocks: the edge between their −Y sides is the parting line.
+    await mp.evaluate(() => window.__sv.model.store.change("Blocks", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const box = (k, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", -50, -30), P(k + "2", 50, -30), P(k + "3", 50, 30), P(k + "4", -50, 30), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push(box("a", { std: "XY" }), { id: "ea", type: "extrude", name: "Boss-Extrude1", sketch: "a", op: "boss", end: "blind", depth: { v: 10 } },
+        box("b", { face: { name: "ea:end" } }), { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="draft"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="dkind"]', "parting");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { std: "XY" }; m.mode().focus = "faces"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="angle"]', "5");
+    await mp.press('#mc-pm input[data-num="angle"]', "Tab");
+    await settle();
+    const [ex, ey] = await toPage([0, -30, 10]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { kind: f.kind, edges: f.parting?.map(e => e.faces.slice().sort().join("+")), other: !!document.querySelector('#mc-pm input[data-k="other"]') }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm label.chk")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const d1 = await state();
+    const wedge = 100 * 0.5 * 10 * 10 * Math.tan(5 * Math.PI / 180);
+    check(dd.kind === "parting" && dd.edges?.length === 1 && /ea:side/.test(dd.edges[0]) && /eb:side/.test(dd.edges[0]) && dd.other && Math.abs(Math.abs(120000 - d1.v) - wedge) < 1 && !d1.bad,
+      `model 1.97: parting line draft from a clicked edge, 5° (FR-FT-061) (${JSON.stringify({ dd, d1, wedge })})`);
+    check(/Линия разъёма/.test(ru) && /Направление извлечения/.test(ru) && /Другая грань/.test(ru) && !/Parting line|Direction of pull/.test(ru), `model 1.97: draft panel in Russian (${ru.slice(0, 300)})`);
+    // Loft between two 20 mm squares (the top one 15 mm over), normal to both profiles from the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Squares", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (k, cx, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", cx - 10, -10), P(k + "2", cx + 10, -10), P(k + "3", cx + 10, 10), P(k + "4", cx - 10, 10), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push({ id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } }, { id: "p2", type: "plane", name: "Plane2", mode: "offset", base: { std: "XY" }, offset: { v: 80 } },
+        sq("q1", 0, { plane: "p1" }), sq("q2", 15, { plane: "p2" }));
+    }));
+    await settle();
+    const before = (await state()).v;
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Loft")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.profiles = ["q1", "q2"]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="startC"]', "normal");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="endC"]', "normal");
+    await settle();
+    const ld = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { s: f.startNormal, e: f.endNormal, len: !!document.querySelector('#mc-pm input[data-k="startLen"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const l1 = await state();
+    check(ld.s && ld.e && ld.len && Math.abs(l1.v - before - 12000) < 15 && !l1.bad, `model 1.97: loft normal to its start and end profiles (FR-FT-082) (${JSON.stringify({ ld, l1, before })})`);
     await ctx.close();
   }
 

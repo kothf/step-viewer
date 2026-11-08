@@ -1744,6 +1744,18 @@ export class ModelController {
       this.draftChanged();
       return;
     }
+    if (f.type === "draft" && f.kind === "parting") {
+      // Parting line draft: a click toggles an edge of the parting line.
+      const hit = this.host.edgeAt(e.clientX, e.clientY);
+      const er = hit?.edge ? this.refOfEdge(hit.edge) : null;
+      if (!er || er.faces.some(own)) { toast(t("Click an edge of the parting line.")); return; }
+      const list = (f.parting ??= []);
+      const same = (x: EdgeRef) => this.edgeOf(x) === this.edgeOf(er) && this.edgeOf(x) != null;
+      const i = list.findIndex(same);
+      if (i >= 0) list.splice(i, 1); else list.push(er);
+      this.draftChanged();
+      return;
+    }
     if (f.type === "moveface" && f.mode === "rotate" && m.focus === "axis") {
       const hit = this.host.edgeAt(e.clientX, e.clientY);
       const er = hit?.edge?.type === "line" ? this.refOfEdge(hit.edge) : null;
@@ -3940,7 +3952,15 @@ export class ModelController {
     if (f.type === "draft") {
       title = t("Draft");
       const dbox = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
-      body = group(t("Draft angle"), numField("angle", t("Angle"), f.angle, "angle"))
+      const parting = f.kind === "parting";
+      const kindSel = `<label class="pm-field"><span>${esc(t("Type of draft"))}</span><select data-k="dkind"><option value="neutral"${parting ? "" : " selected"}>${esc(t("Neutral plane"))}</option><option value="parting"${parting ? " selected" : ""}>${esc(t("Parting line"))}</option></select></label>`;
+      if (parting) body = group(t("Type of draft"), kindSel) + group(t("Draft angle"), numField("angle", t("Angle"), f.angle, "angle"))
+        + group(t("Direction of pull"), dbox("nplane", t("Plane"), this.refLabel(f.plane)) + chk("flip", f.flip, t("Reverse direction")))
+        + group(t("Parting line"), dbox("faces", t("Edges"), t("{n} edge|{n} edges", { n: f.parting?.length ?? 0 }))
+          + (f.parting?.length ? `<button class="btn small" data-k="clearParting">${esc(t("Clear edges"))}</button>` : "") + chk("other", f.other, t("Other face"))
+          + `<p class="pm-help muted">${esc(m.focus === "nplane" || !f.plane ? t("Click a plane or a flat face in the view or the tree.") : t("Click the edges of the parting line: the face on one side of each tapers from it. Other face drafts the face on the far side."))}</p>`);
+      else
+      body = group(t("Type of draft"), kindSel) + group(t("Draft angle"), numField("angle", t("Angle"), f.angle, "angle"))
         + group(t("Neutral plane"), dbox("nplane", t("Plane"), this.refLabel(f.plane)) + chk("flip", f.flip, t("Reverse direction"))
           + `<p class="pm-help muted">${esc(t("The faces keep their size where they cross this plane and taper away from it."))}</p>`)
         + group(t("Faces to draft"), dbox("faces", t("Faces"), t("{n} face|{n} faces", { n: f.faces.length }))
@@ -4110,6 +4130,15 @@ export class ModelController {
         if (k === "name") { const s = String(val).trim(); if (s) f.name = s === featureLabel(f.name) ? f.name : s; this.renderPanel(); return; }
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
+        if (k === "dkind" && f.type === "draft") { upd(() => { if (val === "parting") { f.kind = "parting"; f.parting ??= []; f.faces = []; } else { delete f.kind; delete f.parting; delete f.other; } m.focus = f.plane ? "faces" : "nplane"; }, true); return; }
+        if (k === "ribDraft" && f.type === "rib") { upd(() => { if (val) f.draft = { v: Math.PI / 180 }; else { delete f.draft; delete f.draftOut; } }, true); return; }
+        if ((k === "startC" || k === "endC") && f.type === "loft") { upd(() => { const key = k === "startC" ? "startNormal" : "endNormal"; if (val === "normal") f[key] = true; else delete f[key]; }, true); return; }
+        if ((k === "startLen" || k === "endLen") && f.type === "loft") {
+          const v = Number(String(val).replace(",", "."));
+          if (!(v > 0 && v <= 10)) { toast(t("The tangent length must be between 0 and 10."), true); this.renderPanel(); return; }
+          upd(() => { if (v === 1) delete f[k]; else f[k] = v; });
+          return;
+        }
         if (k === "mode" && f.type === "chamfer") { upd(() => { f.mode = val as NonNullable<ChamferFeature["mode"]>; if (f.mode === "two" || f.mode === "vertex") f.distance2 ??= { v: f.distance.v }; if (f.mode === "vertex") { f.distance3 ??= { v: f.distance.v }; f.vertices ??= []; } if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }, true); return; }
         if (f.type === "fillet" && k === "kind") {
           upd(() => {
@@ -4324,6 +4353,7 @@ export class ModelController {
       inp.addEventListener("change", apply);
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
+    pm.querySelector("[data-k=clearParting]")?.addEventListener("click", () => { if (f.type === "draft") { f.parting = []; this.draftChanged(); } });
     pm.querySelectorAll<HTMLElement>("[data-rmv]").forEach(b => b.addEventListener("click", () => {
       if (f.type !== "chamfer" || !f.vertices) return;
       f.vertices.splice(+b.dataset.rmv!, 1);
@@ -4766,6 +4796,7 @@ export class ModelController {
         + numField("thickness", t("Rib thickness"), f.thickness, "length")
         + sel("dir", t("Extrusion direction"), o("parallel", t("Parallel to sketch"), f.dir) + o("normal", t("Normal to sketch"), f.dir))
         + chk("flip", f.flip, t("Flip material side")))
+        + (f.dir === "normal" ? group(t("Draft"), chk("ribDraft", !!f.draft, t("Draft on")) + (f.draft ? numField("draft", t("Draft angle"), f.draft, "angle") + chk("draftOut", f.draftOut, t("Draft outward")) : "")) : "")
         + `<p class="pm-help muted">${esc(t("Sketch an open line or arc chain beside the part: the rib runs from it to the body, which closes it. Parallel grows it in the sketch plane, Normal along the sketch normal."))}</p>` };
     }
     if (f.type === "curve") return this.curvePanel(f, sketches, group, chk, sel, skOpts);
@@ -4802,6 +4833,11 @@ export class ModelController {
         return sel("lcPath", t("Centerline"), opt("", t("None"), cur) + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), cur)).join("") + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join(""))
           + (f.centerline ? `<p class="pm-help muted">${esc(t("The loft follows the centreline between its profiles. Each profile should sit across it, in its order."))}</p>` : "");
       })())
+      + (f.centerline || f.ruled || f.close ? "" : group(t("Start/End Constraints"), (["start", "end"] as const).map(w => {
+        const on = w === "start" ? !!f.startNormal : !!f.endNormal, len = (w === "start" ? f.startLen : f.endLen) ?? 1;
+        return sel(`${w}C`, w === "start" ? t("Start constraint") : t("End constraint"), `<option value="none"${on ? "" : " selected"}>${esc(t("None"))}</option><option value="normal"${on ? " selected" : ""}>${esc(t("Normal to profile"))}</option>`)
+          + (on ? `<label class="pm-field"><span>${esc(t("Tangent length"))}</span><input type="text" inputmode="decimal" data-k="${w}Len" value="${esc(trimNum(len, 3))}" spellcheck="false" /></label>` : "");
+      }).join("")))
       + (f.centerline ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
   }
 

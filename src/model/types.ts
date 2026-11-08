@@ -291,6 +291,14 @@ export interface DraftFeature {
   angle: Num;
   /** Reverse the pull direction. */
   flip?: boolean;
+  /**
+   * Parting line draft (FR-FT-061, P5): `plane` only gives the pull direction; each picked edge hinges
+   * the face on one side of it (`faces[0]` of the EdgeRef, or `faces[1]` with `other`), so faces
+   * above a split line taper from it.
+   */
+  kind?: "neutral" | "parting";
+  parting?: EdgeRef[];
+  other?: boolean;
 }
 
 /**
@@ -527,6 +535,12 @@ export interface LoftFeature {
   close?: boolean;
   /** Centreline (P5): the loft follows this path between its profiles. */
   centerline?: SweepPath;
+  /** Start / end constraint (FR-FT-082): the loft leaves the first / reaches the last profile square to it. */
+  startNormal?: boolean;
+  endNormal?: boolean;
+  /** Tangent length (1 = default) for the start / end constraint. */
+  startLen?: number;
+  endLen?: number;
 }
 
 /**
@@ -542,6 +556,10 @@ export interface RibFeature {
   side: "mid" | "one" | "other";
   dir: "parallel" | "normal";
   flip?: boolean;
+  /** Draft (FR-FT-062) on a rib normal to the sketch: the walls taper away from the sketch plane. */
+  draft?: Num;
+  /** The walls get wider away from the sketch instead. */
+  draftOut?: boolean;
 }
 
 /**

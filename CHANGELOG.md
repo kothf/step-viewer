@@ -13,6 +13,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Offset face chamfer.** Both faces move in by the distance, and the chamfer runs where they meet, so it stays even where the faces are not square.
   - **Vertex chamfer.** Click an edge next to a corner of three straight edges, and the corner is cut off at three distances along its edges.
   - **Multi-thickness shell.** Flat faces picked under Multi-thickness settings get walls of their own thickness, thicker or thinner than the shell.
+- Draft and loft options from FRS Appendix G (FR-FT-061, FR-FT-062, FR-FT-082):
+  - **Parting line draft.** Pick the direction of pull and the edges of the parting line, and the face on one side of each edge tapers from it.
+  - **Rib draft.** A rib normal to its sketch can taper away from the sketch plane, inward or outward.
+  - **Loft start and end constraints.** Normal to profile makes the loft leave the first profile and reach the last one square to them, with a tangent length.
 - Holes and end conditions from FRS Appendix G (FR-FT-050, FR-FT-012):
   - **New hole types.** Clearance, Counterdrill (a larger drill to a depth with a 118° cone at its bottom) and Slot (length and angle in the face, rounded ends).
   - **Hole end conditions.** Up to next goes through the first wall the hole meets. Up to face or plane stops at a picked plane or flat face.

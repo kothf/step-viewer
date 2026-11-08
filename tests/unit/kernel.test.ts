@@ -1300,3 +1300,47 @@ test("vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-0
   const bad = m.evaluate(doc([s1, e1, { ...sh, multi: [{ name: "f1:end", t: 3 }] } as Feature]));
   assert.equal(bad.statuses[2].ok, false);
 });
+
+test("parting line draft, rib draft, loft start/end normal to profile (FR-FT-061, FR-FT-062, FR-FT-082)", async () => {
+  const m = new Modeller(await occ());
+  const deg = Math.PI / 180;
+  // Two stacked 100 × 60 × 10 blocks: the edge between their −Y sides is the parting line; the top side tapers from it.
+  const st: Feature[] = [rect("s1", 0, 0, 100, 60), { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("s2", 0, 0, 100, 60, { face: { name: "f1:end" } }), { id: "f2", type: "extrude", name: "E2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r0 = run(m, doc(st));
+  assert.ok(r0.body!.names.includes("f2:side:s2l1") && r0.body!.names.includes("f1:side:s1l1"), r0.body!.names.join());
+  const pd: Feature = { id: "d", type: "draft", name: "Draft1", kind: "parting", plane: { std: "XY" }, faces: [], parting: [{ faces: ["f2:side:s2l1", "f1:side:s1l1"] }], angle: { v: 5 * deg } };
+  let r = run(m, doc([...st, pd]));
+  close(Math.abs(120000 - r.props!.volume), 100 * 0.5 * 10 * 10 * Math.tan(5 * deg), 1e-4);
+  // Other face: the lower side tapers from the same edge instead (down the pull, so the same size wedge).
+  r = run(m, doc([...st, { ...pd, other: true } as Feature]));
+  close(Math.abs(120000 - r.props!.volume), 100 * 0.5 * 10 * 10 * Math.tan(5 * deg), 1e-4);
+
+  // Rib normal to the sketch across a channel, 4 thick and 50 deep, walls drafted 2° in: 80 · (4·50 − 50²·tan 2°).
+  const line = (id: string, plane: SketchFeature["plane"], a: [number, number], b: [number, number]): SketchFeature => ({
+    id, type: "sketch", name: id, plane, rels: [], dims: [],
+    ents: [{ id: `${id}a`, t: "point", x: a[0], y: a[1] }, { id: `${id}b`, t: "point", x: b[0], y: b[1] }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }],
+  });
+  const chan: Feature[] = [rect("b", 0, 0, 100, 60), { id: "bx", type: "extrude", name: "Base", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("w", -45, 0, 10, 60), { id: "wx", type: "extrude", name: "Wall", sketch: "w", op: "boss", end: "blind", depth: { v: 60 } },
+    rect("w2", 45, 0, 10, 60), { id: "w2x", type: "extrude", name: "Wall2", sketch: "w2", op: "boss", end: "blind", depth: { v: 60 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 60 } }, line("r", { plane: "p" }, [-45, 0], [45, 0])];
+  const rib: Feature = { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "normal", draft: { v: 2 * deg } };
+  r = run(m, doc([...chan, rib]));
+  close(r.props!.volume, 120000 + 80 * (200 - 2500 * Math.tan(2 * deg)), 1e-4);
+  r = run(m, doc([...chan, { ...rib, draftOut: true } as Feature]));
+  close(r.props!.volume, 120000 + 80 * (200 + 2500 * Math.tan(2 * deg)), 1e-4);
+
+  // Loft between two 20 mm squares 30 apart, the top one 15 mm over in X: every section is the same square, so 12000 either way.
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 30 } };
+  const lf: Feature = { id: "l1", type: "loft", name: "Loft1", op: "boss", profiles: ["q1", "q2"] };
+  const lofts = (o: object) => run(m, doc([rect("q1", 0, 0, 20, 20), pl, rect("q2", 15, 0, 20, 20, { plane: "p1" }), { ...lf, ...o } as Feature]));
+  const plain = lofts({}), normal = lofts({ startNormal: true, endNormal: true });
+  close(plain.props!.volume, 12000, 1e-4);
+  close(normal.props!.volume, 12000, 1e-3);
+  // Square to the start: 1 mm up, the left side has hardly moved (straight loft: 0.5 mm).
+  const oc = (m as unknown as { oc: any }).oc;
+  const inside = (r: { body: { shape: unknown } | null }, x: number) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(x, 0, 1), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.equal(inside(plain, -9.7), false);
+  assert.equal(inside(normal, -9.7), true);
+});

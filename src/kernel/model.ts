@@ -1688,21 +1688,36 @@ export class Modeller {
    */
   private draft(f: DraftFeature, prev: Named | null, frames: Record<string, Frame>): Named {
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
-    if (!f.plane) throw new FeatureError("E-DRAFT-PLANE", "Pick the neutral plane: a flat face or a plane.");
-    if (!f.faces.length) throw new FeatureError("E-DRAFT-FACES", "Click the faces to draft.");
+    const parting = f.kind === "parting";
+    if (!f.plane) throw new FeatureError("E-DRAFT-PLANE", parting ? "Pick the direction of pull: a flat face or a plane." : "Pick the neutral plane: a flat face or a plane.");
+    if (parting ? !f.parting?.length : !f.faces.length) throw new FeatureError("E-DRAFT-FACES", parting ? "Click the edges of the parting line." : "Click the faces to draft.");
     const a = f.angle.v;
     if (!(Math.abs(a) > 1e-6) || Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 90°.");
     const fr = this.planeFrame(f.plane, prev, frames);
     const n = f.flip ? mul(fr.n, -1) : fr.n;
-    return this.applyDraft(prev, f.faces.map(r => this.resolveFace(prev, r)), n, a, fr.o, f.id);
+    if (!parting) return this.applyDraft(prev, f.faces.map(r => this.resolveFace(prev, r)), n, a, fr.o, f.id);
+    // Parting line: each face hinges on its edge (the neutral plane through the edge's middle, square to the pull).
+    const items: { face: any; o: V3 }[] = [];
+    for (const r of f.parting!) {
+      const e = this.resolveEdge(prev, r);
+      const face = this.faceOfEdge(prev, e, r.faces[f.other ? 1 : 0]);
+      if (items.some(x => x.face.IsSame(face))) continue;
+      const c = new this.oc.BRepAdaptor_Curve_2(e);
+      items.push({ face, o: this.xyz(c.Value((c.FirstParameter() + c.LastParameter()) / 2)) });
+    }
+    return this.applyDraftEach(prev, items, n, a, f.id);
   }
 
-  /** Tapers faces of a body by an angle about the plane through `o` normal to the pull direction `n`; faces keep their names. */
   private applyDraft(prev: Named, picked: any[], n: V3, a: number, o: V3, fid: string): Named {
+    return this.applyDraftEach(prev, picked.map(face => ({ face, o })), n, a, fid);
+  }
+
+  /** Tapers faces of a body by an angle, each about the plane through its `o` normal to the pull direction `n`; faces keep their names. */
+  private applyDraftEach(prev: Named, picked: { face: any; o: V3 }[], n: V3, a: number, fid: string): Named {
     const oc = this.oc;
-    const pln = new oc.gp_Pln_3(this.P(o), this.D(n));
     const mk = new oc.BRepOffsetAPI_DraftAngle_2(prev.shape);
-    for (const face of picked) {
+    for (const { face, o } of picked) {
+      const pln = new oc.gp_Pln_3(this.P(o), this.D(n));
       try { mk.Add(oc.TopoDS.Face_1(face), this.D(n), a, pln, true); } catch { /* reported below */ }
       if (!mk.AddDone()) throw new FeatureError("E-DRAFT-FACE", "A face can't be drafted about this neutral plane: pick faces that cross it, not parallel to it.");
     }
@@ -2339,6 +2354,26 @@ export class Modeller {
       wires.push(w);
     });
     if (f.close && wires.length >= 3) wires.push(wires[0]);
+    // Start / end normal to profile (FR-FT-082): a copy of the end profile a little way along its normal
+    // (towards the next one) makes the smooth loft leave it square; the tangent length scales that step.
+    if (!f.ruled && !f.close && (f.startNormal || f.endNormal)) {
+      const norm = (id: string) => this.sketchOf(id, doc, prev, frames, "the profile sketches").frame.n;
+      const cen = (w: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.LinearProperties(w, g, false, false); return this.xyz(g.CentreOfMass()); };
+      const guide = (w: any, next: any, n: V3, len: number) => {
+        const gap = add(cen(next), mul(cen(w), -1));
+        const along = dot(gap, n) >= 0 ? n : mul(n, -1);
+        const step = Math.max(Math.abs(dot(gap, n)), Math.hypot(...gap) * 0.5) * 0.25 * len;
+        if (!(step > 1e-6)) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+        const tr = new oc.gp_Trsf_1();
+        tr.SetTranslation_1(this.V(mul(along, step)));
+        return oc.TopoDS.Wire_1(new oc.BRepBuilderAPI_Transform_2(w, tr, true).Shape());
+      };
+      const L = wires.length;
+      const first = f.startNormal ? guide(wires[0], wires[1], norm(f.profiles[0]), f.startLen ?? 1) : null;
+      const last = f.endNormal ? guide(wires[L - 1], wires[L - 2], norm(f.profiles[L - 1]), f.endLen ?? 1) : null;
+      if (first) wires.splice(1, 0, first);
+      if (last) wires.splice(wires.length - 1, 0, last);
+    }
     for (const w of wires) mk.AddWire(w);
     mk.CheckCompatibility(true);
     mk.Build(new oc.Message_ProgressRange_1());
@@ -2494,6 +2529,19 @@ export class Modeller {
         bb.MakeCompound(comp);
         for (const s of keep) bb.Add(comp, s);
         rib = { shape: comp, faces, names };
+      }
+      const da = f.draft?.v ?? 0;
+      if (Math.abs(da) > 1e-9) {
+        // Rib draft (FR-FT-062): the walls along the growth taper about the sketch plane; faces lying on the body stay.
+        if (f.dir !== "normal") throw new FeatureError("E-RIB-DRAFT", "Draft works on ribs normal to the sketch.");
+        if (Math.abs(da) >= Math.PI / 4) throw new FeatureError("E-DRAFT-ANGLE", "The draft angle must be between 0° and 45°.");
+        const walls = rib.faces.filter(x => {
+          const pl = this.facePlane(x);
+          if (pl && Math.abs(dot(pl.n, along!)) > 1e-6) return false;
+          const c = this.centroid(x);
+          return new oc.BRepClass3d_SolidClassifier_3(prev.shape, this.P(c), 1e-6).State() !== oc.TopAbs_State.TopAbs_ON;
+        });
+        rib = this.applyDraft(rib, walls, along!, f.draftOut ? -da : da, frame.o, f.id);
       }
       this.tools.set(f.id, [{ shape: rib, op: "fuse" }]);
       return this.bool("fuse", prev, rib, f.id);

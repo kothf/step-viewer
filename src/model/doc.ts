@@ -156,7 +156,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "moveface") line(f.axis);
   if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
-  if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
+  if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); for (const e of f.parting ?? []) faces.push(...e.faces); }
   if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
   if (f.type === "spattern") { features.push(...f.features); if (f.sketch) features.push(f.sketch); if (f.csys) features.push(f.csys); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
