@@ -23,7 +23,7 @@ import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
-import { quadCorners } from "./shapes";
+import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
@@ -59,7 +59,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -141,7 +141,7 @@ export class SketchEditor {
   private lastEv: PointerEvent | null = null;
   /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
   modelSnap = true;
-  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean } = { pts: [], ids: [], cursor: null, snap: null };
+  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
   /** Ordinate dimensioning: the base picked first, then the row the values go on. */
   private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
@@ -371,6 +371,7 @@ export class SketchEditor {
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     this.draft.snap = snap.id;
+    this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.render();
     return true;
   }
@@ -516,6 +517,18 @@ export class SketchEditor {
   // ---------- drawing ----------
 
   /** The ellipse being drawn: centre c, major end a, and q on it (null when q cannot be on one). */
+  /** The perimeter circle for three clicks, each a point or on a curve (line, circle or arc), FR-SK-014. */
+  private perimFit(at: V2[], curves: (string | null)[]) {
+    const items: PerimItem[] = at.map((p, i) => {
+      const e = curves[i] ? this.ent(curves[i]!) : undefined;
+      if (e?.t === "line") return { k: "l", a: this.pt(e.a), b: this.pt(e.b) };
+      if (e?.t === "circle") return { k: "c", c: this.pt(e.c), r: e.r };
+      if (e?.t === "arc") { const c = this.pt(e.c), a = this.pt(e.a); return { k: "c", c, r: Math.hypot(a[0] - c[0], a[1] - c[1]) }; }
+      return { k: "p", p };
+    });
+    return perimeterCircle(items, at);
+  }
+
   private draftEll(c: V2, a: V2, q: V2): Ell | null {
     const r1 = Math.hypot(a[0] - c[0], a[1] - c[1]);
     if (r1 < 1e-9) return null;
@@ -717,6 +730,25 @@ export class SketchEditor {
         rels.push({ id: uid("r"), t: "midpoint", e: [d.ids[0] === ORIGIN ? ORIGIN : this.usePoint(d.pts[0], d.ids[0], d.snapCurve ?? null, rels), diag] });
       }
       finish(this.tool === "pgram" ? "Add parallelogram" : centred ? "Add 3-point centre rectangle" : "Add 3-point rectangle");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "pcircle") {
+      // Perimeter circle (FR-SK-014, P2): three clicks; one on a line, circle or arc makes the circle tangent to it.
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      const curves = (d.curves ??= []);
+      if (d.pts.length < 2) { d.pts.push(p); d.ids.push(s.id); curves.push(s.id ? null : s.curve); this.render(); return; }
+      const all = [...curves, s.id ? null : s.curve], ids = [...d.ids, s.id], at = [...d.pts, p];
+      const sol = this.perimFit(at, all);
+      if (!sol) { this.host.toast(t("No circle touches those three."), "warn"); return; }
+      const id = uid("c");
+      this.sk.ents.push({ id, t: "circle", c: this.usePoint(sol.c, null, null, rels), r: sol.r });
+      all.forEach((cv, i) => {
+        if (cv) rels.push({ id: uid("r"), t: "tangent", e: [cv, id], ...(sol.inner[i] ? { inner: true } : {}) });
+        else if (ids[i] && ids[i] !== ORIGIN) rels.push({ id: uid("r"), t: "onCurve", e: [ids[i]!, id] });
+      });
+      finish("Add perimeter circle");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -2293,6 +2325,7 @@ export class SketchEditor {
       point: "Click to place a point",
       text: "Type the text and its height in the panel, then click where it starts",
       circle3: "Click three points on the circle",
+      pcircle: "Click three points or curves; the circle passes through the points and touches the lines, circles and arcs",
       arc3: "Click the start, the end, then a point on the arc",
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
@@ -2447,6 +2480,10 @@ export class SketchEditor {
       } else if (this.tool === "polygon") {
         const r = Math.hypot(p[0] - a[0], p[1] - a[1]), a0 = Math.atan2(p[1] - a[1], p[0] - a[0]), n = this.polySides;
         poly(Array.from({ length: n + 1 }, (_, i) => [a[0] + r * Math.cos(a0 + (2 * Math.PI * i) / n), a[1] + r * Math.sin(a0 + (2 * Math.PI * i) / n)] as V2), C.pre);
+      } else if (this.tool === "pcircle") {
+        const sol = d.pts.length === 2 ? this.perimFit([...d.pts, p], [...(d.curves ?? []), this.draft.hoverCurve ?? null]) : null;
+        if (sol) poly(arcPts(sol.c, sol.r, 0, Math.PI * 2, 72), C.pre);
+        else push(d.pts.at(-1)!, p, C.pre);
       } else if (this.tool === "circle3" || this.tool === "arc3") {
         const c = d.pts.length === 2 ? circumcentre(d.pts[0], d.pts[1], p) : null;
         if (!c) push(d.pts.at(-1)!, p, C.pre);
