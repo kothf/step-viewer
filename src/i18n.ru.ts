@@ -2984,4 +2984,11 @@ export const RU: Record<string, string> = {
   // Next: sketch relations to model edges picked in the view (FR-SK-064).
   "Select sketch items or model edges to add relations (Ctrl+click for more).": "Выберите элементы эскиза или рёбра модели, чтобы добавить взаимосвязи (Ctrl+щелчок добавляет).",
   "Reference model edge": "Ссылка на ребро модели",
+  // 1.104.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
+  "Chain dimension": "Цепной размер",
+  "Baseline dimension": "Размеры от базы",
+  "Ordinate dimension": "Координатный размер",
+  "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
+  "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
+  "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
 };
