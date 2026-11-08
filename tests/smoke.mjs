@@ -3055,7 +3055,7 @@ try {
     await dp.evaluate(() => document.querySelector("#lang-btn").click());
     await dp.waitForTimeout(200);
     const left = await dp.evaluate(() => {
-      const OK = /^(MöbiusCAD|ISO|ANSI|Y14|PDF|SVG|DXF|Ctrl|Esc|Delete|mcaddrw|mm|kg|F|A\d|B|C|D|E|S|Z|Y|P)$/;
+      const OK = /^(MöbiusCAD|ISO|ANSI|Y14|PDF|SVG|DXF|PNG|dpi|GOST|Ctrl|Esc|Delete|mcaddrw|mm|kg|F|A\d|B|C|D|E|S|Z|Y|P)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
