@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.115.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121), Structural Member:
+  - **Corners**: each corner where the member's lines meet can have its own treatment (mitre, butt 1, butt 2 or none), kept when the member's corner treatment changes, like picking a corner in SolidWorks.
+  - **Weld gap**: a gap at every corner, split between the two ends of a mitre; a butted member stops that far short of the one running through. The cut list lengths follow.
+  - **Description** for the cut list, in place of the profile's name.
+
 ## [1.114.0] - 2026-11-08
 
 ### Added
@@ -1061,7 +1070,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.114.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.115.0...HEAD
+[1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0
 [1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0
 [1.110.0]: https://github.com/kothf/step-viewer/compare/v1.108.0...v1.110.0

@@ -6830,6 +6830,18 @@ try {
     await settle();
     const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
     check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
+    // Corners group: one corner of the frame butted, a weld gap at all of them.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "member").id));
+    await settle();
+    const nCorners = await mp.evaluate(() => document.querySelectorAll('#mc-pm select[data-k^="wcorner:"]').length);
+    await mp.selectOption('#mc-pm select[data-k^="wcorner:"] >> nth=0', "butt1");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wGap"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const co = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "member"); return { corners: f.corners, gap: f.gap?.v, rows: (l.cutList ?? []).filter(c => c.desc === "SHS 50x50x4").map(c => [c.qty, c.length, c.angle1, c.angle2]) }; });
+    check(nCorners === 4 && Object.keys(co.corners ?? {}).length === 1 && co.gap === 2 && JSON.stringify(co.rows) === "[[1,648.6,0,45],[1,647.2,45,45],[1,447.2,45,45],[1,396.6,0,45]]", `weldments: per-corner treatment and weld gap (${JSON.stringify({ nCorners, co })})`);
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });

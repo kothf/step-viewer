@@ -23,6 +23,12 @@ export interface MemberFeature {
    * Where three or more segments meet, the first (butt2: the last) runs through and the others are cut square to it.
    */
   corner: "miter" | "butt1" | "butt2" | "none";
+  /** Corner treatment of single corners, overriding `corner`: keyed by the meeting segments' ids, sorted and joined with "+" (see `cornerKey`). */
+  corners?: Record<string, "miter" | "butt1" | "butt2" | "none">;
+  /** Weld gap at corners: a mitre leaves this much between the two ends, a butted member stops this far short of the one running through. */
+  gap?: Num;
+  /** Cut list description in place of the profile's name. */
+  desc?: string;
   /** Where the profile sits on the path; absent: its centre (a sketch profile: the sketch origin). */
   anchor?: Anchor;
   /** Rotation of the profile about the path. */
@@ -106,4 +112,9 @@ export interface CutItem {
   volume: number;
   /** Body keys of the items (Bodies folder). */
   bodies: string[];
+}
+
+/** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */
+export function cornerKey(ents: string[]): string {
+  return [...ents].sort().join("+");
 }
