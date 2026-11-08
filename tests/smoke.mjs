@@ -5803,9 +5803,14 @@ try {
       const box = document.querySelector('#motion input[data-mo="clashall"]'); box.checked = true; box.dispatchEvent(new Event("change"));
       const withTouching = m.clash.items.length + 0, ignoredAfter = m.clash.ignored;
       const box2 = document.querySelector('#motion input[data-mo="clashall"]'); box2.checked = false; box2.dispatchEvent(new Event("change"));
+      // Stop playback at interference: playing from 0 trips where the first span starts.
+      const cstop = document.querySelector('#motion input[data-mo="clashstop"]'); cstop.checked = true; cstop.dispatchEvent(new Event("change"));
+      const stopTrip = m.tripAt(0, Math.round(m.study.duration * m.study.fps)), stopWant = Math.round(sp[0]?.[0] * m.study.fps);
+      m.clashStop = false;
+      const stopOff = m.tripAt(0, Math.round(m.study.duration * m.study.fps));
       document.querySelector('#motion [data-mo="clashclose"]')?.click();
       const closed = !document.querySelector("#motion .mo-clashes");
-      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll, stopTrip: stopTrip && !stopTrip.x && stopTrip.i === stopWant, stopOff: stopOff === null };
       // Explode keys: Step by step on the key panel sets the track's seq; the one-step wizard leaves it off.
       m.wizard("explode");
       const et = m.study.tracks.find(k => k.kind === "explode");
@@ -5886,7 +5891,7 @@ try {
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
-      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
       && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
