@@ -4703,6 +4703,25 @@ try {
     await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
     await shown(3);
     const mv = await mp.evaluate(() => { const c = window.__sv.asm.doc.components[1], d = window.__sv.viewer.parts[1].data; return { tf: c.tf.map(v => Math.round(v * 1e6) / 1e6), min: d.bboxMin.map(v => Math.round(v * 1e3) / 1e3), max: d.bboxMax.map(v => Math.round(v * 1e3) / 1e3), pm: document.querySelector("#asm-pm").hidden }; });
+    // Typing About X, then About Y = -90, then About Z keeps the X turn (the panel used to read X back as 0 there).
+    await mp.click("#asm-tree .ft-comp >> nth=2");
+    await mp.click('#asm-tools [data-ac="move"]');
+    for (const [k, v] of [["rx", "60"], ["ry", "-90"], ["rz", "30"]]) {
+      await mp.fill(`#asm-pm input[data-pose="${k}"]`, v);
+      await mp.press(`#asm-pm input[data-pose="${k}"]`, "Tab");
+      await shown(3);
+    }
+    const gim = await mp.evaluate(() => ({ rx: document.querySelector('#asm-pm input[data-pose="rx"]').value, tf: window.__sv.asm.doc.components[2].tf }));
+    const rad = d => d * Math.PI / 180, [ax, ay, az] = [60, -90, 30].map(rad);
+    // R = Rz·Ry·Rx, row-major
+    const gimWant = [
+      Math.cos(az) * Math.cos(ay), Math.cos(az) * Math.sin(ay) * Math.sin(ax) - Math.sin(az) * Math.cos(ax), Math.cos(az) * Math.sin(ay) * Math.cos(ax) + Math.sin(az) * Math.sin(ax),
+      Math.sin(az) * Math.cos(ay), Math.sin(az) * Math.sin(ay) * Math.sin(ax) + Math.cos(az) * Math.cos(ax), Math.sin(az) * Math.sin(ay) * Math.cos(ax) - Math.cos(az) * Math.sin(ax),
+      -Math.sin(ay), Math.cos(ay) * Math.sin(ax), Math.cos(ay) * Math.cos(ax)];
+    const gimOk = gim.rx === "60" && [0, 1, 2, 4, 5, 6, 8, 9, 10].every((i, k) => Math.abs(gim.tf[i] - gimWant[k]) < 1e-6);
+    await mp.keyboard.press("Escape");
+    for (let i = 0; i < 3; i++) { await mp.keyboard.press("ControlOrMeta+z"); await shown(3); }
+    check(gimOk, `asm 1.189: Move component keeps the typed X turn at -90° about Y (${JSON.stringify(gim)})`);
     // Hide the cube from its row (it still counts in the mass properties), then undo.
     await mp.hover("#asm-tree .ft-comp >> nth=2");
     await mp.click('#asm-tree .ft-comp >> nth=2 >> [data-a="hide"]');
