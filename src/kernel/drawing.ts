@@ -239,3 +239,74 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02): 
   }
   return { ...proj, cut };
 }
+
+// ---------- model topology for dimensions and centre marks (FR-DRW-021/023) ----------
+
+/**
+ * A model edge for dimensions: `k` names it by the faces it joins (persistent face names for parts,
+ * face indices for files), so a dimension finds it again after the part changes; `m` is its middle.
+ * Circles carry centre, axis, radius and the angle they sweep.
+ */
+export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
+/** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
+export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number }
+export interface Topo { edges: MEdge[]; cyls: MCyl[] }
+
+/** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
+export function topology(oc: any, shape: any, names?: string[]): Topo {
+  const A = oc.TopAbs_ShapeEnum, T = oc.GeomAbs_CurveType;
+  const emap = new oc.TopTools_IndexedMapOfShape_1(), fmap = new oc.TopTools_IndexedMapOfShape_1();
+  oc.TopExp.MapShapes_1(shape, A.TopAbs_EDGE, emap);
+  oc.TopExp.MapShapes_1(shape, A.TopAbs_FACE, fmap);
+  const faceOf: string[][] = Array.from({ length: emap.Extent() + 1 }, () => []);
+  const faceEdges: number[][] = [];
+  for (let i = 1; i <= fmap.Extent(); i++) {
+    const f = fmap.FindKey(i), name = names?.[i - 1] ?? `f${i - 1}`;
+    const m = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(f, A.TopAbs_EDGE, m);
+    const list: number[] = [];
+    for (let j = 1; j <= m.Extent(); j++) { const k = emap.FindIndex(m.FindKey(j)); if (k > 0) { if (!faceOf[k].includes(name)) faceOf[k].push(name); list.push(k); } }
+    faceEdges.push(list);
+    m.delete();
+  }
+  const xyz = (p: any): V3 => [p.X(), p.Y(), p.Z()];
+  const edges: MEdge[] = [];
+  const byIndex: (MEdge | null)[] = [null];
+  for (let i = 1; i <= emap.Extent(); i++) {
+    const e = oc.TopoDS.Edge_1(emap.FindKey(i));
+    let ad: any;
+    try { ad = new oc.BRepAdaptor_Curve_2(e); } catch { byIndex.push(null); continue; }
+    const u0 = ad.FirstParameter(), u1 = ad.LastParameter();
+    if (!(u1 > u0) || oc.BRep_Tool.Degenerated(e)) { byIndex.push(null); continue; }
+    const k = [...faceOf[i]].sort().join("|") || `e${i}`;
+    const a = xyz(ad.Value(u0)), b = xyz(ad.Value(u1)), m = xyz(ad.Value((u0 + u1) / 2));
+    const ty = ad.GetType();
+    let me: MEdge;
+    if (ty === T.GeomAbs_Line) me = { k, t: "l", a, b, m };
+    else if (ty === T.GeomAbs_Circle) {
+      const ci = ad.Circle();
+      me = { k, t: "c", a, b, m, c: xyz(ci.Location()), ax: xyz(ci.Axis().Direction()), r: ci.Radius(), sp: Math.min(2 * Math.PI, u1 - u0) };
+    } else me = { k, t: "o", a, b, m };
+    edges.push(me);
+    byIndex.push(me);
+  }
+  const cyls: MCyl[] = [];
+  for (let i = 1; i <= fmap.Extent(); i++) {
+    const f = oc.TopoDS.Face_1(fmap.FindKey(i));
+    let sa: any;
+    try { sa = new oc.BRepAdaptor_Surface_2(f, true); } catch { continue; }
+    if (sa.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) continue;
+    const cy = sa.Cylinder(), ax3 = cy.Position();
+    const o = xyz(ax3.Location()), ax = unit(xyz(ax3.Direction())), r = cy.Radius();
+    let v0 = Infinity, v1 = -Infinity;
+    for (const k of faceEdges[i - 1]) {
+      const me = byIndex[k];
+      if (!me) continue;
+      for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+    }
+    const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
+    if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp });
+  }
+  emap.delete(); fmap.delete();
+  return { edges, cyls };
+}

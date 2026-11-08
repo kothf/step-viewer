@@ -12,8 +12,9 @@ export type Prim =
   /** Counter-clockwise arc from a0 to a1 (radians). */
   | { t: "a"; o: [number, number]; r: number; a0: number; a1: number; pen: Pen; layer: Layer }
   | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean; fill?: boolean }
-  /** Text: baseline point, height in mm, horizontal alignment. */
-  | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean };
+  /** Text: baseline point, height in mm, horizontal alignment, optional rotation (degrees, CCW). */
+  | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean; rot?: number };
+/** Text `rot` is in degrees, counter-clockwise, about the baseline point. */
 
 /** Line widths in mm (ISO 128 pen group 0.35 / 0.18; the frame 0.5). */
 export const PEN_W: Record<Pen, number> = { thick: 0.35, thin: 0.18, hidden: 0.18, center: 0.18, frame: 0.5 };

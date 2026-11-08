@@ -41,7 +41,45 @@ export interface DrawingView {
   letter?: string;
   /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. */
   hatch?: { gap?: number; angle?: number };
+  /** Centre marks on round edges seen end-on and centrelines on cylinders seen from the side (FR-DRW-023); false hides them. */
+  marks?: boolean;
 }
+
+/**
+ * What an annotation is attached to (FR-DRW-021): a model edge by its key (the names of the faces
+ * it joins) with its middle as a hint, and which part of it: an end (the one nearer `q`), the centre
+ * of a circle, or the whole edge. Or a fixed model point (model items, whose points are rebuilt).
+ */
+export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3 };
+
+/** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
+export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string }
+
+/** A dimension: horizontal, vertical or aligned between two points (or a line's ends), radius, diameter, or the angle of two lines. */
+export interface DimAnnot {
+  id: string; t: "dim"; view: string;
+  k: "h" | "v" | "al" | "rad" | "dia" | "ang";
+  refs: GeoRef[];
+  /** Where the dimension line passes / the text sits, in the view's model axes (mm). */
+  pos: [number, number];
+  /** Decimals shown (absent: up to 2, trailing zeros dropped). */
+  prec?: number;
+  tol?: Tol;
+  pre?: string;
+  suf?: string;
+  /** Text typed over the value. */
+  txt?: string;
+  /** Model item it was imported from (`<feature>:<dimension>`): its points are rebuilt from the part. */
+  src?: string;
+}
+
+/** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
+export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number, number]; text: string; h?: number; leader?: GeoRef }
+
+/** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
+export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot;
 
 export interface Sheet {
   id: string;
@@ -56,6 +94,8 @@ export interface Sheet {
   /** Sheet format: ISO 7200 or ANSI Y14.1 title block (GOST later). */
   format: "iso" | "ansi";
   views: DrawingView[];
+  /** Dimensions, notes and hole callouts (FR-DRW-020..023). */
+  annots?: Annot[];
 }
 
 /** Title block fields (FR-DRW-003); empty ones come from the model or the sheet. */

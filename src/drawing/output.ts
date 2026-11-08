@@ -29,7 +29,7 @@ export function svgBody(prims: Prim[], H: number, color = "#000"): string {
       for (let i = 0; i < p.p.length; i += 2) d += `${i ? "L" : "M"}${f(p.p[i])} ${f(H - p.p[i + 1])}`;
       parts.push(`<path d="${d}${p.closed || p.fill ? "Z" : ""}" fill="${p.fill ? color : "none"}" ${style(p.pen)} stroke-linejoin="round" data-l="${p.layer}"/>`);
     } else {
-      parts.push(`<text x="${f(p.x)}" y="${f(H - p.y)}" font-size="${f(p.h * FONT_K)}" text-anchor="${p.al === "l" ? "start" : p.al === "c" ? "middle" : "end"}"${p.bold ? ' font-weight="bold"' : ""} fill="${color}" data-l="${p.layer}">${escXml(p.s)}</text>`);
+      parts.push(`<text x="${f(p.x)}" y="${f(H - p.y)}" font-size="${f(p.h * FONT_K)}" text-anchor="${p.al === "l" ? "start" : p.al === "c" ? "middle" : "end"}"${p.bold ? ' font-weight="bold"' : ""}${p.rot ? ` transform="rotate(${f(-p.rot)} ${f(p.x)} ${f(H - p.y)})"` : ""} fill="${color}" data-l="${p.layer}">${escXml(p.s)}</text>`);
     }
   }
   return parts.join("");
@@ -94,7 +94,7 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
       for (let i = 0; i < p.p.length; i += 2) { g(0, "VERTEX"); g(8, p.layer); g(10, p.p[i]); g(20, p.p[i + 1]); g(30, 0); }
       g(0, "SEQEND"); g(8, p.layer);
     } else {
-      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " "));
+      g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " ")); if (p.rot) g(50, p.rot);
       if (p.al !== "l") { o.push(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
     }
   }
@@ -155,7 +155,11 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
         doc.lines(segs, p.p[0], H - p.p[1], [1, 1], p.fill ? "FD" : "S", !!p.closed || !!p.fill);
       } else {
         doc.setFontSize(p.h * FONT_K / 0.3528);
-        doc.text(p.s, p.x, H - p.y, { align: p.al === "l" ? "left" : p.al === "c" ? "center" : "right", baseline: "alphabetic" });
+        if (p.rot) {
+          // jsPDF aligns rotated text badly: shift the start along the rotated baseline ourselves.
+          const w = p.al === "l" ? 0 : doc.getTextWidth(p.s) * (p.al === "c" ? 0.5 : 1), a = p.rot * Math.PI / 180;
+          doc.text(p.s, p.x - w * Math.cos(a), H - (p.y - w * Math.sin(a)), { angle: p.rot, baseline: "alphabetic" });
+        } else doc.text(p.s, p.x, H - p.y, { align: p.al === "l" ? "left" : p.al === "c" ? "center" : "right", baseline: "alphabetic" });
       }
     }
   });
