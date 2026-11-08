@@ -3576,4 +3576,6 @@ export const RU: Record<string, string> = {
   "Click a round edge seen end-on: a circle or an arc. Esc ends.": "Щёлкните круглую кромку, видимую с торца: окружность или дугу. Esc завершает.",
   "Click a straight edge or a point (a circle's centre) of a view. Esc ends.": "Щёлкните прямую кромку или точку (центр окружности) на виде. Esc завершает.",
   "Click a parallel edge, or a second point. Esc ends.": "Щёлкните параллельную кромку или вторую точку. Esc завершает.",
+  "The graphics card reset and the 3D view could not be restored. Save your work, then reload the page (unsaved parts are offered for recovery).": "Видеокарта сбросилась, и 3D-вид не удалось восстановить. Сохраните работу и перезагрузите страницу (несохранённые детали будут предложены для восстановления).",
+  "The graphics card reset; the 3D view was restored.": "Видеокарта сбросилась; 3D-вид восстановлен.",
 };

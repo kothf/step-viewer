@@ -8686,6 +8686,62 @@ try {
     await ctx.close();
   }
 
+  // --- Several part tabs next to a STEP tab: each tab shows its own body; a lost WebGL context comes back ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&nokernel`);
+    await dp.waitForFunction(() => window.__sv);
+    await dp.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const plate = async w => {
+      await dp.click("#new-part");
+      await dp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.last());
+      await dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
+        const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -10), P("b", w / 2, -10), P("c", w / 2, 10), P("d", -w / 2, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+          { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+      }), w);
+      await dp.waitForTimeout(150);
+      await idle();
+    };
+    await plate(40);
+    await plate(80);
+    // What the view shows: the open part's name, the body's width and whether the STEP header leaked into Properties.
+    const shown = () => dp.evaluate(() => {
+      const ps = window.__sv.viewer.parts, d = ps.length === 1 ? ps[0].data : null;
+      return { name: window.__sv.model.store?.doc.name, w: d ? Math.round(d.bboxMax[0] - d.bboxMin[0]) : -ps.length, step: /AP203/.test(document.querySelector("#props")?.textContent ?? "") };
+    });
+    const seen = [];
+    for (const i of [1, 2, 0, 1, 2, 1]) {
+      await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+      if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+      else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+      const s = await shown();
+      seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
+    }
+    check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
+    const lost = await dp.evaluate(async () => {
+      const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");
+      if (!ext) return "no extension";
+      const env0 = v.scene.environment;
+      ext.loseContext();
+      await new Promise(r => setTimeout(r, 300));
+      const was = v.contextLost;
+      ext.restoreContext();
+      await new Promise(r => setTimeout(r, 800));
+      // three.js starts a fresh renderer.info on restore, so any frame counted now was drawn on the new context.
+      const msg = [...document.querySelectorAll("#toasts .toast")].map(x => x.textContent).join(" | ");
+      return { was, back: !v.contextLost, drew: v.renderer.info.render.frame > 0 && v.renderer.info.render.triangles > 0, env: v.scene.environment !== env0, msg };
+    });
+    check(lost.was && lost.back && lost.drew && lost.env && /restored/.test(lost.msg), `viewer: a lost WebGL context is redrawn when it comes back, with a fresh environment map (${JSON.stringify(lost)})`);
+    await ctx.close();
+  }
+
   // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
