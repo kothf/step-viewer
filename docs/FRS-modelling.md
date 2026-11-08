@@ -1603,8 +1603,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
 | Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
 | Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
-| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | Plain value input (Enter/Esc) | Weaker |
-| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | Double-click opens Edit feature; no feature dimensions on the model | Weaker |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | No | New |
 | Typing a number while drawing | FR-UI-052 | No | Weaker |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
@@ -1646,13 +1646,14 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
 | FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
-| FR-CFG-003 | Configuration table as CSV (P5, C) | No | Not built |
+| FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
 **Sketcher (section 8)**
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
+| FR-SK-006 | Section view at the sketch plane (S) | Done in 1.139.0 (sketch bar Section toggle) | Done |
+| FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.137.0 (sans/serif/mono, bold, italic, angle); along a curve in 1.142.0 | Done |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
@@ -1670,8 +1671,8 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-062 | Rib draft | Rib without draft | Partly |
 | FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
-| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Tool solids are always copied | Not built |
-| FR-FT-080 | Sweep start/end tangency (P5) | Twist and guide curve are built; tangency is missing | Partly |
+| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
+| FR-FT-080 | Sweep start/end tangency (P5) | Done: start tangency in 1.108.0, end tangency in 1.143.0 | Done |
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
 | FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
 | FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
@@ -1681,7 +1682,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Open part edits it apart from the assembly | Not built |
+| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Edit in context (1.135.0): the assembly shown around the part, sketches on other components' flat faces, External References list with lock / lock all | Built (planes; converted edges not yet) |
 
 **Planned, not started:** P6 sheet metal (FR-FT-120), weldments (FR-FT-121), motion (FR-FT-122) and the scripting console; P7 server vault and git backend (FR-PDM-072, FR-PDM-073).
 

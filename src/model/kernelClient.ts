@@ -41,6 +41,9 @@ const RECYCLE_HEAP = 1.5 * 1024 ** 3;
 /** An assembly feature's result: the components it cut, or why it cut none (FR-ASM-027). */
 export interface AsmFeatureStatus { id: string; ok: boolean; cut: string[]; message?: string }
 
+/** The message of calls cut short by `stop()`. */
+export const STOPPED = "The geometry kernel was stopped.";
+
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -77,6 +80,9 @@ export class ModelKernel {
   }
 
   stop() {
+    // Calls in flight end now: a parked document's rebuild must not wait for ever (it held "Rebuilding…").
+    for (const p of this.pending.values()) p.reject(new Error(STOPPED));
+    this.pending.clear();
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
@@ -115,6 +121,8 @@ export class ModelKernel {
         this.heap = r.heap;
         job.resolve(r);
       } catch (err) {
+        // Stopped on purpose (the document was closed or parked): nobody waits for this result.
+        if ((err as Error).message === STOPPED) { job.resolve(null); continue; }
         // A crashed worker: start again from the document once.
         if (!this.worker) {
           try {

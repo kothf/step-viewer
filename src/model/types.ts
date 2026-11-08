@@ -24,7 +24,22 @@ export type SkEnt =
    */
   | { id: string; t: "ellipse"; c: string; a: string; b: string; p0?: string; p1?: string; cons?: boolean }
   /** Interpolating cubic spline through the points; closed runs back to the first (FR-SK-019). */
-  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean };
+  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean }
+  /**
+   * Text (FR-SK-020): `text` from the anchor point `p` (left end of the baseline), capital letters `h` mm
+   * tall, turned by `ang` (radians). `gl` keeps the glyph outlines (from the bundled DejaVu fonts) so
+   * profiles and the kernel need no font; the editor refreshes it when the text or the font changes.
+   * `along` = a curve of the sketch the baseline follows from the point nearest `p` (`ang` is then unused);
+   * `flip` runs it the other way, so the letters stand on the other side.
+   */
+  | { id: string; t: "text"; p: string; text: string; h: number; ang?: number; font?: TextFont; bold?: boolean; italic?: boolean; gl?: TextOutline; along?: string; flip?: boolean; cons?: boolean };
+
+export type TextFont = "sans" | "serif" | "mono";
+/**
+ * Glyph outlines for `key` (text + font), in capital heights from the anchor, y up. Each contour is a
+ * start point then commands: 1 x y = line, 2 x1 y1 x y = quadratic, 3 x1 y1 x2 y2 x y = cubic.
+ */
+export interface TextOutline { key: string; c: number[][] }
 
 export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"
@@ -60,11 +75,20 @@ export interface SkDim {
   ord?: boolean;
 }
 
-/** Plane of a sketch or a reference: a standard plane, a planar face of the model, or a reference plane feature. */
+/** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */
 export type PlaneRef =
   | { std: "XY" | "XZ" | "YZ" }
   | { face: FaceRef; offset?: number }
-  | { plane: string };
+  | { plane: string }
+  | { ctx: CtxRef };
+
+/**
+ * External reference (FR-ASM-030): a flat face of another component of an assembly, made while editing
+ * this part in context. `host` is the component this part was edited as; `p`/`n` are the face's plane in
+ * this part's coordinates as last seen, so the part builds on its own. The assembly updates them when the
+ * components move, unless `locked`.
+ */
+export interface CtxRef { comp: string; face: string; host: string; label?: string; p: V3; n: V3; locked?: boolean }
 
 /** World frame of a sketch plane: origin, x and y directions, normal. */
 export interface Frame { o: V3; x: V3; y: V3; n: V3 }
@@ -312,6 +336,8 @@ export interface DraftFeature {
  */
 export interface CopySource {
   copy?: "features" | "faces" | "bodies";
+  /** Copying features (FR-FT-074): false/unset = geometry pattern (the result is copied); true = each instance is re-evaluated (end conditions such as up to face or through all hold at each place). */
+  vary?: boolean;
   faces?: FaceRef[];
   bodies?: FaceRef[];
 }
@@ -532,6 +558,8 @@ export interface SweepFeature {
   guide?: SweepPath;
   /** Start tangency "path tangent" (P5): the profile is turned square to the path where it starts. */
   startTangent?: boolean;
+  /** End tangency "path tangent" (P5): the sweep ends with the profile square to the path's end. */
+  endTangent?: boolean;
 }
 
 /** Loft (FR-FT-082): through two or more closed profiles in order. */
@@ -855,6 +883,8 @@ export interface PartDoc {
   /** The active configuration's name. */
   config?: string;
   /** Standard planes hidden in the view (they are shown by default). */
+  /** Lock external references (FR-ASM-030): in-context planes keep their stored values. */
+  ctxLocked?: boolean;
   stdHidden?: ("XY" | "XZ" | "YZ")[];
   /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
   bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;

@@ -25,6 +25,7 @@ import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
+import { makeGrip } from "../resize";
 
 export interface DrawingModel {
   name: string;
@@ -432,6 +433,9 @@ export class DrawingWorkspace {
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
     this.svg.addEventListener("contextmenu", e => e.preventDefault());
     this.bindPalette();
+    // The side panel resizes from its edge and keeps its width (FR-UI-002).
+    const side = this.el.querySelector<HTMLElement>(".drw-side")!;
+    side.after(makeGrip({ key: "drw-side", axis: "x", sign: 1, def: 280, min: 200, max: () => Math.min(640, window.innerWidth * 0.45), apply: px => { side.style.width = px == null ? "" : `${px}px`; }, label: "Resize the side panel" }));
     document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();

@@ -9,7 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
+import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
@@ -18,8 +18,11 @@ import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
+import { ModifyBox } from "../modifyBox";
 import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
+import { textBox, textKey, textOutline, textPolys } from "./text";
+import { inPolygon, textPath } from "./profile";
 
 /** Points an entity refers to (its ends, centre, axis points). */
 export function refPts(e: SkEnt): string[] {
@@ -28,6 +31,7 @@ export function refPts(e: SkEnt): string[] {
   if (e.t === "circle") return [e.c];
   if (e.t === "arc") return [e.c, e.a, e.b];
   if (e.t === "spline") return e.pts.slice();
+  if (e.t === "text") return [e.p];
   return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
 }
 
@@ -46,7 +50,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -109,6 +113,8 @@ export class SketchEditor {
   tool: SkTool = "select";
   /** Polygon sides (3–64) and the sketch fillet radius (mm), set in the panel. */
   polySides = 6;
+  /** Text tool settings (FR-SK-020): what a click places; the panel edits a selected text's own. */
+  textOpts: { text: string; h: number; font: TextFont; bold: boolean; italic: boolean } = { text: "Text", h: 5, font: "sans", bold: false, italic: false };
   filletRadius = 2;
   /** Sketch chamfer distance and offset distance (mm), set in the panel. */
   chamferDist = 2;
@@ -270,6 +276,12 @@ export class SketchEditor {
       else if (e.t === "arc") d = arcDist(p, this.pt(e.c), this.pt(e.a), this.pt(e.b));
       else if (e.t === "spline") d = nearestOn(this.splineLine(e), p).d;
       else if (e.t === "ellipse") d = e.p0 && e.p1 ? earcDist(this.ell(e), this.pt(e.p0), this.pt(e.p1), p) : ellDist(this.ell(e), p);
+      else if (e.t === "text") {
+        // Anywhere in the text's box picks it, the outline a little more surely.
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e);
+        d = Math.min(...textPolys(e, at, path).map(l => nearestOn(l, p).d), Infinity);
+        if (d >= tol && inPolygon(p, textBox(e, at, path))) d = tol * 0.6;
+      }
       if (d < tol) out.push({ id: e.id, kind: e.t as Hit["kind"], d: d + tol * 0.25 });
     }
     return out.sort((a, b) => a.d - b.d);
@@ -507,6 +519,47 @@ export class SketchEditor {
     return { c, u, r1, r2 };
   }
 
+  /** Text tool: the outline is made first (the font loads once), then the text goes in as one step and is selected. */
+  private async placeText(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]) {
+    const o = { ...this.textOpts };
+    if (!o.text.trim()) { this.host.toast(t("Type the text first."), "error"); return; }
+    let gl: TextOutline;
+    try { gl = await textOutline(o); } catch { this.host.toast(t("The font could not be loaded."), "error"); return; }
+    const pid = this.usePoint(p, snapId, curve, rels);
+    const id = uid("t");
+    this.sk.ents.push({ id, t: "text", p: pid, text: o.text, h: o.h, ...(o.font !== "sans" ? { font: o.font } : {}), ...(o.bold ? { bold: true } : {}), ...(o.italic ? { italic: true } : {}), gl });
+    this.sk.rels.push(...rels);
+    this.commit("Add text");
+    this.setTool("select");
+    this.selection = new Set([id]);
+    this.render();
+    this.host.onSelection?.([id]);
+  }
+
+  /** Changes a text (FR-SK-020): its outline is remade when the text or the font changes, then one undo step. */
+  async setText(id: string, patch: Partial<Pick<Extract<SkEnt, { t: "text" }>, "text" | "h" | "ang" | "font" | "bold" | "italic" | "along" | "flip">>) {
+    const e = this.ent(id);
+    if (!e || e.t !== "text") return;
+    const next = { ...e, ...patch };
+    if (!next.text.trim()) { this.host.toast(t("Type the text first."), "error"); return; }
+    if (!(next.h > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
+    let gl = e.gl;
+    if (!gl || gl.key !== textKey(next)) {
+      try { gl = await textOutline(next); } catch { this.host.toast(t("The font could not be loaded."), "error"); return; }
+    }
+    const cur = this.ent(id);
+    if (!cur || cur.t !== "text") return;
+    Object.assign(cur, patch, { gl });
+    if (cur.font === "sans") delete cur.font;
+    if (!cur.bold) delete cur.bold;
+    if (!cur.italic) delete cur.italic;
+    if (!cur.ang) delete cur.ang;
+    if (!cur.along) { delete cur.along; delete cur.flip; }
+    if (!cur.flip) delete cur.flip;
+    this.commit("Edit text");
+    this.render();
+  }
+
   /** A point for a new entity: an existing point, the origin (fixed by a relation), or a new one. */
   private usePoint(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]): string {
     if (snapId && snapId !== ORIGIN) return snapId;
@@ -533,6 +586,7 @@ export class SketchEditor {
       this.commit(label);
     };
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
+    if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
     if (this.tool === "line") {
       if (!d.pts.length) { d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
       const a0 = d.pts.at(-1)!;
@@ -721,7 +775,7 @@ export class SketchEditor {
         const r = this.materialize(ms);
         const id = r.id ?? r.curve;
         const ent = id ? this.ent(id) : undefined;
-        if (ent && ent.t !== "ellipse" && ent.t !== "spline") h = { id: ent.id, kind: ent.t, d: 0 };
+        if (ent && ent.t !== "ellipse" && ent.t !== "spline" && ent.t !== "text") h = { id: ent.id, kind: ent.t, d: 0 };
       }
     }
     if (!h) { this.selection.clear(); dd.picks = []; this.render(); return; }
@@ -863,58 +917,71 @@ export class SketchEditor {
     setTimeout(() => this.editDim(dim.id), 0);
   }
 
-  /** Opens the value box on a dimension. */
+  /** Opens the Modify box on a dimension (FR-UI-114): the sketch follows the value as it is typed. */
   editDim(id: string) {
     const dim = this.sk.dims.find(d => d.id === id);
     if (!dim || dim.driven) return;
     const label = this.labels.get(id);
     if (!label) return;
     this.closeInput(false);
-    const inp = document.createElement("input");
-    inp.className = "sk-input";
-    inp.setAttribute("aria-label", t("Dimension value"));
     const u = this.host.unit();
-    inp.value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
-    inp.style.left = label.style.left;
-    inp.style.top = label.style.top;
-    this.host.layer.appendChild(inp);
-    this.input = inp;
-    inp.dataset.dim = id;
-    inp.focus();
-    inp.select();
-    inp.addEventListener("keydown", e => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); this.closeInput(true); }
-      else if (e.key === "Escape") { e.preventDefault(); this.closeInput(false); }
+    const orig = this.sk, origInfo = this.info;
+    const lr = label.getBoundingClientRect();
+    const value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
+    // The sketch with the typed value, solved; an error key when it cannot be.
+    const tryValue = (text: string): { sk: SketchFeature; r: SolveResult } | { err: string; params?: Record<string, string | number> } | null => {
+      let v: number;
+      try { v = evaluate(text, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
+      catch (err) { return { err: (err as ExprError).key ?? String(err), params: (err as ExprError).params }; }
+      if (dim.t !== "angle" && !(v > 0)) return { err: "The value must be more than 0." };
+      if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(text) ? "" : text.trim())) return null;
+      const next: SketchFeature = structuredClone(orig);
+      const nd = next.dims.find(d => d.id === dim.id)!;
+      nd.val = isPlain(text) ? { v } : { v, expr: text.trim() };
+      const r = solve(next);
+      if (r.status !== "ok") return { err: "That value cannot be reached with the other relations and dimensions." };
+      return { sk: next, r };
+    };
+    const restore = () => { if (this.sk !== orig && !this.disposed) { this.sk = orig; this.info = origInfo; this.render(); } };
+    const box = new ModifyBox({
+      at: { x: lr.right, y: lr.top + lr.height / 2 },
+      title: `${dim.name}@${this.sk.name}`,
+      value,
+      step: dim.t === "angle" ? 1 : u.name === "in" ? 0.1 : 1,
+      live: true,
+      preview: text => {
+        if (this.disposed) return;
+        const r = tryValue(text);
+        if (!r || "err" in r) { restore(); return; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.render();
+      },
+      accept: text => {
+        if (this.input === box.input) this.input = null;
+        if (this.disposed) return true;
+        const r = tryValue(text);
+        if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); return true; }
+        if (!r) { restore(); return true; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.commit("Change dimension");
+        this.render();
+        return true;
+      },
+      cancel: () => { if (this.input === box.input) this.input = null; restore(); },
     });
-    inp.addEventListener("blur", () => setTimeout(() => this.closeInput(true), 0));
+    this.input = box.input;
+    this.modify = box;
   }
 
+  private modify: ModifyBox | null = null;
+
   private closeInput(apply: boolean) {
-    const inp = this.input;
-    if (!inp) return;
+    const box = this.modify;
+    this.modify = null;
+    if (box) box.close(apply);
     this.input = null;
-    inp.remove();
-    if (!apply || this.disposed) return;
-    const dim = this.sk.dims.find(d => d.id === inp.dataset.dim);
-    if (!dim) return;
-    let v: number;
-    try { v = evaluate(inp.value, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
-    catch (err) { this.host.toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), "error"); return; }
-    if (dim.t !== "angle" && !(v > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
-    if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(inp.value) ? "" : inp.value)) return;
-    const next: SketchFeature = structuredClone(this.sk);
-    const nd = next.dims.find(d => d.id === dim.id)!;
-    nd.val = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
-    const r = solve(next);
-    if (r.status !== "ok") {
-      this.host.toast(t("That value cannot be reached with the other relations and dimensions."), "error");
-      return;
-    }
-    this.sk = next;
-    this.info = r;
-    this.commit("Change dimension");
-    this.render();
   }
 
   /** Renames a dimension (FR-SK-065); expressions that use "old@Sketch" follow. Returns an error key, or "". */
@@ -1236,6 +1303,7 @@ export class SketchEditor {
       if (e.t === "point") return [[e.x, e.y]];
       if (e.t === "ellipse") return this.ellLine(e);
       if (e.t === "spline") return this.splineLine(e);
+      if (e.t === "text") return textBox(e, this.pt(e.p), textPath(this.sk.ents, e));
       const g = curveOf(e, q => this.pt(q));
       if (!g) return [];
       const n = 48;
@@ -1515,6 +1583,7 @@ export class SketchEditor {
       // A mirror image runs the other way round: the ends swap.
       else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p1), p1: point(e.p0) } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+      else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
     this.selection = new Set(made);
@@ -1590,6 +1659,7 @@ export class SketchEditor {
         else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
         else if (e.t === "ellipse") out.push(this.ellLine(e, mv));
         else if (e.t === "spline") out.push(this.splineLine(e, mv));
+        else if (e.t === "text") out.push(...textPolys(e, this.pt(e.p), textPath(this.sk.ents, e)).map(l => l.map(mv)));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -1642,6 +1712,10 @@ export class SketchEditor {
           const id = uid("e");
           this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons(e) });
           made.push(id);
+        } else if (e.t === "text") {
+          const id = uid("t");
+          this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) });
+          made.push(id);
         } else {
           const id = uid("a");
           this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons(e) });
@@ -1683,6 +1757,7 @@ export class SketchEditor {
         else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
         else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons }); made.push(id); }
         else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons }); made.push(id); }
+        else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p), h: e.h * mv.k }); made.push(id); }
         else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
       }
     } else {
@@ -2029,6 +2104,7 @@ export class SketchEditor {
       circle: "Click the centre, then a point on the circle",
       arc: "Click the centre, the start, then the end (counter-clockwise)",
       point: "Click to place a point",
+      text: "Type the text and its height in the panel, then click where it starts",
       circle3: "Click three points on the circle",
       arc3: "Click the start, the end, then a point on the arc",
       polygon: "Click the centre, then a corner; set the sides in the panel",
@@ -2122,6 +2198,12 @@ export class SketchEditor {
         poly(arcPts(cc, Math.hypot(a[0] - cc[0], a[1] - cc[1]), a0, a1), c);
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") poly(this.splineLine(e), c);
+      else if (e.t === "text") {
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
+        for (const l of ls) poly(l, c);
+        // Text whose outline is still loading: its box, dashed by the colour of construction.
+        if (!ls.length) { const b = textBox(e, at, path); poly([...b, b[0]], C.cons); }
+      }
     }
     // Under-defined analysis (FR-SLV-010): orange arrows show where the selected items can still move.
     if (this.tool === "select" && this.selection.size && this.info.status === "ok" && this.info.dof > 0) {
@@ -2451,6 +2533,7 @@ export class SketchEditor {
     if (e.t === "circle") { const c = this.pt(e.c); return [c[0] + e.r * 0.7071, c[1] + e.r * 0.7071]; }
     if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
     if (e.t === "spline") { const l = this.splineLine(e); return l[Math.floor(l.length / 2)]; }
+    if (e.t === "text") { const b = textBox(e, this.pt(e.p), textPath(this.sk.ents, e)); return b[b.length >> 1]; }
     return this.pt(e.a);
   }
 

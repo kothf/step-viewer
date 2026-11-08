@@ -47,6 +47,7 @@ import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
+import { makeGrip, rememberDialogSizes } from "./resize";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -61,6 +62,8 @@ startI18n();
 const vpEl = $("#viewport");
 const viewer = new Viewer(vpEl);
 const section = new SectionManager(viewer);
+/** The plane of the sketch Section toggle (FR-SK-006), removed when the sketch closes. */
+let skSection: SectionPlane | null = null;
 const snapper = new Snapper(viewer);
 const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
@@ -106,8 +109,21 @@ const modeller = new ModelController({
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
+  sketchSection: pl => {
+    if (skSection) { if (section.planes.includes(skSection)) section.remove(skSection); skSection = null; }
+    if (pl) {
+      if (!section.canAdd) toast(t("Up to 3 section planes"), true);
+      else {
+        const n = new THREE.Vector3(...pl.n).normalize();
+        skSection = section.add("Sketch", n, n.dot(new THREE.Vector3(...pl.o)) + viewer.modelSize * 1e-4);
+        section.setGizmo(null, null);
+      }
+    }
+    renderSections();
+  },
   leaveOthers: () => { docs?.before3d(); asm.close(); },
   opened: label => docs?.opened("part", label),
+  openNames: () => (docs?.tabs ?? []).map(x => x.label.replace(/\s*•$/, "").replace(/\.[^.]+$/, "")),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 // Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
@@ -126,7 +142,7 @@ const asm = new AsmController({
   opened: label => docs?.opened("asm", label),
   openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
   // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
-  editPart: (doc, file, label, back) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) })) : modeller.editIn(doc, file, { label, back })),
+  editPart: (doc, file, label, back, ctx) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) }, ctx)) : modeller.editIn(doc, file, { label, back }, ctx)),
   openPart: () => modeller.openPart(),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
@@ -1250,6 +1266,17 @@ function fitToolbar() {
   for (const c of ["tb-icons", "tb-nodisp", "tb-nobrand", "tb-wrap"]) if (full()) top.classList.add(c);
 }
 new ResizeObserver(() => fitToolbar()).observe($(".topbar"));
+// Resizable side panels and dialogs (FR-UI-002): the widths are remembered per panel side.
+{
+  const app = $("#app");
+  const width = (name: string) => (px: number | null) => { if (px == null) app.style.removeProperty(name); else app.style.setProperty(name, `${px}px`); };
+  const gl = makeGrip({ key: "left", axis: "x", sign: 1, def: 270, min: 200, max: () => Math.min(640, window.innerWidth * 0.4), apply: width("--left-w"), measure: () => document.querySelector<HTMLElement>("#app > .left:not([hidden])")?.offsetWidth || 270, label: "Resize the left panel" });
+  const gr = makeGrip({ key: "right", axis: "x", sign: -1, def: 300, min: 240, max: () => Math.min(760, window.innerWidth * 0.45), apply: width("--right-w"), measure: () => document.querySelector<HTMLElement>("#app > .right:not([hidden])")?.offsetWidth || 300, label: "Resize the right panel" });
+  gl.classList.add("grip-left");
+  gr.classList.add("grip-right");
+  app.append(gl, gr);
+  rememberDialogSizes();
+}
 // Text that changes inside the header (the open file, its status, the kernel's state) can overflow it
 // without resizing the bar itself, so fit again after such changes too.
 {

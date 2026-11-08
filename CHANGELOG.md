@@ -5,6 +5,65 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.143.0] - 2026-11-08
+
+### Added
+
+- **Sweep end tangency (FR-FT-080)**: next to Start tangency, End tangency "Path tangent" ends a sweep with the profile square to the path. With Keep normal constant the profile turns gradually from its sketch plane at the start to square at the end. Not with a guide curve or a closed path.
+
+## [1.142.0] - 2026-11-08
+
+### Added
+
+- **Text along a curve (FR-SK-020)**: a selected sketch text can follow a line, arc, circle, spline or ellipse of the sketch (Along curve in the text panel), starting where its start point is nearest. Flip side runs it the other way, so text round a circle stands on top instead of hanging inside. The letters stay closed regions for Extrude and Cut.
+
+## [1.141.0] - 2026-11-08
+
+### Added
+
+- **Geometry pattern option (FR-FT-074)**: linear, circular, sketch/table driven patterns and mirror of features have a Geometry pattern box. On (the default) copies the seed's shape as before; off rebuilds each extrude or revolve where the instance lands, so end conditions such as up to face hold at every instance.
+
+## [1.140.0] - 2026-11-08
+
+### Fixed
+
+- **Assembly stuck on "Rebuilding…"**: switching to another document tab while an assembly was still rebuilding (the first build takes a few seconds while the geometry kernel starts) left the assembly waiting for ever once you came back, so inserting more components did nothing. Parking a document now ends its kernel work cleanly, and the assembly builds again when shown. The same fix covers parts parked mid-rebuild.
+- A new part no longer takes the name of a part already open in another tab (two empty parts were both Part1).
+
+### Added
+
+- **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in SolidWorks. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
+- **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
+- **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
+
+## [1.139.0] - 2026-11-08
+
+### Added
+
+- **Section at the sketch plane (FR-SK-006)**: the sketch bar's Section button cuts the model at the sketch plane while you sketch, hiding the material in front of it. It stays on for later sketches until turned off, and the cut goes away when you leave the sketch.
+- **Configuration table (FR-CFG-003)**: the Configurations panel exports every configuration as a CSV table, one row per configuration and one column per value: dimensions and feature values (mm, degrees or expressions), pattern counts, suppression (S/U), variables and material. Importing a table (comma or semicolon separated) updates the configurations it names and adds new ones, as one undo step.
+
+## [1.138.0] - 2026-11-08
+
+### Added
+
+- **Cuts in the sheet metal flat pattern (FR-FT-120)**: holes and cuts that ordinary features (extrude cuts, holes) make in the flat faces of a sheet metal part now show in the flat pattern. The material each feature took out of a face is moved onto the pattern with that face, so a hole in a flange lands where the flange lies when unfolded. The flat pattern DXF then takes its outline from the pattern itself, holes included (circles and arcs stay exact). Exported while folded, the DXF has the sheet outline only and says to flatten first. Cuts across a bend aren't unrolled yet.
+
+## [1.137.0] - 2026-11-08
+
+### Added
+
+- **Sketch text (FR-SK-020)**: the Text tool (sketch Point ▾ menu) places text from the bundled DejaVu fonts (sans, serif, monospace, bold and italic) at a capital-letter height. Its letters are closed regions, so Extrude embosses them and Cut engraves them. Select a text to change its words, font, height or angle; drag, dimension or relate its start point like any other point.
+
+## [1.135.0] - 2026-11-08
+
+### Added
+
+- **Edit in context (FR-ASM-030)**: right-click a component and choose Edit in context. Its part opens with the rest of the assembly shown see-through around it.
+  - A sketch on a flat face of another component is an external reference, marked -> in the Features tree.
+  - Back in the assembly, the sketch follows that face whenever the components move or change.
+  - External References (Features → Plane ▾) lists each one with its state: in context, out of context (->?) or locked (->*). You can lock them one by one or all at once.
+
 ## [1.134.0] - 2026-11-08
 
 ### Added
@@ -1173,7 +1232,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.134.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.143.0...HEAD
+[1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0
+[1.142.0]: https://github.com/kothf/step-viewer/compare/v1.141.0...v1.142.0
+[1.141.0]: https://github.com/kothf/step-viewer/compare/v1.140.0...v1.141.0
+[1.140.0]: https://github.com/kothf/step-viewer/compare/v1.139.0...v1.140.0
+[1.139.0]: https://github.com/kothf/step-viewer/compare/v1.138.0...v1.139.0
+[1.138.0]: https://github.com/kothf/step-viewer/compare/v1.137.0...v1.138.0
+[1.137.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.137.0
+[1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0

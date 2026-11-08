@@ -1389,6 +1389,29 @@ test("sweep start tangency: path tangent turns the profile square to the path (F
   close(r1.props!.volume, 24 * 40, 1e-4);
 });
 
+test("sweep end tangency: path tangent ends the sweep square to the path (FR-FT-080 P5)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const bbox = (shape: unknown) => { const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(shape, b, false); const lo = b.CornerMin(), hi = b.CornerMax(); return [lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()]; };
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // The same 45° path and flat 6 × 4 profile, keeping the normal constant.
+  const s = 40 / Math.SQRT2;
+  const path: SketchFeature = { id: "ps", type: "sketch", name: "Path", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", s, s), { id: "pl", t: "line", a: "a", b: "b" }] };
+  const prof = rect("pr", 0, 0, 6, 4);
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "ps" }, orient: "normal" };
+  // Without it the end face is flat like the start: the top is at the path's end height.
+  const r0 = run(m, doc([path, prof, sw]));
+  const b0 = bbox(r0.body!.shape);
+  close(b0[5], s, 1e-4);
+  // Path tangent at the end: the end face turns 45° about Y, so its corners reach 3 sin 45° above and in from x = s + 3.
+  const r1 = run(m, doc([path, prof, { ...sw, endTangent: true } as Feature]));
+  const b1 = bbox(r1.body!.shape);
+  close(b1[5], s + 3 * Math.SQRT1_2, 2e-3);
+  close(b1[3], s + 3 * Math.SQRT1_2, 2e-3);
+  // The start stays flat on Top.
+  assert.ok(Math.abs(b1[2]) < 1e-4, `bottom ${b1[2]}`);
+});
+
 test("feature recognition: holes in an imported body become hole features (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   const s = rect("s", 0, 0, 60, 40);
@@ -1540,4 +1563,34 @@ test("setback fillets: the corner of three fillets becomes one smooth patch (FR-
   assert.equal(two.statuses.find(s => s.id === "f2")?.code, "E-FT-SETBACK3");
   const long = m.evaluate(doc([s1, ex, fil(at(45))]));
   assert.equal(long.statuses.find(s => s.id === "f2")?.code, "E-FT-SETBACK");
+});
+
+test("pattern instances re-evaluated: up to a sloped face at every place (FR-FT-074)", async () => {
+  const m = new Modeller(await occ());
+  // Side profile on XZ: the top slopes from z = 10 at x = 0 to z = 20 at x = 60.
+  const pts: [number, number][] = [[0, 0], [60, 0], [60, 20], [0, 10]];
+  const ents: SkEnt[] = [
+    ...pts.map(([x, y], i): SkEnt => ({ id: `wp${i}`, t: "point", x, y })),
+    ...pts.map((_p, i): SkEnt => ({ id: `wl${i}`, t: "line", a: `wp${i}`, b: `wp${(i + 1) % 4}` })),
+  ];
+  const w: SketchFeature = { id: "w", type: "sketch", name: "w", plane: { std: "XZ" }, ents, rels: [], dims: [] };
+  const base: Feature[] = [w, { id: "eb", type: "extrude", name: "E1", sketch: "w", op: "boss", end: "mid", depth: { v: 20 } }];
+  const r0 = run(m, doc(base));
+  const v0 = r0.props!.volume;
+  close(v0, 60 * 15 * 20, 1e-6);
+  const slope = r0.body!.names.find(n => n === "eb:side:wl2")!;
+  assert.ok(slope);
+  // A pocket from the bottom up to the slope, patterned along X.
+  const cut: Feature[] = [circle("c", 10, 0, 3, { std: "XY" }), { id: "ec", type: "extrude", name: "Cut", sketch: "c", op: "cut", end: "upto", flip: true, depth: { v: 1 }, upTo: { face: { name: slope } } } as Feature];
+  const bottom = r0.body!.names.find(n => n === "eb:side:wl0")!;
+  const lp = (o: object): Feature => ({ id: "p", type: "lpattern", name: "LPattern1", features: ["ec"], dir: { edge: { faces: [bottom, "eb:end"] } }, spacing: { v: 20 }, count: 3, ...o } as Feature);
+  const h = (x: number) => 10 + x / 6, a = Math.PI * 9;
+  const one = run(m, doc([...base, ...cut]));
+  close(v0 - one.props!.volume, a * h(10), 1e-3);
+  // Geometry pattern: the seed's pocket copied as it is.
+  const geo = run(m, doc([...base, ...cut, lp({})]));
+  close(v0 - geo.props!.volume, 3 * a * h(10), 1e-3);
+  // Re-evaluated: each pocket reaches the slope where it is.
+  const vary = run(m, doc([...base, ...cut, lp({ vary: true })]));
+  close(v0 - vary.props!.volume, a * (h(10) + h(30) + h(50)), 1e-3);
 });
