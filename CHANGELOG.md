@@ -12,6 +12,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Surfaces (FRS 9.11, FR-FT-100), in the new Surface ▾ menu: **Extruded Surface** sweeps every curve of a sketch, open or closed, into open surfaces (depth, mid plane, reverse); **Planar Surface** fills a closed sketch; **Offset Surface** copies faces of solids or surfaces at a distance, or in place at 0. Surface bodies show in the view and can be picked, but have no volume and stay out of mass properties.
 - **Knit Surface** sews surface bodies along their shared edges within a tolerance; **Create solid** turns surfaces that close a volume into a new solid body.
 - **Thicken** grows a surface body into a solid to side 1, side 2 or both, merged with the body unless Merge result is off. The panels show the result live while you pick and type.
+- **Move Face** can now translate faces by X/Y/Z (only the part of the move along each face's normal changes a flat face) or rotate them about an edge of the face, besides offsetting them (FR-FT-101).
+- **Replace Face** (Surface ▾) replaces flat faces of a solid with a surface body: the faces around them grow or shrink to meet it, and later features keep the face's name (FR-FT-101).
 
 ## [1.69.0] - 2026-11-08
 

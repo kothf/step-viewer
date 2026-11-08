@@ -249,13 +249,22 @@ export interface DeleteFaceFeature {
   faces: FaceRef[];
 }
 
-/** Move face (FR-FT-101): offsets the picked flat faces along their normals (out adds material, in removes it). */
+/**
+ * Move face (FR-FT-101) on flat faces. Offset (default) moves them along their normals by `distance`
+ * (out adds material, `flip` removes it); translate moves them by `dx`/`dy`/`dz` (only the part along
+ * each normal changes a flat face whose neighbours grow with it); rotate turns them by `angle` about
+ * `axis`, which must lie in each face's plane (an edge of the face, usually).
+ */
 export interface MoveFaceFeature {
   id: string; type: "moveface"; name: string; suppressed?: boolean;
   faces: FaceRef[];
   distance: Num;
   /** Move into the body instead of out. */
   flip?: boolean;
+  mode?: "offset" | "translate" | "rotate";
+  dx?: Num; dy?: Num; dz?: Num;
+  axis?: LineRef;
+  angle?: Num;
 }
 
 /** Draft (FR-FT-061): tapers the picked faces by an angle about a neutral plane (the pull direction is its normal). */
@@ -530,11 +539,21 @@ export interface ThickenFeature {
   merge?: boolean;
 }
 
+/**
+ * Replace face (FR-FT-101): the picked faces of a solid are replaced by a surface body; the faces around
+ * them grow or shrink to meet it. The new faces take the first picked face's name. The surface stays.
+ */
+export interface ReplaceFaceFeature {
+  id: string; type: "replaceface"; name: string; suppressed?: boolean;
+  faces: FaceRef[];
+  surface?: FaceRef;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
-  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature;
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

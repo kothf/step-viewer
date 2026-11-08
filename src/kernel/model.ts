@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -924,17 +924,23 @@ export class Modeller {
    * Move face (FR-FT-101), offset: each flat face is pushed out along its normal (a prism of the face
    * fused on) or pulled in (a prism cut away). The moved face keeps its name; the new side faces are `fid:side:k`.
    */
-  private moveFaces(f: MoveFaceFeature, prev: Named | null): Named {
+  private moveFaces(f: MoveFaceFeature, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to move.");
+    if (f.mode === "rotate") return this.rotateFaces(f, prev, frames);
+    const tr = f.mode === "translate";
     const d = f.distance.v;
-    if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    const vec: V3 = [f.dx?.v ?? 0, f.dy?.v ?? 0, f.dz?.v ?? 0];
+    if (tr ? !(Math.hypot(...vec) > 1e-6) : !(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
     let body = prev, k = 0;
     for (const r of f.faces) {
       const face = this.resolveFace(body, r), pl = this.facePlane(face);
       if (!pl) throw new FeatureError("E-FT-MOVEFLAT", "Move face works on flat faces.");
-      const dir = mul(pl.n, f.flip ? -d : d);
+      // Translate: only the move along the normal changes a flat face (its neighbours grow with it).
+      const along = tr ? dot(vec, pl.n) : f.flip ? -d : d;
+      if (Math.abs(along) < 1e-9) continue;
+      const dir = mul(pl.n, along);
       const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(dir), false, true);
       if (!mk.IsDone()) throw new FeatureError("E-FT-MOVEFACE", "The face could not be moved.");
       let tool = mk.Shape();
@@ -944,7 +950,26 @@ export class Modeller {
       const named: Named = { shape: tool, faces, names: faces.map(x => (x.IsSame(top) ? r.name : `${f.id}:side:${k++}`)) };
       // The original face goes inside (fuse) or is cut away; its name moves to the prism's far end.
       const rest: Named = { shape: body.shape, faces: body.faces, names: body.names.map((n, i) => (body.faces[i].IsSame(face) ? `${f.id}:old` : n)) };
-      body = this.mergeSides(this.bool(f.flip ? "cut" : "fuse", rest, named, f.id), f.id);
+      body = this.mergeSides(this.bool(along < 0 ? "cut" : "fuse", rest, named, f.id), f.id);
+    }
+    if (body === prev) throw new FeatureError("E-MVF-PARALLEL", "The move is parallel to the faces, so it changes nothing.");
+    return body;
+  }
+
+  /** Move face, rotate: each flat face turns about an axis in its plane, as a draft hinged on that axis. */
+  private rotateFaces(f: MoveFaceFeature, prev: Named, frames: Record<string, Frame>): Named {
+    const a = f.angle?.v ?? 0;
+    if (!(Math.abs(a) > 1e-6) || Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-MVF-ANGLE", "The angle must be between 0° and 90°.");
+    const ax = this.lineOf(f.axis, prev, frames, "an axis to rotate about");
+    const tol = 1e-6 * (1 + this.size(prev.shape));
+    let body = prev;
+    for (const r of f.faces) {
+      const face = this.resolveFace(body, r), pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-FT-MOVEFLAT", "Move face works on flat faces.");
+      if (Math.abs(dot(ax.d, pl.n)) > 1e-6 || Math.abs(dot(add(ax.o, mul(pl.p, -1)), pl.n)) > tol) throw new FeatureError("E-MVF-AXIS", "The axis must lie in the plane of each face: pick an edge of the face.");
+      // Pull square to the axis in the face's plane: the face is parallel to it, so the draft turns it about the axis.
+      const pull = unit(cross(ax.d, pl.n));
+      body = this.applyDraft(body, [face], pull, f.flip ? -a : a, ax.o, f.id);
     }
     return body;
   }
@@ -1128,6 +1153,46 @@ export class Modeller {
     const rest = this.sheetsOf(list.filter((_, j) => j !== i));
     if (!body) return { body: solid, sheets: rest };
     return { body: f.merge === false ? this.compoundOf([...this.bodyList(body), solid]) : this.bool("fuse", body, solid, f.id), sheets: rest };
+  }
+
+  /**
+   * Replace face (FR-FT-101): each picked flat face is pushed far out as a prism (its far end `fid:cap`),
+   * the extended body is split by the surface, and the pieces that reach a cap go. What is left meets the
+   * surface; the new faces take the first picked face's name and the prism sides merge into their neighbours.
+   */
+  private replaceFaces(f: ReplaceFaceFeature, prev: Named | null, sheets: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-RPF-FACES", "Click the faces to replace.");
+    if (!f.surface) throw new FeatureError("E-RPF-SURF", "Pick the replacement surface.");
+    const list = this.sheetList(sheets);
+    const sheet = list[this.sheetIndex(list, sheets, f.surface)];
+    const big = this.size(prev.shape) * 2 + this.size(sheet.shape) + 100;
+    const targets = f.faces.map(r => this.resolveFace(prev, r));
+    let ext = prev, k = 0;
+    for (const face of targets) {
+      const pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-RPF-FLAT", "Replace face works on flat faces.");
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(pl.n, big)), false, true);
+      if (!mk.IsDone()) throw new FeatureError("E-RPF-FAIL", "The faces could not be replaced.");
+      let tool = mk.Shape();
+      if (this.volume(tool) < 0) tool = tool.Reversed();
+      const top = mk.LastShape(), faces = this.sub(tool, "FACE");
+      ext = this.bool("fuse", ext, { shape: tool, faces, names: faces.map(x => (x.IsSame(top) ? `${f.id}:cap` : `${f.id}:side:${k++}`)) }, f.id);
+    }
+    const sp = new oc.BRepAlgoAPI_Splitter_1();
+    const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+    args.Append_1(ext.shape);
+    tools.Append_1(sheet.shape);
+    sp.SetArguments(args);
+    sp.SetTools(tools);
+    sp.Build(new oc.Message_ProgressRange_1());
+    if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-RPF-FAIL", "The faces could not be replaced.");
+    const named: Named = { shape: sheet.shape, faces: sheet.faces, names: sheet.faces.map(() => f.faces[0].name) };
+    const pieces = this.bodyList(this.carry(sp, [ext, named], sp.Shape(), f.id));
+    const keep = pieces.filter(p => !p.names.includes(`${f.id}:cap`));
+    if (keep.length === pieces.length || !keep.length) throw new FeatureError("E-RPF-MISS", "The surface must cross the faces' whole outline: make it bigger, or extend it.");
+    return this.mergeSides(this.compoundOf(keep), f.id);
   }
 
   /**
@@ -2146,11 +2211,12 @@ export class Modeller {
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
           else if (f.type === "delface") body = this.deleteFaces(f, body);
-          else if (f.type === "moveface") body = this.moveFaces(f, body);
+          else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
           else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);
           else if (f.type === "knit") ({ body, sheets } = this.knit(f, body, sheets));
+          else if (f.type === "replaceface") body = this.replaceFaces(f, body, sheets);
           else if (f.type === "thicken") ({ body, sheets } = this.thicken(f, body, sheets));
           else if (f.type === "draft") body = this.draft(f, body, frames);
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }

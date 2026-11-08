@@ -938,3 +938,44 @@ test("surfaces: planar, extruded, offset, knit and thicken (FR-FT-100)", async (
   close(r.props!.volume, 8000, 1e-6);
   assert.deepEqual(r.sheets!.names, ["f7:off:f6:end"]);
 });
+
+test("move face: translate and rotate (FR-FT-101)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Translate the top by (7, 0, 5): only the 5 mm along its normal counts.
+  const tr: Feature = { id: "f2", type: "moveface", name: "MoveFace1", faces: [{ name: "f1:end" }], distance: { v: 0 }, mode: "translate", dx: { v: 7 }, dy: { v: 0 }, dz: { v: -5 } };
+  let r = run(m, doc([s1, ex, tr]));
+  close(r.props!.volume, 100 * 60 * 15);
+  assert.ok(r.body!.names.includes("f1:end"));
+  // Rotate the top 10° about its edge on the y = -30 side: a wedge of 100 · 60² · tan10° / 2 added.
+  const rot: Feature = { id: "f3", type: "moveface", name: "MoveFace2", faces: [{ name: "f1:end" }], distance: { v: 0 }, mode: "rotate", axis: { edge: { faces: ["f1:end", "f1:side:s1l1"] } }, angle: { v: Math.PI / 18 } };
+  r = run(m, doc([s1, ex, rot]));
+  close(r.props!.volume, 120000 + 100 * 3600 * Math.tan(Math.PI / 18) / 2, 1e-5);
+  r = run(m, doc([s1, ex, { ...rot, flip: true } as Feature]));
+  close(r.props!.volume, 120000 - 100 * 3600 * Math.tan(Math.PI / 18) / 2, 1e-5);
+  assert.ok(r.body!.names.includes("f1:end"));
+});
+
+test("replace face with a surface (FR-FT-101)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const pl = (z: number): Feature => ({ id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: z } } as Feature);
+  const s2 = rect("s2", 0, 0, 300, 300, { plane: "p1" });
+  const ps: Feature = { id: "f2", type: "planesurf", name: "Surface-Plane1", sketch: "s2" };
+  const rf: Feature = { id: "f3", type: "replaceface", name: "ReplaceFace1", faces: [{ name: "f1:end" }], surface: { name: "f2:face:0" } };
+  // A flat surface 5 mm above the top: the body grows to it; 5 mm below: it shrinks.
+  let r = run(m, doc([s1, ex, pl(25), s2, ps, rf]));
+  close(r.props!.volume, 100 * 60 * 25, 1e-6);
+  assert.equal(r.body!.faces.length, 6, r.body!.names.join());
+  assert.ok(r.body!.names.includes("f1:end"));
+  r = run(m, doc([s1, ex, pl(15), s2, ps, rf]));
+  close(r.props!.volume, 100 * 60 * 15, 1e-6);
+  // A sloping surface (z = 20 + x/10, an extruded line on the front plane): same volume, a tilted top.
+  const s3: SketchFeature = { id: "s3", type: "sketch", name: "s3", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "a", t: "point", x: -100, y: 10 }, { id: "b", t: "point", x: 100, y: 30 }, { id: "l", t: "line", a: "a", b: "b" }] };
+  const es: Feature = { id: "f4", type: "extsurf", name: "Surface-Extrude1", sketch: "s3", depth: { v: 200 }, mid: true };
+  r = run(m, doc([s1, ex, s3, es, { ...rf, surface: { name: "f4:side:l" } } as Feature]));
+  close(r.props!.volume, 120000, 1e-6);
+  assert.equal(r.body!.faces.length, 6, r.body!.names.join());
+});
