@@ -749,3 +749,27 @@ test("text widths follow DejaVu Sans; long title block values break into two lin
   const one = cellText("BASE PLATE", 140, 30, 5, 78, 11, true) as any[];
   assert.equal(one.length, 1); assert.equal(one[0].h, 5);
 });
+
+test("centreline: halfway between two parallel edges over both, centre mark on an arc", async () => {
+  const { clineSegs } = await import("../../src/drawing/annot");
+  const pl = { s: 2, uc: 0, vc: 0, x: 100, y: 100, box: [0, 0, 0, 0] as [number, number, number, number], ready: true };
+  const P = (p: V3): [number, number] => [p[0], p[1]];
+  const topo = { cyls: [], edges: [
+    { k: "A", t: "l" as const, a: [0, 0, 0] as V3, b: [40, 0, 0] as V3, m: [20, 0, 0] as V3 },
+    { k: "B", t: "l" as const, a: [10, 10, 0] as V3, b: [50, 10, 0] as V3, m: [30, 10, 0] as V3 },
+    { k: "C", t: "l" as const, a: [0, 0, 0] as V3, b: [10, 10, 0] as V3, m: [5, 5, 0] as V3 },
+    { k: "R", t: "c" as const, a: [5, 0, 0] as V3, b: [0, 5, 0] as V3, m: [5 * Math.SQRT1_2, 5 * Math.SQRT1_2, 0] as V3, c: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, r: 5, sp: Math.PI / 2 },
+  ] };
+  const ref = (k: string, m: V3) => ({ e: k, h: m, p: "e" as const });
+  const g = clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [ref("A", [20, 0, 0]), ref("B", [30, 10, 0])] }, P, topo, pl)!;
+  assert.equal(g.length, 1);
+  // Halfway at y = 5 (sheet 100 + 2·5), from x = 0 to 50 plus 2 sheet mm (1 model mm) each way.
+  assert.deepEqual(g[0].map(v => Math.round(v * 1000) / 1000), [100 - 2, 110, 200 + 2, 110]);
+  assert.equal(clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [ref("A", [20, 0, 0]), ref("C", [5, 5, 0])] }, P, topo, pl), null, "not parallel");
+  const pts = clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [{ pt: [0, 0, 0] }, { pt: [0, 20, 0] }], ext: 0 }, P, topo, pl)!;
+  assert.deepEqual(pts[0], [100, 100, 100, 140]);
+  const mk = clineSegs({ id: "m", t: "cline", view: "v", k: "mark", refs: [ref("R", topo.edges[3].m)] }, P, topo, pl)!;
+  assert.equal(mk.length, 2);
+  assert.deepEqual(mk[0].map(v => Math.round(v * 1000) / 1000), [100 - 12, 100, 100 + 12, 100]);
+  assert.equal(clineSegs({ id: "m", t: "cline", view: "v", k: "mark", refs: [ref("A", [20, 0, 0])] }, P, topo, pl), null, "a line is not round");
+});

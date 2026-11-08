@@ -9,7 +9,7 @@ import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { textWidth } from "./textWidth";
@@ -570,6 +570,19 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const ht = holeTablePrims(a, P, pl, ctx);
       r = ht;
       if (ht.missing) out.dangling.push(a.id);
+    } else if (a.t === "cline") {
+      const g = clineSegs(a, P, ctx.topo, pl);
+      if (g) {
+        for (const q of g) out.prims.push({ t: "l", p: q, pen: "center", layer: "CENTER" });
+        const ring = g.length === 1 ? g[0] : [g[0][0], g[0][1], g[0][2], g[0][3], (g[0][0] + g[0][2]) / 2, (g[0][1] + g[0][3]) / 2, g[1][0], g[1][1], g[1][2], g[1][3], (g[1][0] + g[1][2]) / 2, (g[1][1] + g[1][3]) / 2];
+        const xs = g.flatMap(q => [q[0], q[2]]), ys = g.flatMap(q => [q[1], q[3]]);
+        out.hits.push({ id: a.id, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], ring, band: 1.5 });
+      } else {
+        const e = a.refs[0] && refPoint(a.refs[0], ctx.topo), T = e ? toSheet(pl, ...P(e)) : toSheet(pl, 0, 0);
+        out.prims.push({ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" });
+        out.hits.push({ id: a.id, box: textBox(T[0], T[1], "?", TEXT_H, "c") });
+        out.dangling.push(a.id);
+      }
     } else if (a.t === "surf") {
       const T = toSheet(pl, a.pos[0], a.pos[1]);
       const f = a.ref ? edgeFoot(a.ref, ctx.topo, P, pl, T) : null;
@@ -579,6 +592,49 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }
   return out;
+}
+
+/**
+ * A hand-placed centreline or centre mark as sheet segments, or null when its edges are gone (or no longer fit:
+ * the lines stopped being parallel, the edge is not round and end-on).
+ * Line: two straight edges → the line halfway between them over the length both cover together; else the line through
+ * the two points (a circle's centre, an edge end). It runs `ext` sheet mm past either end.
+ */
+export function clineSegs(a: CLineAnnot, P: (p: V3) => P2, topo: Topo | null, pl: Placement): [number, number, number, number][] | null {
+  const ext = (a.ext ?? 2) / pl.s;
+  const S = (q: P2): P2 => toSheet(pl, q[0], q[1]);
+  if (a.k === "mark") {
+    const e = a.refs[0] ? refEdge(a.refs[0], topo) : null;
+    if (!e || e.t !== "c" || !e.c || !e.r) return null;
+    const c = P(e.c), m = P(e.m);
+    if (Math.abs(d2(c, m) - e.r) > e.r * 1e-3 + 1e-6) return null; // not seen end-on
+    const L = e.r + ext, l = S([c[0] - L, c[1]]), r = S([c[0] + L, c[1]]), b = S([c[0], c[1] - L]), u = S([c[0], c[1] + L]);
+    return [[l[0], l[1], r[0], r[1]], [b[0], b[1], u[0], u[1]]];
+  }
+  if (a.refs.length < 2) return null;
+  const e0 = refEdge(a.refs[0], topo), e1 = refEdge(a.refs[1], topo);
+  const isLine = (r: GeoRef, e: MEdge | null): e is MEdge => !!e && "p" in r && r.p === "e" && e.t === "l";
+  let A: P2, B: P2;
+  if (isLine(a.refs[0], e0) && isLine(a.refs[1], e1)) {
+    const a0 = P(e0.a), b0 = P(e0.b), a1 = P(e1.a), b1 = P(e1.b);
+    if (d2(a0, b0) < 1e-9 || d2(a1, b1) < 1e-9) return null;
+    const d = unit2([b0[0] - a0[0], b0[1] - a0[1]]), w = unit2([b1[0] - a1[0], b1[1] - a1[1]]);
+    if (Math.abs(d[0] * w[1] - d[1] * w[0]) > 1e-4) return null;
+    const nrm: P2 = [-d[1], d[0]], off = (q: P2) => q[0] * nrm[0] + q[1] * nrm[1], tt = (q: P2) => q[0] * d[0] + q[1] * d[1];
+    const o = (off(a0) + off(a1)) / 2;
+    if (Math.abs(off(a0) - off(a1)) < 1e-9) return null; // the same line
+    const ts = [a0, b0, a1, b1].map(tt), t0 = Math.min(...ts) - ext, t1 = Math.max(...ts) + ext;
+    A = [d[0] * t0 + nrm[0] * o, d[1] * t0 + nrm[1] * o]; B = [d[0] * t1 + nrm[0] * o, d[1] * t1 + nrm[1] * o];
+  } else {
+    const p0 = refPoint(a.refs[0], topo), p1 = refPoint(a.refs[1], topo);
+    if (!p0 || !p1) return null;
+    const q0 = P(p0), q1 = P(p1);
+    if (d2(q0, q1) < 1e-9) return null;
+    const d = unit2([q1[0] - q0[0], q1[1] - q0[1]]);
+    A = add2(q0, d, -ext); B = add2(q1, d, ext);
+  }
+  const sa = S(A), sb = S(B);
+  return [[sa[0], sa[1], sb[0], sb[1]]];
 }
 
 /** The point of a referenced edge nearest to `T` on the sheet, and the edge's direction there. */
