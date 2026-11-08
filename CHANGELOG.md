@@ -5,11 +5,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.200.0] - 2026-11-08
+## [1.203.0] - 2026-11-08
 
 ### Added
 
 - **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
+
+## [1.200.0] - 2026-11-08
+
+### Added
+
+- Drawing model views of a part with configurations can show another configuration (FR-DRW-010): pick it under **Configuration** in the view panel. Projected, section and detail views made from that view follow it, and dimensions on them measure that configuration.
+
+## [1.199.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Mate value** results (Add track… → Mate value), as SolidWorks' Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
+
+## [1.197.0] - 2026-11-08
+
+### Added
+
+- Drawing notes can link to sheet properties (FR-DRW-023): `$PRP:"Material"` (also `$PRPSHEET:`) shows the title block's value, so the note follows the model and the sheet. The Note panel's **Link to property** list inserts one. Unknown names stay as typed.
 
 ## [1.196.0] - 2026-11-08
 
@@ -1465,8 +1483,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.200.0...HEAD
-[1.200.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.200.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.203.0...HEAD
+[1.203.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.203.0
+[1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
+[1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
+[1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
 [1.196.0]: https://github.com/kothf/step-viewer/compare/v1.194.0...v1.196.0
 [1.194.0]: https://github.com/kothf/step-viewer/compare/v1.191.0...v1.194.0
 [1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0

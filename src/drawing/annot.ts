@@ -17,7 +17,11 @@ type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
-export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
+export interface AnnotCtx {
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
+  forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
+}
 
 /** Annotation text height and arrowhead in force (FR-DRW-025): set from the drawing's style by `useStyle` before composing. */
 export let TEXT_H = 3.5;
@@ -422,7 +426,7 @@ function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Draws a note (multi-line text) and its leader. */
 export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: Prim[]; box: [number, number, number, number] } {
-  const out: Prim[] = [], h = a.h ?? TEXT_H, lines = a.text.split("\n");
+  const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
   lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
   if (leaderTo) {
@@ -431,6 +435,26 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
     out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
   return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
+}
+
+// ---------- property links in notes (FR-DRW-023) ----------
+
+/** The drawing's properties that notes link to with $PRP:"name" (set from the title block fields before composing). */
+let NOTE_PROPS: Record<string, string> = {};
+/** SolidWorks property names that mean one of our fields. */
+const PROP_ALIAS: Record<string, string> = { description: "title", partno: "number", partnumber: "number", weight: "mass", drawnby: "author", swsheetscale: "scale", sheetscale: "scale", sheetformatsize: "size", swsheetformatsize: "size" };
+
+export function useProps(fields: Record<string, string | undefined>) {
+  NOTE_PROPS = {};
+  for (const [k, v] of Object.entries(fields)) if (typeof v === "string") NOTE_PROPS[k.toLowerCase()] = v;
+}
+
+/** $PRP:"Material" (or $PRPSHEET:"…") → the property's value; an unknown name stays as typed so it can be seen and fixed. */
+export function expandProps(text: string, props: Record<string, string> = NOTE_PROPS): string {
+  return text.replace(/\$PRP(?:SHEET)?:"([^"]*)"/g, (m, name: string) => {
+    const k = name.toLowerCase().replace(/[^a-z0-9]/g, ""), v = props[PROP_ALIAS[k] ?? k];
+    return v ?? m;
+  });
 }
 
 // ---------- hole table (FR-DRW-024) ----------
@@ -496,7 +520,14 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 }
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
+/** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null };
+}
+
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
+  const own = ctx.forView?.(v);
+  if (own) ctx = { ...ctx, ...own, forView: undefined };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));

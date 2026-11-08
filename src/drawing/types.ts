@@ -25,6 +25,8 @@ export interface DrawingView {
   y: number;
   /** Own scale as [numerator, denominator]; absent: the sheet scale (projected views: the parent's). */
   scale?: [number, number];
+  /** A part configuration to draw (FR-DRW-010), set on a model view; views made from it follow. Absent: the part's active one. */
+  config?: string;
   style?: DisplayStyle;
   tangent?: TangentEdges;
   /** Show the label under the view (projected and model views have none by default). */

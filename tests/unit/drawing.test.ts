@@ -658,3 +658,30 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(d.includes("LWPOLYLINE") && d.includes("*Model_Space") && d.includes("ACAD_GROUP"));
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
 });
+
+test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
+  const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
+  const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
+  assert.equal(expandProps('MATERIAL: $PRP:"Material"', props), "MATERIAL: Steel");
+  assert.equal(expandProps('$PRP:"Weight" / $PRP:"PartNo" / $PRPSHEET:"SW-Sheet Scale" / $PRP:"Description"', props), "1.25 kg / MC-001 / 2:1 / Plate");
+  assert.equal(expandProps('$PRP:"Nope"', props), '$PRP:"Nope"');
+  useProps({ material: "Brass" });
+  const r = notePrims({ id: "n", t: "note", pos: [0, 0], text: 'M: $PRP:"material"' }, [0, 0], null);
+  assert.equal((r.prims[0] as any).s, "M: Brass");
+});
+
+test("view configuration: projected, section and detail views follow their model view", async () => {
+  const { viewConfig, viewReq } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "Sheet1", size: "A3", landscape: true, scale: [1, 1], projection: "first", views: [
+    { id: "f", name: "F", orient: "front", x: 100, y: 100, config: "Tall" },
+    { id: "t", name: "T", parent: "f", side: [0, 1], x: 100, y: 200 },
+    { id: "d", name: "D", kind: "detail", parent: "t", c: [0, 0], r: 5, x: 200, y: 200 },
+    { id: "g", name: "G", orient: "top", x: 300, y: 100 },
+  ] } as any;
+  assert.equal(viewConfig(sheet, sheet.views[2]), "Tall");
+  assert.equal(viewConfig(sheet, sheet.views[3]), undefined);
+  const r = viewReq(sheet, sheet.views[1]);
+  assert.equal(r.cfg, "Tall");
+  assert.ok(r.key.endsWith("|cfg|Tall"));
+  assert.ok(!viewReq(sheet, sheet.views[3]).key.includes("|cfg|"));
+});

@@ -3765,6 +3765,15 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
+    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.waitForTimeout(150);
+    tx = await texts();
+    const scaleNote = tx.find(s => s.startsWith("SCALE "));
+    check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
@@ -5589,7 +5598,18 @@ try {
       const relMoved = relPath.some((q, k) => Math.hypot(...q.map((v, j) => v - world1[k][j])) > 1);
       const relGroup = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr1.id && x.userData.rel === id));
       const relative = { stored: m.study.traces.at(-1).rel === id, noSelf: !relOpts.includes(c[0].id) && relOpts.includes(id) && relOpts[0] === "", relDist, relMoved, relGroup };
-      const trace = { relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Mate value: Add track… → Mate value: Distance1 plots the gap between pin 1's top and pin 2's bottom; the faces
+      // face each other, so the angle stays at 180°; the plot switches to the angle and the row deletes with ✕.
+      const madd = document.querySelector('#motion select[data-mo="add"]'), mopt = [...madd.options].some(o => o.value === "mplot:md");
+      madd.value = "mplot:md"; madd.dispatchEvent(new Event("change"));
+      const mt = m.study.traces.at(-1), mv = m.mateValues(mt.id);
+      const mrow = !!document.querySelector(`#motion .mo-name[data-trace="${mt.id}"]`), msvg = !!document.querySelector("#motion .mo-trace-plot svg polyline");
+      const mAngle = plotAs("angle");
+      const mateVal = { mopt, mate: mt.mate, plot0: mt.plot ?? "dist", n: mv.dist.length === path.length, finite: mv.dist.every(Number.isFinite), d0: mv.dist[0],
+        a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
+      document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
+      mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
+      const trace = { mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5705,8 +5725,10 @@ try {
       && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
       && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
       && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
-      && Object.values(tc.relative).every(v => v === true),
-      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && Object.values(tc.relative).every(v => v === true)
+      && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
+      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
@@ -8555,6 +8577,51 @@ try {
     await pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     const names = await pg.$$eval("#tree .row-n", els => els.map(e => e.textContent.trim()));
     check(names.some(n => n.includes(want)) && !names.some(n => /[ÏËà÷åðí]/.test(n)), `STEP names in Windows-1251 read as Cyrillic in the model tree (${names.join(" | ")})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const st = (depth, w) => ({ nums: { "s1/dim/d1": { v: w }, "s1/dim/d2": { v: 60 }, "f1/depth": { v: depth } }, ints: {}, suppressed: [], vars: {}, material: null, ids: ["s1", "f1"] });
+    const part = { schema: 1, kind: "part", id: "d_drwcfg", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [{ id: "r1", t: "horizontal", e: ["l1"] }, { id: "r2", t: "horizontal", e: ["l3"] }, { id: "r3", t: "vertical", e: ["l2"] }, { id: "r4", t: "vertical", e: ["l4"] }], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }],
+        dims: [{ id: "d1", name: "D1", t: "hdistance", e: ["p1", "p2"], val: { v: 100 } }, { id: "d2", name: "D2", t: "vdistance", e: ["p2", "p3"], val: { v: 60 } }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ], configs: [{ name: "Default", state: st(20, 100) }, { name: "Tall", state: st(50, 80) }], config: "Default" };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const boxes = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => { const p = window.__sv.drw.placement(v.id); return { id: v.id, root: !v.parent, w: (p.box[2] - p.box[0]) / p.s, h: (p.box[3] - p.box[1]) / p.s, x: v.x, y: v.y, cfg: v.config ?? null }; }));
+    const b0 = await boxes(), front = b0.find(v => v.root);
+    const [fx, fy] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [front.x, front.y]);
+    await dp.mouse.click(fx, fy);
+    await dp.waitForSelector('#drw .drw-props [data-v="cfg"]');
+    const opts = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')].map(o => o.textContent));
+    await dp.selectOption('#drw .drw-props [data-v="cfg"]', "Tall");
+    await dp.waitForTimeout(200);
+    await ready();
+    const b1 = await boxes(), f1 = b1.find(v => v.root), kids = b1.filter(v => !v.root);
+    check(opts.join("|") === "Active (Default)|Default|Tall" && Math.abs(front.h - 20) < 0.6 && Math.abs(f1.h - 50) < 0.6 && Math.abs(f1.w - 80) < 0.6 && f1.cfg === "Tall"
+      && kids.some(k => Math.abs(k.w - 80) < 0.6) && kids.some(k => Math.abs(k.h - 50) < 0.6),
+      `drawing: a model view shows another configuration and its projected views follow (${JSON.stringify({ opts, before: b0, after: b1 })})`);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(300);
+    const ru = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')][0]?.textContent);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ru === "Активная (Default)", `drawing: configuration list in Russian (${ru})`);
     await ctx.close();
   }
 

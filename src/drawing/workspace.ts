@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, dimGeo, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, dimGeo, factsCtx, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -23,7 +23,7 @@ import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameO
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { fitLimits, splitFit } from "./iso286";
-import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -58,6 +58,9 @@ export interface DrawingHost {
   beforeOpen?(): void;
   opened?(label: string): void;
 }
+
+/** Title block fields a note can link to with $PRP:"key" (FR-DRW-023). */
+const NOTE_PROP_KEYS: [string, string][] = [["title", "Title"], ["number", "Part number"], ["revision", "Revision"], ["material", "Material"], ["mass", "Mass"], ["company", "Company"], ["author", "Author"], ["checked", "Checked"], ["approved", "Approved"], ["date", "Date"], ["scale", "Scale"], ["sheet", "Sheet"], ["size", "Size"]];
 
 type Mode =
   | { kind: "none" }
@@ -974,8 +977,14 @@ export class DrawingWorkspace {
 
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
-    if (this.store) useStyle(this.doc.style);
-    return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh) };
+    if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
+    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = c && this.kernel.configs.get(c); return g ? factsCtx(g) : null; } };
+  }
+
+  /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
+  private factsOf(view: string, sh = this.sheet): ModelFacts | null {
+    const v = findView(sh, view), c = v && viewConfig(sh, v);
+    return (c && this.kernel.configs.get(c)) || this.facts;
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -1024,7 +1033,7 @@ export class DrawingWorkspace {
 
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
   private pickAt(viewId: string, p: Pt, only?: "circle"): Pick | null {
-    const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.facts?.topo;
+    const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
     const tol = this.snapTol();
@@ -1079,7 +1088,7 @@ export class DrawingWorkspace {
     const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
     if (p1 && (p0.kind === "line" || p1.kind === "line")) return { ...base, k: "al", refs: [p0.kind === "line" ? p0.ref : asPoint(p0), p1.kind === "line" ? p1.ref : asPoint(p1)] };
     const refs = picks.length === 1 ? [p0.ref] : [asPoint(p0), asPoint(p1)];
-    const g = dimGeo({ ...base, k: "al", refs }, P, this.facts?.topo ?? null);
+    const g = dimGeo({ ...base, k: "al", refs }, P, this.factsOf(viewId)?.topo ?? null);
     if (!g) return null;
     const [a, b] = g.pts, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
     const flatY = y1 - y0 < 1e-6, flatX = x1 - x0 < 1e-6;
@@ -1098,7 +1107,7 @@ export class DrawingWorkspace {
     if (!v) return [];
     const { P, n } = projector(viewDir(this.sheet, v));
     const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
-    return holeEdges(this.facts?.topo ?? null, P, n, inDetail).map(e => edgeRef(e, "e"));
+    return holeEdges(this.factsOf(viewId)?.topo ?? null, P, n, inDetail).map(e => edgeRef(e, "e"));
   }
 
   /** A point for chain, baseline and ordinate dimensions: a corner or a circle's centre (a line is no point). */
@@ -1110,7 +1119,7 @@ export class DrawingWorkspace {
   /** The dimensions one more point adds to a chain, baseline or ordinate set (FR-DRW-021), placed clear of the view:
    *  horizontal ones above it, vertical ones to its right, baseline ones stacked 7 mm apart. The axis comes from the first step. */
   private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef): { dims: DimAnnot[]; axis: "h" | "v" } | null {
-    const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = this.facts?.topo ?? null;
+    const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = (vid ? this.factsOf(vid) : this.facts)?.topo ?? null;
     if (!vid || !v || !pl || !m.picks.length) return null;
     const { P } = projector(viewDir(this.sheet, v));
     const pt = (r: GeoRef) => { const q = refPoint(r, topo); return q ? P(q) : null; };
@@ -1250,7 +1259,7 @@ export class DrawingWorkspace {
   private footAt(viewId: string, ref: GeoRef, p: Pt) {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId);
     if (!v || !pl) return null;
-    return edgeFoot(ref, this.facts?.topo ?? null, projector(viewDir(this.sheet, v)).P, pl, p);
+    return edgeFoot(ref, this.factsOf(viewId)?.topo ?? null, projector(viewDir(this.sheet, v)).P, pl, p);
   }
 
   /** A revision table at the frame's top-right corner, or a general table at its top-left (FR-DRW-024). */
@@ -1306,17 +1315,17 @@ export class DrawingWorkspace {
       const hov = this.pickAt(vid, at);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
-        const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.facts?.topo ?? null);
+        const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
         if (d && g) s += `<g class="drw-preview">${svgBody(dimPrims(d, g, pl, this.ctx().dec).prims, H, "currentColor")}</g>`;
       }
     } else if (m.kind === "htable") {
-      if (!m.origin) { const ref = this.pointAt(vid, at), q = ref && refPoint(ref, this.facts?.topo ?? null); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
+      if (!m.origin) { const ref = this.pointAt(vid, at), q = ref && refPoint(ref, this.factsOf(vid)?.topo ?? null); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
       else {
         const pa: Annot = { id: "_pt", t: "htable", view: vid, origin: m.origin, holes: m.holes, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dimset") {
-      const topo = this.facts?.topo ?? null;
+      const topo = this.factsOf(vid)?.topo ?? null;
       for (const r of m.picks) { const q = refPoint(r, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
       const ref = this.pointAt(vid, at), q = ref && refPoint(ref, topo);
       if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; }
@@ -1327,20 +1336,20 @@ export class DrawingWorkspace {
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
-        s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: this.facts?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
     return s;
@@ -1417,12 +1426,12 @@ export class DrawingWorkspace {
   private annotProps(a: Annot): string {
     const sh = this.sheet;
     if (a.t === "dim") {
-      const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.facts?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.facts?.topo ?? null) : null;
+      const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
       const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: undefined, txt: undefined }, g, this.ctx().dec).main) : "?";
       const tol = a.tol?.t ?? "";
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
       // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
-      const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.facts?.topo ?? null) : null;
+      const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.factsOf(a.view)?.topo ?? null) : null;
       const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c"
         ? [["rad", "Radius"], ["dia", "Diameter"], ...((e0.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3 ? [["arc", "Arc length"] as [DimAnnot["k"], string]] : [])]
         : a.k === "ang" || a.k === "chamfer" ? [["ang", "Angle"], ["chamfer", "Chamfer"]] : null;
@@ -1445,7 +1454,7 @@ export class DrawingWorkspace {
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.facts?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
         <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
@@ -1513,6 +1522,7 @@ export class DrawingWorkspace {
     if (a.t !== "note") return del;
     return `<fieldset class="pm-group"><legend>${esc(t("Note"))}</legend>
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
+      <label class="drw-f">${esc(t("Link to property"))}<select data-d="nprop"><option value="">—</option>${NOTE_PROP_KEYS.map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label>
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
     </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
   }
@@ -1530,6 +1540,7 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "gtol" && k.startsWith("g:")) {
@@ -2094,6 +2105,7 @@ export class DrawingWorkspace {
           <label class="drw-f">${esc(t("Name"))}<input data-v="name" value="${esc(v.name)}" translate="no"></label>
           ${v.kind ? this.kindProps(v) : v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
           <label class="drw-f">${esc(t("Orientation"))}<select data-v="orient">${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<option value="${o}"${o === (v.orient ?? "front") ? " selected" : ""}>${esc(t(ORIENT_NAMES[o]))}</option>`).join("")}</select></label>`}
+          ${this.configField(v)}
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Scale"))}</legend>
           <label class="drw-f">${esc(t("Scale"))}<select data-v="scale"><option value="">${esc(v.parent ? t("Parent's scale") : t("Sheet scale ({s})", { s: scaleText(sh.scale) }))}</option>${SCALES.map(s => `<option value="${scaleText(s)}"${own === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${own && !SCALES.some(s => scaleText(s) === own) ? `<option value="${own}" selected>${own}</option>` : ""}<option value="custom">${esc(t("Custom…"))}</option></select></label>
@@ -2280,6 +2292,14 @@ export class DrawingWorkspace {
   }
 
   /** Extra properties of section, detail and auxiliary views. */
+  /** A part's configuration for a model view (FR-DRW-010); views made from it follow theirs. */
+  private configField(v: DrawingView): string {
+    const src = this.doc.source;
+    if (src.kind !== "part" || !src.doc.configs?.length || v.kind || v.parent) return "";
+    const act = src.doc.config ?? src.doc.configs[0].name;
+    return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${src.doc.configs.map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+  }
+
   private kindProps(v: DrawingView): string {
     const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
     let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
@@ -2394,6 +2414,7 @@ export class DrawingWorkspace {
     if (el.dataset.d) { this.onAnnotInput(el); return; }
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
+    else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; });
     else if (vk === "orient") {
       const o = val as Orient;
       const c = o === "current" ? this.host.currentView() : null;
