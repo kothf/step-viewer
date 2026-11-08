@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.152.0] - 2026-11-08
+
+### Added
+
+- **3-point rectangles and parallelogram (FR-SK-013)**: the Rectangle ▾ menu adds 3-point corner rectangle (two corners set the first side at any angle, the third click the width), 3-point centre rectangle (centre, middle of a side, then a corner) and Parallelogram (three corners, the fourth follows), all with a live preview and the relations that keep their shape.
+
 ## [1.151.0] - 2026-11-08
 
 ### Added
@@ -1267,7 +1273,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.151.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.152.0...HEAD
+[1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
 [1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
 [1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0
 [1.147.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.147.0
