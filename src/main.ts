@@ -30,6 +30,7 @@ import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
 import { bindModal, bindTabs, busy, confirmModal, emptyState, initModals, initPanels, storage, toast } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
+import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
 import { hint, relocalizeHint, setTips, tipsOn } from "./hints";
 import { KernelClient, type KernelStatus } from "./kernel/client";
@@ -115,6 +116,7 @@ const asm = new AsmController({
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { ++loadToken; modeller.close(); },
   editPart: (doc, file, label, back) => modeller.editIn(doc, file, { label, back }),
+  openPart: () => modeller.openPart(),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 // Motion studies (FR-FT-122): the timeline pane under the view, driving the assembly's mates.
@@ -1138,13 +1140,10 @@ function updateHint() {
 $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool as Tool)));
 
 // ---------- tool strip and right-panel pages ----------
-// The right panel shows one page (Properties, Section, Explode, Mass, Export) picked from the tool strip,
-// so every tool is one click away and nothing sits below the fold. Clicking the open page again hides the panel.
+// The right panel shows one page (Properties, Section, Explode, Mass, Export) picked from the tabs at its top
+// (FR-UI-118), so nothing sits below the fold. The header's panel button hides and shows the panel.
 const rpTabs = $("#rp-tabs");
-rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEventListener("click", () => {
-  if (b.classList.contains("on") && !$("#app").classList.contains("no-right") && innerWidth > 900) panels.toggle("right");
-  else panels.show("right");
-}, true));
+rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEventListener("click", () => panels.show("right"), true));
 const showPage = bindTabs(rpTabs, tab => {
   $$(".rp").forEach(s => s.classList.toggle("on", s.id === `rp-${tab}`));
 });
@@ -1177,6 +1176,34 @@ new ResizeObserver(() => fitToolbar()).observe($(".topbar"));
 }
 new MutationObserver(() => fitToolbar()).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
 onLangChange(() => requestAnimationFrame(fitToolbar));
+
+// ---------- command bar (FRS 13.2, FR-UI-010): tabs follow what is open ----------
+bindCommandBar();
+function syncCmTabs() {
+  const app = $("#app");
+  const list: CmTabId[] = app.classList.contains("gerber") ? []
+    : app.classList.contains("model") ? ["features", "sketch", "surfaces", "weldments", "evaluate"]
+    : app.classList.contains("asm") ? ["assembly", "evaluate"]
+    : $("#empty").hidden ? ["evaluate"] : [];
+  setCmTabs(list);
+  fitCm();
+}
+/** Labels fold into icons (with tooltips) when the selected tab's buttons do not fit on one row. */
+function fitCm() {
+  const cm = $("#cm"), body = $("#cm-body");
+  cm.classList.remove("cm-icons");
+  if (!cm.hidden && body.scrollWidth > body.clientWidth + 1) cm.classList.add("cm-icons");
+}
+new MutationObserver(syncCmTabs).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
+new MutationObserver(syncCmTabs).observe($("#empty"), { attributes: true, attributeFilter: ["hidden"] });
+{
+  let queued = false;
+  new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fitCm(); }); }).observe($("#cm-body"), { childList: true, subtree: true });
+}
+new ResizeObserver(() => fitCm()).observe($("#cm"));
+onCmTab(() => requestAnimationFrame(fitCm));
+onLangChange(() => { relabelCmTabs(); requestAnimationFrame(fitCm); });
+syncCmTabs();
 const PLANE3_INFO = { title: "Section plane", picks: 3, hint: "Pick three points on the plane" };
 
 const PALETTE = ["#e8590c", "#2f9e44", "#1c7ed6", "#ae3ec9", "#f08c00", "#0ca678", "#e03131", "#5f3dc4"];
