@@ -16,6 +16,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Play once, loop or back and forth at 0.25× to 4×; scrub the ruler; Space, ←/→, Home and End in the pane.
   - Record a WebM video of the view in real time, or save an animated GIF.
   - Several named studies per assembly, saved in the `.mcadasm` file, with undo.
+## [1.92.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121), in the new Weldments ▾ menu of the feature bar:
+  - **Structural Member**: a standard profile along the lines of a sketch or 3D sketch, one body per line. Profiles: EN 10219 square, rectangular and round tube, EN 10056 equal angle, DIN 1026 UPN channel, EN 10365 IPE and HEA beams, flat and round bar. Corners where two lines meet are mitred, butted (either line runs through) or left alone; the profile can sit on any of nine points of its box, turn and mirror. The view follows every panel change.
+  - **Trim/Extend**: members cut back to a flat face's plane or another body, or lengthened up to it.
+  - **End Cap** (thickness, inset, corner chamfer), **Gusset** (triangular or polygonal, inner chamfer, at the middle or either end of the corner) and **Fillet Bead** along straight and round edges (flat faces, tubes on plates, the round corners of hollow sections).
+  - **Cut List…**: members grouped by profile, length and end angles, plates by size, welds by leg, with quantities and mass (the part's material, else steel), exported as CSV.
+
 ## [1.90.0] - 2026-11-08
 
 ### Added
@@ -918,7 +928,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.94.0...HEAD
-[1.94.0]: https://github.com/kothf/step-viewer/compare/v1.90.0...v1.94.0
+[1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0
+[1.92.0]: https://github.com/kothf/step-viewer/compare/v1.90.0...v1.92.0
 [1.90.0]: https://github.com/kothf/step-viewer/compare/v1.89.0...v1.90.0
 [1.89.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.89.0
 [1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
