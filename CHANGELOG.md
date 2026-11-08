@@ -16,6 +16,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Export format / Import format… share a format as a small JSON file.
   - The logo is drawn on screen and in PDF, SVG and PNG exports; DXF leaves it out.
 
+## [1.89.0] - 2026-11-08
+
+### Added
+
+- **Sketch relations to the model** (FR-SK-042, FR-SK-052): while sketching, points snap to model vertices, edge midpoints and circle centres (projected onto the sketch plane), shown with the usual snap marker.
+  - A snapped point is tied to the model through a construction copy of the edge with an On edge relation, so it follows when the model changes.
+  - **Smart Dimension** takes model edges and vertices too: click a sketch curve, then a model edge, then where the dimension goes.
+  - **Snap to model geometry** in the sketch panel turns it off.
+
+### Changed
+
+- While sketching, the middle mouse button rotates the view (FR-UI-020). It still pans elsewhere.
+- Smart Dimension with one item picked: clicking a second item dimensions the pair instead of placing the first item's dimension.
+- A new part shows its origin planes at once, without a "Rebuild" step.
+
 ## [1.88.0] - 2026-11-08
 
 ### Added
@@ -892,7 +907,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
-[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.90.0
+[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.89.0...v1.90.0
+[1.89.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.89.0
 [1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
