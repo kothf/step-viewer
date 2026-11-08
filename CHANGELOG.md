@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.101.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121):
+  - **Gusset**: two arrows in the view, one per leg, change the lengths along face 1 and face 2 by dragging (also from the tree, like extrude depth); click an arrow's value to type it.
+  - **Fillet Bead**: **Tangent propagation** (on by default) brings in the faces that run on smoothly from a picked one, so picking one side of a square tube and the plate gives a bead all round it, round corners included.
+  - Bead pieces that meet end to end are fused into one bead body; the cut list gives its length along the root.
+
 ## [1.100.0] - 2026-11-08
 
 ### Added
@@ -980,7 +989,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.100.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.101.0...HEAD
+[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
