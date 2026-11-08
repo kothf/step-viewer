@@ -50,6 +50,7 @@ import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { onLangChange, t } from "../i18n";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import type { EndCapFeature } from "../weldments/types";
 
 export interface ModelHost {
   viewer: Viewer;
@@ -2521,9 +2522,9 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | null {
     const m = this.mode;
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"));
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid")) || (f?.type === "endcap" && f.faces.length > 0);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     if (m.kind !== "none" || !this.selected) return null;
     const f = this.store?.feature(this.selected);
@@ -2537,6 +2538,7 @@ export class ModelController {
     this.arrow = null;
     const f = this.arrowFeature();
     if (!f) return;
+    if (f.type === "endcap") { this.drawCapArrow(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -2564,6 +2566,40 @@ export class ModelController {
     this.decor.add(obj);
     this.arrow = { obj, pick, base, dir, scale: 1, mid };
     this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
+  }
+
+  /** The thickness arrow of an end cap (FR-FT-121): from the first capped face, outwards (or into the member). */
+  private drawCapArrow(f: EndCapFeature) {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames, ref = f.faces[0];
+    if (!data || !names) return;
+    let best = -1, bd = Infinity;
+    names.forEach((n, i) => {
+      const fi = data.faces[i];
+      if (n !== ref.name || fi?.type !== "plane" || !fi.normal) return;
+      const d = ref.hint ? Math.hypot(fi.center[0] - ref.hint[0], fi.center[1] - ref.hint[1], fi.center[2] - ref.hint[2]) : 0;
+      if (d < bd) { bd = d; best = i; }
+    });
+    if (best < 0) return;
+    const fi = data.faces[best];
+    const base = new THREE.Vector3(...fi.center);
+    const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(f.inward ? -1 : 1);
+    this.placeArrow(base, dir, f.thickness.v, false);
+    this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
+  }
+
+  /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it). */
+  private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean) {
+    const obj = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10).translate(0, 0.5, 0), mat);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 18).translate(0, 1.25, 0), mat);
+    const pick = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.6, 8).translate(0, 0.8, 0), new THREE.MeshBasicMaterial({ visible: false }));
+    obj.add(shaft, head, pick);
+    obj.position.copy(base).addScaledVector(dir, mid ? value / 2 : value);
+    obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    obj.renderOrder = shaft.renderOrder = head.renderOrder = 2600;
+    this.decor.add(obj);
+    this.arrow = { obj, pick, base, dir, scale: 1, mid };
   }
 
   private handleLabel(id: string, num: string, title: string) {
@@ -2657,7 +2693,7 @@ export class ModelController {
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
       label.textContent = f.type === "revolve" ? `${trimNum((f.angle.v * 180) / Math.PI, 2)}°`
-        : `${trimNum(f.depth.v * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+        : `${trimNum((f.type === "endcap" ? f.thickness.v : f.depth.v) * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
     }
   }
 
@@ -2695,7 +2731,7 @@ export class ModelController {
     }
     this.arrowDrag = f.type === "revolve"
       ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e) }
-      : { start: this.axisParam(e), depth: f.depth.v, moved: false };
+      : { start: this.axisParam(e), depth: f.type === "endcap" ? f.thickness.v : f.depth.v, moved: false };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -2705,7 +2741,8 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || m.draft.type !== "extrude" || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap") || !d || !a) return;
+    const key = m.draft.type === "endcap" ? "thickness" : "depth";
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
     // Round to a step that suits the zoom (Shift: finer).
@@ -2714,10 +2751,11 @@ export class ModelController {
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
     if (!(v > 1e-6)) v = step / fu;
-    if (Math.abs(v - m.draft.depth.v) < 1e-12) return;
+    const draft = m.draft as { depth?: Num; thickness?: Num };
+    if (Math.abs(v - draft[key]!.v) < 1e-12) return;
     d.moved = true;
-    m.draft.depth = { v };
-    const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth]");
+    draft[key] = { v };
+    const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${key}]`);
     if (inp) inp.value = trimNum(v * fu, 6);
     a.obj.position.copy(a.base).addScaledVector(a.dir, a.mid ? v / 2 : v);
     this.sizeArrow();
@@ -5089,6 +5127,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "curve") return g.sketch === sketch;
   if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline);
   if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf") return g.sketch === sketch;
+  if (g.type === "member") return g.profile === "sketch" && g.psketch === sketch;
   return false;
 }
 
