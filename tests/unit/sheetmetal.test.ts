@@ -229,3 +229,27 @@ test("sheet metal: holes cut in flat faces show in the flat pattern (FR-FT-120)"
   // Without cuts the flat pattern keeps its exact sketch outline.
   assert.equal(run(doc([s, base(), fl, flat])).sheet!.flatEdges, undefined);
 });
+
+test("sheet metal: edge flanges on edges meeting at a corner are mitred (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const { apply } = await import("../../src/sheetmetal/sheet");
+  const s = rect("s", 0, 0, 100, 50);
+  // Front (y = 0) and right (x = 100) edges: the front edge ends where the right one starts.
+  const fl = (gap: number): SmFlangeFeature => ({ id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 30 }, angle: { v: Math.PI / 2 }, gap: { v: gap } });
+  for (const gap of [0.1, 5]) {
+    const r = run(doc([s, base(), fl(gap)]));
+    close(r.size[0], 100, 1e-6); close(r.size[1], 50, 1e-6); close(r.size[2], 30, 1e-6);
+    const st = r.sheet!;
+    for (const [id, axis] of [["f:p0", 0], ["f:p1", 1]] as const) {
+      const p = st.panels.find(x => x.id === id)!;
+      const mi = p.outer.filter(x => x.ent === "miter");
+      assert.equal(mi.length, 1, `${id} has one mitre edge`);
+      // The mid-planes meet 1 mm (T/2) inside the outer corner; each flange stops gap/2 short of it.
+      const pts = [mi[0].a, mi[0].b].map(q => apply(p.M, [q[0], q[1], 1]));
+      for (const q of pts) close(axis === 0 ? q[0] : q[1], axis === 0 ? 99 - gap / 2 : 1 + gap / 2, 1e-6);
+    }
+    assert.equal(flatLoops(st).outer.length, 1);
+    run(doc([s, base(), fl(gap), flat]));
+  }
+});

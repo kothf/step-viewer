@@ -53,6 +53,8 @@ export interface SmFlangeFeature {
   /** Shorten the flange from the edge's start / end. */
   off0?: Num;
   off1?: Num;
+  /** Picked edges meeting at a corner: the gap left between their mitred flanges (default 0.1 mm). */
+  gap?: Num;
 }
 
 /** Hem: the edge folded back on itself. */

@@ -241,7 +241,7 @@ export function findEdge(st: SheetState, faces: [string, string]): { panel: Pane
   throw new SheetError("E-SM-EDGE", "Pick an outside edge of a flat sheet metal face.");
 }
 
-interface FlangeSpec { angle: number; r: number; /** flat length after the bend */ s: number; /** how far inside the edge the bend starts */ d: number; off0: number; off1: number; flip: boolean }
+interface FlangeSpec { angle: number; r: number; /** flat length after the bend */ s: number; /** how far inside the edge the bend starts */ d: number; off0: number; off1: number; flip: boolean; /** Flange (not bend) run past the edge start / end, cut back later by a mitre. */ ext0?: number; ext1?: number }
 
 /** Adds a bend and a flange panel on one picked edge (edge flange and hem). */
 function addFlange(st: SheetState, faces: [string, string], spec: FlangeSpec, pid: string, bid: string): SheetOp[] {
@@ -301,7 +301,7 @@ function addFlange(st: SheetState, faces: [string, string], spec: FlangeSpec, pi
   const { bend, next } = makeBend(st, panel.M, A0, A1, up, spec.angle, spec.r, bid);
   st.bends.push(bend);
   ops.push({ kind: "bend", bend });
-  const c0 = p2(A0, s2(o, bend.ba)), c1 = p2(A1, s2(o, bend.ba));
+  const c0 = p2(p2(A0, s2(o, bend.ba)), s2(e, -(spec.ext0 ?? 0))), c1 = p2(p2(A1, s2(o, bend.ba)), s2(e, spec.ext1 ?? 0));
   // c0, c0 + s·o, c1 + s·o, c1: counter-clockwise (o is to the right of A0 → A1).
   const fl: Panel = { id: pid, outer: strip(c0, c1, o, spec.s, ["s0", "tip", "s1", "att"]), holes: [], M: next, n: 0 };
   st.used.push(`${pid}:att`);
@@ -344,8 +344,62 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
   const pos = f.position ?? "inside";
   const d = pos === "inside" ? outerSetback(st.T, angle, r) : pos === "outside" ? innerSetback(angle, r) : 0;
   const ops: SheetOp[] = [];
-  f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, { angle, r, s, d, off0: f.off0?.v ?? 0, off1: f.off1?.v ?? 0, flip: !!f.flip }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
+  const off0 = f.off0?.v ?? 0, off1 = f.off1?.v ?? 0;
+  // Picked edges meeting at a corner of the same face: their flanges run on past it and are mitred (SolidWorks).
+  const corners = off0 > 1e-9 || off1 > 1e-9 ? [] : flangeCorners(st, f.edges.map(x => x.faces));
+  const E = 2 * (s + d + bendAllowance(st, angle, r) + 2 * st.T);
+  f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, {
+    angle, r, s, d, off0, off1, flip: !!f.flip,
+    ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
+  }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
+  const gap = Math.max(f.gap?.v ?? 0.1, 0);
+  for (const [i, j] of corners) mitre(st, `${f.id}:p${i}`, `${f.id}:p${j}`, gap);
   return { state: st, ops };
+}
+
+/** Pairs [i, j] of picked edges where edge i ends where edge j starts on the same face. */
+function flangeCorners(st: SheetState, picks: [string, string][]): [number, number][] {
+  const found = picks.map(f => { try { const r = findEdge(st, f); return { panel: r.panel.id, seg: r.panel.outer[r.index] }; } catch { return null; } });
+  const out: [number, number][] = [];
+  found.forEach((a, i) => found.forEach((b, j) => {
+    if (i === j || !a || !b || a.panel !== b.panel || a.seg.kind !== "line" || b.seg.kind !== "line") return;
+    const ua: V2 = [a.seg.b[0] - a.seg.a[0], a.seg.b[1] - a.seg.a[1]], ub: V2 = [b.seg.b[0] - b.seg.a[0], b.seg.b[1] - b.seg.a[1]];
+    const turn = Math.abs(ua[0] * ub[1] - ua[1] * ub[0]) / (Math.hypot(...ua) * Math.hypot(...ub));
+    if (d2(a.seg.b, b.seg.a) < 1e-6 && turn > 1e-6) out.push([i, j]);
+  }));
+  return out;
+}
+
+/** Mitres two flanges that run past a shared corner: each is cut where the flanges' mid-planes meet, gap/2 back. */
+function mitre(st: SheetState, ida: string, idb: string, gap: number) {
+  const A = st.panels.find(p => p.id === ida), B = st.panels.find(p => p.id === idb);
+  if (!A || !B) return;
+  const T = st.T;
+  const na = A.M.z, nb = B.M.z;
+  const L: V3 = [na[1] * nb[2] - na[2] * nb[1], na[2] * nb[0] - na[0] * nb[2], na[0] * nb[1] - na[1] * nb[0]];
+  const ll = Math.hypot(...L);
+  const dot = (u: V3, v: V3) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  if (ll < 1e-6) return;
+  const ha = dot(na, apply(A.M, [0, 0, T / 2])), hb = dot(nb, apply(B.M, [0, 0, T / 2]));
+  const c = dot(na, nb), den = 1 - c * c;
+  const X: V3 = add(mul(na, (ha - hb * c) / den), mul(nb, (hb - ha * c) / den));
+  const cut = (P: Panel) => {
+    const to2 = (q: V3): V2 => { const v: V3 = [q[0] - P.M.o[0], q[1] - P.M.o[1], q[2] - P.M.o[2]]; return [dot(v, P.M.x), dot(v, P.M.y)]; };
+    const p0 = to2(X), p1 = to2(add(X, mul(L, 1 / ll)));
+    const dl = d2(p0, p1);
+    if (dl < 1e-9) return;
+    const n: V2 = [-(p1[1] - p0[1]) / dl, (p1[0] - p0[0]) / dl];
+    let k = n[0] * p0[0] + n[1] * p0[1];
+    // Keep the side the flange's bend edge (its attached part) is on.
+    const att = P.outer.find(x => x.ent === "att");
+    const bendSide = P.id === ida ? "s0" : "s1";
+    const ref = P.outer.find(x => x.ent === bendSide);
+    const q = ref && ref.kind === "line" ? [(ref.a[0] + ref.b[0]) / 2, (ref.a[1] + ref.b[1]) / 2] as V2 : att && att.kind === "line" ? att.a : p0;
+    const keep: 1 | -1 = n[0] * q[0] + n[1] * q[1] - k >= 0 ? 1 : -1;
+    k += keep * gap / 2;
+    try { P.outer = clipOuter(P.outer, n, k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the cut misses: leave the flange */ }
+  };
+  cut(A); cut(B);
 }
 
 /** Hem: a 180° fold, closed (radius next to nothing) or open (radius half the gap). */
