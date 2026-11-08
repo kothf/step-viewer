@@ -2,6 +2,8 @@
 // (FRS section 15). Geometry, meshes and naming maps are derived from it.
 // Lengths are millimetres, angles radians.
 
+import type { WeldFeature } from "../weldments/types";
+
 export type V2 = [number, number];
 export type V3 = [number, number, number];
 
@@ -86,7 +88,7 @@ export interface EdgeRef { faces: [string, string]; hint?: V3 }
 
 // ---------- features ----------
 
-export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2" | "next" | "vertex";
+export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2" | "next" | "vertex" | "body";
 
 /** A vertex (FR-FT-012/013): the end of an edge nearer `at`, or a reference point feature. */
 export type VertexRef = { edge: EdgeRef; at: V3 } | { point: string };
@@ -111,6 +113,8 @@ export interface ExtrudeFeature {
   reverseOffset?: boolean;
   /** Up to vertex: the extrusion ends level with this vertex. */
   upToVertex?: VertexRef;
+  /** Up to body (FR-FT-012): any face of the solid the extrusion stops at. */
+  upToBody?: FaceRef;
   /** Start from (FR-FT-013): absent is the sketch plane. */
   start?: "offset" | "surface" | "vertex";
   /** Start from Offset: the distance from the sketch plane (along its normal; reversed the other way). */
@@ -174,9 +178,17 @@ export interface ChamferFeature {
   id: string; type: "chamfer"; name: string; suppressed?: boolean;
   distance: Num;
   edges: EdgeRef[];
-  /** Equal distances (default), two distances, or distance and angle. */
-  mode?: "equal" | "two" | "angle";
+  /**
+   * Equal distances (default), two distances, distance and angle, offset face (FR-FT-041: `distance`
+   * is how far the two faces move in; their intersection sets the chamfer), or vertex (three distances
+   * along the three straight edges at each picked corner).
+   */
+  mode?: "equal" | "two" | "angle" | "offset" | "vertex";
   distance2?: Num;
+  /** Vertex chamfer: the third distance. Distances go to the clicked edge first, then the others in name order. */
+  distance3?: Num;
+  /** Vertex chamfer: the corners. */
+  vertices?: VertexRef[];
   angle?: Num;
   /** Measure the first distance on the edge's other face. */
   flip?: boolean;
@@ -241,6 +253,8 @@ export interface ShellFeature {
   faces: FaceRef[];
   /** Grow the wall outward instead of inward. */
   outward?: boolean;
+  /** Multi-thickness (FR-FT-060): flat faces whose wall gets its own thickness `t` (mm). */
+  multi?: (FaceRef & { t: number })[];
 }
 
 /** Delete face (FR-FT-101): removes the picked faces and heals the gap from the faces around them (defeaturing). */
@@ -277,17 +291,37 @@ export interface DraftFeature {
   angle: Num;
   /** Reverse the pull direction. */
   flip?: boolean;
+  /**
+   * Parting line draft (FR-FT-061, P5): `plane` only gives the pull direction; each picked edge hinges
+   * the face on one side of it (`faces[0]` of the EdgeRef, or `faces[1]` with `other`), so faces
+   * above a split line taper from it.
+   */
+  kind?: "neutral" | "parting";
+  parting?: EdgeRef[];
+  other?: boolean;
+}
+
+/**
+ * What a mirror or pattern copies (FR-FT-070..073): features (their tool solids, the default), faces (the
+ * boss or cut they bound, found by deleting them) or whole bodies (copies become new bodies).
+ */
+export interface CopySource {
+  copy?: "features" | "faces" | "bodies";
+  faces?: FaceRef[];
+  bodies?: FaceRef[];
 }
 
 /** Mirror (FR-FT-072): copies of features (or of the whole body, with none picked) about a plane. */
-export interface MirrorFeature {
+export interface MirrorFeature extends CopySource {
   id: string; type: "mirror"; name: string; suppressed?: boolean;
   plane?: PlaneRef;
   features: string[];
+  /** Bodies: join each mirrored body to its original (SolidWorks "Merge solids"). */
+  merge?: boolean;
 }
 
 /** Linear pattern (FR-FT-070): copies of features along one or two directions. */
-export interface LinearPatternFeature {
+export interface LinearPatternFeature extends CopySource {
   id: string; type: "lpattern"; name: string; suppressed?: boolean;
   features: string[];
   dir?: LineRef;
@@ -303,7 +337,7 @@ export interface LinearPatternFeature {
 }
 
 /** Circular pattern (FR-FT-071): copies of features about an axis. */
-export interface CircularPatternFeature {
+export interface CircularPatternFeature extends CopySource {
   id: string; type: "cpattern"; name: string; suppressed?: boolean;
   features: string[];
   axis?: LineRef;
@@ -313,6 +347,24 @@ export interface CircularPatternFeature {
   equal: boolean;
   flip?: boolean;
   skip?: string[];
+}
+
+/**
+ * Sketch-driven and table-driven patterns (FR-FT-073): a copy at each point of a sketch (moved from the
+ * seed's reference point, its centroid unless a sketch point is picked) or at each X/Y row of a table in a
+ * coordinate system (offsets from the seed).
+ */
+export interface SketchPatternFeature extends CopySource {
+  id: string; type: "spattern"; name: string; suppressed?: boolean;
+  features: string[];
+  src: "sketch" | "table";
+  sketch?: string;
+  /** Sketch point used as the seed's reference point; absent: the seed's centroid. */
+  refPt?: string;
+  /** Table rows: offsets from the seed along the coordinate system's X and Y. */
+  table?: { x: Num; y: Num }[];
+  /** Coordinate system feature for the table; absent: the part's axes. */
+  csys?: string;
 }
 
 /**
@@ -341,13 +393,23 @@ export interface HoleFeature {
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
-  kind: "simple" | "cbore" | "csink" | "tapped" | "insert";
+  /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`. */
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot";
   /** ISO size ("M6") the values were taken from; absent for a custom hole. */
   size?: string;
   fit?: "close" | "normal" | "loose";
   diameter: Num;
-  end: "blind" | "through";
+  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material. */
+  end: "blind" | "through" | "upto" | "next";
   depth: Num;
+  upTo?: PlaneRef;
+  /** Counterdrill: diameter, depth and the angle of its conical bottom. */
+  cdDia?: Num;
+  cdDepth?: Num;
+  cdAngle?: Num;
+  /** Slot: centre-to-centre length and its angle from the plane's X axis. */
+  slotLen?: Num;
+  slotAngle?: Num;
   /** Flat bottom instead of a 118° drill point. */
   flat?: boolean;
   cbDia?: Num;
@@ -473,6 +535,12 @@ export interface LoftFeature {
   close?: boolean;
   /** Centreline (P5): the loft follows this path between its profiles. */
   centerline?: SweepPath;
+  /** Start / end constraint (FR-FT-082): the loft leaves the first / reaches the last profile square to it. */
+  startNormal?: boolean;
+  endNormal?: boolean;
+  /** Tangent length (1 = default) for the start / end constraint. */
+  startLen?: number;
+  endLen?: number;
 }
 
 /**
@@ -488,6 +556,10 @@ export interface RibFeature {
   side: "mid" | "one" | "other";
   dir: "parallel" | "normal";
   flip?: boolean;
+  /** Draft (FR-FT-062) on a rib normal to the sketch: the walls taper away from the sketch plane. */
+  draft?: Num;
+  /** The walls get wider away from the sketch instead. */
+  draftOut?: boolean;
 }
 
 /**
@@ -684,10 +756,11 @@ export interface IntersectFeature {
 export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
 
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
-  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
-  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature;
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
+  | WeldFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

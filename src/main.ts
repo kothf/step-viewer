@@ -6,6 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
+import { bindNavigation } from "./viewer/navigation";
 import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
@@ -38,6 +39,7 @@ import { ModelController } from "./model/controller";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
+import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -115,6 +117,8 @@ const asm = new AsmController({
   editPart: (doc, file, label, back) => modeller.editIn(doc, file, { label, back }),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
+// Motion studies (FR-FT-122): the timeline pane under the view, driving the assembly's mates.
+const motion = new MotionManager(asm, viewer);
 $("#app-version").textContent = `v${__APP_VERSION__}`;
 // Offline start (FR-STO-030): the service worker keeps this version's app files. Not in dev, and not
 // under test automation unless the page asks for it (?sw), so tests see the network as it is.
@@ -1802,6 +1806,34 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
   if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
 }));
+/** World box of the picked face, edge or parts, for Zoom to selection (FR-UI-103). */
+function selectionBox(): THREE.Box3 | null {
+  const s = state.selection;
+  const b = new THREE.Box3();
+  if (s?.face) {
+    const g = s.part.mesh.geometry, pos = g.attributes.position, idx = g.index;
+    const v = new THREE.Vector3();
+    for (let i = s.face.triStart * 3; i < (s.face.triStart + s.face.triCount) * 3; i++) b.expandByPoint(v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(s.part.mesh.matrixWorld));
+    return b;
+  }
+  if (s?.edge) {
+    const v = new THREE.Vector3(), q = s.edge.pts;
+    for (let i = 0; i + 2 < q.length; i += 3) b.expandByPoint(v.set(q[i], q[i + 1], q[i + 2]).applyMatrix4(s.part.mesh.matrixWorld));
+    return b;
+  }
+  if (s) return b.expandByPoint(s.point.clone());
+  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : [];
+  parts.forEach(p => b.expandByObject(p.mesh));
+  return parts.length ? b : null;
+}
+const nav = bindNavigation({
+  viewer,
+  views: VIEWS,
+  active: () => !drawing.open && !isPcbMode() && viewer.parts.length + (modeller.active ? 1 : 0) > 0,
+  normalTo: () => normalTo(),
+  selectionBox,
+});
+void nav;
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;
 function normalTo(given?: [number, number, number]) {
@@ -2346,4 +2378,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });

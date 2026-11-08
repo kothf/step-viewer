@@ -10,7 +10,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
-import { applyExt, projectEdge, type ModelEdge } from "./external";
+import { applyExt, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
@@ -66,6 +66,8 @@ export interface SketchHost {
   modelFace?(e: PointerEvent): { tri: ArrayLike<number>; type: string; axis?: [number, number, number]; center?: [number, number, number]; radius?: number } | null;
   /** A persistent reference to a shown model edge, so a converted curve follows it (FR-SK-064). */
   edgeRef?(ed: ModelEdge): EdgeRef | null;
+  /** Model edges at the pointer (the one under it, then those meeting at the snapped vertex or centre), for snapping while drawing. */
+  modelEdge?(e: PointerEvent): ModelEdge[];
   /** Dimension names typed by the user: rewrite "old@Sketch" in the other features' expressions (FR-SK-065). */
   renamedDim?(from: string, to: string): void;
 }
@@ -120,6 +122,10 @@ export class SketchEditor {
   private group = new THREE.Group();
   private hover: Hit | null = null;
   /** In-progress entity: its points so far, and the live cursor point. */
+  /** The last pointer event, for model snapping (the snap works in sketch coordinates). */
+  private lastEv: PointerEvent | null = null;
+  /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
+  modelSnap = true;
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
   /** Ordinate dimensioning: the base picked first, then the row the values go on. */
@@ -274,6 +280,7 @@ export class SketchEditor {
   /** Returns true when the event was used (so the viewer does not orbit or measure). */
   pointerDown(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
+    this.lastEv = e;
     const p = this.uv(e);
     if (!p) return true;
     this.closeInput(true);
@@ -315,6 +322,7 @@ export class SketchEditor {
 
   pointerMove(e: PointerEvent): boolean {
     if (e.buttons & 6) return false; // panning / orbiting with the other buttons
+    this.lastEv = e;
     const p = this.uv(e);
     if (!p) return true;
     if (this.box) {
@@ -348,7 +356,25 @@ export class SketchEditor {
 
   pointerUp(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
-    if (this.box) { this.box = null; this.render(); this.emitSel(); return true; }
+    if (this.box) {
+      const b = this.box;
+      this.box = null;
+      // A click (no box drawn) on a model edge or vertex (FR-SK-064): its reference copy is selected, so
+      // relations such as parallel, tangent or coincident can be added against the model directly.
+      const p = this.uv(e);
+      if (p && Math.abs(e.clientX - b.x0) <= 4 && Math.hypot(p[0] - b.a[0], p[1] - b.a[1]) <= this.px(p) * 4) {
+        const ms = this.modelSnapAt(p, false);
+        if (ms) {
+          const r = this.materialize(ms);
+          const id = r.id ?? r.curve;
+          if (id) {
+            this.selection.add(id);
+            this.commit("Reference model edge");
+          }
+        }
+      }
+      this.render(); this.emitSel(); return true;
+    }
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
@@ -370,12 +396,20 @@ export class SketchEditor {
   // ---------- snapping ----------
 
   /** Snaps a cursor point to points, the origin, curves and horizontal/vertical from the last point. */
-  private snapPoint(p: V2, active: boolean): { p: V2; id: string | null; curve: string | null; hv: "horizontal" | "vertical" | null } {
+  private snapPoint(p: V2, active: boolean, materialize = false): { p: V2; id: string | null; curve: string | null; hv: "horizontal" | "vertical" | null } {
     this.marker.visible = false;
     if (!active) return { p, id: null, curve: null, hv: null };
     const exclude = new Set<string>();
     const h = this.hits(p, { curves: false, exclude });
     if (h.length) { const q = this.pt(h[0].id); this.showMarker(q); return { p: q, id: h[0].id, curve: null, hv: null }; }
+    // Model vertices, edge midpoints and circle centres (projected onto the sketch) come next.
+    const ms = this.modelSnapAt(p, true);
+    if (ms) {
+      this.showMarker(ms.p);
+      if (!materialize) return { p: ms.p, id: null, curve: null, hv: null };
+      const r = this.materialize(ms);
+      return { p: ms.p, id: r.id, curve: r.curve, hv: null };
+    }
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
@@ -387,6 +421,57 @@ export class SketchEditor {
     const c = this.hits(q, { points: false })[0];
     if (c && !hv) { const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null }; }
     return { p: q, id: null, curve: null, hv };
+  }
+
+  /**
+   * The model point (or, with `points` only false, the model edge) nearest the cursor: the edge under
+   * the pointer projected onto the sketch plane, its ends, midpoint or centre within the snap radius.
+   */
+  private modelSnapAt(p: V2, pointsOnly: boolean): { p: V2; ed: ModelEdge; g: ExtGeo; at: "a" | "b" | "mid" | "c" | "on" } | null {
+    if (!this.modelSnap || !this.lastEv || !this.host.modelEdge) return null;
+    const tol = this.px(p) * SNAP_PX;
+    let on: { p: V2; ed: ModelEdge; g: ExtGeo; at: "on" } | null = null;
+    for (const ed of this.host.modelEdge(this.lastEv)) {
+      const g = projectEdge(ed, this.frame);
+      if (!g) continue;
+      const cands: [V2, "a" | "b" | "mid" | "c"][] = g.t === "line" ? [[g.a, "a"], [g.b, "b"], [[(g.a[0] + g.b[0]) / 2, (g.a[1] + g.b[1]) / 2], "mid"]]
+        : g.t === "circle" ? [[g.c, "c"]] : [[g.a, "a"], [g.b, "b"], [uvOf(this.frame, ed.mid), "mid"], [g.c, "c"]];
+      let best: [V2, "a" | "b" | "mid" | "c"] | null = null, bd = tol;
+      for (const c of cands) { const d = Math.hypot(c[0][0] - p[0], c[0][1] - p[1]); if (d < bd) { bd = d; best = c; } }
+      if (best) return { p: best[0], ed, g, at: best[1] };
+      on ??= { p, ed, g, at: "on" };
+    }
+    return pointsOnly ? null : on;
+  }
+
+  /**
+   * Turns a model snap into sketch geometry: the edge converted as a construction curve with an On edge
+   * relation (reused when the edge was converted before), and the point it gives (its end or centre,
+   * or a new point at its midpoint), or the curve itself.
+   */
+  private materialize(ms: { p: V2; ed: ModelEdge; g: ExtGeo; at: "a" | "b" | "mid" | "c" | "on" }): { id: string | null; curve: string | null } {
+    const ref = this.host.edgeRef?.(ms.ed) ?? null;
+    const same = (r: EdgeRef) => !!ref && [...r.faces].sort().join("|") === [...ref.faces].sort().join("|")
+      && (!r.hint || !ref.hint || Math.hypot(r.hint[0] - ref.hint[0], r.hint[1] - ref.hint[1], r.hint[2] - ref.hint[2]) < 1e-3);
+    let ent = ref ? this.sk.ents.find(x => this.sk.rels.some(r => r.ext && r.e[0] === x.id && same(r.ext))) : undefined;
+    if (!ent) {
+      ent = this.entFrom(ms.g);
+      ent.cons = true;
+      this.sk.rels.push({ id: uid("r"), t: "fix", e: [ent.id], ...(ref ? { ext: ref } : {}) });
+    }
+    if (ms.at === "on") return { id: null, curve: ent.id };
+    if (ms.at === "c" && (ent.t === "circle" || ent.t === "arc")) return { id: ent.c, curve: null };
+    if ((ms.at === "a" || ms.at === "b") && (ent.t === "line" || ent.t === "arc")) {
+      const d = (id: string) => { const q = this.pt(id); return Math.hypot(q[0] - ms.p[0], q[1] - ms.p[1]); };
+      return { id: d(ent.a) <= d(ent.b) ? ent.a : ent.b, curve: null };
+    }
+    if (ms.at === "mid" && ent.t === "line") {
+      const id = uid("p");
+      this.sk.ents.push({ id, t: "point", x: ms.p[0], y: ms.p[1] });
+      this.sk.rels.push({ id: uid("r"), t: "midpoint", e: [id, ent.id] });
+      return { id, curve: null };
+    }
+    return { id: null, curve: null };
   }
 
   private project(p: V2, id: string): V2 {
@@ -433,7 +518,7 @@ export class SketchEditor {
   }
 
   private drawClick(raw: V2, e: PointerEvent) {
-    const s = this.snapPoint(raw, true);
+    const s = this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
@@ -608,17 +693,30 @@ export class SketchEditor {
 
   private dimClick(p: V2, e: PointerEvent) {
     const dd = this.dimDraft;
+    // With one item picked, a click on another item (in the sketch or on the model) dimensions the pair.
+    const other = dd.dim && dd.picks.length === 1 ? this.hits(p).find(x => x.id !== dd.picks[0].id) ?? (this.hits(p).length ? undefined : this.modelSnapAt(p, false)) : undefined;
+    if (other) dd.dim = null;
     if (dd.dim) {
-      // Second click places the dimension and asks for its value.
+      // Otherwise the next click places the dimension and asks for its value.
       this.placeDimDraft(p);
       const dim = dd.dim;
       this.dimDraft = { picks: [], dim: null };
       this.addDimension(dim);
       return;
     }
-    const h = this.hits(p)[0];
+    let h = this.hits(p)[0];
+    if (!h) {
+      // A model vertex or edge: converted as construction geometry with an On edge relation, then dimensioned.
+      const ms = this.modelSnapAt(p, false);
+      if (ms) {
+        const r = this.materialize(ms);
+        const id = r.id ?? r.curve;
+        const ent = id ? this.ent(id) : undefined;
+        if (ent && ent.t !== "ellipse" && ent.t !== "spline") h = { id: ent.id, kind: ent.t, d: 0 };
+      }
+    }
     if (!h) { this.selection.clear(); dd.picks = []; this.render(); return; }
-    if (!dd.picks.some(x => x.id === h.id)) dd.picks.push(h);
+    if (!dd.picks.some(x => x.id === h!.id)) dd.picks.push(h);
     this.selection = new Set(dd.picks.map(x => x.id));
     const kinds = dd.picks.map(x => (x.kind === "origin" ? "point" : x.kind));
     const ids = dd.picks.map(x => x.id);

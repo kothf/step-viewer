@@ -55,7 +55,18 @@ export interface DrawingView {
   sketches?: boolean;
   /** Alignment with the parent broken (FR-DRW-017): the view moves on its own and stays put when the parent moves. */
   free?: boolean;
+  /** Broken-out section (FR-DRW-015): material inside `poly` (u, v pairs in view axes, model mm) is cut away
+   * from the viewer down to the plane at `d` along the view direction (n · p, model mm), and the cut is hatched. */
+  broken?: { poly: number[]; d: number };
+  /** Alternate position (FR-DRW-015, assembly drawings): components drawn again, moved, in phantom lines. */
+  alt?: AltMove[];
 }
+
+/**
+ * A component's alternate position, in the view's axes: turned by `ang` degrees (counter-clockwise as seen)
+ * about `c` (model mm), then moved by `du`, `dv` (mm). `comp` is a top-level component id; its sub-components go with it.
+ */
+export interface AltMove { comp: string; du: number; dv: number; ang?: number; c?: [number, number] }
 
 export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 
@@ -69,10 +80,12 @@ export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
 export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string }
 
-/** A dimension: horizontal, vertical or aligned between two points (or a line's ends), radius, diameter, or the angle of two lines. */
+/** A dimension: horizontal, vertical or aligned between two points (or a line's ends), radius, diameter, the angle of two lines,
+ *  the length of an arc seen end-on ("arc"), a chamfer (the shorter of two lines against the other: "1 × 45°"), or an ordinate
+ *  ("oh" / "ov": refs = [base point, point], the value is the horizontal / vertical distance from the base, `pos` is where its text sits). */
 export interface DimAnnot {
   id: string; t: "dim"; view: string;
-  k: "h" | "v" | "al" | "rad" | "dia" | "ang";
+  k: "h" | "v" | "al" | "rad" | "dia" | "ang" | "arc" | "chamfer" | "oh" | "ov";
   refs: GeoRef[];
   /** Where the dimension line passes / the text sits, in the view's model axes (mm). */
   pos: [number, number];
@@ -129,10 +142,21 @@ export interface Sheet {
   projection: Projection;
   /** Sheet format: ISO 7200, ANSI Y14.1 or GOST 2.104 (form 1) title block. */
   format: "iso" | "ansi" | "gost";
+  /** A user title block (FR-DRW-004) in place of the ISO/ANSI one (not with GOST); the zones follow `format`. */
+  tb?: TitleFormat;
   views: DrawingView[];
   /** Dimensions, notes and hole callouts (FR-DRW-020..023). */
   annots?: Annot[];
 }
+
+/** What a title block cell shows: a property, a sheet fact, or the projection symbol. */
+export type TbKey = keyof DrawingProps | "scale" | "sheet" | "size" | "units" | "projection";
+/** A user title block cell (mm from the block's bottom-left corner); a cell without a key is a label or a box. */
+export interface TbCell { x: number; y: number; w: number; h: number; key?: TbKey; label?: string; big?: boolean }
+/** A logo image (PNG or JPEG data URL) placed in the block. */
+export interface TbLogo { src: string; x: number; y: number; w: number; h: number }
+/** A user sheet format's title block (FR-DRW-004): its size, cells and logo. */
+export interface TitleFormat { id: string; name: string; w: number; h: number; cells: TbCell[]; logo?: TbLogo }
 
 /** Title block fields (FR-DRW-003); empty ones come from the model or the sheet. */
 export interface DrawingProps {

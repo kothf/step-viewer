@@ -77,11 +77,29 @@ export class DrawingKernel {
     return (await this.call<{ diff: GeomDiff }>({ type: "diff", a, b })).diff;
   }
 
+  /** The lines of moved components for an alternate position (FR-DRW-015), cached by `key`. */
+  alt(req: { view: ViewDir; moves: { comp: string; tf: number[] }[]; key: string }): Promise<Projection> {
+    const have = this.cache.get(req.key);
+    if (have) return Promise.resolve(have);
+    let p = this.inflight.get(req.key);
+    if (!p) {
+      if (!this.loaded) return Promise.reject(new Error("No model loaded"));
+      const gen = this.gen;
+      p = this.loaded.then(() => this.call<{ proj: Projection }>({ type: "alt", view: req.view, moves: req.moves })).then(r => {
+        if (gen === this.gen) this.cache.set(req.key, r.proj);
+        this.inflight.delete(req.key);
+        return r.proj;
+      }, err => { this.inflight.delete(req.key); throw err; });
+      this.inflight.set(req.key, p);
+    }
+    return p;
+  }
+
   /** The view's lines (cached by direction). */
   project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; key: string }): Promise<Projection> {
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; key: string }): Promise<Projection> {
     const { view, key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
@@ -89,7 +107,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p } : { type: "project", view })).then(r => {
+      p = this.loaded.then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly } : { type: "project", view })).then(r => {
         if (gen === this.gen) this.cache.set(key, r.proj);
         this.inflight.delete(key);
         return r.proj;

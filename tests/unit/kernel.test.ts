@@ -1194,3 +1194,153 @@ test("Intersect bodies and surfaces into regions; untrim surface (FR-BODY-007, F
   close(props.props(r.sheets!).area, 400, 1e-6);
   assert.deepEqual(r.sheets!.names, ["ps:face:0"]);
 });
+
+test("Patterns of faces and bodies, sketch- and table-driven patterns (FR-FT-070..073)", async () => {
+  const m = new Modeller(await occ());
+  const top = { face: { name: "eb:end" } };
+  const base: Feature[] = [rect("b", 0, 0, 100, 60), { id: "eb", type: "extrude", name: "E1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    circle("c", -40, -20, 5, top), { id: "ec", type: "extrude", name: "Boss", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } },
+    circle("h", -40, 20, 4, top), { id: "eh", type: "extrude", name: "Cut", sketch: "h", op: "cut", end: "blind", depth: { v: 5 } }];
+  const boss = Math.PI * 25 * 5, hole = Math.PI * 16 * 5, v0 = 60000 + boss - hole;
+  let r = run(m, doc(base));
+  close(r.props!.volume, v0);
+  const facesOf = (id: string) => r.body!.names.filter(n => n.startsWith(`${id}:`) && !n.endsWith(":start")).map(name => ({ name }));
+  const dir = { edge: { faces: ["eb:side:bl1", "eb:end"] } };
+  const lp = (o: object): Feature => ({ id: "p", type: "lpattern", name: "LPattern1", features: [], dir, spacing: { v: 20 }, count: 3, ...o } as Feature);
+  // Faces of the boss: two more bosses; faces of the cut: two more holes.
+  const bossFaces = facesOf("ec"), holeFaces = facesOf("eh");
+  r = run(m, doc([...base, lp({ copy: "faces", faces: bossFaces })]));
+  close(r.props!.volume, v0 + 2 * boss, 1e-5);
+  r = run(m, doc([...base, lp({ copy: "faces", faces: holeFaces })]));
+  close(r.props!.volume, v0 - 2 * hole, 1e-5);
+  // Faces that bound nothing are an error.
+  const bad = m.evaluate(doc([...base, lp({ copy: "faces", faces: [{ name: "eb:end" }] })]));
+  assert.ok(!bad.statuses.find(s => s.id === "p")!.ok);
+  // Bodies: a separate 10 mm cube patterned into new bodies.
+  const cube: Feature[] = [rect("q", 5, 100, 10, 10), { id: "eq", type: "extrude", name: "E2", sketch: "q", op: "boss", end: "blind", depth: { v: 10 }, merge: false } as Feature];
+  r = run(m, doc([...base, ...cube, lp({ copy: "bodies", bodies: [{ name: "eq:end" }] })]));
+  close(r.props!.volume, v0 + 3000, 1e-6);
+  assert.equal(r.props!.bodies, 4);
+  // Mirror a body about YZ: it touches its original, and merge joins them.
+  const mir = (o: object): Feature => ({ id: "mi", type: "mirror", name: "Mirror1", features: [], plane: { std: "YZ" }, copy: "bodies", bodies: [{ name: "eq:end" }], ...o } as Feature);
+  r = run(m, doc([...base, ...cube, mir({})]));
+  assert.equal(r.props!.bodies, 3);
+  r = run(m, doc([...base, ...cube, mir({ merge: true })]));
+  assert.equal(r.props!.bodies, 2);
+  close(r.props!.volume, v0 + 2000, 1e-6);
+  // Sketch-driven: the boss copied from its centre to two free points of a sketch (a line's ends don't count).
+  const pts: SketchFeature = { id: "k", type: "sketch", name: "Pts", plane: top, rels: [], dims: [], ents: [
+    { id: "k1", t: "point", x: 0, y: 0 }, { id: "k2", t: "point", x: 20, y: 0 }, { id: "k3", t: "point", x: 30, y: 20 }, { id: "k4", t: "point", x: 40, y: 20 }, { id: "kl", t: "line", a: "k3", b: "k4", cons: true }] };
+  r = run(m, doc([...base, pts, { id: "sp", type: "spattern", name: "SketchPattern1", features: ["ec"], src: "sketch", sketch: "k" } as Feature]));
+  close(r.props!.volume, v0 + 2 * boss, 1e-5);
+  // With a picked reference point at the first point, only the second gives a copy (the first is the seed's own place).
+  r = run(m, doc([...base, pts, { id: "sp", type: "spattern", name: "SketchPattern1", features: ["ec"], src: "sketch", sketch: "k", refPt: "k1" } as Feature]));
+  close(r.props!.volume, v0 + boss, 1e-5);
+  // Table-driven: offsets in the part's axes; a zero row is the seed itself.
+  r = run(m, doc([...base, { id: "tp", type: "spattern", name: "TablePattern1", features: ["eh"], src: "table", table: [{ x: { v: 0 }, y: { v: 0 } }, { x: { v: 20 }, y: { v: 0 } }, { x: { v: 40 }, y: { v: -10 } }] } as Feature]));
+  close(r.props!.volume, v0 - 2 * hole, 1e-5);
+});
+
+test("Up to body; counterdrilled, slot holes; hole up to face and up to next (FR-FT-012, FR-FT-050)", async () => {
+  const m = new Modeller(await occ());
+  // A 100 × 60 × 20 block, and a 20 × 20 × 10 block floating 30 mm above it as its own body.
+  const base: Feature[] = [rect("s1", 0, 0, 100, 60), { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } }];
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } } as Feature;
+  const lid: Feature[] = [pl, rect("s2", 0, 0, 20, 20, { plane: "p1" }), { id: "f2", type: "extrude", name: "E2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, merge: false } as Feature];
+  // Up to body: a Ø10 boss on the block's top grows until it meets the floating block (30 mm).
+  const post: Feature[] = [{ id: "c", type: "sketch", name: "c", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "ck", t: "circle", c: "c0", r: 5 }] },
+    { id: "f3", type: "extrude", name: "E3", sketch: "c", op: "boss", end: "body", depth: { v: 1 }, upToBody: { name: "f2:start" } } as Feature];
+  let r = run(m, doc([...base, ...lid, ...post]));
+  close(r.props!.volume, 120000 + 4000 + Math.PI * 25 * 30, 1e-6);
+  const top = { face: { name: "f1:end" } };
+  const h = (o: object): Feature => ({ id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[0, 0]], kind: "simple", diameter: { v: 6 }, end: "blind", depth: { v: 10 }, flat: true, ...o } as Feature);
+  // Counterdrill Ø12 × 4 with a 90° bottom (3 mm high cone frustum) over a Ø6 × 15 flat hole.
+  r = run(m, doc([...base, h({ kind: "cdrill", cdDia: { v: 12 }, cdDepth: { v: 4 }, cdAngle: { v: Math.PI / 2 }, depth: { v: 15 } })]));
+  const cone = (Math.PI * 3 / 3) * (36 + 18 + 9);
+  close(r.props!.volume, 120000 - (Math.PI * 36 * 4 + cone + Math.PI * 9 * 8), 1e-6);
+  // Slot: two Ø6 ends 20 mm apart, 10 deep with a flat bottom: 10 × (π·9 + 6·20).
+  r = run(m, doc([...base, h({ kind: "slot", slotLen: { v: 20 } })]));
+  close(r.props!.volume, 120000 - 10 * (Math.PI * 9 + 120), 1e-6);
+  assert.ok(r.body!.faces.length <= 6 + 5, `slot faces merged: ${r.body!.faces.length}`);
+  // Up to face: a plane 8 mm below the top (z = 12).
+  const p8: Feature = { id: "p8", type: "plane", name: "Plane8", base: { std: "XY" }, mode: "offset", offset: { v: 12 } } as Feature;
+  r = run(m, doc([...base, p8, h({ end: "upto", upTo: { plane: "p8" } })]));
+  close(r.props!.volume, 120000 - Math.PI * 9 * 8, 1e-6);
+  // Up to next: through the 20 mm block, no drill point.
+  r = run(m, doc([...base, h({ end: "next" })]));
+  close(r.props!.volume, 120000 - Math.PI * 9 * 20, 1e-6);
+});
+
+test("vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060)", async () => {
+  const m = new Modeller(await occ());
+  const s = rect("s", 0, 0, 40, 20);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const edge = { faces: ["e:end", "e:side:sl1"] as [string, string] };
+  // Offset face 3 on a square edge: both faces move in 3, so the chamfer is 3 × 3.
+  let r = run(m, doc([s, ex, { id: "c", type: "chamfer", name: "C", distance: { v: 3 }, mode: "offset", edges: [edge] } as Feature]));
+  close(r.props!.volume, 8000 - 4.5 * 40, 1e-6);
+  // Vertex chamfer 2 / 3 / 4 at the corner (−20, −10, 10): a tetrahedron 2·3·4 / 6 comes off.
+  const vc: Feature = { id: "c", type: "chamfer", name: "C", distance: { v: 2 }, distance2: { v: 3 }, distance3: { v: 4 }, mode: "vertex", edges: [], vertices: [{ edge, at: [-20, -10, 10] }] };
+  r = run(m, doc([s, ex, vc]));
+  close(r.props!.volume, 8000 - 4, 1e-6);
+  assert.equal(r.body!.faces.length, 7);
+  assert.ok(r.body!.names.includes("c:vertex:0"), r.body!.names.join());
+  // Equal 2 at two corners.
+  r = run(m, doc([s, ex, { ...vc, distance2: undefined, distance3: undefined, vertices: [{ edge, at: [-20, -10, 10] }, { edge, at: [20, -10, 10] }] } as Feature]));
+  close(r.props!.volume, 8000 - 2 * 8 / 6, 1e-6);
+
+  // Shell 2 mm open at the top, the +X wall 5 mm and the −X wall 1 mm: the cavity is 94 × 56 × 18.
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const e1: Feature = { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const sh: Feature = { id: "f2", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "f1:end" }], multi: [{ name: "f1:side:s1l2", t: 5 }, { name: "f1:side:s1l4", t: 1 }] };
+  r = run(m, doc([s1, e1, sh]));
+  close(r.props!.volume, 120000 - 94 * 56 * 18, 1e-6);
+  assert.ok(r.body!.names.includes("f2:off:f1:side:s1l2"), r.body!.names.join());
+  // A removed face cannot have its own thickness.
+  const bad = m.evaluate(doc([s1, e1, { ...sh, multi: [{ name: "f1:end", t: 3 }] } as Feature]));
+  assert.equal(bad.statuses[2].ok, false);
+});
+
+test("parting line draft, rib draft, loft start/end normal to profile (FR-FT-061, FR-FT-062, FR-FT-082)", async () => {
+  const m = new Modeller(await occ());
+  const deg = Math.PI / 180;
+  // Two stacked 100 × 60 × 10 blocks: the edge between their −Y sides is the parting line; the top side tapers from it.
+  const st: Feature[] = [rect("s1", 0, 0, 100, 60), { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("s2", 0, 0, 100, 60, { face: { name: "f1:end" } }), { id: "f2", type: "extrude", name: "E2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }];
+  const r0 = run(m, doc(st));
+  assert.ok(r0.body!.names.includes("f2:side:s2l1") && r0.body!.names.includes("f1:side:s1l1"), r0.body!.names.join());
+  const pd: Feature = { id: "d", type: "draft", name: "Draft1", kind: "parting", plane: { std: "XY" }, faces: [], parting: [{ faces: ["f2:side:s2l1", "f1:side:s1l1"] }], angle: { v: 5 * deg } };
+  let r = run(m, doc([...st, pd]));
+  close(Math.abs(120000 - r.props!.volume), 100 * 0.5 * 10 * 10 * Math.tan(5 * deg), 1e-4);
+  // Other face: the lower side tapers from the same edge instead (down the pull, so the same size wedge).
+  r = run(m, doc([...st, { ...pd, other: true } as Feature]));
+  close(Math.abs(120000 - r.props!.volume), 100 * 0.5 * 10 * 10 * Math.tan(5 * deg), 1e-4);
+
+  // Rib normal to the sketch across a channel, 4 thick and 50 deep, walls drafted 2° in: 80 · (4·50 − 50²·tan 2°).
+  const line = (id: string, plane: SketchFeature["plane"], a: [number, number], b: [number, number]): SketchFeature => ({
+    id, type: "sketch", name: id, plane, rels: [], dims: [],
+    ents: [{ id: `${id}a`, t: "point", x: a[0], y: a[1] }, { id: `${id}b`, t: "point", x: b[0], y: b[1] }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }],
+  });
+  const chan: Feature[] = [rect("b", 0, 0, 100, 60), { id: "bx", type: "extrude", name: "Base", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("w", -45, 0, 10, 60), { id: "wx", type: "extrude", name: "Wall", sketch: "w", op: "boss", end: "blind", depth: { v: 60 } },
+    rect("w2", 45, 0, 10, 60), { id: "w2x", type: "extrude", name: "Wall2", sketch: "w2", op: "boss", end: "blind", depth: { v: 60 } },
+    { id: "p", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 60 } }, line("r", { plane: "p" }, [-45, 0], [45, 0])];
+  const rib: Feature = { id: "rb", type: "rib", name: "Rib1", sketch: "r", thickness: { v: 4 }, side: "mid", dir: "normal", draft: { v: 2 * deg } };
+  r = run(m, doc([...chan, rib]));
+  close(r.props!.volume, 120000 + 80 * (200 - 2500 * Math.tan(2 * deg)), 1e-4);
+  r = run(m, doc([...chan, { ...rib, draftOut: true } as Feature]));
+  close(r.props!.volume, 120000 + 80 * (200 + 2500 * Math.tan(2 * deg)), 1e-4);
+
+  // Loft between two 20 mm squares 30 apart, the top one 15 mm over in X: every section is the same square, so 12000 either way.
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 30 } };
+  const lf: Feature = { id: "l1", type: "loft", name: "Loft1", op: "boss", profiles: ["q1", "q2"] };
+  const lofts = (o: object) => run(m, doc([rect("q1", 0, 0, 20, 20), pl, rect("q2", 15, 0, 20, 20, { plane: "p1" }), { ...lf, ...o } as Feature]));
+  const plain = lofts({}), normal = lofts({ startNormal: true, endNormal: true });
+  close(plain.props!.volume, 12000, 1e-4);
+  close(normal.props!.volume, 12000, 1e-3);
+  // Square to the start: 1 mm up, the left side has hardly moved (straight loft: 0.5 mm).
+  const oc = (m as unknown as { oc: any }).oc;
+  const inside = (r: { body: { shape: unknown } | null }, x: number) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(x, 0, 1), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.equal(inside(plain, -9.7), false);
+  assert.equal(inside(normal, -9.7), true);
+});

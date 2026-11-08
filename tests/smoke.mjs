@@ -2288,7 +2288,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const vLp = await vol(), stLp = await lastSt();
-    check(patMenu === "Linear pattern|Circular pattern|Mirror" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
@@ -2304,7 +2304,7 @@ try {
     const topS = await world([30, 15, 20]);
     await mp.mouse.click(topS[0], topS[1]);
     await idle();
-    const shellFaces = await mp.evaluate(() => document.querySelector("#mc-pm .pm-count")?.textContent);
+    const shellFaces = await mp.evaluate(() => document.querySelector('#mc-pm [data-focus="faces"]')?.textContent);
     await mp.click("#mc-ok");
     await idle();
     const vSh = await vol(), stSh = await lastSt();
@@ -2706,8 +2706,9 @@ try {
     // Right-click the top front edge: Select loop takes the four edges round its face.
     const [ex, ey] = await world([0, -15, 20]);
     await mp.mouse.click(ex, ey, { button: "right" });
-    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(1)");
+    // OK and Cancel come first (FR-UI-107), then the edge helpers.
+    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(4)");
     const nLoop = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await idle();
     await mp.waitForTimeout(300);
@@ -2717,8 +2718,8 @@ try {
     // A point on the rim away from vertices and quadrant points (those snap as points, not the edge).
     const [hx, hy] = await world([-10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
     await mp.mouse.click(hx, hy, { button: "right" });
-    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(6)");
     const nSame = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await mp.keyboard.press("Escape");
     check(items === "Select loop|Select tangency|Select straight edges of the same length" && nLoop === 4 && /same radius/.test(items2) && nSame === 8, `model 1.36: fillet edge helpers, select loop and same radius (${items}, ${nLoop}, ${items2}, ${nSame})`);
@@ -3274,6 +3275,19 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
+    const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
+    await clicks(top.id, [[-50, -30], [10, 0], [50, -30]]);
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
+    await clicks(top.id, [[-50, 30], [10, 0], [50, 30]]);
+    await dp.keyboard.press("Escape");
+    an = await annots();
+    tx = await texts();
+    const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
+    check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
+      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-dims.png` });
     // Exports carry the annotations; Russian uses the decimal comma.
     const svgT = await dp.evaluate(() => window.__sv.drw.svg());
@@ -3469,6 +3483,32 @@ try {
     const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    await dp.keyboard.press("Escape");
+    // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
+    [x, y] = await at(top, -45, -25);
+    await dp.mouse.click(x, y);
+    await dp.click('#drw .drw-props [data-a="altpos"]');
+    [x, y] = await at(top, 34, 0);
+    await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top, 34, 30);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    const alt = await dp.evaluate(id => JSON.parse(JSON.stringify(window.__sv.drw.doc().sheets[0].views.find(v => v.id === id).alt ?? null)), top);
+    const ph = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM" && p.pen === "phantom"));
+    const phc = ph.find(p => p.t === "a" && p.a1 - p.a0 > 6);
+    const tpl = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { x: p.x, y: p.y, s: p.s, uc: p.uc, vc: p.vc }; }, top);
+    const want = [tpl.x + (30 - tpl.uc) * tpl.s, tpl.y + (30 - tpl.vc) * tpl.s];
+    check(alt?.length === 1 && alt[0].comp === "c2" && Math.abs(alt[0].dv - 30) < 1 && Math.abs(alt[0].du) < 1 && phc && Math.abs(phc.r - 4 * tpl.s) < 0.05 && Math.hypot(phc.o[0] - want[0], phc.o[1] - want[1]) < 1.5,
+      `drawing: alternate position draws the moved pin in phantom lines (${JSON.stringify([alt, ph.length, phc?.o, want])})`);
+    // Typing a turn keeps the circle where it is (it turns about its own centre line seen end-on).
+    await dp.fill('#drw .drw-props [data-v="alt:0:ang"]', "90");
+    await dp.keyboard.press("Enter");
+    await ready();
+    const phc2 = await dp.evaluate(() => window.__sv.drw.prims().find(p => p.layer === "PHANTOM" && p.t === "a" && p.a1 - p.a0 > 6) ?? null);
+    await dp.click('#drw .drw-props [data-a="altrm"]');
+    await ready();
+    const left = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM").length);
+    check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
     await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
@@ -4118,7 +4158,7 @@ try {
     await mp.click("#new-more");
     await mp.click("#new-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
-    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden }));
+    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden, partBar: !document.querySelector("#mc-bar").hidden || !document.querySelector("#mc-empty").hidden }));
     const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
     await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
     await shown(1);
@@ -4156,7 +4196,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -4739,6 +4779,151 @@ try {
       && hinge.type === "hinge" && hinge.refs && hinge.dof === 1 && JSON.stringify(hinge.at) === "[0,0,20]" && hinge.up === 1
       && JSON.stringify(clear.near) === "[4,4]" && clear.lines === 2 && /2 pairs/.test(clear.status ?? ""),
       `asm 1.76: mechanical mates in the Mate panel (hinge: one turn left), clearance check below a minimum (FR-MATE-005, FR-ASM-021) (${JSON.stringify({ offer, hinge, clear })})`);
+    await ctx.close();
+  }
+
+  // --- motion study (FR-FT-122): mate keys, motors, explode and camera animation, GIF and WebM ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Pin", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const pin = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    for (let k = 0; k < 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin); await shown(k + 1); }
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 30, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    // Pin 2 on pin 1's axis, 10 mm above its top face; an exploded view moving pin 2 along +X.
+    await mp.evaluate(() => {
+      const a = window.__sv.asm, k = a.doc.components[0].part, g = [...a.geo.get(k).entries()], c = a.doc.components;
+      const side = g.find(([, x]) => x.k === "axis")[0], top = g.find(([, x]) => x.k === "plane" && x.n[2] > 0.99)[0], bottom = g.find(([, x]) => x.k === "plane" && x.n[2] < -0.99)[0];
+      a.change(d => {
+        d.mates = [{ id: "mc", name: "Concentric1", type: "concentric", a: { comp: c[0].id, face: side }, b: { comp: c[1].id, face: side } },
+          { id: "md", name: "Distance1", type: "distance", a: { comp: c[0].id, face: top }, b: { comp: c[1].id, face: bottom }, align: "anti", value: 10 }];
+        d.explodes = [{ id: "x1", name: "Exploded1", steps: [{ comps: [c[1].id], dir: [1, 0, 0], dist: 50 }] }];
+      });
+    });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pos = () => mp.evaluate(() => { const g = window.__sv.viewer.parts[1].group, q = g.quaternion; return { x: Math.round(g.position.x * 1000) / 1000, z: Math.round(g.position.z * 1000) / 1000, rz: Math.round(2 * Math.atan2(q.z, q.w) * 1000) / 1000 }; });
+    // Mate keys: Distance1 from 10 to 40 mm over 5 s.
+    const keys = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.addTrack("mate:md");
+      const tr = m.study.tracks[0];
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      const inp = document.querySelector('#motion [data-p="v"]');
+      inp.value = "40"; inp.dispatchEvent(new Event("change"));
+      return { n: window.__sv.asm.doc.motions?.length, keys: m.study.tracks[0].keys.map(k => [k.t, k.v]), rows: document.querySelectorAll("#motion .mo-key").length };
+    });
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const mid = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(5));
+    const end = await pos();
+    // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
+    await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
+    const turn = await pos();
+    // Animation wizard: explode over the study, and rotate the model (camera keys).
+    const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+    await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
+    const exploded = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const cam1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray() }; });
+    // Appearance keys: pin 2 fades out over the study (half way at 2.5 s, hidden at 5 s); Alt+← moves the end key a frame.
+    const look = await mp.evaluate(async () => {
+      const m = window.__sv.motion, a = window.__sv.asm, id = a.doc.components[1].id, p = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)];
+      const listed = [...document.querySelectorAll('#motion select[data-mo="add"] option')].some(o => o.value === `look:${id}`);
+      m.addTrack(`look:${id}`);
+      m.seek(2.5);
+      const half = { op: p().opacity, vis: p().visible, mat: p().material.transparent };
+      m.seek(5);
+      const end = { vis: p().visible };
+      const tr = m.study.tracks.find(k => k.kind === "look");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true }));
+      const moved = m.study.tracks.find(k => k.kind === "look").keys.map(k => k.t);
+      const label = document.querySelector(`#motion [data-track="${tr.id}"] .mo-kind`)?.textContent;
+      m.deleteTrack(tr.id);
+      m.seek(5);
+      return { listed, half, end, moved, label, back: { op: p().opacity, vis: p().visible } };
+    });
+    // Recording: a GIF of a 1 s study and a WebM video.
+    const rec = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.edit(s => { s.duration = 1; });
+      const gif = await m.recordGif(160), head = new Uint8Array(await gif.slice(0, 6).arrayBuffer());
+      const webm = await m.recordWebm();
+      const wh = webm ? new Uint8Array(await webm.slice(0, 4).arrayBuffer()) : [];
+      return { gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
+    });
+    // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
+    const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
+    await shown(2);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(150);
+    const ru = await mp.evaluate(() => {
+      const bad = [], ok = /^(fps|mm|GIF|WebM)$/;
+      const test = s => { for (const w of s.split(/[^A-Za-z0-9]+/)) if (/^[A-Za-z]{2,}$/.test(w) && !ok.test(w)) bad.push(s.trim().slice(0, 40)); };
+      const root = document.querySelector("#motion");
+      const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = tw.nextNode(); n; n = tw.nextNode()) if (!n.parentElement.closest('[translate="no"]')) test(n.data);
+      for (const e of root.querySelectorAll("[title], [aria-label]")) for (const at of ["title", "aria-label"]) { const v = e.getAttribute(at); if (v) test(v); }
+      return { bad, title: root.querySelector(".mo-title").textContent };
+    });
+    await mp.click("#lang-btn");
+    await mp.click('#motion [data-mo="close"]');
+    const back = await pos();
+    // Placement keys (unmated components only): a third pin moves 20 mm up and turns 90° over the study.
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(3);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pose = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm, c = a.doc.components, id = c[2].id, g = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)].group;
+      const opts = [...document.querySelectorAll('#motion select[data-mo="add"] option')].map(o => o.value);
+      m.edit(s => { s.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const tr = m.study.tracks.find(k => k.kind === "pose");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      for (const [k, v] of [["dz", "20"], ["rz", "90"]]) { const inp = document.querySelector(`#motion [data-p="${k}"]`); inp.value = v; inp.dispatchEvent(new Event("change")); }
+      const [x0, y0] = [c[2].tf[3], c[2].tf[7]], q = Math.SQRT1_2;
+      m.seek(1);
+      const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
+      m.seek(2);
+      const end = { z: g().position.z };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end };
+    }).catch(e => ({ err: String(e) }));
+    await mp.click('#motion [data-mo="close"]');
+    check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
+      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
+    check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
+      && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && Math.abs(exploded.x - 50) < 0.01
+      && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
+      && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
+      `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -5617,6 +5802,413 @@ try {
     await ctx.close();
   }
 
+  // --- 1.101: a sketch line made parallel to a model edge picked in the view (FR-SK-064) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 20 × 20 block, and a sketch on its top with one slanted line.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false));
+    await mp.waitForTimeout(300);
+    // Draw the slanted line from (−10, 2) to (8, 6) on the top, away from the edges.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const w of [[-10, 2, 20], [8, 6, 20]]) { const [x, y] = await scr(w); await mp.mouse.move(x, y); await mp.mouse.click(x, y); }
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("select"));
+    await settle();
+    // Select the line, then Ctrl+click the block's front top edge (y = −10) in the view.
+    const [lx, ly] = await scr([-1, 4, 20]);
+    await mp.mouse.move(lx, ly); await mp.mouse.click(lx, ly);
+    const [fx, fy] = await scr([-5, -10, 20]);
+    await mp.mouse.move(fx, fy);
+    await mp.keyboard.down("Control"); await mp.mouse.click(fx, fy); await mp.keyboard.up("Control");
+    await mp.waitForTimeout(200);
+    const sel = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { n: ed.selection.size, kinds: [...ed.selection].map(id => ed.sk.ents.find(e => e.id === id)?.t), rels: ed.validRelations(), ext: ed.sk.rels.filter(r => r.ext).length }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-rel]")].map(b => b.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    await mp.click('#mc-pm [data-rel="parallel"]');
+    await settle();
+    const par = await mp.evaluate(() => {
+      const s = window.__sv.model.editor().sk, P = id => s.ents.find(e => e.id === id), d = l => { const a = P(l.a), b = P(l.b); return [b.x - a.x, b.y - a.y]; };
+      const line = s.ents.find(e => e.t === "line" && !e.cons), ref = s.ents.find(e => e.t === "line" && e.cons);
+      const u = d(line), v = d(ref);
+      return { cross: Math.abs(u[0] * v[1] - u[1] * v[0]) / Math.hypot(...u) / Math.hypot(...v), rel: s.rels.some(r => r.t === "parallel") };
+    });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    check(sel.n === 2 && sel.kinds.join() === "line,line" && sel.rels.includes("parallel") && sel.ext === 1 && par.rel && par.cross < 1e-6,
+      `model 1.101: a sketch line made parallel to a model edge clicked in the view (FR-SK-064) (${JSON.stringify({ sel, par })})`);
+    check(/Параллельность|Параллельн/.test(ru) && !/Parallel/.test(ru), `model 1.101: relation buttons in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- 1.98: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two stacked 100 × 60 × 10 blocks: the edge between their −Y sides is the parting line.
+    await mp.evaluate(() => window.__sv.model.store.change("Blocks", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const box = (k, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", -50, -30), P(k + "2", 50, -30), P(k + "3", 50, 30), P(k + "4", -50, 30), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push(box("a", { std: "XY" }), { id: "ea", type: "extrude", name: "Boss-Extrude1", sketch: "a", op: "boss", end: "blind", depth: { v: 10 } },
+        box("b", { face: { name: "ea:end" } }), { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="draft"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="dkind"]', "parting");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { std: "XY" }; m.mode().focus = "faces"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="angle"]', "5");
+    await mp.press('#mc-pm input[data-num="angle"]', "Tab");
+    await settle();
+    const [ex, ey] = await toPage([0, -30, 10]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { kind: f.kind, edges: f.parting?.map(e => e.faces.slice().sort().join("+")), other: !!document.querySelector('#mc-pm input[data-k="other"]') }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm label.chk")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const d1 = await state();
+    const wedge = 100 * 0.5 * 10 * 10 * Math.tan(5 * Math.PI / 180);
+    check(dd.kind === "parting" && dd.edges?.length === 1 && /ea:side/.test(dd.edges[0]) && /eb:side/.test(dd.edges[0]) && dd.other && Math.abs(Math.abs(120000 - d1.v) - wedge) < 1 && !d1.bad,
+      `model 1.98: parting line draft from a clicked edge, 5° (FR-FT-061) (${JSON.stringify({ dd, d1, wedge })})`);
+    check(/Линия разъёма/.test(ru) && /Направление извлечения/.test(ru) && /Другая грань/.test(ru) && !/Parting line|Direction of pull/.test(ru), `model 1.98: draft panel in Russian (${ru.slice(0, 300)})`);
+    // Loft between two 20 mm squares (the top one 15 mm over), normal to both profiles from the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Squares", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (k, cx, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", cx - 10, -10), P(k + "2", cx + 10, -10), P(k + "3", cx + 10, 10), P(k + "4", cx - 10, 10), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push({ id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } }, { id: "p2", type: "plane", name: "Plane2", mode: "offset", base: { std: "XY" }, offset: { v: 80 } },
+        sq("q1", 0, { plane: "p1" }), sq("q2", 15, { plane: "p2" }));
+    }));
+    await settle();
+    const before = (await state()).v;
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Loft")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.profiles = ["q1", "q2"]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="startC"]', "normal");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="endC"]', "normal");
+    await settle();
+    const ld = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { s: f.startNormal, e: f.endNormal, len: !!document.querySelector('#mc-pm input[data-k="startLen"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const l1 = await state();
+    check(ld.s && ld.e && ld.len && Math.abs(l1.v - before - 12000) < 15 && !l1.bad, `model 1.98: loft normal to its start and end profiles (FR-FT-082) (${JSON.stringify({ ld, l1, before })})`);
+    await ctx.close();
+  }
+
+  // --- 1.98: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="chamfer"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="mode"]', "vertex");
+    await settle();
+    for (const k of ["distance", "distance2", "distance3"]) {
+      await mp.fill(`#mc-pm input[data-num="${k}"]`, "5");
+      await mp.press(`#mc-pm input[data-num="${k}"]`, "Enter");
+      await settle();
+    }
+    // Click on the top front edge 3 mm from the corner (50, −30, 20): that corner is picked.
+    const [cx, cy] = await toPage([47, -30, 20]);
+    await mp.mouse.move(cx, cy); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const vd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { mode: f.mode, n: f.vertices?.length ?? 0, at: f.vertices?.[0]?.at, d3: !!document.querySelector('#mc-pm input[data-num="distance3"]'), items: document.querySelector("#mc-pm .pm-count")?.textContent }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm .pm-count")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const v1 = await state();
+    check(vd.mode === "vertex" && vd.n === 1 && vd.d3 && Math.abs(v1.v - (120000 - 125 / 6)) < 0.1 && !v1.bad,
+      `model 1.98: vertex chamfer on a clicked corner, 5 mm each way (FR-FT-041) (${JSON.stringify({ vd, v1 })})`);
+    check(/Расстояние 3/.test(ru) && /Вершина/.test(ru) && !/Distance 3|Click near a corner/.test(ru), `model 1.98: vertex chamfer panel in Russian (${ru.slice(0, 300)})`);
+    // Shell 2 mm open at the top (on the plain block); the +X wall gets 5 mm typed in the multi-thickness list.
+    await mp.evaluate(() => window.__sv.model.store.change("Drop chamfer", d => { d.features.pop(); }));
+    await settle();
+    await mp.click('#mc-tools [data-c="shell"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.faces = [{ name: "eb:end" }]; f.thickness = { v: 2 }; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.click('#mc-pm [data-focus="mthick"]');
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.multi = [{ name: "eb:side:bl2", t: 4 }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-mt="0"]', "5");
+    await mp.press('#mc-pm input[data-mt="0"]', "Enter");
+    await settle();
+    const sd = await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; return { focus: m.mode().focus, multi: f.multi }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const v2 = await state();
+    check(sd.focus === "mthick" && sd.multi?.[0]?.t === 5 && Math.abs(v2.v - (120000 - 93 * 56 * 18)) < 1 && !v2.bad,
+      `model 1.98: multi-thickness shell, one wall 5 mm (FR-FT-060) (${JSON.stringify({ sd, v2, want: 120000 - 93 * 56 * 18 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.96: slot hole up to next, extrude up to body (FR-FT-050, FR-FT-012) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="hole"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { face: { name: "eb:end" } }; f.pts = [[0, 0]]; m.mode().focus = "pts"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "next");
+    await settle();
+    const hd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { d: f.diameter.v, L: f.slotLen?.v, kind: f.kind, end: f.end, fields: !!document.querySelector('#mc-pm input[data-num="slotLen"]') }; });
+    const h1 = await state();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const h2 = await state();
+    const r = hd.d / 2, want = 120000 - 20 * (Math.PI * r * r + 2 * r * (hd.L ?? 0));
+    check(hd.kind === "slot" && hd.end === "next" && hd.fields && hd.L > 0 && Math.abs(h1.v - want) < 1 && Math.abs(h2.v - want) < 1 && !h2.bad,
+      `model 1.96: slot hole up to next goes through the block (FR-FT-050) (${JSON.stringify({ hd, h1, h2, want })})`);
+    check(/Длина паза/.test(ru) && /До следующей|До след/.test(ru) && !/Slot length|Up to next/.test(ru), `model 1.96: hole panel in Russian (${ru.slice(0, 300)})`);
+    // Up to body: a Ø10 post grows from the block's top to a separate block 30 mm above.
+    await mp.evaluate(() => window.__sv.model.store.change("Lid and post", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "pl", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { plane: "pl" }, rels: [], dims: [], ents: [P("s1", 10, -10), P("s2", 30, -10), P("s3", 30, 10), P("s4", 10, 10), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e2", type: "extrude", name: "Boss-Extrude2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, merge: false },
+        { id: "c", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", 20, 0), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "e3", type: "extrude", name: "Boss-Extrude3", sketch: "c", op: "boss", end: "body", depth: { v: 1 }, upToBody: { name: "e2:start" } });
+    }));
+    await settle();
+    const ub = await state();
+    check(Math.abs(ub.v - (h2.v + 4000 + Math.PI * 25 * 30)) < 1 && !ub.bad, `model 1.96: extrude up to body stops at the other body (FR-FT-012) (${JSON.stringify({ ub, before: h2.v })})`);
+    await ctx.close();
+  }
+
+  // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bodies: l.props?.bodies ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    const setDraft = fn => mp.evaluate(fn => { const m = window.__sv.model; new Function("f", "names", fn)(m.mode().draft, m.last().faceNames); m.panel(); void m.rebuild(); }, fn);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 10 block with a Ø10 × 5 boss at (−40, −20), and a sketch of two free points on top.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "c", type: "sketch", name: "Sketch2", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", -40, -20), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "ec", type: "extrude", name: "Boss-Extrude2", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("k1", 0, 0), P("k2", 20, 10)] });
+    }));
+    await settle();
+    const v0 = (await state()).v, boss = Math.PI * 25 * 5;
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Sketch driven pattern$/ }).click();
+    await settle();
+    const sk = await mp.evaluate(() => window.__sv.model.mode().draft.sketch);
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    const s1 = await state();
+    // Copy the boss's faces instead of the feature: the same result.
+    await mp.selectOption('#mc-pm select[data-k="copyKind"]', "faces");
+    await settle();
+    await setDraft('f.faces = names.filter(n => n.startsWith("ec:") && n !== "ec:start").map(name => ({ name }));');
+    await settle();
+    const s2 = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const s3 = await state();
+    check(sk === "k" && s1.title === "Sketch driven pattern" && Math.abs(s1.v - (v0 + 2 * boss)) < 2 && Math.abs(s2.v - s1.v) < 2 && !s3.bad && Math.abs(s3.v - s1.v) < 2,
+      `model 1.90: sketch driven pattern copies a boss (feature or faces) to the sketch's points (FR-FT-073, FR-FT-070) (${JSON.stringify({ sk, v0, s1, s2, s3 })})`);
+    // Table driven: rows typed as X, Y offsets.
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Table driven pattern$/ }).click();
+    await settle();
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    await mp.fill('#mc-pm textarea[data-k="tableText"]', "0, 40\n20, 40\n40, 40");
+    await mp.dispatchEvent('#mc-pm textarea[data-k="tableText"]', "change");
+    await settle();
+    const t1 = await state();
+    const rows = await mp.evaluate(() => window.__sv.model.mode().draft.table.length);
+    // In Russian: the panel.
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const t2 = await state();
+    check(rows === 3 && t1.title === "Table driven pattern" && Math.abs(t2.v - (v0 + 5 * boss)) < 3 && !t2.bad,
+      `model 1.90: table driven pattern adds a copy per X, Y row (FR-FT-073) (${JSON.stringify({ rows, t1, t2 })})`);
+    check(ru.title === "Массив, управляемый таблицей" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm|Enter|Esc|Boss-Extrude2/g, "")), `model 1.90: pattern panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- 1.89: sketch snaps to model geometry (relations to the model) and middle-drag orbit while sketching ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 20 × 20 block, then a sketch on its top face.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false));
+    await mp.waitForTimeout(300);
+    // Line tool: start on the block's top corner (20, 10, 20), end at the middle of the top.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    const [cx, cy] = await scr([20, 10, 20]);
+    await mp.mouse.move(cx + 3, cy + 2); await mp.mouse.move(cx + 1, cy + 1);
+    await mp.mouse.click(cx + 1, cy + 1);
+    const [mx, my] = await scr([0, 0, 20]);
+    await mp.mouse.move(mx, my); await mp.mouse.click(mx, my);
+    await mp.keyboard.press("Escape");
+    await settle();
+    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); return { cons: s.ents.filter(e => e.cons).length, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    // The block grows to 60 wide: the line's start follows the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const s = d.features.find(f => f.id === "b"); s.ents.find(e => e.id === "b2").x = 30; s.ents.find(e => e.id === "b3").x = 30; }));
+    await settle();
+    const moved = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
+    check(sk.cons === 1 && sk.ext === 1 && sk.a && Math.hypot(sk.a[0] - 20, sk.a[1] - 10) < 1e-6 && Math.hypot(moved.a[0] - 30, moved.a[1] - 10) < 1e-6 && !moved.bad,
+      `model 1.89: a sketch point snapped to a model vertex follows it when the model changes (${JSON.stringify({ sk, moved })})`);
+    // Smart Dimension from the line to a model edge (the top's front edge, at its midpoint): a new reference and a dimension.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => { window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false); window.__sv.model.editor().setTool("dim"); });
+    await mp.waitForTimeout(300);
+    const [lx, ly] = await scr([15, 5, 20]);
+    await mp.mouse.move(lx, ly); await mp.mouse.click(lx, ly);
+    const [ex2, ey2] = await scr([5, -10, 20]);
+    await mp.mouse.move(ex2, ey2); await mp.mouse.click(ex2, ey2);
+    const [px, py] = await scr([0, -20, 20]);
+    await mp.mouse.move(px, py); await mp.mouse.click(px, py);
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.model.editor().closeInput(false));
+    const dm = await mp.evaluate(() => { const s = window.__sv.model.editor().sk; return { dims: s.dims.length, ext: s.rels.filter(r => r.ext).length, cons: s.ents.filter(e => e.cons).length }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    check(dm.dims === 1 && dm.ext === 2 && dm.cons === 2, `model 1.89: Smart Dimension takes a model edge (${JSON.stringify(dm)})`);
+    // Middle-drag orbits while sketching (it pans elsewhere). Last, as the orbit coasts on after the drag.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    const cam = () => mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+    const c0 = await cam();
+    await mp.mouse.move(700, 600); await mp.mouse.down({ button: "middle" }); await mp.mouse.move(760, 560, { steps: 6 }); await mp.mouse.up({ button: "middle" });
+    const c1 = await cam();
+    const turned = Math.hypot(c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]) > 1;
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(turned, `model 1.89: middle-drag orbits the view while sketching (${JSON.stringify({ c0, c1 })})`);
+    await ctx.close();
+  }
+
   // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -5705,7 +6297,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 12 && mode === "note", `drawing: annotation tab shows the 12 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 15 && mode === "note", `drawing: annotation tab shows the 15 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -5746,6 +6338,42 @@ try {
     const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
     check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
       `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
+    // 1.90.0 user sheet format (FR-DRW-004): edit the title block from the ISO one, add a logo, save and use it; back to ISO.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.click('.drw-props [data-a="tbedit"]');
+    await ap.waitForSelector("#drw-tb-dlg[open]");
+    await ap.fill('#drw-tb-dlg [data-tb-f="name"]', "Smoke block");
+    await ap.fill('#drw-tb-dlg [data-c="0.label"]', "Firma");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await ap.setInputFiles('#drw-tb-dlg [data-tb="logo"]', { name: "logo.png", mimeType: "image/png", buffer: png });
+    await ap.waitForSelector('#drw-tb-dlg [data-tb-l="w"]');
+    const pvImg = await ap.evaluate(() => !!document.querySelector("#drw-tb-dlg .drw-tb-pv image"));
+    await ap.click('#drw-tb-dlg button[value="ok"]');
+    await ap.waitForFunction(() => !!window.__sv.drw.doc().sheets[0].tb, null, { timeout: 10000 });
+    const fmt = await ap.evaluate(() => { const tb = window.__sv.drw.doc().sheets[0].tb; return { name: tb.name, label: tb.cells[0].label, logo: !!tb.logo, img: /<image /.test(window.__sv.drw.svg()), lib: JSON.parse(localStorage.getItem("mc:sheetFormats") ?? "[]").length, opt: [...document.querySelectorAll('.drw-props [data-s="format"] option')].map(o => o.value).filter(v => v.startsWith("user:")).length }; });
+    await ap.selectOption('.drw-props [data-s="format"]', "iso");
+    const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
+    check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
+      `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
+    // 1.96.0 broken-out section (FR-DRW-015): outline an area of the projected view, Enter cuts it to the middle and hatches the floor.
+    await ap.keyboard.press("Escape");
+    const tv = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, uc: pl.uc, vc: pl.vc, w: (pl.box[2] - pl.box[0]) / pl.s, h: (pl.box[3] - pl.box[1]) / pl.s }; }, pv0.id);
+    const at2 = (u, v) => clickAt(tv.x + (u - tv.uc) * tv.s, tv.y + (v - tv.vc) * tv.s);
+    await at2(tv.uc, tv.vc);
+    await ap.click('.drw-props [data-a="brokenout"]');
+    const bu0 = tv.uc - tv.w * 0.4, bu1 = tv.uc - tv.w * 0.2, bv0 = tv.vc - tv.h * 0.2, bv1 = tv.vc + tv.h * 0.2;
+    await at2(bu0, bv0); await at2(bu1, bv0); await at2(bu1, bv1); await at2(bu0, bv1);
+    await ap.keyboard.press("Enter");
+    await ap.waitForFunction(id => window.__sv.drw.proj(id)?.cut?.length > 0, tv.id, { timeout: 60000 });
+    const bo = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { poly: v.broken?.poly.length, d: v.broken?.d, mode: window.__sv.drw.mode(), depth: document.querySelector('.drw-props [data-v="bdepth"]')?.value ?? null }; }, tv.id);
+    check(bo.poly === 8 && bo.mode === "none" && bo.depth && +bo.depth > 0, `drawing: broken-out section cuts the outlined area and hatches it (${JSON.stringify([tv, bo])})`);
+    await ap.fill('.drw-props [data-v="bdepth"]', "1");
+    await ap.keyboard.press("Enter");
+    const bo2 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken?.d, tv.id);
+    await ap.click('.drw-props [data-a="unbroken"]');
+    const bo3 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken ?? null, tv.id);
+    check(bo2 != null && Math.abs(bo2 - bo.d) > 0.5 && bo3 === null, `drawing: the broken-out depth can be typed; Remove takes it off (${JSON.stringify([bo.d, bo2, bo3])})`);
     await ctx.close();
   }
 
@@ -5802,6 +6430,298 @@ try {
     await vp.evaluate(async id => { for (let i = 0; i < 200; i++) { if (!(await window.__sv.vault.vault.files()).find(f => f.id === id).checkout) return; await new Promise(r => setTimeout(r, 100)); } }, ids.base);
     const after = await vp.evaluate(async ({ part }) => { const v = window.__sv.vault.vault, f = (await v.files()).find(x => x.id === part); return [v.latest(f).n, !!f.checkout]; }, ids);
     check(JSON.stringify(box) === JSON.stringify([[`ref:${ids.part}`, true]]) && after[0] === 3 && !after[1], `vault: check-in offers the changed part it references, ticked, and checks it in too (${JSON.stringify([box, after])})`);
+    await ctx.close();
+  }
+
+  // --- View navigation (FRS 13.13: FR-UI-101..104): arrow keys, Z, previous view, zoom to area/selection, Space picker ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const np = await ctx.newPage();
+    np.on("pageerror", e => errors.push(e.message));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.waitForFunction(() => window.__sv);
+    await np.setInputFiles("#file-input", join(fixtures, "cube-10x10mm/Cube 10x10.stp"));
+    await np.waitForFunction(() => window.__sv.viewer.parts.length > 0);
+    const cam = () => np.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray(), h: v.viewHeight() }; });
+    const settleCam = async () => { await np.waitForTimeout(60); await np.waitForFunction(() => !window.__sv.viewer.animating); };
+    const dist = (a, b) => Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1], a.p[2] - b.p[2]);
+    const ang = (a, b) => { const u = a.p.map((x, i) => x - a.t[i]), w = b.p.map((x, i) => x - b.t[i]); const c = u.reduce((s, x, i) => s + x * w[i], 0) / Math.hypot(...u) / Math.hypot(...w); return Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI; };
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.keyboard.press("Control+1"); await settleCam();
+    const c0 = await cam();
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    const c1 = await cam();
+    await np.keyboard.press("Shift+ArrowRight"); await settleCam();
+    const c2 = await cam();
+    check(Math.abs(ang(c0, c1) - 15) < 0.5 && Math.abs(ang(c1, c2) - 90) < 0.5, `navigation: → turns the view 15°, Shift+→ 90° (${ang(c0, c1).toFixed(2)}°, ${ang(c1, c2).toFixed(2)}°)`);
+    await np.keyboard.press("z"); await settleCam();
+    const c3 = await cam();
+    await np.keyboard.press("Shift+Z"); await settleCam();
+    const c4 = await cam();
+    check(c3.h > c2.h * 1.2 && Math.abs(c4.h / c2.h - 1) < 0.01, `navigation: Z zooms out and Shift+Z back in (${c2.h.toFixed(2)} → ${c3.h.toFixed(2)} → ${c4.h.toFixed(2)})`);
+    await np.keyboard.press("Control+ArrowRight"); await settleCam();
+    const c5 = await cam();
+    const moved = Math.hypot(...c5.t.map((x, i) => x - c4.t[i]));
+    check(Math.abs(moved / c4.h - 0.1) < 0.01 && Math.abs(ang(c4, c5)) < 0.1, `navigation: Ctrl+→ pans a tenth of the view without turning it (${(moved / c4.h).toFixed(3)})`);
+    // Previous view walks back: pan, zoom in, zoom out, turn 90, turn 15 → the camera before Ctrl+1's result.
+    for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
+    const back = await cam();
+    check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // Double middle click fits: the same camera as F.
+    await np.keyboard.press("f"); await settleCam();
+    const cf = await cam();
+    await np.keyboard.press("z"); await settleCam();
+    const box = await np.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; });
+    const mx = box.x + box.width / 2, my = box.y + box.height / 2;
+    await np.mouse.move(mx, my);
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await settleCam();
+    const cd = await cam();
+    check(Math.abs(cd.h / cf.h - 1) < 0.01, `navigation: a double middle click fits like F (${cd.h.toFixed(2)} vs ${cf.h.toFixed(2)})`);
+    // Space: the orientation picker at the cursor; its Top gives the same view as Ctrl+5, Esc closes it untouched.
+    await np.mouse.move(mx + 50, my + 20);
+    await np.keyboard.press("Space");
+    const pick = await np.evaluate(() => { const el = document.querySelector(".nav-pick"); if (!el) return null; const r = el.getBoundingClientRect(); return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, n: el.querySelectorAll("button").length }; });
+    await np.click('.nav-pick [data-nv="top"]'); await settleCam();
+    const ct = await cam();
+    await np.keyboard.press("Control+5"); await settleCam();
+    const c5b = await cam();
+    await np.keyboard.press("Space");
+    const before = await cam();
+    await np.keyboard.press("Escape");
+    const after = await cam();
+    const open = await np.evaluate(() => !!document.querySelector(".nav-pick"));
+    check(!!pick && pick.n >= 12 && Math.abs(pick.cx - (mx + 50)) < 2 && ang(ct, c5b) < 0.01 && dist(before, after) < 1e-9 && !open,
+      `navigation: Space opens the orientation picker at the cursor (${pick?.n} buttons), Top = Ctrl+5, Esc closes it without moving the view`);
+    // Zoom to area: a box over a quarter of the view makes the view half as tall.
+    const h0 = (await cam()).h;
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="area"]');
+    await np.mouse.move(mx - box.width / 8, my - box.height / 8);
+    await np.mouse.down();
+    await np.mouse.move(mx + box.width / 8, my + box.height / 8, { steps: 4 });
+    await np.mouse.up();
+    await settleCam();
+    const ca = await cam();
+    check(Math.abs(ca.h / h0 - 0.25) < 0.01 && (await np.evaluate(() => !document.querySelector(".nav-area") && window.__sv.viewer.controls.enabled)), `navigation: Zoom to area frames the box (${(ca.h / h0).toFixed(3)} of the height)`);
+    // Zoom to selection on one face of the 10 mm cube: the face fills the view.
+    await np.evaluate(() => { const v = window.__sv.viewer, p = v.parts[0]; const f = p.data.faces[0]; window.__sv.state.selection = { kind: "face", point: new (v.camera.position.constructor)(...f.centroid), part: p, face: f }; });
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="sel"]'); await settleCam();
+    const cs = await cam();
+    check(cs.h > 8 && cs.h < 25, `navigation: Zoom to selection frames the picked 10 mm face (view height ${cs.h.toFixed(2)} mm)`);
+    // Russian: the picker's labels are translated.
+    await np.click("#lang-btn");
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.mouse.move(mx, my);
+    await np.keyboard.press("Space");
+    const ru = await np.evaluate(() => document.querySelector(".nav-pick")?.textContent ?? "");
+    await np.keyboard.press("Escape");
+    await np.click("#lang-btn");
+    check(ru.includes("Сверху") && ru.includes("Предыдущий вид") && !/[A-Za-z]{3}/.test(ru), `navigation: the orientation picker is translated in Russian (${ru.slice(0, 60)})`);
+    await ctx.close();
+  }
+
+  // --- Commands (FRS 13.13: FR-UND-005, FR-UI-106/107/111): named undo and its list, Enter repeats, right-click OK/Cancel, pushpin ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.click("#new-part");
+    await cp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await cp.waitForTimeout(150); await cp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    const rect = (id, x0, y0, x1, y1) => cp.evaluate(([id, x0, y0, x1, y1]) => window.__sv.model.store.change("Sketch", d => {
+      const P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: id === "s1" ? "Sketch1" : "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, x0, y0), P(2, x1, y0), P(3, x1, y1), P(4, x0, y1), { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` }, { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] });
+    }), [id, x0, y0, x1, y1]);
+    const mode = () => cp.evaluate(() => { const m = window.__sv.model.mode(); return m.kind === "feature" ? `feature:${m.draft.type}` : m.kind; });
+    const nf = () => cp.evaluate(() => window.__sv.model.store.doc.features.length);
+    await rect("s1", -20, -10, 20, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click("#mc-ok");
+    await settle();
+    const tip = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    check((await nf()) === 2 && /Extrude1/.test(tip), `commands: the Undo button names the step it undoes (${tip})`);
+    // Enter with no command running repeats the last one.
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(200);
+    const rep = await mode();
+    // Right-click without a drag while the command runs: OK and Cancel first.
+    const vb = await cp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width * 0.8, y: r.top + r.height * 0.8 }; });
+    await cp.mouse.click(vb.x, vb.y, { button: "right" });
+    await cp.waitForTimeout(100);
+    const menu = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button", { hasText: "Cancel" }).click();
+    await cp.waitForTimeout(150);
+    const afterCancel = await mode();
+    check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 2,
+      `commands: Enter repeats Extrude, a right-click offers OK / Cancel and Cancel closes it (${rep}, [${menu.join(", ")}], ${afterCancel})`);
+    // Undo ▾ lists the steps newest first; picking the second undoes both.
+    await cp.click('#mc-tools [data-fly="undo"]');
+    const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button").nth(1).click();
+    await settle();
+    const undone = await nf();
+    await cp.keyboard.press("Control+y"); await cp.keyboard.press("Control+y");
+    await settle();
+    check(list.length === 2 && /Extrude1/.test(list[0]) && undone === 0 && (await nf()) === 2, `commands: the Undo list names the steps and undoes back to the one picked ([${list.join(", ")}] → ${undone} features)`);
+    // Pushpin: OK makes the feature and opens the same command again.
+    await rect("s2", 30, -10, 50, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.waitForTimeout(300);
+    const pinned = { n: await nf(), mode: await mode(), store: await cp.evaluate(() => localStorage.getItem("mc:pin")), on: await cp.evaluate(() => document.querySelector('#mc-pm [data-k="pin"]')?.getAttribute("aria-pressed")) };
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.keyboard.press("Escape");
+    check(pinned.n === 4 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
+    // Remembered options (FR-UI-043): an extrude made Mid plane makes the next one start as Mid plane.
+    await rect("s3", -20, 30, 20, 50);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.selectOption('#mc-pm select[data-k="end"]', "mid");
+    await cp.waitForTimeout(150);
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    const endNext = await cp.evaluate(() => window.__sv.model.mode().draft.end);
+    await cp.keyboard.press("Escape");
+    await cp.waitForTimeout(150);
+    check(endNext === "mid", `commands: a new extrude starts with the end condition used last (${endNext})`);
+    // What's wrong: a fillet far too big fails; the list names it and a click selects it in the tree.
+    await cp.evaluate(() => window.__sv.model.store.change("Add Fillet1", d => { const ex = d.features.find(f => f.type === "extrude"); d.features.push({ id: "fbad", type: "fillet", name: "Fillet1", radius: { v: 500 }, edges: [{ faces: [`${ex.id}:end`, `${ex.id}:side:s1l1`], hint: [0, -10, 10] }] }); }));
+    await settle();
+    const wrongHead = await cp.evaluate(() => { const el = document.querySelector("#mc-errors"); return el.hidden ? "" : el.textContent; });
+    await cp.click("#mc-errors .mc-wrong-h");
+    const rows = await cp.evaluate(() => [...document.querySelectorAll("#mc-errors [data-wid]")].map(b => b.dataset.wid));
+    if (rows.length) await cp.click(`#mc-errors [data-wid="${rows[0]}"]`);
+    const sel = await cp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id);
+    check(/What's wrong/.test(wrongHead) && rows.includes("fbad") && sel === rows[0], `commands: What's wrong lists the failing fillet and selects it (${wrongHead}; ${rows.join(",")}; ${sel})`);
+    await cp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Russian: the named Undo tooltip and the pushpin are translated.
+    await cp.click("#lang-btn");
+    const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    await cp.click("#lang-btn");
+    check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // A 600 × 400 frame sketched on XY, then Structural Member from the Weldments flyout.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Frame", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 600, 0), P("c", 600, 400), P("d", 0, 400), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Structural Member")');
+    await settle();
+    const p0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, segs: window.__sv.model.mode().draft?.segs?.length, bodies: window.__sv.model.last().bodies?.length, boxes: document.querySelectorAll("#mc-pm input[data-wseg]").length }));
+    // Live preview follows the panel: a bigger tube, then untick one line.
+    await mp.selectOption('#mc-pm select[data-k="wsize"]', "50x50x4");
+    await settle();
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const r = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), cut: (l.cutList ?? []).map(c => [c.desc, c.qty, c.length, c.angle1, c.angle2]) }; });
+    check(p0.title === "Structural Member" && p0.segs === 4 && p0.boxes === 4 && p0.bodies === 4 && p1.bodies === 3 && p1.size === "50x50x4" && !r.bad && r.bodies === 4
+      && JSON.stringify(r.cut) === JSON.stringify([["SHS 50x50x4", 2, 650, 45, 45], ["SHS 50x50x4", 2, 450, 45, 45]]),
+      `weldments: Structural Member along a sketch, mitred corners, live preview, cut list (FR-FT-121) (${JSON.stringify({ p0, p1, r })})`);
+    // Cut List… opens a table: two member rows and the total mass (steel assumed).
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Cut List")');
+    await mp.waitForSelector("#wld-cut[open]");
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    await mp.click('#wld-cut [data-a="close"]');
+    check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    // End cap on an open end: an L of two members butted, a cap on the free end.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("End Cap")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces = [{ name: "m2:k1:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
+    // The end cap's thickness arrow: dragging it outwards thickens the plate.
+    const capId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    // Look at the cap from close by, so the arrow is on screen.
+    await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrow; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(-1, -1, 0.8).multiplyScalar(250)); v.camera.lookAt(a.base); v.controls.update(); });
+    await mp.waitForTimeout(300);
+    const ends = await mp.evaluate(() => {
+      const a = window.__sv.modeller.arrow, v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      if (!a) return null;
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (ends) {
+      await mp.mouse.move(ends.from[0], ends.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(ends.from[0] + ((ends.to[0] - ends.from[0]) * i) / 6, ends.from[1] + ((ends.to[1] - ends.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const thick = await mp.evaluate(() => window.__sv.model.mode().draft?.thickness?.v);
+    await mp.click("#mc-ok");
+    await settle();
+    const plate2 = await mp.evaluate(() => (window.__sv.model.last().cutList ?? []).find(c => c.kind === "plate")?.plate);
+    check(ends && /^5 mm$/.test(ends.label ?? "") && thick > 10 && thick < 20 && plate2?.[2] === thick, `weldments: dragging the end cap arrow sets its thickness (${JSON.stringify({ ends, thick, plate2 })})`);
+    // A custom profile from a closed sketch, and three members meeting at a corner.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Custom", d => {
+        d.features.push({ id: "pr", type: "sketch", name: "Profile", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1", 0, 0), P("q2", 30, 0), P("q3", 30, 10), P("q4", 0, 10), L("r1", "q1", "q2"), L("r2", "q2", "q3"), L("r3", "q3", "q4"), L("r4", "q4", "q1")] },
+          { id: "k3", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [1000, 0, 0], fixed: true }, { id: "X", p: [1300, 0, 0] }, { id: "Y", p: [1000, 300, 0] }, { id: "Z", p: [1000, 0, 300] }], segs: [{ id: "x", t: "line", pts: ["A", "X"] }, { id: "y", t: "line", pts: ["A", "Y"] }, { id: "z", t: "line", pts: ["A", "Z"] }] },
+          { id: "m3", type: "member", name: "Structural Member3", profile: "sketch", size: "", psketch: "pr", segs: [{ sketch: "s2", ent: "k1" }], corner: "none" },
+          { id: "m4", type: "member", name: "Structural Member4", profile: "shs", size: "40x40x3", segs: ["x", "y", "z"].map(ent => ({ sketch: "k3", ent })), corner: "butt1" });
+      });
+    });
+    await settle();
+    const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
+    check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
+    // In Russian: the Structural Member panel.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 

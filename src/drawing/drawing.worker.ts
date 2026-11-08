@@ -13,7 +13,8 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir }
-  | { id: number; type: "section"; view: ViewDir; p: V3 }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[] }
+  | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
 
@@ -35,6 +36,8 @@ function solidOf(src: DiffSrc): any {
 
 let oc: any = null;
 let shape: any = null;
+/** An assembly's placed component shapes by id, for alternate positions. */
+let placedShapes: { id: string; shape: any }[] = [];
 const post = (msg: unknown) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
@@ -48,6 +51,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       });
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
+      placedShapes = [];
       if (!oc) throw new Error("Kernel not started");
       let extra = {};
       if (r.part) {
@@ -75,6 +79,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
         b.MakeCompound(comp);
         const names: string[] = [], comps: { id: string; part: string; name: string }[] = [];
+        placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape }));
         for (const pc of placed) { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name }); }
         shape = comp;
         extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
@@ -87,9 +92,21 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "diff") {
       if (!oc) throw new Error("Kernel not started");
       post({ id: r.id, ok: true, diff: geometryDiff(oc, solidOf(r.a), solidOf(r.b)) });
+    } else if (r.type === "alt") {
+      // Alternate position (FR-DRW-015): the moved components alone (a sub-assembly's children go with it), projected.
+      const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      b.MakeCompound(comp);
+      let n = 0;
+      for (const mv of r.moves) {
+        const t = mv.tf, trsf = new oc.gp_Trsf_1();
+        trsf.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
+        const loc = new oc.TopLoc_Location_2(trsf);
+        for (const pc of placedShapes) if (pc.id === mv.comp || pc.id.startsWith(`${mv.comp}/`)) { b.Add(comp, pc.shape.Moved(loc, false)); n++; }
+      }
+      post({ id: r.id, ok: true, proj: n ? project(oc, comp, r.view) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
-      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p) });
+      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p, 0.02, r.poly) });
     }
   } catch (err) {
     post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });
