@@ -5477,6 +5477,46 @@ try {
       const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
       m.seek(2);
       const end = { z: g().position.z };
+      // Trace path: Add track… → Trace path… then a click on the pin picks a point on it; the pin's own origin traced
+      // through the study rises 20 mm in a straight line (the turn is about it), one point per frame, plotted and saved as CSV.
+      m.seek(0);
+      window.__sv.viewer.fit(false);
+      window.__sv.viewer.camera.updateMatrixWorld(true);
+      const canvas = window.__sv.viewer.renderer.domElement, rc = canvas.getBoundingClientRect(), d = window.__sv.viewer.parts[a.shownIds.indexOf(id)].data;
+      const ctr = g().position.clone().set((d.bboxMin[0] + d.bboxMax[0]) / 2, (d.bboxMin[1] + d.bboxMax[1]) / 2, (d.bboxMin[2] + d.bboxMax[2]) / 2).project(window.__sv.viewer.camera);
+      const addSel = document.querySelector('#motion select[data-mo="add"]');
+      addSel.value = "trace:"; addSel.dispatchEvent(new Event("change"));
+      const picking = m.tracing;
+      // The pin's centre on screen, else the first point of a grid that hits a component (the motion pane covers the lower view).
+      let at = [rc.left + (ctr.x + 1) / 2 * rc.width, rc.top + (1 - ctr.y) / 2 * rc.height];
+      // Else the first triangle middle of the pin's mesh that a click there hits.
+      if (a.shownAt(at[0], at[1])?.top !== id) {
+        const mesh = window.__sv.viewer.parts[a.shownIds.indexOf(id)].mesh, pos = mesh.geometry.attributes.position, ix = mesh.geometry.index;
+        mesh.updateMatrixWorld(true);
+        for (let k = 0; k + 2 < (ix ? ix.count : pos.count); k += 3) {
+          const v = g().position.clone().set(0, 0, 0);
+          for (let j = 0; j < 3; j++) { const vi = ix ? ix.getX(k + j) : k + j; v.x += pos.getX(vi) / 3; v.y += pos.getY(vi) / 3; v.z += pos.getZ(vi) / 3; }
+          v.applyMatrix4(mesh.matrixWorld).project(window.__sv.viewer.camera);
+          const q = [rc.left + (v.x + 1) / 2 * rc.width, rc.top + (1 - v.y) / 2 * rc.height];
+          if (a.shownAt(q[0], q[1])?.top === id) { at = q; break; }
+        }
+      }
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: at[0], clientY: at[1] }));
+      if (m.tracing) document.querySelector("#motion").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      const pickedTrace = { picking, after: m.tracing, n: (m.study.traces ?? []).length, at };
+      m.addTrace(id, [0, 0, 0]);
+      const tr0 = m.study.traces.at(-1), path = m.tracePath(tr0.id), o = [c[2].tf[3], c[2].tf[7], c[2].tf[11]];
+      const plot = !!document.querySelector("#motion .mo-trace-plot svg polyline"), row = !!document.querySelector(`#motion .mo-name[data-trace="${tr0.id}"]`);
+      const psel = document.querySelector('#motion select[data-tr="plot"]'); if (psel) { psel.value = "speed"; psel.dispatchEvent(new Event("change")); }
+      const speedPlot = m.study.traces.at(-1).plot;
+      const lines = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr0.id));
+      const len = path.reduce((s2, q, k) => k ? s2 + Math.hypot(q[0] - path[k - 1][0], q[1] - path[k - 1][1], q[2] - path[k - 1][2]) : 0, 0);
+      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, lines };
+      for (const x of [...m.study.traces]) m.deleteTrace(x.id);
+      trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      m.seek(2);
       // Key point menu: right-click the end key, pick Snap (jump): the pin stays put until the key, then jumps.
       // Ctrl+C / Ctrl+V copy the key to the playhead (1.5 s).
       const kb = document.querySelector("#motion .mo-key.sel");
@@ -5521,7 +5561,7 @@ try {
       const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
       document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
     let boxed = { err: "no track" }, stretched = { err: "no track" };
@@ -5581,6 +5621,11 @@ try {
     check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
       && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 4 && boxed.boxGone && boxed.left === 0,
       `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
+    const tc = pose.trace;
+    check(tc?.pickedTrace.picking === true && tc.pickedTrace.after === false && tc.pickedTrace.n === 1 && tc.n === tc.want
+      && tc.start.every(v => Math.abs(v) < 0.01) && Math.abs(tc.end[0]) < 0.01 && Math.abs(tc.end[1]) < 0.01 && Math.abs(tc.end[2] - 20) < 0.01
+      && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone,
+      `motion study: a trace path follows a picked point, is drawn, plotted and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,

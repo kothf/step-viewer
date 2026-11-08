@@ -15,6 +15,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - End cap corner treatment only touches sharp corners: on a tube with a rounded outline it no longer chamfers the seams where the flat sides meet the round corners.
 
+## [1.175.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace paths, as SolidWorks' Results → Trace Path. **Add track… → Trace path…** asks for a click on a moving component; the path of that point over the study is drawn in the view with a marker that follows the playhead. Its row (show/hide, delete) opens a panel that plots the distance from the start, the speed or X/Y/Z against time with the playhead on the plot, shows the position and speed at the playhead and the path length, and saves the points as CSV (time, X, Y, Z, speed) (FR-FT-122).
+
 ## [1.174.0] - 2026-11-08
 
 ### Fixed
@@ -1382,7 +1388,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.176.0...HEAD
-[1.176.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.176.0
+[1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
+[1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
 [1.174.0]: https://github.com/kothf/step-viewer/compare/v1.173.0...v1.174.0
 [1.173.0]: https://github.com/kothf/step-viewer/compare/v1.169.0...v1.173.0
 [1.169.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.169.0
