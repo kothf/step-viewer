@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.135.0] - 2026-11-08
+
+### Added
+
+- **Edit in context (FR-ASM-030)**: right-click a component and choose Edit in context. Its part opens with the rest of the assembly shown see-through around it.
+  - A sketch on a flat face of another component is an external reference, marked -> in the Features tree.
+  - Back in the assembly, the sketch follows that face whenever the components move or change.
+  - External References (Features → Plane ▾) lists each one with its state: in context, out of context (->?) or locked (->*). You can lock them one by one or all at once.
+
 ## [1.134.0] - 2026-11-08
 
 ### Added
@@ -1173,7 +1182,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.134.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.135.0...HEAD
+[1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
