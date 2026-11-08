@@ -2975,6 +2975,7 @@ export const RU: Record<string, string> = {
   "Drag the arrow to change the length along face 2; click to type it": "Перетащите стрелку, чтобы изменить длину вдоль грани 2; щёлкните, чтобы ввести значение",
   "Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2. With tangent propagation it follows on round corners.": "Щёлкните плоские или цилиндрические грани: шов идёт вдоль прямых и круговых рёбер, где набор 1 встречается с набором 2. С распространением по касательной он продолжается по скруглённым углам.",
   "Drag the arrow to change the thickness; click to type it": "Перетащите стрелку, чтобы изменить толщину; щёлкните, чтобы ввести значение",
+  "Drag the arrow to change the flange length; click to type it": "Перетащите стрелку, чтобы изменить длину кромки; щёлкните, чтобы ввести её",
   "Click two flat faces that meet at a corner, such as a beam and a post.": "Щёлкните две плоские грани, сходящиеся в углу, например балку и стойку.",
   "Corner treatment": "Обработка углов",
   "Corner type": "Тип угла",
