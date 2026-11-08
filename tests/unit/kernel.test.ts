@@ -1489,3 +1489,18 @@ test("check and heal feature: a gap sewn shut, split faces merged, names kept (F
   close(merged.props!.volume, split.props!.volume, 1e-9);
   assert.ok(merged.body!.names.includes("ea:end") || merged.body!.names.includes("ec:end"), merged.body!.names.join());
 });
+
+test("loft connectors: the loft joins the picked points, so shifting one twists it (FR-FT-082)", async () => {
+  const m = new Modeller(await occ());
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 10 } } as Feature;
+  const a = rect("a", 0, 0, 10, 10), b = rect("b", 0, 0, 10, 10, { plane: "p1" });
+  const loft = (connectors?: string[]): Feature => ({ id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["a", "b"], ruled: true, connectors } as Feature);
+  const plain = run(m, doc([a, pl, b, loft()]));
+  close(plain.props!.volume, 1000, 1e-6);
+  // Matching corners: still the box.
+  const same = run(m, doc([a, pl, b, loft(["ap1", "bp1"])]));
+  close(same.props!.volume, 1000, 1e-6);
+  // One corner along on the top: each side becomes a twisted ruled face and the solid is thinner.
+  const twisted = run(m, doc([a, pl, b, loft(["ap1", "bp2"])]));
+  assert.ok(twisted.props!.volume < 950 && twisted.props!.volume > 500, `${twisted.props!.volume}`);
+});

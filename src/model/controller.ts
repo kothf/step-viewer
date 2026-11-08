@@ -4696,7 +4696,20 @@ export class ModelController {
           return;
         }
         if (f.type === "loft" && /^lp\d+$/.test(k)) {
-          upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
+          upd(() => {
+            const i = +k.slice(2);
+            if (val) { f.profiles[i] = String(val); if (f.connectors) f.connectors[i] = ""; } else { f.profiles.splice(i, 1); f.connectors?.splice(i, 1); }
+            f.profiles = f.profiles.filter(Boolean);
+            if (f.connectors && !f.connectors.some(Boolean)) delete f.connectors;
+          }, true);
+          return;
+        }
+        if (f.type === "loft" && /^lc\d+$/.test(k)) {
+          upd(() => {
+            const cs = f.profiles.map((_, i) => f.connectors?.[i] ?? "");
+            cs[+k.slice(2)] = String(val);
+            if (cs.some(Boolean)) f.connectors = cs; else delete f.connectors;
+          }, true);
           return;
         }
         if (k === "dfmode" && f.type === "delface") { upd(() => { if (val === "delete") f.mode = "delete"; else delete f.mode; }, true); return; }
@@ -5278,6 +5291,12 @@ export class ModelController {
         return sel("lcPath", t("Centerline"), opt("", t("None"), cur) + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), cur)).join("") + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join(""))
           + (f.centerline ? `<p class="pm-help muted">${esc(t("The loft follows the centreline between its profiles. Each profile should sit across it, in its order."))}</p>` : "");
       })())
+      + (f.centerline || f.profiles.length < 2 ? "" : group(t("Connectors"), f.profiles.map((id, i) => {
+        const sk = sketches.find(x => x.id === id);
+        const cur = f.connectors?.[i] ?? "";
+        const pts = (sk?.ents ?? []).filter(e => e.t === "point" && sk!.ents.some(c => c.t === "line" && !c.cons && (c.a === e.id || c.b === e.id)));
+        return sel(`lc${i}`, `${t("Start point")} ${i + 1}`, opt("", t("Automatic"), cur) + pts.map(e => e.t === "point" ? `<option value="${esc(e.id)}"${e.id === cur ? " selected" : ""}>(${esc(trimNum(e.x, 2))}, ${esc(trimNum(e.y, 2))})</option>` : "").join(""));
+      }).join("") + `<p class="pm-help muted">${esc(t("The loft joins the start points of the profiles. Pick matching corners to stop it twisting."))}</p>`))
       + (f.centerline ? "" : group(t("Guide curves"), (() => {
         const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
         const curves = this.doc.features.slice(0, at).filter(g => g.type === "curve" || g.type === "sketch3d");
