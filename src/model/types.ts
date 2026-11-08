@@ -540,6 +540,8 @@ export interface LoftFeature {
   close?: boolean;
   /** Centreline (P5): the loft follows this path between its profiles. */
   centerline?: SweepPath;
+  /** Guide curves (FR-FT-082, P5): sketches or curves that touch every profile; the loft's sections stretch to pass through them. */
+  guides?: SweepPath[];
   /** Start / end constraint (FR-FT-082): the loft leaves the first / reaches the last profile square to it. */
   startNormal?: boolean;
   endNormal?: boolean;

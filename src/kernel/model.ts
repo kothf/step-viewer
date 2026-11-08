@@ -2359,9 +2359,15 @@ export class Modeller {
       wires.push(w);
     });
     if (f.close && wires.length >= 3) wires.push(wires[0]);
+    // Guide curves (FR-FT-082, P5): sections of the free loft between the profiles, stretched to the guides.
+    const guided = !!f.guides?.length && !f.ruled && !f.close;
+    if (guided) {
+      const ns = f.profiles.map(id => this.sketchOf(id, doc, prev, frames, "the profile sketches").frame.n);
+      wires.splice(0, wires.length, ...this.guidedSections(f, wires, ns, doc, prev, frames));
+    }
     // Start / end normal to profile (FR-FT-082): a copy of the end profile a little way along its normal
     // (towards the next one) makes the smooth loft leave it square; the tangent length scales that step.
-    if (!f.ruled && !f.close && (f.startNormal || f.endNormal)) {
+    if (!guided && !f.ruled && !f.close && (f.startNormal || f.endNormal)) {
       const norm = (id: string) => this.sketchOf(id, doc, prev, frames, "the profile sketches").frame.n;
       const cen = (w: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.LinearProperties(w, g, false, false); return this.xyz(g.CentreOfMass()); };
       const guide = (w: any, next: any, n: V3, len: number) => {
@@ -2400,6 +2406,112 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /** The centre of a wire's length. */
+  private wireCentre(w: any): V3 {
+    const g = new this.oc.GProp_GProps_1();
+    this.oc.BRepGProp.LinearProperties(w, g, false, false);
+    return this.xyz(g.CentreOfMass());
+  }
+
+  /**
+   * Guide curves for a loft (FR-FT-082, P5). ThruSections has no guides, so the free loft is cut by
+   * planes between each pair of profiles and every cut is stretched in its plane (about its centre)
+   * until it passes through the guides there: a uniform scale for one guide, the smallest change of
+   * shape that reaches them for more. The profiles with those sections in between are lofted again.
+   */
+  private guidedSections(f: LoftFeature, wires: any[], ns: V3[], doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): any[] {
+    const oc = this.oc;
+    const guides = f.guides!.map(g => this.pathWire(g, doc, prev, frames));
+    const cens = wires.map(w => this.wireCentre(w));
+    let span = 0;
+    for (let i = 1; i < cens.length; i++) span = Math.max(span, d3(cens[i], cens[0]));
+    const tol = Math.max(1e-3, span * 1e-3);
+    const dist = (a: any, b: any) => {
+      const d = new oc.BRepExtrema_DistShapeShape_2(a, b, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      return d.IsDone() ? d : null;
+    };
+    for (const g of guides) for (const w of wires) {
+      const d = dist(g, w);
+      if (!d || d.Value() > tol) throw new FeatureError("E-LOFT-GUIDE", "Each guide curve must touch every profile.");
+    }
+    const samples = guides.map(g => {
+      const ag = new oc.BRepAdaptor_CompCurve_2(g, false), a = ag.FirstParameter(), b = ag.LastParameter();
+      const m = Math.max(400, 120 * this.sub(g, "EDGE").length), pts: V3[] = [];
+      for (let k = 0; k <= m; k++) pts.push(this.xyz(ag.Value(a + ((b - a) * k) / m)));
+      return pts;
+    });
+    // The free loft the sections are cut from.
+    const free = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6);
+    for (const w of wires) free.AddWire(w);
+    free.CheckCompatibility(true);
+    free.Build(new oc.Message_ProgressRange_1());
+    if (!free.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+    const solid = free.Shape();
+    const K = 5, out: any[] = [wires[0]];
+    for (let i = 0; i + 1 < wires.length; i++) {
+      const gap = sub3(cens[i + 1], cens[i]);
+      const n0 = dot(ns[i], gap) >= 0 ? ns[i] : mul(ns[i], -1), n1 = dot(ns[i + 1], gap) >= 0 ? ns[i + 1] : mul(ns[i + 1], -1);
+      for (let k = 1; k <= K; k++) {
+        const t = k / (K + 1);
+        const c0 = add(cens[i], mul(gap, t)), n = unit(add(mul(n0, 1 - t), mul(n1, t)));
+        const sec = new oc.BRepAlgoAPI_Section_5(solid, new oc.gp_Pln_3(this.P(c0), this.D(n)), true);
+        const list = new oc.TopTools_ListOfShape_1();
+        for (const e of this.sub(sec.Shape(), "EDGE")) list.Append_1(e);
+        const mw = new oc.BRepBuilderAPI_MakeWire_1();
+        if (list.Size() > 0) mw.Add_3(list);
+        if (list.Size() === 0 || !mw.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+        const w = mw.Wire(), c = this.wireCentre(w);
+        const u = unit(Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0])), v = cross(n, u);
+        const F: [number, number][] = [], G: [number, number][] = [];
+        samples.forEach(pts => {
+          let hit: V3 | null = null, best = Infinity;
+          for (let j = 0; j + 1 < pts.length; j++) {
+            const a = dot(sub3(pts[j], c), n), b = dot(sub3(pts[j + 1], c), n);
+            if ((a <= 0 && b >= 0) || (a >= 0 && b <= 0)) {
+              const s = Math.abs(a - b) < 1e-15 ? 0 : a / (a - b), p = add(pts[j], mul(sub3(pts[j + 1], pts[j]), s));
+              if (d3(p, c) < best) { best = d3(p, c); hit = p; }
+            }
+          }
+          if (!hit) throw new FeatureError("E-LOFT-GUIDE", "Each guide curve must run from the first profile to the last.");
+          const d = dist(new oc.BRepBuilderAPI_MakeVertex(this.P(hit)).Vertex(), w);
+          if (!d) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+          const q = sub3(this.xyz(d.PointOnShape2(1)), c), h = sub3(hit, c);
+          F.push([dot(q, u), dot(q, v)]);
+          G.push([dot(h, u), dot(h, v)]);
+        });
+        // A = I + (G − F) F⁺ (for one guide, a uniform scale instead).
+        let A = [[1, 0], [0, 1]];
+        const ff = F.reduce((s, q) => s + q[0] * q[0] + q[1] * q[1], 0);
+        if (!(ff > 1e-18)) throw new FeatureError("E-LOFT-GUIDE", "A guide curve meets the middle of the loft: the section would shrink to nothing.");
+        if (F.length === 1) {
+          const s = (F[0][0] * G[0][0] + F[0][1] * G[0][1]) / ff;
+          A = [[s, 0], [0, s]];
+        } else {
+          const M = [[0, 0], [0, 0]];
+          for (const q of F) { M[0][0] += q[0] * q[0]; M[0][1] += q[0] * q[1]; M[1][0] += q[1] * q[0]; M[1][1] += q[1] * q[1]; }
+          const det = M[0][0] * M[1][1] - M[0][1] * M[1][0];
+          const Mi = det > 1e-9 * ff * ff ? [[M[1][1] / det, -M[0][1] / det], [-M[1][0] / det, M[0][0] / det]] : [[1 / ff, 0], [0, 1 / ff]];
+          for (let r = 0; r < 2; r++) for (let cc = 0; cc < 2; cc++) {
+            let sum = 0;
+            F.forEach((q, j) => { const pinv = q[0] * Mi[0][cc] + q[1] * Mi[1][cc]; sum += (G[j][r] - q[r]) * pinv; });
+            A[r][cc] += sum;
+          }
+        }
+        if (!(A[0][0] * A[1][1] - A[0][1] * A[1][0] > 1e-9)) throw new FeatureError("E-LOFT-GUIDE", "A guide curve meets the middle of the loft: the section would shrink to nothing.");
+        const U = [u, v];
+        const A3 = [0, 1, 2].map(r => [0, 1, 2].map(cc => (r === cc ? 1 : 0) + [0, 1].reduce((s, a) => s + [0, 1].reduce((s2, b) => s2 + U[a][r] * (A[a][b] - (a === b ? 1 : 0)) * U[b][cc], 0), 0)));
+        const g = new oc.gp_GTrsf_1();
+        for (let r = 0; r < 3; r++) for (let cc = 0; cc < 3; cc++) g.SetValue(r + 1, cc + 1, A3[r][cc]);
+        const tr = [0, 1, 2].map(r => c[r] - (A3[r][0] * c[0] + A3[r][1] * c[1] + A3[r][2] * c[2]));
+        g.SetTranslationPart(new oc.gp_XYZ_2(tr[0], tr[1], tr[2]));
+        const moved = new oc.BRepBuilderAPI_GTransform_2(w, g, true).Shape();
+        out.push(oc.TopoDS.Wire_1(moved));
+      }
+      out.push(wires[i + 1]);
+    }
+    return out;
   }
 
   /**

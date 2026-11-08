@@ -169,7 +169,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); if (f.guide) features.push(pathId(f.guide)); }
   if (f.type === "sweepsurf") { features.push(f.profile); if (f.path) features.push(pathId(f.path)); }
   if (f.type === "curve") { if (f.sketch) features.push(f.sketch); for (const e of f.edges ?? []) faces.push(...e.faces); faces.push(...(f.faces ?? []).map(x => x.name)); }
-  if (f.type === "loft") { features.push(...f.profiles); if (f.centerline) features.push(pathId(f.centerline)); }
+  if (f.type === "loft") { features.push(...f.profiles); if (f.centerline) features.push(pathId(f.centerline)); for (const g of f.guides ?? []) features.push(pathId(g)); }
   if (f.type === "rib") features.push(f.sketch);
   if (f.type === "smbase" || f.type === "smbend" || f.type === "smjog" || f.type === "smtab") features.push(f.sketch);
   if (f.type === "smflange" || f.type === "smhem") for (const e of f.edges) faces.push(...e.faces);
