@@ -276,19 +276,22 @@ export class AsmController {
     if (!this.doc) return;
     if (!this.interfere) this.closeTools();
     const clear = this.interfere?.clear ?? 1;
-    this.interfere = { touch, pairs: null, sel: -1, clear, near: null };
+    const it = this.interfere = { touch, pairs: null, sel: -1, clear, near: null } as NonNullable<AsmController["interfere"]>;
     this.renderAll();
     $("#asm-busy").hidden = false;
     try {
       const doc = this.expand(this.doc).doc;
       const pairs = await this.kernel.interference(doc, touch);
-      if (!this.interfere) return;
-      this.interfere.pairs = pairs;
+      if (this.interfere !== it) return;
+      it.pairs = pairs;
+      // Show the interferences at once; the clearance rows follow.
+      this.drawOverlay();
+      this.renderPanel();
       // Clearance: pairs closer than the minimum that do not already interfere.
       const near = clear > 0 ? await this.kernel.clearance(doc, clear) : [];
-      if (!this.interfere) return;
+      if (this.interfere !== it) return;
       const hit = new Set(pairs.map(p => `${p.a}|${p.b}`));
-      this.interfere.near = near.filter(p => p.distance > 1e-6 && !hit.has(`${p.a}|${p.b}`));
+      it.near = near.filter(p => p.distance > 1e-6 && !hit.has(`${p.a}|${p.b}`));
       this.drawOverlay();
     } catch (err) { toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true); }
     finally { $("#asm-busy").hidden = true; }
