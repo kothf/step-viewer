@@ -979,3 +979,69 @@ test("replace face with a surface (FR-FT-101)", async () => {
   close(r.props!.volume, 120000, 1e-6);
   assert.equal(r.body!.faces.length, 6, r.body!.names.join());
 });
+
+test("surfaces: revolve, loft, trim; delete face to a surface (FR-FT-100/101)", async () => {
+  const m = new Modeller(await occ());
+  const area = (n: { shape: unknown; faces: unknown[]; names: string[] }) => m.props(n as never).area;
+  // A line 10 mm off a vertical axis, revolved: a cylinder surface 2π·10·20.
+  const s1: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+    { id: "a0", t: "point", x: 0, y: -5 }, { id: "a1", t: "point", x: 0, y: 30 }, { id: "ax", t: "line", a: "a0", b: "a1", cons: true },
+    { id: "b0", t: "point", x: 10, y: 0 }, { id: "b1", t: "point", x: 10, y: 20 }, { id: "l", t: "line", a: "b0", b: "b1" }] };
+  const rv: Feature = { id: "f1", type: "revsurf", name: "Surface-Revolve1", sketch: "s1", axis: "ax", angle: { v: 2 * Math.PI } };
+  let r = run(m, doc([s1, rv]));
+  close(area(r.sheets!), 2 * Math.PI * 10 * 20, 1e-6);
+  assert.ok(r.sheets!.names.every(n => n === "f1:side:l"), r.sheets!.names.join());
+  // Half a turn: half the area.
+  r = run(m, doc([s1, { ...rv, angle: { v: Math.PI } } as Feature]));
+  close(area(r.sheets!), Math.PI * 10 * 20, 1e-6);
+  // Loft through two open lines 10 mm apart: a 20 × 10 strip.
+  const line = (id: string, plane: SketchFeature["plane"]): SketchFeature => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [{ id: `${id}a`, t: "point", x: -10, y: 0 }, { id: `${id}b`, t: "point", x: 10, y: 0 }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }] });
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 10 } } as Feature;
+  const lf: Feature = { id: "f2", type: "loftsurf", name: "Surface-Loft1", profiles: ["k1", "k2"] };
+  r = run(m, doc([line("k1", { std: "XY" }), pl, line("k2", { plane: "p1" }), lf]));
+  close(area(r.sheets!), 200, 1e-6);
+  assert.ok(r.sheets!.names.includes("f2:side:k1l"), r.sheets!.names.join());
+  // A 40 × 20 planar surface trimmed by the right plane (x = 0), keeping the +x half.
+  const s2 = rect("s2", 0, 0, 40, 20);
+  const ps: Feature = { id: "f3", type: "planesurf", name: "Surface-Plane1", sketch: "s2" };
+  const tr: Feature = { id: "f4", type: "trimsurf", name: "Surface-Trim1", surface: { name: "f3:face:0" }, tool: { plane: { std: "YZ" } }, keep: [{ name: "f3:face:0", hint: [10, 0, 0] }] };
+  r = run(m, doc([s2, ps, tr]));
+  close(area(r.sheets!), 400, 1e-6);
+  assert.ok(r.sheets!.faces.every(g => (m as never as { centroid(f: unknown): number[] }).centroid(g)[0] > 0));
+  // Keeping the other side.
+  r = run(m, doc([s2, ps, { ...tr, keep: [{ name: "f3:face:0", hint: [-10, 0, 0] }] } as Feature]));
+  assert.ok(r.sheets!.faces.every(g => (m as never as { centroid(f: unknown): number[] }).centroid(g)[0] < 0));
+  // Delete face, "delete": a block without its top is an open surface body of the other five faces.
+  const s3 = rect("s3", 0, 0, 100, 60);
+  const ex: Feature = { id: "f5", type: "extrude", name: "Extrude1", sketch: "s3", op: "boss", end: "blind", depth: { v: 20 } };
+  const del: Feature = { id: "f6", type: "delface", name: "DeleteFace1", faces: [{ name: "f5:end" }], mode: "delete" };
+  r = run(m, doc([s3, ex, del]));
+  assert.equal(r.body, null);
+  assert.equal(r.sheets!.faces.length, 5);
+  close(area(r.sheets!), 6000 + 2 * 160 * 20, 1e-6);
+  // A later feature reuses the cached steps: the deleted solid must stay gone.
+  r = run(m, doc([s3, ex, del, { id: "f7", type: "planesurf", name: "Surface-Plane1", sketch: "s3" } as Feature]));
+  assert.equal(r.body, null);
+});
+
+test("surfaces: fill openings and extend (FR-FT-100)", async () => {
+  const m = new Modeller(await occ());
+  const area = (n: { shape: unknown; faces: unknown[]; names: string[] }) => m.props(n as never).area;
+  // An open 40×20×10 tube; filling both ends and knitting with Create solid gives the 8000 mm³ box.
+  const s1 = rect("s1", 0, 0, 40, 20);
+  const es: Feature = { id: "f1", type: "extsurf", name: "Surface-Extrude1", sketch: "s1", depth: { v: 10 } };
+  const fb: Feature = { id: "f2", type: "fillsurf", name: "Surface-Fill1", surface: { name: "f1:side:s1l1" }, at: [0, 0, 0] };
+  let r = run(m, doc([s1, es, fb]));
+  assert.equal(r.sheets!.faces.length, 5, r.sheets!.names.join());
+  close(area(r.sheets!), 2 * 60 * 10 + 800, 1e-3);
+  const ft: Feature = { id: "f3", type: "fillsurf", name: "Surface-Fill2", surface: { name: "f1:side:s1l1" }, at: [0, 0, 10] };
+  const kn: Feature = { id: "f4", type: "knit", name: "Surface-Knit1", surfaces: [{ name: "f1:side:s1l1" }], tol: { v: 0.01 }, solid: true };
+  r = run(m, doc([s1, es, fb, ft, kn]));
+  close(r.props!.volume, 8000, 1e-3);
+  // A 40×20 planar surface extended 5 mm all round: 50 × 30.
+  const ps: Feature = { id: "f5", type: "planesurf", name: "Surface-Plane1", sketch: "s1" };
+  const ext: Feature = { id: "f6", type: "extendsurf", name: "Surface-Extend1", surface: { name: "f5:face:0" }, distance: { v: 5 } };
+  r = run(m, doc([s1, ps, ext]));
+  close(area(r.sheets!), 1500, 1e-6);
+  assert.deepEqual(r.sheets!.names, ["f5:face:0"]);
+});

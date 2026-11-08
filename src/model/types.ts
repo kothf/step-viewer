@@ -247,6 +247,8 @@ export interface ShellFeature {
 export interface DeleteFaceFeature {
   id: string; type: "delface"; name: string; suppressed?: boolean;
   faces: FaceRef[];
+  /** "delete": the faces go and the rest of the solid becomes a surface body (no healing). */
+  mode?: "patch" | "delete";
 }
 
 /**
@@ -549,11 +551,55 @@ export interface ReplaceFaceFeature {
   surface?: FaceRef;
 }
 
+/** Revolved surface: the sketch's curves (not the axis line) turned about `axis` by `angle` into sheets (`<id>:side:<entity>`). */
+export interface RevolveSurfFeature {
+  id: string; type: "revsurf"; name: string; suppressed?: boolean;
+  sketch: string;
+  axis: string;
+  angle: Num;
+  flip?: boolean;
+}
+
+/** Lofted surface: an open surface through two or more profile sketches, each one chain of curves, open or closed. */
+export interface LoftSurfFeature {
+  id: string; type: "loftsurf"; name: string; suppressed?: boolean;
+  profiles: string[];
+  ruled?: boolean;
+}
+
+/**
+ * Trim surface: a surface body cut by a plane or another surface; the pieces holding the picked
+ * faces (`keep`, by their hints) stay. Without `keep`, the larger piece stays.
+ */
+export interface TrimSurfFeature {
+  id: string; type: "trimsurf"; name: string; suppressed?: boolean;
+  surface?: FaceRef;
+  tool?: { plane: PlaneRef } | { surface: FaceRef };
+  /** What a click picks as the tool (UI). */
+  toolKind?: "plane" | "surface";
+  keep: FaceRef[];
+}
+
+/** Filled surface: a patch over the open boundary loop of a surface body nearest `at` (all loops without it); merged (knitted) into it unless `merge` is false. */
+export interface FillSurfFeature {
+  id: string; type: "fillsurf"; name: string; suppressed?: boolean;
+  surface?: FaceRef;
+  at?: V3;
+  merge?: boolean;
+}
+
+/** Extend surface: a one-face surface body grown by `distance` past all its sides. */
+export interface ExtendSurfFeature {
+  id: string; type: "extendsurf"; name: string; suppressed?: boolean;
+  surface?: FaceRef;
+  distance: Num;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
-  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature;
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

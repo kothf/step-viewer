@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.72.0] - 2026-11-08
+
+### Added
+
+- More surfaces (FRS 9.11, FR-FT-100) in Surface ▾: **Revolved Surface** turns the curves of a sketch about one of its lines (angle, reverse); **Lofted Surface** runs an open surface through profile sketches, open or closed chains, smooth or ruled; **Trim Surface** cuts a surface with a plane, a flat face or another surface and keeps the piece you click (the larger one if you don't).
+- **Filled Surface** patches a closed opening of a surface body, the one next to where you click, and sews the patch on unless Merge result is off. **Extend Surface** grows a one-face surface past all its edges by a distance, following its own shape.
+- **Delete Face** has a new option, **Delete (leave a surface)**: the faces leave the solid and the rest of it becomes an open surface body, ready to patch, knit or thicken.
+
+### Fixed
+
+- A solid turned into a surface (or deleted) by one feature came back when a later feature was added or edited.
+
 ## [1.71.0] - 2026-11-08
 
 ### Added
@@ -686,7 +698,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.71.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.72.0...HEAD
+[1.72.0]: https://github.com/kothf/step-viewer/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/kothf/step-viewer/compare/v1.70.0...v1.71.0
 [1.70.0]: https://github.com/kothf/step-viewer/compare/v1.69.0...v1.70.0
 [1.69.0]: https://github.com/kothf/step-viewer/compare/v1.68.0...v1.69.0
