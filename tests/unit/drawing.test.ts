@@ -717,6 +717,8 @@ test("a component-only view keeps the topology of its components only", async ()
   assert.deepEqual(a.cyls.map(c => c.f), ["c2@f2"]);
   assert.deepEqual(topoOnly(topo, ["s1"]).edges.map(e => e.k), ["s1/c3@f0|s1/c3@f1"]);
   assert.equal(topoOnly(topo, undefined), topo);
+});
+
 test("revision cloud: scallops bulge outwards whichever way the corners go", async () => {
   const { cloudPrims } = await import("../../src/drawing/annot");
   for (const pts of [[0, 0, 30, 0, 30, 20, 0, 20], [0, 0, 0, 20, 30, 20, 30, 0]]) {
