@@ -15,6 +15,7 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
+import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
 import { MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
@@ -63,9 +64,15 @@ export class MotionManager {
   private mateVals = new Map<string, { dist: number[]; angle: number[] }>();
   /** Each trace's component angle (degrees from the first frame) per frame (by trace id). */
   private traceAng = new Map<string, number[]>();
+  /** The last interference check (Results → Interference): pairs with their time spans, for the frames it was run on. */
+  clash: { study: string; key: string; items: ClashItem[]; ignored: number } | null = null;
+  /** The interference results are what the panel under the timeline shows (until a key, motor or trace is selected). */
+  private clashOpen = false;
+  /** Count pairs that already touch at the start (SolidWorks: treat coincidence as interference). */
+  clashAll = false;
   /** The selected key or motor; setting it drops the other selected keys. */
   get sel(): Sel { return this._sel; }
-  set sel(v: Sel) { this._sel = v; this.more = []; if (v) this.selTrace = null; }
+  set sel(v: Sel) { this._sel = v; this.more = []; if (v) { this.selTrace = null; this.clashOpen = false; } }
   /** The copied keys (Ctrl+C or the key menu): each with its track, the unit of that track and its time after the first. */
   private clip: { items: { track: string; unit: string; dt: number; key: AnyKey }[] } | null = null;
   /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
@@ -322,6 +329,59 @@ export class MotionManager {
       for (const [id, p] of Object.entries(f.pose)) if (rest[id]) tfs[id] = posed(rest[id], p);
     }
     return tfs;
+  }
+
+  // ---------- interference (Results → Interference Detection) ----------
+
+  /** What an interference check depends on: the solved frames, placement and explode keys. */
+  private clashKey() {
+    return JSON.stringify([this.key0(), this.study.tracks.filter(k => (k.kind === "pose" || k.kind === "explode") && !k.off), this.clashAll]);
+  }
+
+  /** Poses every frame and lists the pairs of components that enter one another, with when; shows them in the panel. */
+  checkInterference(): ClashItem[] {
+    const s = this.study, n = frameCount(s), doc = this.asm.doc;
+    if (!doc) return [];
+    this.ensure(n - 1);
+    const mates = new Map((doc.mates ?? []).map(m => [m.id, m]));
+    const per: [string, string][][] = [];
+    for (let k = 0; k < n; k++) {
+      this.asm.motionShow(this.tfsAt(k), frameAt(s, k / s.fps, mates).explode);
+      per.push(this.asm.motionClashes());
+    }
+    // Pairs touching at the start (a pin in its hole, faces mated together) are left out unless asked for.
+    const ignore = this.clashAll ? new Set<string>() : new Set(per[0].map(([a, b]) => pairKey(a, b)));
+    const items = clashItems(per, s.fps, ignore);
+    this.clash = { study: s.id, key: this.clashKey(), items, ignored: ignore.size };
+    this.sel = null;
+    this.selTrace = null;
+    this.clashOpen = true;
+    this.render();
+    this.showAt(this.time);
+    return items;
+  }
+
+  private compName(id: string) { return this.asm.doc?.components.find(c => c.id === id)?.name ?? id; }
+
+  /** Red bands along the bottom of the ruler where anything interferes (from the last check). */
+  private clashLane(): string {
+    const c = this.clash;
+    if (!c?.items.length || c.study !== this.study.id) return "";
+    const spans = c.items.flatMap(it => it.spans), f = 1 / this.study.fps;
+    return spans.map(([a, b]) => `<span class="mo-cspan" aria-hidden="true" style="left:${this.x(a)};width:calc(${this.x(Math.min(this.study.duration, b + f) - a)})"></span>`).join("");
+  }
+
+  private clashProps(): string {
+    const c = this.clash!, stale = c.key !== this.clashKey();
+    const rows = c.items.map(it => `<li class="mo-clash"><span translate="no">${esc(this.compName(it.a))} ↔ ${esc(this.compName(it.b))}</span> `
+      + it.spans.map(([a, b]) => `<button class="btn small" data-clt="${a}" title="${esc(t("Go to {t} s", { t: fmt(a) }))}">${esc(a === b ? `${fmt(a)} ${t("s")}` : `${fmt(a)}–${fmt(b)} ${t("s")}`)}</button>`).join(" ") + `</li>`).join("");
+    return `<strong>${esc(t("Interference"))}</strong> `
+      + `<span class="muted">${esc(c.items.length ? t("{n} pairs of components interfere.", { n: c.items.length }) : t("No interference found."))}${c.ignored ? " " + esc(t("{n} pairs touching at the start left out.", { n: c.ignored })) : ""}${stale ? " " + esc(t("The study changed since the check.")) : ""}</span>`
+      + `<label class="mo-f"><input type="checkbox" data-mo="clashall"${this.clashAll ? " checked" : ""} /><span>${esc(t("Treat coincidence as interference"))}</span></label>`
+      + `<button class="btn small" data-mo="clash">${esc(t("Check again"))}</button>`
+      + (c.items.length ? `<button class="btn small" data-mo="clashcsv" title="${esc(t("Save the interfering pairs and times as CSV"))}">CSV</button>` : "")
+      + `<button class="btn small" data-mo="clashclose">${esc(t("Close"))}</button>`
+      + (rows ? `<ul class="mo-clashes">${rows}</ul>` : "");
   }
 
   // ---------- trace paths (Results → Trace Path) ----------
@@ -769,11 +829,12 @@ export class MotionManager {
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`
       + `<button class="btn small" data-mo="orbit" title="${esc(t("Rotate the model once round over the study (camera keys)"))}">${esc(t("Rotate model"))}</button>`
+      + `<button class="btn small" data-mo="clash" title="${esc(t("Check where components enter one another over the study"))}">${esc(t("Interference"))}</button>`
       + `<span class="mo-sp"></span>`
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
-      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
+      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}${this.clashLane()}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
     this.pane.prepend(this.grip);
     const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw");
@@ -811,6 +872,7 @@ export class MotionManager {
     const tx = this.selTrace ? this.traces.find(k => k.id === this.selTrace) : undefined;
     if (tx) return this.traceProps(tx);
     const sel = this.sel, tr = sel && this.study.tracks.find(k => k.id === sel.track);
+    if ((!sel || !tr) && this.clashOpen && this.clash?.study === this.study.id) return this.clashProps();
     if (!sel || !tr) return `<span class="muted">${esc(t("Select a key or a motor to edit it; double-click a track to add a key."))}</span>`;
     const field = (label: string, key: string, v: string, unitTxt = "") => `<label class="mo-f"><span>${esc(label)}</span><input type="text" inputmode="decimal" class="mo-n" data-p="${key}" value="${esc(v)}" />${unitTxt ? `<span class="muted">${esc(unitTxt)}</span>` : ""}</label>`;
     const interpSel = (v: Interp | undefined) => `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="interp">${INTERPS.map(([k, l]) => `<option value="${k}"${(v ?? "linear") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
@@ -896,7 +958,12 @@ export class MotionManager {
       else if (a === "gif") { if (this.recording) this.recording = null; else void this.recordGif(); }
       else if (a.startsWith("del:")) this.deleteTrack(a.slice(4));
       else if (a.startsWith("tdel:")) this.deleteTrace(a.slice(5));
+      else if (a === "clash") this.checkInterference();
+      else if (a === "clashclose") { this.clashOpen = false; this.render(); }
+      else if (a === "clashcsv" && this.clash) download(new Blob([clashCsv(this.clash.items, id => this.compName(id))], { type: "text/csv" }), `${this.fileBase()}-interference.csv`);
     });
+    on("input[data-mo=clashall]", "change", (_e, el) => { this.clashAll = (el as HTMLInputElement).checked; this.checkInterference(); });
+    on("button[data-clt]", "click", (_e, el) => this.seek(Number(el.dataset.clt)));
     on("select[data-mo=study]", "change", (_e, el) => { this.stop(); this.studyId = (el as HTMLSelectElement).value; this.sel = null; this.render(); this.showAt(0); });
     on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v.startsWith("mplot:")) this.addMatePlot(v.slice(6)); else if (v) this.addTrack(v); });
     on(".mo-name[data-trace]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = null; this.selTrace = el.dataset.trace!; this.render(); this.showAt(this.time); });

@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { apply, applyDir, baseFlange, breakCorner, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -44,7 +44,7 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the bend line.");
     const ln = bendSketchLine(sk, frameOfSketch(sk));
     res = f.type === "smbend" ? sketchedBend(sm, f, ln) : jog(sm, f, ln);
-  } else res = f.type === "smflange" ? edgeFlange(sm, f) : hem(sm, f);
+  } else res = f.type === "smflange" ? edgeFlange(sm, f) : f.type === "smcorner" ? breakCorner(sm, f) : hem(sm, f);
   const { state, ops } = res;
   if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
@@ -56,7 +56,7 @@ function applyOps(api: SheetApi, body: Named | null, ops: SheetOp[], T: number, 
   ops.forEach((op, i) => {
     if (op.kind !== "cut") return;
     if (!out) return;
-    out = api.bool("cut", out, cutTool(api, op.M, op.loop, T, `${fid}:t${i}`), fid);
+    out = api.bool("cut", out, op.segs ? segCutTool(api, op.M, op.segs, T, `${fid}:t${i}`) : cutTool(api, op.M, op.loop, T, `${fid}:t${i}`), fid);
   });
   for (const op of ops) {
     if (op.kind === "cut") continue;
@@ -157,6 +157,15 @@ function cutTool(api: SheetApi, M: Mat, loop: V2[], T: number, fid: string): Nam
   const faces = api.sub(shape, "FACE");
   return { shape, faces, names: faces.map((_f, i) => `${fid}:${i}`) };
 }
+
+/** A cut prism across the sheet from a closed outline; a side face whose piece's `ent` holds ":" takes that name. */
+function segCutTool(api: SheetApi, M: Mat, segs: Seg[], T: number, fid: string): Named {
+  const ccw = polyArea(loopPolygon(segs)) >= 0 ? segs : [...segs].reverse().map(s => s.kind === "line" ? { ...s, a: s.b, b: s.a } : s.kind === "arc" ? { ...s, a: s.b, b: s.a, ccw: !s.ccw } : s);
+  const shape = prism(api, faceOf(api, ccw, [], frameOf(M, -T * 0.01)), applyDir(M, [0, 0, T * 1.02]));
+  const n = nameSides(api, shape, frameOf2(M, -T * 0.01), T * 1.02, ccw, fid);
+  return { ...n, names: n.names.map((x, i) => { const e = x.slice(fid.length + 1); return e.includes(":") ? e : `${fid}:${i}`; }) };
+}
+const frameOf2 = (M: Mat, z: number): Mat => ({ ...M, o: apply(M, [0, 0, z]) });
 
 /** The flat pattern as a solid on the plane of the first face. Material that later features took out
  * of a flat panel (holes, cuts) is moved onto the pattern with the panel and cut from it too; then

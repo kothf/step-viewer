@@ -1091,6 +1091,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Motion trace paths (FR-FT-122): their rows have an empty lane; the panel plots the selected one. */
 .motion .mo-tlane { position: relative; height: 26px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(90deg, transparent 0 6px, color-mix(in srgb, var(--line) 50%, transparent) 6px 7px); }
 .motion .mo-tlane.off { opacity: 0.55; }
+.motion .mo-cspan { position: absolute; bottom: 0; height: 4px; min-width: 2px; background: var(--danger); pointer-events: none; }
+.motion .mo-clashes { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.motion .mo-clash { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .motion .mo-trace-plot { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .motion .mo-plot { width: min(100%, 520px); height: 96px; background: var(--panel, transparent); border: 1px solid var(--line); border-radius: 4px; }
 .motion .mo-plot .mo-pg { stroke: var(--line); stroke-width: 0.5; vector-effect: non-scaling-stroke; }

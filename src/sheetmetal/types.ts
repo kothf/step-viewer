@@ -70,6 +70,16 @@ export interface SmHemFeature {
   flip?: boolean;
 }
 
+/** Break corner: outside corners of flat faces rounded or chamfered through the thickness. */
+export interface SmCornerFeature {
+  id: string; type: "smcorner"; name: string; suppressed?: boolean;
+  /** Thickness edges at the corners (between two side faces of one flat face). */
+  edges: EdgeRef[];
+  kind: "chamfer" | "fillet";
+  /** Chamfer distance along both edges, or fillet radius. */
+  size: Num;
+}
+
 /** Flat pattern: the folded sheet unfolded onto the plane of its first face. */
 export interface SmFlatFeature {
   id: string; type: "smflat"; name: string; suppressed?: boolean;
@@ -113,8 +123,8 @@ export interface SmTabFeature {
   sketch: string;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smflat"]);
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

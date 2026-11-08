@@ -2539,6 +2539,16 @@ export class AsmController {
     this.previewTfs(all);
   }
 
+  /** Top-level components whose shown meshes enter one another where they are shown now (motion interference check). */
+  motionClashes(): [string, string][] {
+    const out = new Map<string, [string, string]>();
+    for (const k of this.clashes()) {
+      const [i, j] = k.split(":").map(Number), a = topOf(this.shownIds[i]), b = topOf(this.shownIds[j]);
+      if (a && b && a !== b) out.set(a < b ? `${a}|${b}` : `${b}|${a}`, a < b ? [a, b] : [b, a]);
+    }
+    return [...out.values()];
+  }
+
   /** Parts whose look a motion study changed: viewer part index → what it had. */
   private motionLooks = new Map<number, { visible: boolean; opacity: number }>();
 
