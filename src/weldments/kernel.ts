@@ -119,15 +119,21 @@ export function memberDesc(f: MemberFeature, doc: PartDoc): string {
   return f.profile === "sketch" ? doc.features.find(x => x.id === f.psketch)?.name ?? "Sketch" : profileName(f.profile, f.size);
 }
 
-function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
+/** The profile settings a segment uses: its group's, else the feature's (group 1). */
+export function groupOf(f: MemberFeature, ent: string): Pick<MemberFeature, "anchor" | "angle" | "mirror"> {
+  return f.groups?.find(g => g.ents.includes(ent)) ?? f;
+}
+
+function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
   const v = upOf(ref, seg, doc, frames);
   const u = cross(v, seg.wa);
-  const an = f.anchor ? anchorPoint(shape, f.anchor) : shape.origin ?? [0, 0];
-  const a = f.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
+  const g = groupOf(f, ref.ent);
+  const an = g.anchor ? anchorPoint(shape, g.anchor) : shape.origin ?? [0, 0];
+  const a = g.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
   const p2 = (q: V2): V2 => {
     let x = q[0] - an[0];
     const y = q[1] - an[1];
-    if (f.mirror) x = -x;
+    if (g.mirror) x = -x;
     return [x * c - y * s, x * s + y * c];
   };
   const R = Math.max(...outline(shape.outer, 8).map(q => Math.hypot(...p2(q))));

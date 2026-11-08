@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.147.0] - 2026-11-08
+## [1.149.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
+
+## [1.147.0] - 2026-11-08
+
+### Added
+
+- **Structural member groups (FR-FT-121).** Each segment in the Structural Member panel has a group list. Segments moved to a new group get their own profile position, rotation angle and mirror, so a frame's rails and posts can face different ways within one feature. Group 1 keeps the settings above.
+- **Pick member path segments in the view (FR-FT-121).** While a Structural Member is open, clicking a line or arc of the path sketch (or a face of the member's preview) ticks or unticks that segment, as in SolidWorks; a segment of another sketch starts the selection over with that sketch.
 
 ## [1.146.0] - 2026-11-08
 
@@ -1254,7 +1261,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.147.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.149.0...HEAD
+[1.149.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.149.0
 [1.147.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.147.0
 [1.146.0]: https://github.com/kothf/step-viewer/compare/v1.144.0...v1.146.0
 [1.144.0]: https://github.com/kothf/step-viewer/compare/v1.143.0...v1.144.0
