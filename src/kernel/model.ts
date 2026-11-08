@@ -247,6 +247,14 @@ export class Modeller {
     const pos = ad.Plane().Position();
     let n = this.xyz(pos.Direction());
     const x = this.xyz(pos.XDirection());
+    // The face's own normal is du × dv of its surface; a plane made by revolving a straight edge (a revolve's
+    // flat end or web face) is a surface of revolution whose du × dv can point against the plane's axis.
+    {
+      const q = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1((ad.FirstUParameter() + ad.LastUParameter()) / 2, (ad.FirstVParameter() + ad.LastVParameter()) / 2, q, du, dv);
+      const pn = cross(this.xyz(du), this.xyz(dv));
+      if (dot(pn, n) < 0) n = mul(n, -1);
+    }
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
     let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));

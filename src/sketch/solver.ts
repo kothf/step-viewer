@@ -204,6 +204,21 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
     }
     case "tangent": {
       const li = kind(0) === "line" ? 0 : kind(1) === "line" ? 1 : -1;
+      // Curves that share an end (a sketch fillet's arc and its lines): tangent there means the radius to that
+      // end is square to the line, or both centres and the end are in line. The distance form below is flat
+      // at the solution in that case (its gradient vanishes), so the solver counted 1 spare DOF per tangency.
+      const endIds = (i: number) => { const e = E(i); return e && (e.t === "line" || e.t === "arc") ? [e.a, e.b] : []; };
+      const shared = endIds(0).find(q => endIds(1).includes(q));
+      if (shared) {
+        const S = P(sys, shared);
+        if (li >= 0) {
+          const [a, b] = ends(sys, ents, r.e[li]);
+          const c = center(sys, ents, r.e[1 - li]);
+          return [term([a, b, c, S], x => dot(sub(c(x), S(x)), sub(b(x), a(x))) / nrm(sub(b(x), a(x))))];
+        }
+        const c1 = center(sys, ents, r.e[0]), c2 = center(sys, ents, r.e[1]);
+        return [term([c1, c2, S], x => cross(sub(c1(x), S(x)), sub(c2(x), S(x))) / (nrm(sub(c1(x), S(x))) + nrm(sub(c2(x), S(x)))))];
+      }
       if (li >= 0) {
         const [a, b] = ends(sys, ents, r.e[li]);
         const c = center(sys, ents, r.e[1 - li]), rr = R(sys, ents, r.e[1 - li]);

@@ -897,6 +897,8 @@ export const RU: Record<string, string> = {
   "Hole positions": "Положения отверстий",
   "{n} hole|{n} holes": "{n} отверстие|{n} отверстия|{n} отверстий",
   "Clear holes": "Убрать отверстия",
+  "Add hole": "Добавить отверстие",
+  "Hole {n}": "Отверстие {n}",
   "Click on the face to place holes; click a hole again to remove it.": "Щёлкайте по грани, чтобы ставить отверстия; повторный щелчок по отверстию убирает его.",
   "Click the flat face (or a plane) for the holes.": "Щёлкните плоскую грань (или плоскость) для отверстий.",
   "Click on the face to place the holes.": "Щёлкните по грани, чтобы поставить отверстия.",

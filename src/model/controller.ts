@@ -1645,7 +1645,8 @@ export class ModelController {
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
-      if (m.editor.key(e)) { stop(); this.renderBar(); return; }
+      // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
+      if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
@@ -4355,6 +4356,8 @@ export class ModelController {
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${(["X", "Y"] as const).map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(p[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
     }
@@ -4487,8 +4490,8 @@ export class ModelController {
     // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
     // A rebuild re-renders the panel; keep what is being typed (and the caret) instead of the stored value.
     const typing = new Map<string, { value: string; focus: boolean; a: number | null; b: number | null }>();
-    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k]").forEach(inp => {
-      const key = inp.dataset.num ? `n:${inp.dataset.num}` : `k:${inp.dataset.k}`;
+    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k], input[data-hp]").forEach(inp => {
+      const key = inp.dataset.num ? `n:${inp.dataset.num}` : inp.dataset.hp ? `h:${inp.dataset.hp}` : `k:${inp.dataset.k}`;
       const focus = document.activeElement === inp;
       if (focus || inp.value !== inp.defaultValue) typing.set(key, { value: inp.value, focus, a: inp.selectionStart, b: inp.selectionEnd });
     });
@@ -4496,7 +4499,7 @@ export class ModelController {
       + err + `<p class="pm-help muted">${esc(m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels."))}</p>`
       + name + body;
     typing.forEach((st, key) => {
-      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
+      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : key.startsWith("h:") ? `input[data-hp="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
       if (!inp) return;
       inp.value = st.value;
       if (st.focus) { inp.focus(); try { inp.setSelectionRange(st.a, st.b); } catch { /* not a text input */ } }
@@ -4895,6 +4898,43 @@ export class ModelController {
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
+    // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
+    pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      const last = f.pts.at(-1);
+      f.pts.push(last ? [last[0] + Math.max(f.diameter.v * 2, 5), last[1]] : [0, 0]);
+      this.draftChanged();
+      setTimeout(() => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${f.pts.length - 1}:0"]`); inp?.focus(); inp?.select(); }, 0);
+    });
+    pm.querySelectorAll<HTMLElement>("[data-rmh]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      f.pts.splice(+b.dataset.rmh!, 1);
+      this.draftChanged();
+    }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-hp]").forEach(inp => {
+      const apply = () => {
+        if (f.type !== "hole") return;
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        let v: number;
+        try { v = evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const p = f.pts[i];
+        if (!p || p[j] === v) return;
+        p[j] = v;
+        this.draftChanged();
+      };
+      inp.addEventListener("change", apply);
+      // Enter applies and goes on to the next coordinate (X, Y, then the next hole), so a table of holes is typed in one go.
+      inp.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault(); e.stopPropagation();
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        const next = j === 0 ? `${i}:1` : `${i + 1}:0`;
+        apply();
+        setTimeout(() => { const n = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${next}"]`); n?.focus(); n?.select(); }, 0);
+      });
+    });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
