@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2680,6 +2680,91 @@ export class Modeller {
   shownBodies(parts: Named[]): Named { return this.compoundOf(parts); }
 
   /** A body as BREP text (Insert part, FR-BODY-005: another part's result kept in this one). */
+  /**
+   * Feature recognition (FR-FT-102): round holes in the body at the end of the document. A hole is a
+   * set of cylinder faces (material outside) on one axis, open on a flat face square to it at one end
+   * (blind, with a flat or 118° drilled bottom) or both (through). The faces to fill come back with,
+   * for each hole, its plane (the opening face, as it is after the fill) and centre in that frame.
+   */
+  recognizeHoles(doc: PartDoc): { faces: FaceRef[]; holes: RecognizedHole[] } {
+    const oc = this.oc;
+    const r = this.evaluate(doc);
+    const body = r.body;
+    if (!body) return { faces: [], holes: [] };
+    const tol = Math.max(1e-4, this.size(body.shape) * 1e-6);
+    type Cyl = { i: number; o: V3; d: V3; r: number; v0: number; v1: number };
+    type Pln = { i: number; o: V3; n: V3 };
+    const cyls: Cyl[] = [], plns: Pln[] = [], cones: { i: number; o: V3; d: V3 }[] = [];
+    body.faces.forEach((face, i) => {
+      const ad = new oc.BRepAdaptor_Surface_2(face, true);
+      const ty = ad.GetType();
+      if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) {
+        const c = ad.Cylinder(), ax = c.Axis();
+        const o = this.xyz(ax.Location()), d = unit(this.xyz(ax.Direction()));
+        // Normal and point at the same parameter (a full round's centroid lies on its axis).
+        const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+        const pp = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+        ad.D1(u, v, pp, du, dv);
+        let n = unit(cross(this.xyz(du), this.xyz(dv)));
+        if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+        const rel = sub3(this.xyz(pp), o), radial = sub3(rel, mul(d, dot(rel, d)));
+        // Material outside: the face normal points at the axis.
+        if (dot(n, radial) >= 0) return;
+        const vs = [ad.FirstVParameter(), ad.LastVParameter()];
+        cyls.push({ i, o, d, r: c.Radius(), v0: Math.min(...vs), v1: Math.max(...vs) });
+      } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
+        plns.push({ i, o: this.xyz(ad.Plane().Location()), n: this.faceNormalAt(face) });
+      } else if (ty === oc.GeomAbs_SurfaceType.GeomAbs_Cone) {
+        const ax = ad.Cone().Axis();
+        cones.push({ i, o: this.xyz(ax.Location()), d: unit(this.xyz(ax.Direction())) });
+      }
+    });
+    const onAxis = (p: V3, o: V3, d: V3) => { const q = sub3(p, o); return Math.hypot(...sub3(q, mul(d, dot(q, d)))) < tol * 10; };
+    // Group the cylinder faces of one hole (a full round is often two half faces).
+    const groups: { o: V3; d: V3; r: number; lo: number; hi: number; faces: number[] }[] = [];
+    for (const c of cyls) {
+      const g = groups.find(g => Math.abs(g.r - c.r) < tol * 10 && Math.abs(Math.abs(dot(g.d, c.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
+      const s = (v: number) => dot(sub3(add(c.o, mul(c.d, v)), g ? g.o : c.o), g ? g.d : c.d);
+      const a = s(c.v0), b = s(c.v1);
+      if (g) { g.lo = Math.min(g.lo, a, b); g.hi = Math.max(g.hi, a, b); g.faces.push(c.i); }
+      else groups.push({ o: c.o, d: c.d, r: c.r, lo: Math.min(a, b), hi: Math.max(a, b), faces: [c.i] });
+    }
+    const found: { faces: number[]; open: number; at: V3; end: "blind" | "through"; depth: number; flat: boolean; r: number }[] = [];
+    for (const g of groups) {
+      const P0 = add(g.o, mul(g.d, g.lo)), P1 = add(g.o, mul(g.d, g.hi));
+      // A flat face square to the axis through an end, facing away from the hole: the hole opens there.
+      const cap = (P: V3, out: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, out) > 1 - 1e-6);
+      const floor = (P: V3, up: V3) => plns.find(p => Math.abs(dot(sub3(P, p.o), p.n)) < tol * 10 && dot(p.n, up) > 1 - 1e-6);
+      const open0 = cap(P0, mul(g.d, -1)), open1 = cap(P1, g.d);
+      const len = g.hi - g.lo;
+      if (open0 && open1) { found.push({ faces: g.faces, open: open0.i, at: P0, end: "through", depth: len, flat: true, r: g.r }); continue; }
+      const open = open0 ?? open1;
+      if (!open) continue;
+      const [at, bot, up] = open0 ? [P0, P1, mul(g.d, -1)] : [P1, P0, g.d];
+      const flatFace = floor(bot, up);
+      const cone = cones.find(c => Math.abs(Math.abs(dot(c.d, g.d)) - 1) < 1e-6 && onAxis(c.o, g.o, g.d));
+      if (flatFace) found.push({ faces: [...g.faces, flatFace.i], open: open.i, at, end: "blind", depth: len, flat: true, r: g.r });
+      else if (cone) found.push({ faces: [...g.faces, cone.i], open: open.i, at, end: "blind", depth: len, flat: false, r: g.r });
+    }
+    // A face another hole fills cannot hold a hole.
+    const filled = new Set(found.flatMap(h => h.faces));
+    const keep = found.filter(h => !filled.has(h.open));
+    if (!keep.length) return { faces: [], holes: [] };
+    const ref = (i: number): FaceRef => ({ name: body.names[i], hint: this.centroid(body.faces[i]) });
+    const faces = keep.flatMap(h => h.faces.map(ref));
+    // The planes are measured after the fill, which is what the hole features will be built on.
+    const del: Feature = { id: "__recog", type: "delface", name: "", faces };
+    const after = this.evaluate({ ...doc, rollback: null, features: [...doc.features.slice(0, doc.rollback ?? doc.features.length), del] });
+    if (after.statuses.at(-1)?.ok === false || !after.body) return { faces: [], holes: [] };
+    const holes: RecognizedHole[] = keep.map(h => {
+      const plane: PlaneRef = { face: { name: body.names[h.open], hint: h.at } };
+      const fr = this.planeFrame(plane, after.body, after.frames);
+      const q = sub3(h.at, fr.o);
+      return { plane, pt: [dot(q, fr.x), dot(q, fr.y)], diameter: 2 * h.r, end: h.end, depth: h.depth, flat: h.flat };
+    });
+    return { faces, holes };
+  }
+
   brepText(body: Named): { brep: string; solids: number; faces: number } {
     const oc = this.oc as any;
     const path = `/part${Date.now()}${Math.floor(Math.random() * 1e6)}.brep`;
