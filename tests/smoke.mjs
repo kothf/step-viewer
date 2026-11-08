@@ -8141,6 +8141,24 @@ try {
     await ctx.close();
   }
 
+  // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const pg = await ctx.newPage();
+    pg.on("pageerror", e => errors.push(e.message));
+    const want = "ПЛ31а-п_черн";
+    const cp = Buffer.from([...want].map(c => { const u = c.charCodeAt(0); return u < 0x80 ? u : u - 0x350; }));
+    const src = await readFile("src/worker/warmup.step", "latin1");
+    const parts = src.split("warm-up").map(x => Buffer.from(x, "latin1"));
+    const file = Buffer.concat(parts.flatMap((x, i) => i ? [cp, x] : [x]));
+    await pg.goto(`${origin}/index.html?debug&nokernel`);
+    await pg.setInputFiles("#file-input", { name: "socket.step", mimeType: "application/step", buffer: file });
+    await pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    const names = await pg.$$eval("#tree .row-n", els => els.map(e => e.textContent.trim()));
+    check(names.some(n => n.includes(want)) && !names.some(n => /[ÏËà÷åðí]/.test(n)), `STEP names in Windows-1251 read as Cyrillic in the model tree (${names.join(" | ")})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

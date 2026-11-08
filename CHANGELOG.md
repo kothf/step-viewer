@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.162.0] - 2026-11-08
+
+### Fixed
+
+- **Russian part names in STEP files** show as Cyrillic in the Model tree and the file info, not as "ÏË31à-ï_÷åðí". Many Russian CAD exports write names as raw Windows-1251 bytes, and OpenCASCADE read them as Latin-1. Names are now decoded again: Windows-1251 when the file's names look Cyrillic (decided once per file, so real Latin-1 names such as "Müller" stay as they are), UTF-8 written through \X\ escapes, and UTF-16 code units written as bytes. The STEP header reader also understands \X4\ and \S\ escapes. The interface font list has Noto Sans / DejaVu Sans / Liberation Sans fallbacks, which cover Cyrillic on Linux.
+
 ## [1.157.0] - 2026-11-08
 
 ### Added
@@ -1291,7 +1297,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.157.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.162.0...HEAD
+[1.162.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.162.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
 [1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0

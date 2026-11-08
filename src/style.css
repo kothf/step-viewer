@@ -14,7 +14,7 @@
   --danger: #d32f2f;
   --warn-text: #8a5600;
   --scrim: rgba(15, 20, 30, 0.45);
-  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "DejaVu Sans", "Liberation Sans", Ubuntu, Arial, sans-serif;
   --fs-caption: 12px;
   --fs-body: 14px;
   --fs-subtitle: 18px;
@@ -23,7 +23,7 @@
   --vp-top: #f8fafc;
   --vp-bottom: #c9d2de;
   --shadow: 0 6px 24px rgba(20, 30, 50, 0.12);
-  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
