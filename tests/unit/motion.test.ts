@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
@@ -207,4 +207,21 @@ test("GIF: palette, nearest colours and file structure", () => {
     frames++;
   }
   assert.equal(frames, 2);
+});
+
+test("key interpolations: snap holds then jumps, ease in/out start and end slowly", () => {
+  close(ease(0.5, undefined), 0.5);
+  close(ease(0.5, "linear"), 0.5);
+  close(ease(0.99, "snap"), 0);
+  close(ease(1, "snap"), 1);
+  close(ease(0.5, "easein"), 0.25);
+  close(ease(0.5, "easeout"), 0.75);
+  close(ease(0.5, "ease"), 0.5);
+  assert.ok(ease(0.1, "easein") < 0.1 && ease(0.1, "easeout") > 0.1);
+  const keys = [{ t: 0, v: 0 }, { t: 2, v: 10, interp: "snap" as const }];
+  close(valueAt(keys, 1.999)!, 0);
+  close(valueAt(keys, 2)!, 10);
+  close(valueAt([{ t: 0, v: 0 }, { t: 2, v: 10, interp: "easein" as const }], 1)!, 2.5);
+  const pk = [{ t: 0, d: [0, 0, 0] as [number, number, number], r: [0, 0, 0] as [number, number, number] }, { t: 1, d: [0, 0, 8] as [number, number, number], r: [0, 0, 0] as [number, number, number], interp: "easeout" as const }];
+  close(poseAt(pk, 0.5)!.d[2], 6);
 });
