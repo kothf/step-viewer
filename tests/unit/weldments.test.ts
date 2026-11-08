@@ -108,6 +108,13 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   // Against the body instead of its face: the end follows the post's round corners too (6 mm radius).
   const rb = run(m, doc([k, mem, { ...tr, kind: "body" } as Feature]));
   assert.deepEqual(rb.cut.map(c => c.length), [500, 386]);
+  // Against a plane instead of a face: the Right (YZ) plane lengthens the beam back to x = 0 (400 long),
+  // and a reference plane 200 along X cuts it there (200 long).
+  const rp = run(m, doc([k, mem, { ...tr, boundary: undefined, plane: { std: "YZ" } } as Feature]));
+  assert.deepEqual(rp.cut.map(c => c.length), [500, 400]);
+  const pl: Feature = { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 200 } };
+  const rq = run(m, doc([k, mem, pl, { ...tr, boundary: undefined, plane: { plane: "p" } } as Feature]));
+  assert.deepEqual(rq.cut.map(c => c.length), [500, 200]);
 
   // End cap on the beam's free end, 5 thick, 2 in from its outline.
   const cap: Feature = { id: "c", type: "endcap", name: "End cap1", faces: [{ name: "m:beam:end" }], thickness: { v: 5 }, inset: { v: 2 } };

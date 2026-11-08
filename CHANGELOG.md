@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Miter flange (FR-FT-120)**: Sheet Metal → **Miter Flange** runs an open profile of lines, sketched on a plane square to an edge and starting at it, along the edges clicked in the view. Each line of the profile becomes a bend and a flat flange, with lengths to the virtual sharps on the profile's side, and flanges on edges that meet at a corner of the face are mitred at every level with the corner gap between them, as in SolidWorks. The flat pattern unfolds them like any other flange.
 
+## [1.253.0] - 2026-11-08
+
+### Added
+
+- **Trim/Extend to a plane (FR-FT-121).** With *Face or plane*, the Trimming boundary's new **Plane** list takes Top, Front, Right or any reference plane above the feature, so members can be cut at, or lengthened up to, a plane that isn't a face of the model, as in SolidWorks. Picking a face again goes back to the face.
+
 ## [1.252.0] - 2026-11-08
 
 ### Added
@@ -1637,7 +1643,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.254.0...HEAD
-[1.254.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.254.0
+[1.254.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.254.0
+[1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0

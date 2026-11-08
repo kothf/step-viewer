@@ -1,6 +1,6 @@
 // Weldment features (FR-FT-121). Each member, end cap, gusset and weld bead is its own solid body
 // in the part's body compound, so the Bodies folder, mass properties and the cut list see them.
-import type { FaceRef, Num } from "../model/types";
+import type { FaceRef, Num, PlaneRef } from "../model/types";
 import type { Anchor, ProfileType } from "./profiles";
 
 /** A path segment: a line of a 2D sketch or of a 3D sketch, by the sketch's id and the line's id. */
@@ -61,6 +61,8 @@ export interface TrimExtendFeature {
   /** Bodies to trim: any face of each member segment. */
   bodies: FaceRef[];
   boundary?: FaceRef;
+  /** kind face: a reference or standard plane used instead of a picked face. */
+  plane?: PlaneRef;
   /** face: cut at a flat face's plane; body: stop at another body; mitre: this member and the boundary member are both lengthened to where their axes meet and cut on the bisector plane (End miter); butt1/butt2: the same two members butted, the first (butt1) or the boundary member (butt2) stopping at the other's side, the other running on to its far side, cut square (End butt). */
   kind: "face" | "body" | "mitre" | "butt1" | "butt2";
   /** Members that end short of the boundary are not lengthened. */
