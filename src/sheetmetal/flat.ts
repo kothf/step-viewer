@@ -13,7 +13,12 @@ export function flatDrawing(st: SheetState): Drawing2 {
   const min: V2 = [Infinity, Infinity], max: V2 = [-Infinity, -Infinity];
   const grow = (p: V2, r = 0) => { min[0] = Math.min(min[0], p[0] - r); min[1] = Math.min(min[1], p[1] - r); max[0] = Math.max(max[0], p[0] + r); max[1] = Math.max(max[1], p[1] + r); };
   const ang = (c: V2, p: V2) => Math.atan2(p[1] - c[1], p[0] - c[0]);
-  for (const s of [...outer, ...holes].flat() as Seg[]) {
+  if (st.flatEdges) for (const e of st.flatEdges) {
+    if (e.kind === "line") { entities.push({ ...e, layer: "OUTLINE" }); grow(e.a); grow(e.b); }
+    else if (e.kind === "poly") { entities.push({ kind: "poly", pts: e.pts, closed: false, layer: "OUTLINE" }); e.pts.forEach(p => grow(p)); }
+    else { entities.push({ ...e, layer: "OUTLINE" }); grow(e.c, e.r); }
+  }
+  else for (const s of [...outer, ...holes].flat() as Seg[]) {
     if (s.kind === "line") { entities.push({ kind: "line", a: s.a, b: s.b, layer: "OUTLINE" }); grow(s.a); grow(s.b); }
     else if (s.kind === "circle") { entities.push({ kind: "circle", c: s.c, r: s.r, layer: "OUTLINE" }); grow(s.c, s.r); }
     else if (s.kind === "arc") {
