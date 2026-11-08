@@ -13,6 +13,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Drawing dimensions: a circle smaller than the snap distance (a Ø5 rod at 1:1, a Ø12 bore at 1:2) could not be picked, because its centre point or a nearby line end always won. A circle right under the cursor now beats a point that is not, and a first pick on a circle takes the circle even where another edge ends on it (a cross hole's curve on a shaft).
 - Text widths on drawings follow the embedded DejaVu Sans. Fit deviations (Ø12H7 +0.018/0) no longer overlap the dimension text or each other, and long title block values shrink to fit their cell or, in the big cells, break into two lines instead of running past the frame.
 
+## [1.236.0] - 2026-11-08
+
+### Added
+
+- **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
+
+## [1.234.0] - 2026-11-08
+
+### Added
+
+- **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in SolidWorks. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
+
 ## [1.233.0] - 2026-11-08
 
 ### Changed
@@ -1565,7 +1577,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.237.0...HEAD
-[1.237.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.237.0
+[1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
+[1.236.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.236.0
+[1.234.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.234.0
 [1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
 [1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
