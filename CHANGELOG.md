@@ -5,12 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.66.0] - 2026-11-07
+## [1.67.0] - 2026-11-08
 
 ### Added
 
 - Collision detection while dragging components: tick it in the Move panel and a drag stops where the component would enter another, even on a fast drag (FR-MATE-002).
 - Inferred mates: hold Alt while dragging a component by a face and drop it on a face of another component; a cylinder on a cylinder makes a concentric mate, a flat face on a flat face a coincident one (FR-MATE-007).
+- Direct editing on any body, imported ones too (FR-FT-101): **Move Face** pushes flat faces out or in along their normals (the new side faces merge into the faces next to them), and **Delete Face** removes faces and heals the gap from the faces around them. Both are in the Sweep ▾ menu.
+
+## [1.66.0] - 2026-11-08
+
+### Added
+
+- **Section views** (FR-DRW-012, AT-P5-2): Section ▾ in the drawing workspace draws a horizontal, vertical or two-point cutting line on a view; the line follows the cursor and snaps to circle centres, line ends and midpoints. Then the section view follows the cursor on the side it looks from, lined up with its parent, and a click places it. The cut faces are hatched (spacing and angle per view), the parent shows the cutting line with thick ends, arrows and letters, and the view is labelled SECTION A-A. Flip direction looks from the other side.
+- **Detail views** (FR-DRW-013): click the centre of a circle on a view (it snaps too), then its radius, then place the view. It shows the parent's lines (and hatching) clipped to the circle at twice the parent's scale, with DETAIL B and its scale under it, and the circle and letter on the parent. The radius can be typed in the view's properties.
+- **Auxiliary views** (FR-DRW-014): click a straight edge of a view, then place the view square to it; it stays lined up and the parent gets a lettered arrow.
+- Section, detail and auxiliary views are listed under their parent in the drawing tree, drag only along their viewing direction, carry a letter that can be changed (the next free letter, skipping I, O and Q) and export to PDF, SVG and DXF (hatching on its own HATCH layer).
 
 ## [1.65.0] - 2026-11-07
 
@@ -633,7 +643,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.66.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.67.0...HEAD
+[1.67.0]: https://github.com/kothf/step-viewer/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/kothf/step-viewer/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0

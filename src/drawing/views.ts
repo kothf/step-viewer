@@ -33,10 +33,37 @@ export function projectedDir(parent: ViewDir, side: [number, number], proj: Proj
   return { dir: mul(y, s * dy), up: mul(n, -s * dy) };
 }
 
+/**
+ * The view seen from the side `q` (a unit 2D direction on the sheet, in the parent's axes), with the
+ * viewer on that side: a third-angle projection along any direction. Section and auxiliary views use it.
+ */
+export function sideView(parent: ViewDir, q: [number, number]): ViewDir {
+  const { x, y, n } = viewAxes(parent);
+  const r: [number, number] = [-q[1], q[0]];
+  const r3 = add(mul(x, r[0]), y, r[1]);
+  const X = add(mul(n, -q[0]), r3, r[0]), Y = add(mul(n, -q[1]), r3, r[1]);
+  const dir = unit([X[1] * Y[2] - X[2] * Y[1], X[2] * Y[0] - X[0] * Y[2], X[0] * Y[1] - X[1] * Y[0]]);
+  return { dir, up: unit(Y) };
+}
+
+/** Section / aux views: the unit sheet direction (parent axes) from the line towards the view. */
+export function lookDir(v: DrawingView): [number, number] {
+  const [a, b, c, d] = v.line!, L = Math.hypot(c - a, d - b) || 1, s = v.look ?? 1;
+  return [-(d - b) / L * s, (c - a) / L * s];
+}
+
 export function findView(sheet: Sheet, id: string | undefined) { return id ? sheet.views.find(v => v.id === id) : undefined; }
 
 /** The view's direction, following projected views up to their model view. */
 export function viewDir(sheet: Sheet, v: DrawingView, depth = 0): ViewDir {
+  if (v.kind && v.parent && depth < 20) {
+    const p = findView(sheet, v.parent);
+    if (p) {
+      const pd = viewDir(sheet, p, depth + 1);
+      if (v.kind === "detail") return pd;
+      return sideView(pd, lookDir(v));
+    }
+  }
   if (v.parent && v.side && depth < 20) {
     const p = findView(sheet, v.parent);
     if (p) return projectedDir(viewDir(sheet, p, depth + 1), v.side, sheet.projection);
@@ -48,17 +75,20 @@ export function viewDir(sheet: Sheet, v: DrawingView, depth = 0): ViewDir {
 /** Scale factor (sheet mm per model mm). Projected views use their parent's. */
 export function viewScale(sheet: Sheet, v: DrawingView, depth = 0): number {
   if (v.scale) return v.scale[0] / v.scale[1];
+  if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return 2 * viewScale(sheet, p, depth + 1); }
   if (v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewScale(sheet, p, depth + 1); }
   return sheet.scale[0] / sheet.scale[1];
 }
 export function viewScalePair(sheet: Sheet, v: DrawingView, depth = 0): [number, number] {
   if (v.scale) return v.scale;
+  if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) { const s = viewScalePair(sheet, p, depth + 1); return s[1] % 2 === 0 ? [s[0], s[1] / 2] : [s[0] * 2, s[1]]; } }
   if (v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewScalePair(sheet, p, depth + 1); }
   return sheet.scale;
 }
 
 /** Projected views stay lined up with their parent: same y (left/right) or same x (above/below). */
-export function alignAxis(v: DrawingView): "x" | "y" | null {
+export function alignAxis(v: DrawingView): "x" | "y" | [number, number] | null {
+  if (v.kind === "section" || v.kind === "aux") return v.line ? lookDir(v) : null;
   if (!v.parent || !v.side) return null;
   if (v.side[0] && !v.side[1]) return "y";
   if (v.side[1] && !v.side[0]) return "x";
@@ -82,6 +112,21 @@ export function boxInView(box: [V3, V3], vd: ViewDir): [number, number, number, 
     x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, w); y1 = Math.max(y1, w);
   }
   return [x0, y0, x1, y1];
+}
+
+/** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
+export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; key: string } {
+  if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewReq(sheet, p, depth + 1); }
+  const view = viewDir(sheet, v);
+  if (v.kind === "section" && v.parent && v.line) {
+    const par = findView(sheet, v.parent);
+    if (par) {
+      const { x, y } = viewAxes(viewDir(sheet, par));
+      const p = add(mul(x, v.line[0]), y, v.line[1]);
+      return { view, p, key: `${dirKey(view)}|${p.map(c => c.toFixed(6)).join(",")}` };
+    }
+  }
+  return { view, key: dirKey(view) };
 }
 
 export const dirKey = (d: ViewDir) => [...d.dir, ...d.up].map(v => (Math.abs(v) < 1e-12 ? 0 : v).toFixed(9)).join(",");

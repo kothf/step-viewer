@@ -5,13 +5,13 @@
 /** Line types (ISO 128): thick visible, thin, hidden (dashed), centre (long dash dot). */
 export type Pen = "thick" | "thin" | "hidden" | "center" | "frame";
 /** DXF layers / SVG classes. */
-export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH";
+export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT";
 
 export type Prim =
   | { t: "l"; p: [number, number, number, number]; pen: Pen; layer: Layer }
   /** Counter-clockwise arc from a0 to a1 (radians). */
   | { t: "a"; o: [number, number]; r: number; a0: number; a1: number; pen: Pen; layer: Layer }
-  | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean }
+  | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean; fill?: boolean }
   /** Text: baseline point, height in mm, horizontal alignment. */
   | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean };
 

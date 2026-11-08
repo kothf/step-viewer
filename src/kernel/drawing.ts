@@ -19,6 +19,8 @@ export interface Projection {
   /** Bounds of the visible geometry: [xmin, ymin, xmax, ymax]. */
   box: [number, number, number, number];
   ms: number;
+  /** Section views: the cut faces as closed 2D loops (fill even-odd). */
+  cut?: number[][];
 }
 /** A view direction: `dir` points from the model towards the viewer; `up` is the sheet's +y. */
 export interface ViewDir { dir: V3; up: V3 }
@@ -193,4 +195,47 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
   const p = new oc.GProp_GProps_1();
   oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
   return { box: [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]], volume: Math.abs(p.Mass()) };
+}
+
+/** A section view (FR-DRW-012): `view.dir` is the plane's normal, pointing at the viewer; material on the viewer's side of the plane through `p` is cut away. `cut` holds the cut faces as closed 2D loops (outer and holes alike; fill them even-odd). */
+export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02): Projection {
+  const { x, y, n } = viewAxes(view);
+  const info = shapeInfo(oc, shape);
+  const [lo, hi] = info.box;
+  const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
+  const o = [p[0] - x[0] * L - y[0] * L, p[1] - x[1] * L - y[1] * L, p[2] - x[2] * L - y[2] * L];
+  const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(o[0], o[1], o[2]), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
+  const box = new oc.BRepPrimAPI_MakeBox_5(ax, 2 * L, 2 * L, L).Shape();
+  const cutter = new oc.BRepAlgoAPI_Cut_3(shape, box, new oc.Message_ProgressRange_1());
+  cutter.Build(new oc.Message_ProgressRange_1());
+  if (!cutter.IsDone()) throw new Error("The section could not be cut");
+  const rest = cutter.Shape();
+  const proj = project(oc, rest, view, tol);
+  // Faces on the cutting plane: their wires, flattened into the view's axes.
+  const cut: number[][] = [];
+  const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
+  for (const ex = new oc.TopExp_Explorer_2(rest, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const f = oc.TopoDS.Face_1(ex.Current());
+    const ad = new oc.BRepAdaptor_Surface_2(f, true);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) continue;
+    const pl = ad.Plane(), dn = pl.Axis().Direction(), lp = pl.Location();
+    if (Math.abs(Math.abs(dn.X() * n[0] + dn.Y() * n[1] + dn.Z() * n[2]) - 1) > 1e-7) continue;
+    if (Math.abs(lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2] - d0) > 1e-5) continue;
+    for (const wx = new oc.TopExp_Explorer_2(f, A.TopAbs_WIRE, A.TopAbs_SHAPE); wx.More(); wx.Next()) {
+      const loop: number[] = [];
+      for (const it = new oc.BRepTools_WireExplorer_2(oc.TopoDS.Wire_1(wx.Current())); it.More(); it.Next()) {
+        const c = new oc.BRepAdaptor_Curve_2(it.Current());
+        const fwd = it.Current().Orientation_1() === oc.TopAbs_Orientation.TopAbs_FORWARD;
+        const u0 = c.FirstParameter(), u1 = c.LastParameter();
+        const nSeg = c.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : Math.max(8, Math.ceil((u1 - u0) / 0.1));
+        for (let i = 0; i < nSeg; i++) {
+          const u = fwd ? u0 + (u1 - u0) * i / nSeg : u1 - (u1 - u0) * i / nSeg;
+          const q = c.Value(u), P: V3 = [q.X(), q.Y(), q.Z()];
+          loop.push(dot(P, x), dot(P, y));
+        }
+      }
+      if (loop.length >= 6) cut.push(loop);
+    }
+  }
+  return { ...proj, cut };
 }
