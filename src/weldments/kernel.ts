@@ -5,6 +5,7 @@
 import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../model/types";
 import { FeatureError, type Named } from "../kernel/model";
 import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
+import { sketchShape } from "./custom";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldFeature } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
@@ -74,12 +75,29 @@ function upOf(ref: { sketch: string }, seg: PathSeg, doc: PartDoc, frames: Recor
 /** How a member's profile is placed on one segment: profile (u, v) to world, on the plane through `at`. */
 interface Placement { u: V3; v: V3; w: V3; p2: (q: V2) => V2; R: number; shape: ProfileShape }
 
-function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string }, doc: PartDoc, frames: Record<string, Frame>): Placement {
+/** A member's cross-section: a library profile, or its profile sketch. */
+export function memberShape(f: MemberFeature, doc: PartDoc): ProfileShape {
+  if (f.profile === "sketch") {
+    const sk = doc.features.find(x => x.id === f.psketch);
+    if (!sk || sk.type !== "sketch" || sk.suppressed) throw new FeatureError("E-WLD-PROFILE", "Pick a closed sketch for the profile.");
+    const s = sketchShape(sk);
+    if ("error" in s) throw new FeatureError("E-WLD-PROFILE", s.error);
+    return s;
+  }
   const shape = profileShape(f.profile, f.size);
   if (!shape) throw new FeatureError("E-WLD-SIZE", "Unknown profile size: pick one from the list.");
+  return shape;
+}
+
+/** The cut list description of a member's profile: "SHS 40x40x3", or the profile sketch's name. */
+export function memberDesc(f: MemberFeature, doc: PartDoc): string {
+  return f.profile === "sketch" ? doc.features.find(x => x.id === f.psketch)?.name ?? "Sketch" : profileName(f.profile, f.size);
+}
+
+function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
   const v = upOf(ref, seg, doc, frames);
   const u = cross(v, seg.w);
-  const an = anchorPoint(shape, f.anchor ?? "c");
+  const an = f.anchor ? anchorPoint(shape, f.anchor) : shape.origin ?? [0, 0];
   const a = f.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
   const p2 = (q: V2): V2 => {
     let x = q[0] - an[0];
@@ -209,16 +227,25 @@ type End = { kind: "free" } | { kind: "miter"; n: V3 } | { kind: "through"; ext:
 export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
   if (!f.segs.length) throw new FeatureError("E-WLD-PATH", "Pick the sketch lines the member runs along.");
   const segs = f.segs.map(r => segOf(r, doc, frames));
-  const pls = segs.map((s, i) => placement(f, s, f.segs[i], doc, frames));
+  const shape = memberShape(f, doc);
+  const pls = segs.map((s, i) => placement(f, s, f.segs[i], doc, frames, shape));
   const tol = 1e-6 * (1 + Math.max(...segs.map(s => s.L)));
   const endPt = (i: number, e: 0 | 1) => (e ? segs[i].b : segs[i].a);
   const ends: [End, End][] = segs.map((_s, i) => ([0, 1] as const).map(e => {
     const P = endPt(i, e);
     const others: [number, 0 | 1][] = [];
     segs.forEach((_t, j) => { if (j !== i) for (const k of [0, 1] as const) if (d3(endPt(j, k), P) < tol) others.push([j, k]); });
-    if (others.length !== 1 || f.corner === "none") return { kind: "free" } as End;
-    const [j, k] = others[0];
+    if (!others.length || f.corner === "none") return { kind: "free" } as End;
     const din = e ? segs[i].w : mul(segs[i].w, -1);
+    if (others.length > 1) {
+      // Three or more meet: the first (butt2: the last) runs through, the others stop at its face.
+      const all = [i, ...others.map(([j]) => j)];
+      const through = f.corner === "butt2" ? Math.max(...all) : Math.min(...all);
+      if (through !== i) return Math.abs(dot(segs[i].w, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
+      const ext = Math.max(0, ...others.flatMap(([j]) => outline(pls[j].shape.outer, 8).map(q => dot(sub(at3(pls[j], P, q), P), din))));
+      return { kind: "through", ext } as End;
+    }
+    const [j, k] = others[0];
     const dout = k ? mul(segs[j].w, -1) : segs[j].w;
     if (Math.abs(dot(din, dout)) > 1 - 1e-9) return { kind: "free" } as End;
     if (f.corner === "miter") return { kind: "miter", n: unit(add(din, dout)) } as End;
@@ -578,7 +605,7 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         };
         const a1 = r1(ang("start")), a2 = r1(ang("end"));
         const [lo, hi] = a1 <= a2 ? [a1, a2] : [a2, a1];
-        const desc = profileName(owner.profile, owner.size);
+        const desc = memberDesc(owner, doc);
         put(`m|${desc}|${r1(length)}|${lo}|${hi}`, { kind: "member", desc, length: r1(length), angle1: lo, angle2: hi, volume }, key);
       } else if (owner.type === "weldbead") {
         // The root: the shortest edge along the bead (edges of the end caps left out).

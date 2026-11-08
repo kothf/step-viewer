@@ -7,6 +7,7 @@ import { toast } from "../ui";
 import { featureLabel } from "../model/controller";
 import { units, UNITS } from "../tools/units";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
+import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -57,6 +58,11 @@ function pathLines(sk: SketchFeature | Sketch3dFeature): string[] {
   return sk.type === "sketch" ? sk.ents.filter(e => e.t === "line" && !e.cons).map(e => e.id) : sk.segs.filter(s => s.t === "line").map(s => s.id);
 }
 
+/** 2D sketches with a closed region (custom member profiles), before the edited feature; not the path sketch. */
+function profileSketches(ctx: WeldCtx, path?: string): SketchFeature[] {
+  return ctx.before.filter((x): x is SketchFeature => x.type === "sketch" && x.id !== path && !x.suppressed && sketchProfile(x).faces.length > 0);
+}
+
 /** A new weldment feature with sensible picks (FR-FT-121). */
 export function weldDraft(ctx: WeldCtx, type: WeldTool, id: string, name: string, face: number | null): Feature | null {
   const fr = face != null ? ctx.faceRef(face) : null;
@@ -86,6 +92,7 @@ export function weldFocus(f: Feature): string | undefined {
 /** What is still missing before ✓, as an English message key (null: ready). */
 export function weldMissing(f: Feature): string | null {
   if (f.type === "member" && !f.segs.length) return "Pick the sketch lines the member runs along.";
+  if (f.type === "member" && f.profile === "sketch" && !f.psketch) return "Pick a closed sketch for the profile.";
   if (f.type === "trimext" && !f.bodies.length) return "Pick the member bodies to trim.";
   if (f.type === "trimext" && !f.boundary) return "Pick the boundary: a flat face or a body.";
   if (f.type === "endcap" && !f.faces.length) return "Pick the end faces of members to cap.";
@@ -122,13 +129,16 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const segList = lines.map((ent, i) => `<label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(t("Line {n}", { n: i + 1 }))}</label>`).join("");
     return {
       title: t("Structural Member"),
-      body: group(t("Selections"), sel("wtype", t("Type"), PROFILE_TYPES.map(([v, l]) => [v, t(l)]), f.profile)
-        + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-k="wsize" translate="no">${profileSizes(f.profile).map(s => `<option${s === f.size ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`)
+      body: group(t("Selections"), sel("wtype", t("Type"), [...PROFILE_TYPES.map(([v, l]): [string, string] => [v, t(l)]), ["sketch", t("Custom profile (sketch)")]], f.profile)
+        + (f.profile === "sketch"
+          ? sel("wpsketch", t("Profile sketch"), [["", t("None")], ...profileSketches(ctx, cur).map((s): [string, string] => [s.id, featureLabel(s.name)])], f.psketch ?? "")
+            + help(t("A closed sketch drawn at the origin: its largest region is the profile, the sketch origin sits on the path."))
+          : `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-k="wsize" translate="no">${profileSizes(f.profile).map(s => `<option${s === f.size ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`))
         + group(t("Path segments"), sel("wsketch", t("Sketch"), paths.map(s => [s.id, featureLabel(s.name)]), cur)
           + `<p class="pm-count">${esc(t("{n} segment|{n} segments", { n: f.segs.length }))}</p>${segList}`
           + help(t("Each segment becomes its own body; where two segments meet end to end the corner is treated.")))
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
-          + sel("anchor", t("Profile position"), ANCHORS.map(a => [a, t(ANCHOR_LABEL[a])]), f.anchor ?? "c")
+          + sel("anchor", t("Profile position"), [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])])], f.anchor ?? (f.profile === "sketch" ? "o" : "c"))
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
           + chk("mirror", f.mirror, t("Mirror profile"))),
     };
@@ -151,7 +161,8 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
       body: group(t("Parameters"), box("wfaces", t("Faces"), faces(f.faces.length))
         + (f.faces.length ? `<button class="btn small" data-k="wclear" data-wlist="faces">${esc(t("Clear faces"))}</button>` : "")
         + numField("thickness", t("Thickness"), f.thickness, "length")
-        + help(t("Click the flat end faces of members.")))
+        + chk("inward", f.inward, t("Thickness inward"))
+        + help(t("Click the flat end faces of members. Drag the arrow to change the thickness.")))
         + group(t("Offset"), chk("wInset", f.inset.v > 0, t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", t("Inset"), f.inset, "length") : ""))
         + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Chamfer corners")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : "")),
     };
@@ -181,11 +192,23 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
 /** A panel field of a weldment feature changed: the change to make (null: the controller's default handling). */
 export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx: WeldCtx): (() => void) | null {
   if (f.type === "member") {
-    if (k === "wtype") return () => { f.profile = val as ProfileType; const sizes = profileSizes(f.profile); if (!sizes.includes(f.size)) f.size = sizes[Math.min(sizes.length - 1, Math.floor(sizes.length / 3))]; };
+    if (k === "wtype") return () => {
+      if (val === "sketch") {
+        f.profile = "sketch";
+        f.psketch ??= profileSketches(ctx, f.segs[0]?.sketch).at(-1)?.id;
+        delete f.anchor;
+        return;
+      }
+      if (f.profile === "sketch") delete f.anchor;
+      f.profile = val as ProfileType;
+      const sizes = profileSizes(f.profile);
+      if (!sizes.includes(f.size)) f.size = sizes[Math.min(sizes.length - 1, Math.floor(sizes.length / 3))];
+    };
+    if (k === "wpsketch") return () => { if (val) f.psketch = String(val); else delete f.psketch; };
     if (k === "wsize") return () => { f.size = String(val); };
     if (k === "wsketch") return () => { const sk = pathSketches(ctx).find(s => s.id === val); f.segs = sk ? pathLines(sk).map(ent => ({ sketch: sk.id, ent })) : []; };
     if (k === "corner") return () => { f.corner = val as MemberFeature["corner"]; };
-    if (k === "anchor") return () => { if (val === "c") delete f.anchor; else f.anchor = val as Anchor; };
+    if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
   }
   if (f.type === "trimext") {
     if (k === "wkind") return () => { f.kind = val as "face" | "body"; delete f.boundary; };

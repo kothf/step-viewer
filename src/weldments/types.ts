@@ -13,12 +13,17 @@ export interface WeldSegRef { sketch: string; ent: string }
  */
 export interface MemberFeature {
   id: string; type: "member"; name: string; suppressed?: boolean;
-  profile: ProfileType;
+  /** A library profile, or "sketch": the closed 2D sketch `psketch` is the cross-section. */
+  profile: ProfileType | "sketch";
   size: string;
+  psketch?: string;
   segs: WeldSegRef[];
-  /** Corner treatment where two segments meet: mitre, butt (the first runs through), butt (the second runs through), or none. */
+  /**
+   * Corner treatment where two segments meet: mitre, butt (the first runs through), butt (the second runs through), or none.
+   * Where three or more segments meet, the first (butt2: the last) runs through and the others are cut square to it.
+   */
   corner: "miter" | "butt1" | "butt2" | "none";
-  /** Where the profile sits on the path; absent: its centre. */
+  /** Where the profile sits on the path; absent: its centre (a sketch profile: the sketch origin). */
   anchor?: Anchor;
   /** Rotation of the profile about the path. */
   angle?: Num;
