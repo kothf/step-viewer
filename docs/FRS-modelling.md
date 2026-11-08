@@ -517,7 +517,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 | Fixed | any entity (locks in place) |
 | On edge / On model | sketch entity–projected model edge or vertex (external reference) |
 
-- **FR-SK-051** (P2, M) Additional relations: pierce (sketch point onto a curve not in the plane), intersection (point at intersection of two curves), along X/Y of another point, curvature continuity (spline), equal curvature, merge points. **Intersection, merge points and along X/Y (horizontal/vertical between two points) done; spline tangent and equal curvature (G2 at a shared end) done (1.215.0); pierce onto a model edge done (1.221.0).**
+- **FR-SK-051** (P2, M) Additional relations: pierce (sketch point onto a curve not in the plane), intersection (point at intersection of two curves), along X/Y of another point, curvature continuity (spline), equal curvature, merge points. **Intersection, merge points and along X/Y (horizontal/vertical between two points) done; spline tangent and equal curvature (G2 at a shared end) done (1.215.0); pierce onto a model edge done (1.228.0).**
 - **FR-SK-052** (P1, M) Automatic relations while drawing (horizontal, vertical, coincident, tangent, perpendicular, parallel to inferred lines), shown as glyphs near the cursor; holding Ctrl (or a toggle) suppresses them.
 - **FR-SK-053** (P1, M) Relations are shown as small glyphs next to the entities (toggle), with hover highlighting of the related entities; clicking a glyph selects the relation; Del deletes it.
 - **FR-SK-054** (P1, M) **Add relation**: select entities, the panel lists only relations valid for that selection.
