@@ -24,6 +24,7 @@ import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, 
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
 import { quadCorners } from "./shapes";
+import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, type CurveEq } from "./conic";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -35,6 +36,12 @@ export function refPts(e: SkEnt): string[] {
   if (e.t === "spline") return e.pts.slice();
   if (e.t === "text") return [e.p];
   return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
+}
+
+/** A conic's or equation curve's own fields, for a copy (a mirror image of an equation curve flips it). */
+function splineExtra(e: SkEnt & { t: "spline" }, mirror = false) {
+  if (!e.kind) return {};
+  return { kind: e.kind, ...(e.rho !== undefined ? { rho: e.rho } : {}), ...(e.eq ? { eq: { ...e.eq, flip: mirror ? !e.eq.flip : e.eq.flip } } : {}) };
 }
 
 function arcPts(c: V2, r: number, a0: number, a1: number, n = 48): V2[] {
@@ -52,7 +59,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -246,7 +253,7 @@ export class SketchEditor {
   private ell(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): Ell { return ellOf(mv(this.pt(e.c)), mv(this.pt(e.a)), mv(this.pt(e.b))); }
   /** Polyline of a spline, optionally moved point by point. */
   private splineLine(e: SkEnt & { t: "spline" }, mv: (q: V2) => V2 = q => q): V2[] {
-    return bezPts(splineBezier(e.pts.map(q => mv(this.pt(q))), !!e.closed && e.pts.length >= 3), 16);
+    return bezPts(entBezier(e, q => mv(this.pt(q))), 16);
   }
   /** Polyline of an ellipse or elliptical arc, optionally moved point by point. */
   private ellLine(e: SkEnt & { t: "ellipse" }, mv: (q: V2) => V2 = q => q): V2[] {
@@ -538,6 +545,66 @@ export class SketchEditor {
     this.host.onSelection?.([id]);
   }
 
+  /** Equation driven curve (FR-SK-021) the panel is filling in. */
+  eqDraft: CurveEq = { mode: "xy", y: "x^2/40", t0: "-20", t1: "20" };
+
+  /** The equation curve's text checked: null when it makes a curve, else an English message key. */
+  static eqProblem(eq: CurveEq): string | null {
+    try { eqBezier(eq); return null; } catch (err) { return (err as Error).message; }
+  }
+
+  /**
+   * Adds an equation driven curve in sketch coordinates (FR-SK-021): its two end points are fixed, so it is
+   * fully defined, as in SolidWorks. Returns an error message key, or null.
+   */
+  addEquation(eq: CurveEq): string | null {
+    let bz: V2[];
+    try { bz = eqBezier(eq); } catch (err) { return (err as Error).message; }
+    const a = bz[0], b = bz[bz.length - 1];
+    const pa = uid("p"), pb = uid("p"), id = uid("s");
+    this.sk.ents.push({ id: pa, t: "point", x: a[0], y: a[1] }, { id: pb, t: "point", x: b[0], y: b[1] });
+    this.sk.ents.push({ id, t: "spline", pts: [pa, pb], kind: "eqn", eq: { ...eq } });
+    this.sk.rels.push({ id: uid("r"), t: "fix", e: [pa] }, { id: uid("r"), t: "fix", e: [pb] });
+    this.commit("Add equation curve");
+    this.setTool("select");
+    this.selection = new Set([id]);
+    this.render();
+    this.host.onSelection?.([id]);
+    return null;
+  }
+
+  /**
+   * Changes a conic's rho, or an equation curve's text (its end points move to the new ends while they
+   * are fixed where the old ones were). One undo step; returns an error message key, or null.
+   */
+  setCurve(id: string, patch: { rho?: number; eq?: CurveEq }): string | null {
+    const e = this.ent(id);
+    if (!e || e.t !== "spline") return null;
+    if (patch.rho !== undefined) {
+      if (!(patch.rho > 0 && patch.rho < 1)) return "Rho must be between 0 and 1.";
+      if (e.kind === "parabola" && Math.abs(patch.rho - 0.5) > 1e-9) e.kind = "conic";
+      e.rho = patch.rho;
+      if (e.kind === "conic" && Math.abs(patch.rho - 0.5) < 1e-12) delete e.rho;
+      this.commit("Edit conic");
+    }
+    if (patch.eq && e.kind === "eqn") {
+      let bz: V2[];
+      try { bz = eqBezier(patch.eq); } catch (err) { return (err as Error).message; }
+      const old = e.eq ? (() => { try { return eqBezier(e.eq!); } catch { return null; } })() : null;
+      // Still where the old equation put it: the ends follow the new equation.
+      const at = (k: number) => this.pt(e.pts[k]);
+      const unmoved = !old || (Math.hypot(at(0)[0] - old[0][0], at(0)[1] - old[0][1]) < 1e-6 && Math.hypot(at(1)[0] - old[old.length - 1][0], at(1)[1] - old[old.length - 1][1]) < 1e-6);
+      if (unmoved) for (const [k, q] of [[0, bz[0]], [1, bz[bz.length - 1]]] as [number, V2][]) {
+        const pe = this.ent(e.pts[k]);
+        if (pe && pe.t === "point") { pe.x = q[0]; pe.y = q[1]; }
+      }
+      e.eq = { ...patch.eq, ...(e.eq?.flip ? { flip: true } : {}) };
+      this.commit("Edit equation curve");
+    }
+    this.render();
+    return null;
+  }
+
   /** Changes a text (FR-SK-020): its outline is remade when the text or the font changes, then one undo step. */
   async setText(id: string, patch: Partial<Pick<Extract<SkEnt, { t: "text" }>, "text" | "h" | "ang" | "font" | "bold" | "italic" | "along" | "flip">>) {
     const e = this.ent(id);
@@ -587,6 +654,7 @@ export class SketchEditor {
       if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
       this.commit(label);
     };
+    if (this.tool === "eqn") return;
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
     if (this.tool === "line") {
@@ -678,6 +746,29 @@ export class SketchEditor {
         this.sk.ents.push({ id: uid("a"), t: "arc", c: cId, a: ccw ? aId : bId, b: ccw ? bId : aId });
         finish("Add arc");
       }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "conic" || this.tool === "parabola") {
+      // FR-SK-021. Conic: start, end, top vertex (where the end tangents meet), then a point that sets rho.
+      // Parabola: focus, vertex, then the start and end (moved square to the axis onto the curve).
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      if (d.pts.length < 3) { d.pts.push(p); d.ids.push(s.id); this.render(); return; }
+      let ids: string[], rho = 0.5;
+      if (this.tool === "conic") {
+        const [a, b, v] = d.pts;
+        if (Math.abs((b[0] - a[0]) * (v[1] - a[1]) - (b[1] - a[1]) * (v[0] - a[0])) < 1e-9 * (1 + Math.hypot(b[0] - a[0], b[1] - a[1]) ** 2)) { this.host.toast(t("The top vertex is on the line between the ends."), "warn"); return; }
+        rho = rhoAt(a, v, b, p);
+        ids = [this.usePoint(a, d.ids[0], null, rels), this.usePoint(v, d.ids[2], null, rels), this.usePoint(b, d.ids[1], null, rels)];
+      } else {
+        const q = parabolaFrom(d.pts[0], d.pts[1], d.pts[2], p);
+        if (!q) { this.host.toast(t("Pick the ends on either side of the axis, away from each other."), "warn"); return; }
+        ids = [this.usePoint(q[0], null, null, rels), this.usePoint(q[1], null, null, rels), this.usePoint(q[2], null, null, rels)];
+      }
+      const id = uid("s");
+      this.sk.ents.push({ id, t: "spline", pts: ids, kind: this.tool, ...(this.tool === "conic" ? { rho: Math.round(rho * 1e4) / 1e4 } : {}) });
+      finish(this.tool === "conic" ? "Add conic" : "Add parabola");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -1676,7 +1767,7 @@ export class SketchEditor {
       else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r, ...(e.cons ? { cons: true } : {}) }); this.sk.rels.push({ id: uid("r"), t: "equal", e: [e.id, id] }); made.push(id); }
       // A mirror image runs the other way round: the ends swap.
       else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p1), p1: point(e.p0) } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
-      else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+      else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...splineExtra(e, true), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
@@ -1800,7 +1891,7 @@ export class SketchEditor {
           made.push(id);
         } else if (e.t === "spline") {
           const id = uid("s");
-          this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons(e) });
+          this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...splineExtra(e), ...cons(e) });
           made.push(id);
         } else if (e.t === "ellipse") {
           const id = uid("e");
@@ -1850,7 +1941,7 @@ export class SketchEditor {
         else if (e.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
         else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
         else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons }); made.push(id); }
-        else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons }); made.push(id); }
+        else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...splineExtra(e), ...cons }); made.push(id); }
         else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p), h: e.h * mv.k }); made.push(id); }
         else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
       }
@@ -2220,6 +2311,9 @@ export class SketchEditor {
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
+      conic: "Click the start, the end, the top vertex where the end tangents meet, then a point the conic passes through",
+      parabola: "Click the focus, the vertex, then the start and the end",
+      eqn: "Type the equation and its range in the panel, then Add curve",
       dim: "Click one or two items, then click where the dimension goes",
       hord: "Click the base point, then where the values go, then each point to dimension along X",
       vord: "Click the base point, then where the values go, then each point to dimension along Y",
@@ -2297,8 +2391,11 @@ export class SketchEditor {
         while (a1 <= a0) a1 += Math.PI * 2;
         poly(arcPts(cc, Math.hypot(a[0] - cc[0], a[1] - cc[1]), a0, a1), c);
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
-      else if (e.t === "spline") poly(this.splineLine(e), c);
-      else if (e.t === "text") {
+      else if (e.t === "spline") {
+        poly(this.splineLine(e), c);
+        // A conic's top vertex: thin lines to the ends, where the end tangents run.
+        if (hasControl(e)) { const [a, v, b] = e.pts.map(q => this.pt(q)); push(a, v, C.cons, dimSegs, dimCols); push(v, b, C.cons, dimSegs, dimCols); }
+      } else if (e.t === "text") {
         const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
         for (const l of ls) poly(l, c);
         // Text whose outline is still loading: its box, dashed by the colour of construction.
@@ -2359,6 +2456,22 @@ export class SketchEditor {
             const [s0, s1] = sw(ang(d.pts[0]), ang(p)) < sw(ang(d.pts[0]), ang(d.pts[1])) ? [d.pts[0], d.pts[1]] : [d.pts[1], d.pts[0]];
             poly(arcPts(c, r, ang(s0), ang(s0) + sw(ang(s0), ang(s1))), C.pre);
           }
+        }
+      } else if (this.tool === "conic") {
+        const [a0, b0, v0] = [d.pts[0], d.pts[1] ?? p, d.pts[2] ?? p];
+        if (d.pts.length < 2) push(a0, p, C.pre);
+        else if (d.pts.length === 2) { push(a0, b0, C.cons); poly(bezPts(conicBezier(a0, v0, b0, 0.5), 32), C.pre); push(a0, v0, C.cons); push(v0, b0, C.cons); }
+        else { poly(bezPts(conicBezier(a0, v0, b0, rhoAt(a0, v0, b0, p)), 4), C.pre); push(a0, v0, C.cons); push(v0, b0, C.cons); const sh = conicShoulder(a0, v0, b0, rhoAt(a0, v0, b0, p)); push([(a0[0] + b0[0]) / 2, (a0[1] + b0[1]) / 2], sh, C.cons); }
+      } else if (this.tool === "parabola") {
+        if (d.pts.length < 2) push(a, p, C.cons);
+        else {
+          const f = d.pts[0], v = d.pts[1];
+          // Before the ends are picked, a wide piece of the parabola shows its shape.
+          const s0 = d.pts[2] ?? [v[0] - (f[1] - v[1]) * 3, v[1] + (f[0] - v[0]) * 3] as V2;
+          const s1 = d.pts.length === 3 ? p : ([v[0] + (f[1] - v[1]) * 3, v[1] - (f[0] - v[0]) * 3] as V2);
+          push(f, v, C.cons);
+          const q = parabolaFrom(f, v, s0, s1);
+          if (q) poly(bezPts(conicBezier(q[0], q[1], q[2], 0.5), 48), d.pts.length === 3 ? C.pre : C.cons);
         }
       } else if (this.tool === "spline") {
         const closing = d.pts.length >= 3 && Math.hypot(p[0] - a[0], p[1] - a[1]) < this.px(p) * 3;
@@ -2431,7 +2544,7 @@ export class SketchEditor {
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
     addPt([0, 0], 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
-    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect"].includes(this.tool)) addPt(d.cursor, C.pre);
+    if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute("position", new THREE.Float32BufferAttribute(pp, 3));
     pg.setAttribute("color", new THREE.Float32BufferAttribute(pc, 3));
@@ -2459,6 +2572,7 @@ export class SketchEditor {
         const E = d.pts.length === 2 ? this.draftEll(a, d.pts[1], p) : null;
         text = d.pts.length === 1 ? `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}` : E ? `${L(E.r1 * 2)} × ${L(E.r2 * 2)}` : "";
       }
+      else if (this.tool === "conic" && d.pts.length === 3) text = `ρ ${trimNum(rhoAt(d.pts[0], d.pts[2], d.pts[1], p), 3)}`;
       else if (this.tool === "rect") text = `${L(Math.abs(p[0] - a[0]))} × ${L(Math.abs(p[1] - a[1]))}`;
       else if (this.tool === "crect") text = `${L(Math.abs(p[0] - a[0]) * 2)} × ${L(Math.abs(p[1] - a[1]) * 2)}`;
       else if (this.tool === "arc") text = d.pts.length === 1 ? `R ${L(Math.hypot(p[0] - a[0], p[1] - a[1]))}` : (() => { const s = d.pts[1]; let x = Math.atan2(p[1] - a[1], p[0] - a[0]) - Math.atan2(s[1] - a[1], s[0] - a[0]); while (x <= 0) x += Math.PI * 2; return `A ${trimNum((x * 180) / Math.PI, 1)}°`; })();

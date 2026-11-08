@@ -418,7 +418,16 @@ export class Modeller {
     const nrm = this.D(frame.n);
     let e: any;
     if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
-    else if (s.kind === "spline") {
+    else if (s.kind === "spline" && s.rq) {
+      // A conic (FR-SK-021): the exact rational quadratic, so mass properties stay exact too.
+      const [a, v, b, wt] = s.rq;
+      const poles = new oc.TColgp_Array1OfPnt_2(1, 3), wts = new oc.TColStd_Array1OfReal_2(1, 3);
+      [a, v, b].forEach((q, i) => { poles.SetValue(i + 1, this.P(this.w(frame, q, off))); wts.SetValue(i + 1, i === 1 ? wt : 1); });
+      const knots = new oc.TColStd_Array1OfReal_2(1, 2), mults = new oc.TColStd_Array1OfInteger_2(1, 2);
+      knots.SetValue(1, 0); knots.SetValue(2, 1); mults.SetValue(1, 3); mults.SetValue(2, 3);
+      const curve = new oc.Geom_BSplineCurve_2(poles, wts, knots, mults, 2, false, false);
+      e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+    } else if (s.kind === "spline") {
       e = this.bezierEdge(s.bz.map(q => this.w(frame, q, off)));
     } else if (s.kind === "ellipse" || s.kind === "earc") {
       // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
