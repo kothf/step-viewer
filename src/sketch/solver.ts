@@ -53,7 +53,7 @@ const TOL = 1e-9;
 function fixedSet(sk: SketchFeature) {
   const fixed = new Set<string>([ORIGIN]);
   const ent = new Map(sk.ents.map(e => [e.id, e] as const));
-  for (const r of sk.rels) if (r.t === "fix") for (const id of r.e) {
+  for (const r of sk.rels) if (r.t === "fix" || r.t === "pierce") for (const id of r.e) {
     const e = ent.get(id);
     if (!e) continue;
     if (e.t === "point") fixed.add(e.id);
@@ -255,7 +255,7 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
         term([p, q, a, b], x => dot(sub(q(x), p(x)), sub(b(x), a(x))) / nrm(sub(b(x), a(x)))),
       ]);
     }
-    case "fix": return [];
+    case "fix": case "pierce": return [];
   }
 }
 

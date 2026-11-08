@@ -639,7 +639,8 @@ export class ModelController {
         if (!src || !rel.ext) continue;
         if (src.dangling) rel.dangling = true; else delete rel.dangling;
         const e = next.ents.find(x => x.id === rel.e[0]);
-        if (e?.t === "line") { pts.add(e.a); pts.add(e.b); }
+        if (e?.t === "point") pts.add(e.id);
+        else if (e?.t === "line") { pts.add(e.a); pts.add(e.b); }
         else if (e?.t === "arc") { pts.add(e.c); pts.add(e.a); pts.add(e.b); }
         else if (e?.t === "circle") { pts.add(e.c); const r = sk.ents.find(x => x.id === e.id); if (r?.t === "circle") e.r = r.r; }
       }
@@ -5613,6 +5614,7 @@ export class ModelController {
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
         : `<p class="muted">${esc(t("Select sketch items or model edges to add relations (Ctrl+click for more)."))}</p>`)
+      + (ed.piercing ? `<p class="muted pm-pierce" role="status">${esc(t("Click a model edge that crosses the sketch plane: the point moves to where it pierces the plane."))}</p>` : "")
       + `</div>`
       + this.textBox(ed)
       + this.curveBox(ed)

@@ -3120,7 +3120,7 @@ try {
     await ctx.close();
   }
 
-  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002) ---
+  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.234.0 pierce (FR-SK-051) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3155,6 +3155,27 @@ try {
     const after = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "t"); return { edge: f.xAxis?.edge?.faces?.slice().sort().join("+") ?? null, x: window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(",") }; });
     check(x0 === "1,0,0" && /straight edge/.test(status) && box === "Edge" && after.edge === "x:end+x:side:l2" && after.x === "0,1,0",
       `model 1.215: sketch X axis along a picked model edge (${x0} → ${after.x}, ${after.edge}, ${box}, ${status})`);
+    // Pierce (FR-SK-051): a point in a sketch on XZ, then the top edge at x = 20 (it crosses y = 0 at z = 20).
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch3", d => { d.features.push({ id: "u", type: "sketch", name: "Sketch3", plane: { std: "XZ" }, hidden: false, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: -10, y: 5 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("u"));
+    await idle();
+    await mp.waitForTimeout(800);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); const ed = window.__sv.model.editor(); ed.setTool("select"); ed.selection.add("q2"); ed.host.onSelection([...ed.selection]); });
+    const pierceBtn = await mp.$('#mc-pm [data-rel="pierce"]');
+    if (pierceBtn) await pierceBtn.click();
+    const pStatus = await mp.evaluate(() => document.querySelector("#mc-pm .pm-pierce")?.textContent ?? "");
+    const [px, py] = await world([20, 4, 20]);
+    await mp.mouse.move(px, py); await mp.waitForTimeout(80); await mp.mouse.down(); await mp.mouse.up();
+    await mp.waitForTimeout(300);
+    await idle();
+    const pierced = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), q = ed.sk.ents.find(e => e.id === "q2"), r = ed.sk.rels.find(x => x.t === "pierce"), f = ed.frame;
+      const w = [0, 1, 2].map(k => Math.round((f.o[k] + q.x * f.x[k] + q.y * f.y[k]) * 1000) / 1000);
+      return { w: w.join(","), edge: r?.ext?.faces?.slice().sort().join("+") ?? null };
+    });
+    check(!!pierceBtn && /pierces/.test(pStatus) && pierced.w === "20,0,20" && pierced.edge === "x:end+x:side:l2",
+      `model 1.234: Pierce puts the point where the picked edge crosses the sketch plane (${!!pierceBtn}, ${pierced.w}, ${pierced.edge}, ${pStatus})`);
     await ctx.close();
   }
 

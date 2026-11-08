@@ -17,7 +17,7 @@ import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
 import { chain3d } from "../sketch/sketch3d";
-import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
+import { applyExt, piercePoint, projectEdge, uvOf, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
@@ -217,8 +217,11 @@ export class Modeller {
       const ent = out.ents.find(e => e.id === r.e[0]);
       let ok = false;
       try {
-        const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
-        ok = !!g && applyExt(out, ent!, g);
+        if (r.t === "pierce") ok = !!body && ent?.t === "point" && this.pierce(body, r.ext, frame, ent);
+        else {
+          const g = body && ent ? projectEdge(this.modelEdge(this.resolveEdge(body, r.ext)), frame) : null;
+          ok = !!g && applyExt(out, ent!, g);
+        }
       } catch { ok = false; }
       if (ok) delete r.dangling; else { r.dangling = true; lost++; }
     }
@@ -226,6 +229,41 @@ export class Modeller {
     if (JSON.stringify(out) === JSON.stringify(sk)) return null;
     solve(out);
     return JSON.stringify(out) === JSON.stringify(sk) ? null : out;
+  }
+
+  /**
+   * Pierce (FR-SK-051): moves the point to where the edge crosses the sketch plane (the crossing nearest
+   * it). Lines and circles are exact in `piercePoint`; other curves are sampled and each crossing bisected.
+   */
+  private pierce(body: Named, ref: EdgeRef, frame: Frame, p: { x: number; y: number }): boolean {
+    const e = this.resolveEdge(body, ref);
+    const me = this.modelEdge(e);
+    const near: [number, number] = [p.x, p.y];
+    let q: [number, number] | null = null;
+    if (me.type !== "curve") q = piercePoint(me, frame, near);
+    else {
+      const ad = new this.oc.BRepAdaptor_Curve_2(e);
+      const t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+      const at = (t: number) => this.xyz(ad.Value(t));
+      const h = (t: number) => dot(add(at(t), mul(frame.o, -1)), frame.n);
+      const N = 256;
+      let best = Infinity;
+      let ta = t0, ha = h(t0);
+      for (let i = 1; i <= N; i++) {
+        const tb = t0 + ((t1 - t0) * i) / N, hb = h(tb);
+        if (ha === 0 || (ha > 0) !== (hb > 0)) {
+          let lo = ta, hi = tb, hl = ha;
+          for (let k = 0; k < 60 && hl !== 0; k++) { const m = (lo + hi) / 2, hm = h(m); if ((hm > 0) === (hl > 0)) { lo = m; hl = hm; } else hi = m; }
+          const uv = uvOf(frame, at(hl === 0 ? lo : (lo + hi) / 2));
+          const d = Math.hypot(uv[0] - near[0], uv[1] - near[1]);
+          if (d < best) { best = d; q = uv; }
+        }
+        ta = tb; ha = hb;
+      }
+    }
+    if (!q) return false;
+    p.x = q[0]; p.y = q[1];
+    return true;
   }
 
   /** The frame of a sketch plane. */
