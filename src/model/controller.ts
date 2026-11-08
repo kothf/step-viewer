@@ -53,7 +53,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet } from "../sheetmetal/types";
@@ -3341,11 +3341,14 @@ export class ModelController {
     const names = this.last?.faceNames;
     if (!part || !names) return;
     const pre = `${id}:`;
+    // A body or a cut list item selected in the tree lights up its bodies' faces.
+    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
+    const inBody = keys ? bodyFaces(this.last?.bodies ?? [], keys) : null;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
     const out: number[] = [];
     part.data.faces.forEach((fc, i) => {
-      if (!names[i]?.startsWith(pre)) return;
+      if (inBody ? !inBody(i) : !names[i]?.startsWith(pre)) return;
       for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let k = 0; k < 3; k++) {
         const vi = idx ? idx.getX(tri * 3 + k) : tri * 3 + k;
         out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
@@ -4047,6 +4050,7 @@ export class ModelController {
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
+    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -4162,6 +4166,7 @@ export class ModelController {
           if ((e.target as HTMLElement).matches("input")) return;
           this.selected = id;
           this.renderTree();
+          this.drawDecor();
           return;
         }
         if ((e.target as HTMLElement).matches("input")) return;
@@ -4220,7 +4225,8 @@ export class ModelController {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
-        if (id === "folder:bodies") return;
+        if (id === "folder:bodies" || id === "folder:cutlist") return;
+        if (id.startsWith("cut:")) { showCutList(this.last?.cutList, this.doc); return; }
         if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
@@ -4306,7 +4312,8 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id.startsWith("folder:") && id !== "folder:bodies") {
+    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => showCutList(this.last?.cutList, this.doc)]);
+    if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
@@ -6174,6 +6181,14 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** Whether a feature uses a sketch up (SolidWorks hides it once used). */
+/** Whether view face i belongs to one of the bodies `keys` (the worker lists shown faces body by body). */
+function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (i: number) => boolean {
+  const ranges: [number, number][] = [];
+  let at = 0;
+  for (const b of bodies) { const n = b.faces ?? 0; if (keys.includes(b.key)) ranges.push([at, at + n]); at += n; }
+  return i => ranges.some(([a, z]) => i >= a && i < z);
+}
+
 function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab") return g.sketch === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
