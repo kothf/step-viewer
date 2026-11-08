@@ -5659,6 +5659,31 @@ try {
       const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
       document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
+      // Interference over the study (Results → Interference): in a new study a placement key carries pin 3 onto pin 2 by the
+      // end, so that pair interferes from some time to the end; a time button seeks there; the list closes.
+      const prevStudy = m.studyId, prevTime = m.time;
+      m.newStudy();
+      m.edit(st => { st.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const ct = m.study.tracks.find(k => k.kind === "pose");
+      const to = [c[1].tf[3] - c[2].tf[3], c[1].tf[7] - c[2].tf[7], c[1].tf[11] - c[2].tf[11]];
+      m.edit(st => { st.tracks.find(k => k.id === ct.id).keys[1].d = to; });
+      document.querySelector('#motion [data-mo="clash"]').click();
+      const ci = m.clash?.items ?? [], pair = ci.find(x => [x.a, x.b].sort().join() === [c[1].id, id].sort().join());
+      const sp = pair?.spans ?? [];
+      const listed = document.querySelectorAll("#motion .mo-clashes .mo-clash").length, bands = document.querySelectorAll("#motion .mo-ruler .mo-cspan").length;
+      document.querySelector("#motion [data-clt]")?.click();
+      const sought = m.time;
+      const all0 = ci.length;
+      const box = document.querySelector('#motion input[data-mo="clashall"]'); box.checked = true; box.dispatchEvent(new Event("change"));
+      const withTouching = m.clash.items.length + 0, ignoredAfter = m.clash.ignored;
+      const box2 = document.querySelector('#motion input[data-mo="clashall"]'); box2.checked = false; box2.dispatchEvent(new Event("change"));
+      document.querySelector('#motion [data-mo="clashclose"]')?.click();
+      const closed = !document.querySelector("#motion .mo-clashes");
+      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      m.deleteStudy();
+      m.studyId = prevStudy; m.render(); m.seek(prevTime);
+      trace.interfere = interfere;
       return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
@@ -5727,8 +5752,10 @@ try {
       && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
       && Object.values(tc.relative).every(v => v === true)
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
-      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone,
-      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
+      && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
