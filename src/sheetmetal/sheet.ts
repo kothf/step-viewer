@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmBaseFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { BendCalc, BendPosition, SmBaseFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -74,7 +74,7 @@ export type FlatEdge =
 
 /** What a sheet metal feature does to the solid: cut prisms (panel frame, z across the sheet), then new panels and bends. */
 export type SheetOp =
-  | { kind: "cut"; M: Mat; loop: V2[] }
+  | { kind: "cut"; M: Mat; loop: V2[]; /** A closed outline used instead of `loop`; a piece whose `ent` holds ":" names the face it leaves. */ segs?: Seg[] }
   | { kind: "panel"; panel: Panel }
   | { kind: "bend"; bend: Bend };
 
@@ -413,6 +413,57 @@ export function hem(prev: SheetState, f: SmHemFeature): { state: SheetState; ops
   const ops: SheetOp[] = [];
   f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, { angle: Math.PI, r, s, d, off0: 0, off1: 0, flip: !!f.flip }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
   return { state: st, ops };
+}
+
+/** Break corner: each picked thickness edge's corner of a flat face chamfered or rounded, in the outline itself, so the flat pattern follows. */
+export function breakCorner(prev: SheetState, f: SmCornerFeature): { state: SheetState; ops: SheetOp[] } {
+  if (!f.edges.length) throw new SheetError("E-SM-NOCORNER", "Pick the corner edges to break.");
+  const size = f.size.v;
+  if (!(size > 1e-6)) throw new SheetError("E-SM-SIZE", "The size must be more than 0.");
+  const st = clone(prev);
+  const ops: SheetOp[] = [];
+  for (const ref of f.edges) {
+    const { panel, i, j } = cornerOf(st, ref.faces);
+    const sa = panel.outer[i], sb = panel.outer[j];
+    if (sa.kind !== "line" || sb.kind !== "line") throw new SheetError("E-SM-CORNERLINE", "Break corners between straight edges.");
+    const V = sa.b;
+    const l1 = d2(sa.a, sa.b), l2 = d2(sb.a, sb.b);
+    const u1: V2 = [(sa.b[0] - sa.a[0]) / l1, (sa.b[1] - sa.a[1]) / l1], u2: V2 = [(sb.b[0] - sb.a[0]) / l2, (sb.b[1] - sb.a[1]) / l2];
+    const turn = Math.atan2(u1[0] * u2[1] - u1[1] * u2[0], u1[0] * u2[0] + u1[1] * u2[1]);
+    // Outer loops run counter-clockwise, so an outside corner turns left.
+    if (turn < 1e-6 || turn > Math.PI - 1e-6) throw new SheetError("E-SM-CONVEX", "Break outside corners only.");
+    // Along each edge from the corner: the chamfer distance, or the fillet's tangent length r·tan(turn / 2).
+    const t = f.kind === "fillet" ? size * Math.tan(turn / 2) : size;
+    if (t >= l1 - 1e-6 || t >= l2 - 1e-6) throw new SheetError("E-SM-CORNERBIG", "The corner size is longer than an edge at the corner.");
+    const P1 = p2(V, s2(u1, -t)), P2 = p2(V, s2(u2, t));
+    const ent = `x${panel.n++}`;
+    const piece: Seg = f.kind === "fillet"
+      ? { ent, kind: "arc", c: p2(P1, [-u1[1] * size, u1[0] * size]), r: size, a: P1, b: P2, ccw: true }
+      : line(ent, P1, P2);
+    panel.outer[i] = { ...sa, b: P1 };
+    panel.outer[j] = { ...sb, a: P2 };
+    panel.outer.splice(j === 0 ? panel.outer.length : j, 0, piece);
+    // The corner piece cut away; its side on the new piece names the new face.
+    const back: Seg = piece.kind === "arc" ? { ...piece, ent: `${panel.id}:${ent}`, a: P2, b: P1, ccw: false } : line(`${panel.id}:${ent}`, P2, P1);
+    ops.push({ kind: "cut", M: panel.M, loop: [P1, V, P2], segs: [line("c0", P1, V), line("c1", V, P2), back] });
+  }
+  return { state: st, ops };
+}
+
+/** The panel and the two outline pieces (i ends where j starts) at a picked thickness edge. */
+function cornerOf(st: SheetState, faces: [string, string]): { panel: Panel; i: number; j: number } {
+  const split = (n: string) => { const k = n.lastIndexOf(":"); return [n.slice(0, k), n.slice(k + 1)] as const; };
+  const [pa, ea] = split(faces[0]), [pb, eb] = split(faces[1]);
+  const panel = pa === pb ? st.panels.find(p => p.id === pa) : undefined;
+  if (panel) {
+    const ia = panel.outer.findIndex(s => s.ent === ea), ib = panel.outer.findIndex(s => s.ent === eb);
+    const n = panel.outer.length;
+    if (ia >= 0 && ib >= 0) {
+      if ((ia + 1) % n === ib) return { panel, i: ia, j: ib };
+      if ((ib + 1) % n === ia) return { panel, i: ib, j: ia };
+    }
+  }
+  throw new SheetError("E-SM-CORNER", "Pick an edge across the thickness at an outside corner of a flat face.");
 }
 
 // ---------- sketched bends and jogs ----------
