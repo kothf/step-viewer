@@ -91,6 +91,8 @@ const SNAP_PX = 9;
 const HV_TOL = (3 * Math.PI) / 180;
 
 type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "spline" | "origin" | "dim" | "rel"; d: number };
+/** A snapped cursor point: an existing point, a curve, horizontal/vertical or an inferred relation (FR-SK-052). */
+type Snap = { p: V2; id: string | null; curve: string | null; hv: "horizontal" | "vertical" | null; rel?: { t: "perpendicular" | "parallel" | "tangent"; ref: string } };
 
 /** Under-defined analysis arrows (FR-SLV-010). */
 const FREE_ARROW = 0xf08c00;
@@ -161,6 +163,17 @@ export class SketchEditor {
   piercing: string | null = null;
   /** Show dimension names with their values (FR-SK-065). */
   showNames = false;
+  /** Automatic relations while drawing (FR-SK-052); holding Ctrl suppresses them for one move or click. */
+  autoRels = true;
+  /** Relation glyphs next to the entities (FR-SK-053). */
+  showRels = true;
+  /** The relation glyph under the pointer: its entities are highlighted (FR-SK-053). */
+  private hoverRel: string | null = null;
+  private relHot = new Set<string>();
+  /** The last sketch line hovered while drawing a line: parallel/perpendicular inference (FR-SK-052). */
+  private inferLine: string | null = null;
+  /** The glyph beside the cursor naming the relation the next click adds (FR-SK-052). */
+  private inferEl: HTMLElement | null = null;
   private input: HTMLInputElement | null = null;
   private marker: THREE.Mesh;
   private dark = false;
@@ -207,6 +220,8 @@ export class SketchEditor {
     this.reattaching = null;
     this.piercing = null;
     this.tool = tool;
+    this.inferLine = null;
+    this.showInfer(null);
     this.draft = { pts: [], ids: [], cursor: null, snap: null };
     this.dimDraft = { picks: [], dim: null };
     this.ordDraft = { base: null, row: null };
@@ -379,6 +394,7 @@ export class SketchEditor {
     this.draft.cursor = snap.p;
     this.draft.snap = snap.id;
     this.draft.hoverCurve = snap.id ? null : snap.curve;
+    this.showInfer(pick || ["select", "fillet", "chamfer", "convert", "intersect", "dim", "hord", "vord"].includes(this.tool) ? null : snap);
     this.render();
     return true;
   }
@@ -425,9 +441,10 @@ export class SketchEditor {
   // ---------- snapping ----------
 
   /** Snaps a cursor point to points, the origin, curves and horizontal/vertical from the last point. */
-  private snapPoint(p: V2, active: boolean, materialize = false): { p: V2; id: string | null; curve: string | null; hv: "horizontal" | "vertical" | null } {
+  private snapPoint(p: V2, active: boolean, materialize = false): Snap {
     this.marker.visible = false;
-    if (!active) return { p, id: null, curve: null, hv: null };
+    // Ctrl held (or automatic relations off): the point goes where the cursor is, with no relation (FR-SK-052).
+    if (!active || this.suppressed()) return { p, id: null, curve: null, hv: null };
     const exclude = new Set<string>();
     const h = this.hits(p, { curves: false, exclude });
     if (h.length) { const q = this.pt(h[0].id); this.showMarker(q); return { p: q, id: h[0].id, curve: null, hv: null }; }
@@ -446,10 +463,86 @@ export class SketchEditor {
       const a = Math.atan2(p[1] - last[1], p[0] - last[0]);
       if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
       else if (Math.abs(Math.cos(a)) < Math.sin(HV_TOL)) { q = [last[0], p[1]]; hv = "vertical"; }
+      if (!hv) {
+        const inf = this.inferDir(last, p);
+        if (inf) return { p: inf.p, id: null, curve: null, hv: null, rel: inf.rel };
+      }
     }
     const c = this.hits(q, { points: false })[0];
-    if (c && !hv) { const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null }; }
+    if (c && !hv) {
+      // A line hovered while drawing a line becomes the parallel/perpendicular reference (SolidWorks inference).
+      if (this.tool === "line" && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
+      const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null };
+    }
     return { p: q, id: null, curve: null, hv };
+  }
+
+  /** Ctrl suppresses automatic relations while drawing, as in SolidWorks (FR-SK-052). */
+  private suppressed(): boolean {
+    return !this.autoRels || !!(this.lastEv && (this.lastEv.ctrlKey || this.lastEv.metaKey));
+  }
+
+  /**
+   * Direction inference for the next line from `last` (FR-SK-052): perpendicular to the line the chain came
+   * from, tangent to the arc it came from, parallel or perpendicular to the last line hovered. Returns the
+   * cursor moved onto that direction and the relation the click adds.
+   */
+  private inferDir(last: V2, p: V2): { p: V2; rel: { t: "perpendicular" | "parallel" | "tangent"; ref: string } } | null {
+    const w: V2 = [p[0] - last[0], p[1] - last[1]];
+    const L = Math.hypot(w[0], w[1]);
+    if (L < 1e-9) return null;
+    const tol = Math.sin(HV_TOL);
+    const onto = (u: V2): V2 => { const k = (w[0] * u[0] + w[1] * u[1]) / (u[0] * u[0] + u[1] * u[1]); return [last[0] + u[0] * k, last[1] + u[1] * k]; };
+    const dirOf = (id: string): V2 | null => {
+      const e = this.sk.ents.find(x => x.id === id);
+      if (e?.t !== "line") return null;
+      const a = this.pt(e.a), b = this.pt(e.b);
+      const n = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      return n > 1e-9 ? [(b[0] - a[0]) / n, (b[1] - a[1]) / n] : null;
+    };
+    const cands: { t: "perpendicular" | "parallel" | "tangent"; ref: string; u: V2 }[] = [];
+    const at = this.draft.ids.at(-1);
+    if (at) for (const e of this.sk.ents) {
+      if (e.cons) continue;
+      if (e.t === "line" && (e.a === at || e.b === at)) { const u = dirOf(e.id); if (u) cands.push({ t: "perpendicular", ref: e.id, u: [-u[1], u[0]] }); }
+      else if (e.t === "arc" && (e.a === at || e.b === at)) {
+        const c = this.pt(e.c);
+        const r: V2 = [last[0] - c[0], last[1] - c[1]];
+        const n = Math.hypot(r[0], r[1]);
+        if (n > 1e-9) cands.push({ t: "tangent", ref: e.id, u: [-r[1] / n, r[0] / n] });
+      }
+    }
+    const hov = this.inferLine && this.sk.ents.some(x => x.id === this.inferLine) ? this.inferLine : null;
+    const hu = hov ? dirOf(hov) : null;
+    if (hov && hu && !cands.some(c => c.ref === hov)) cands.push({ t: "parallel", ref: hov, u: hu }, { t: "perpendicular", ref: hov, u: [-hu[1], hu[0]] });
+    let best: (typeof cands)[number] | null = null, bd = tol;
+    for (const c of cands) {
+      const s = Math.abs(w[0] * c.u[1] - w[1] * c.u[0]) / L; // sine of the angle to the direction
+      if (s < bd) { bd = s; best = c; }
+    }
+    if (!best) return null;
+    return { p: onto(best.u), rel: { t: best.t, ref: best.ref } };
+  }
+
+  /** The glyph beside the cursor for the relation a click would add (FR-SK-052). */
+  private showInfer(s: Snap | null) {
+    const g = !s || !this.lastEv || this.tool === "select" ? ""
+      : s.rel ? REL_GLYPH[s.rel.t]
+      : s.hv ? REL_GLYPH[s.hv]
+      : s.id ? REL_GLYPH.coincident
+      : s.curve ? REL_GLYPH.onCurve : "";
+    if (!g) { this.inferEl?.remove(); this.inferEl = null; return; }
+    if (!this.inferEl) {
+      this.inferEl = document.createElement("div");
+      this.inferEl.className = "sk-infer";
+      this.inferEl.setAttribute("aria-hidden", "true");
+      this.host.layer.appendChild(this.inferEl);
+    }
+    const r = this.host.layer.getBoundingClientRect();
+    this.inferEl.textContent = g;
+    this.inferEl.dataset.rel = s!.rel?.t ?? s!.hv ?? (s!.id ? "coincident" : "onCurve");
+    this.inferEl.style.left = `${this.lastEv!.clientX - r.left + 14}px`;
+    this.inferEl.style.top = `${this.lastEv!.clientY - r.top + 14}px`;
   }
 
   /**
@@ -664,7 +757,7 @@ export class SketchEditor {
     // typed chain closes on its start, as when clicked.
     const joinTol = Math.min(1e-3, this.px(raw));
     const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= joinTol)?.id ?? (Math.hypot(raw[0], raw[1]) <= joinTol ? ORIGIN : null) : null;
-    const s = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
+    const s: Snap = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
@@ -678,7 +771,7 @@ export class SketchEditor {
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
     if (this.tool === "line") {
-      if (!d.pts.length) { d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
+      if (!d.pts.length) { this.inferLine = null; d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
       const a0 = d.pts.at(-1)!;
       if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
       const aId = d.ids.at(-1) ?? this.usePoint(a0, d.snapOrigin ? ORIGIN : null, d.snapCurve ?? null, rels);
@@ -686,6 +779,7 @@ export class SketchEditor {
       const lid = uid("l");
       this.sk.ents.push({ id: lid, t: "line", a: aId, b: bId });
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
+      else if (s.rel) rels.push({ id: uid("r"), t: s.rel.t, e: [s.rel.ref, lid] });
       finish("Add line");
       // Chain on from the end, unless the loop closed on an existing point.
       const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN) && d.ids.length > 0;
@@ -2550,9 +2644,11 @@ export class SketchEditor {
     const segs: number[] = [], cols: number[] = [];
     const dimSegs: number[] = [], dimCols: number[] = [];
     const lost = new Set(this.sk.rels.filter(r => r.ext && r.dangling).map(r => r.e[0]));
+    const hr = this.hoverRel ? this.sk.rels.find(r => r.id === this.hoverRel) : null;
+    this.relHot = new Set(hr ? hr.e : []);
     const color = (id: string, cons?: boolean) => {
       if (this.selection.has(id)) return C.sel;
-      if (this.hover?.id === id) return C.hover;
+      if (this.hover?.id === id || this.relHot.has(id)) return C.hover;
       if (lost.has(id)) return this.dark ? DANGLING.dark : DANGLING.light;
       if (this.info.status !== "ok" && this.info.conflicting.length) return C.bad;
       if (cons) return C.cons;
@@ -2850,6 +2946,11 @@ export class SketchEditor {
           this.emitSel();
         });
         el.addEventListener("dblclick", ev => { ev.stopPropagation(); if (cls.includes("sk-dim")) this.editDim(id); });
+        if (cls.includes("sk-rel")) {
+          // Hovering a relation glyph lights up the entities it ties (FR-SK-053).
+          el.addEventListener("pointerenter", () => { this.hoverRel = id; this.render(); });
+          el.addEventListener("pointerleave", () => { if (this.hoverRel === id) { this.hoverRel = null; this.render(); } });
+        }
         this.host.layer.appendChild(el);
         this.labels.set(id, el);
       }
@@ -2886,6 +2987,8 @@ export class SketchEditor {
     const per = new Map<string, number>();
     for (const r of this.sk.rels) {
       if (r.t === "coincident" || r.t === "onCurve") continue;
+      // Hidden glyphs (FR-SK-053) still show while selected, so a relation picked in the list can be seen.
+      if (!this.showRels && !this.selection.has(r.id)) continue;
       const el = mk(r.id, "sk-rel");
       el.textContent = r.ext ? "⊡" : REL_GLYPH[r.t];
       const name = t(relName(r)) + (r.dangling ? ` · ${t("dangling: drag onto a model edge to re-attach")}` : "");
@@ -2899,7 +3002,7 @@ export class SketchEditor {
       el.dataset.pos = JSON.stringify(this.anchorOf(anchor));
       el.dataset.k = String(k);
     }
-    for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); }
+    for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); if (this.hoverRel === id) this.hoverRel = null; }
     this.placeLabels();
   }
 

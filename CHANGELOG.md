@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.243.0] - 2026-11-08
+
+### Added
+
+- **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in SolidWorks; **Automatic relations** in the sketch panel turns them off.
+- **Relation glyphs (FR-SK-053)**: hovering a relation glyph lights up the entities it ties, and **Show relations** in the sketch panel hides the glyphs (a relation selected in the list still shows its own).
+
 ## [1.240.0] - 2026-11-08
 
 ### Added
@@ -1588,7 +1595,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.240.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.243.0...HEAD
+[1.243.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.243.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0

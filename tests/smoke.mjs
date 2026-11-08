@@ -2134,6 +2134,55 @@ try {
     });
     check(capOpts === "none|arc|line" && ob.offs === 2 && ob.linked === 1 && ob.dim === 3 && ob.caps === 2 && ob.r.every(r => near(r, 3, 0.01)) && ob5.ys.join(",") === "35,45" && ob5.status === "ok",
       `model 1.240: Offset both sides caps the open line with arcs and one dimension drives both copies (${capOpts}, ${JSON.stringify(ob)}, ${JSON.stringify(ob5)})`);
+    // 1.243.0 (FR-SK-052/053): a line drawn on from a slanted one snaps perpendicular (glyph at the cursor, relation
+    // added), Ctrl suppresses it, a hovered line gives parallel; hovering a relation glyph lights up its entities.
+    await tool("line");
+    const lineIds = () => mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+    const before = await lineIds();
+    await click([72, 12]); await click([82, 17]);
+    const [mx, my] = await toPage([77.15, 27]);
+    await mp.mouse.move(mx, my); await mp.waitForTimeout(60);
+    const glyph = await mp.evaluate(() => document.querySelector(".sk-infer")?.dataset.rel ?? null);
+    await click([77.15, 27]);
+    await mp.keyboard.down("Control");
+    await click([87.15, 32.2]);
+    await mp.keyboard.up("Control");
+    await mp.keyboard.press("Escape");
+    await click([95, 28]);
+    const [hx, hy] = await toPage([77, 14.5]);
+    await mp.mouse.move(hx, hy); await mp.waitForTimeout(60);
+    await click([84.9, 23]);
+    await mp.keyboard.press("Escape");
+    const inf = await mp.evaluate(old => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      const made = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+      const dir = l => { const a = P(l.a), b = P(l.b); return [b.x - a.x, b.y - a.y]; };
+      const rel = (t, a, b) => sk.rels.find(r => r.t === t && r.e[0] === a && r.e[1] === b);
+      if (made.length !== 4) return { n: made.length };
+      const [l1, l2, l3, l4] = made;
+      const d1 = dir(l1), d2 = dir(l2), d4 = dir(l4);
+      const perp = rel("perpendicular", l1.id, l2.id);
+      const end3 = P(l3.b);
+      return {
+        n: made.length, perp: !!perp, dot: Math.abs(d1[0] * d2[0] + d1[1] * d2[1]) / Math.hypot(...d1) / Math.hypot(...d2),
+        ctrlFree: !sk.rels.some(r => r.e.includes(l3.id)) && Math.abs(end3.x - 87.15) < 0.05 && Math.abs(end3.y - 32.2) < 0.05,
+        par: !!rel("parallel", l1.id, l4.id), cross: Math.abs(d1[0] * d4[1] - d1[1] * d4[0]) / Math.hypot(...d1) / Math.hypot(...d4),
+        perpId: perp?.id, l1: l1.id, status: ed.info.status,
+      };
+    }, before);
+    const hot = await mp.evaluate(({ id, l1 }) => {
+      const ed = window.__sv.model.editor(), el = document.querySelector(`.sk-rel[data-id="${id}"]`);
+      if (!el) return { glyph: false };
+      el.dispatchEvent(new PointerEvent("pointerenter"));
+      const lit = ed.relHot.has(l1);
+      el.dispatchEvent(new PointerEvent("pointerleave"));
+      ed.showRels = false; ed.render();
+      const hidden = !document.querySelector(`.sk-rel[data-id="${id}"]`);
+      ed.showRels = true; ed.render();
+      return { glyph: true, lit, cleared: ed.relHot.size === 0, hidden };
+    }, { id: inf.perpId, l1: inf.l1 });
+    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
+      `model 1.243: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
