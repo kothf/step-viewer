@@ -199,3 +199,52 @@ test("annotations: topology names, centre marks, dimensions, hole callout, model
   assert.deepEqual(placed.map(a => `${a.src}@${a.view}:${a.k}`).sort(), ["f1:depth@front:v", "s1:d1@top:h", "s1:d2@top:v", "s2:d3@top:dia"]);
   assert.equal(placeItems({ ...sheet, annots: placed as never[] }, items, () => [-50, -30, 50, 30], () => "z").length, 0);
 });
+
+test("GD&T, datums, surface finish, tables, GOST title block, dangling annotations", async () => {
+  const { symbolPrims, gtolPrims, datumPrims, surfPrims, tablePrims, GSYMS } = await import("../../src/drawing/gdt");
+  const { formatPrims, frameOf, titleBlockAt } = await import("../../src/drawing/sheet");
+  const { viewAnnots, sheetNotes } = await import("../../src/drawing/annot");
+  const { newSheet } = await import("../../src/drawing/doc");
+  // Every characteristic draws something, all on the annotation layer.
+  for (const g of GSYMS) { const p = symbolPrims(g, 0, 0); assert.ok(p.length && p.every(x => x.layer === "ANNOT"), g); }
+  // A position frame: Ø0.1 (M) | A | B, two rows stacked downwards, with a leader ending at the feature.
+  const f = gtolPrims({ id: "g", t: "gtol", pos: [0, 0], rows: [{ sym: "pos", tol: "0.1", dia: true, mod: "M", datums: ["A", "B"] }, { sym: "flat", tol: "0.02", datums: [] }] }, [100, 100], [80, 90], ",");
+  const txt = f.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.deepEqual(txt, ["Ø0,1", "M", "A", "B", "0,02"]);
+  assert.equal(f.box[1], 86);
+  assert.equal(f.box[3], 100);
+  assert.ok(f.prims.some(p => p.t === "p" && p.fill), "arrow on the leader");
+  // A datum on a horizontal edge with the letter above: the triangle points up, away from the edge.
+  const d = datumPrims({ id: "d", t: "datum", view: "v", ref: { pt: [0, 0, 0] }, pos: [0, 0], letter: "A" }, [10, 0], [1, 0], [10, 15]);
+  const tri = d.prims.find(p => p.t === "p" && p.fill) as { p: number[] };
+  assert.equal(tri.p[5], 3);
+  assert.deepEqual(d.box, [6.5, 11.5, 13.5, 18.5]);
+  // Surface finish: the removal bar and the roughness under the long leg's line, decimal comma.
+  const s = surfPrims({ id: "s", t: "surf", pos: [0, 0], proc: "removal", text: "Ra 3.2" }, [0, 0], ",");
+  assert.equal(s.prims.filter(p => p.t === "l").length, 4);
+  assert.ok(s.prims.some(p => p.t === "t" && p.s === "Ra 3,2"));
+  // A revision table anchored at its top-right corner grows to the left; headers are translated.
+  const tb = tablePrims({ id: "t", t: "table", kind: "rev", anchor: "tr", pos: [400, 287], title: "REVISIONS", cols: ["Rev.", "Column 2"], rows: [["A", "x"]] }, (k, p) => (k === "Column {n}" ? `C${p!.n}` : k.toLowerCase()));
+  assert.equal(tb.box[2], 400);
+  assert.equal(tb.box[1], 287 - 18);
+  assert.ok(tb.prims.some(p => p.t === "t" && p.s === "C2") && tb.prims.some(p => p.t === "t" && p.s === "revisions" && p.bold));
+  // GOST 2.104: frame 20/5/5/5, a 185 × 55 block in the bottom-right corner, sheet "2/3" split into its two cells.
+  const g = newSheet(1); g.format = "gost";
+  assert.deepEqual(frameOf(g), [20, 5, 415, 292]);
+  assert.deepEqual(titleBlockAt(g), [230, 5]);
+  const fields = { title: "Plate", number: "АБВГ.123456.001", revision: "", material: "Сталь 45", mass: "", company: "", author: "Ivanov", checked: "", approved: "", date: "", scale: "1:1", sheet: "2/3", size: "A3", units: "mm" };
+  const fp = formatPrims(g, fields, k => k);
+  const texts = fp.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  for (const k of ["Developed", "N. control", "Lit.", "No. of sheets", "АБВГ.123456.001", "Ivanov", "2", "3"]) assert.ok(texts.includes(k), k);
+  assert.ok(fp.every(p => p.t !== "t" || p.x >= 230), "no zone letters on a GOST frame");
+  // A datum whose edge is gone is reported and drawn as its framed letter only; sheet-level tables are drawn.
+  const sh = { ...newSheet(1), views: [{ id: "v", name: "v", orient: "front" as const, x: 0, y: 0 }], annots: [
+    { id: "d1", t: "datum" as const, view: "v", ref: { e: "nope", h: [0, 0, 0] as V3, p: "e" as const }, pos: [0, 10] as [number, number], letter: "A" },
+    { id: "t1", t: "table" as const, kind: "general" as const, pos: [30, 280] as [number, number], cols: ["a"], rows: [["b"]] }] };
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-1, -1, 1, 1] as [number, number, number, number], ready: true };
+  const out = viewAnnots(sh, sh.views[0], pl, { topo: { edges: [], cyls: [] }, holes: [], items: [], box: null, dec: ".", label: k => k });
+  assert.deepEqual(out.dangling, ["d1"]);
+  assert.deepEqual(out.hits.map(h => h.id), ["d1"]);
+  assert.ok(!out.prims.some(p => p.t === "p" && p.fill), "no triangle without the edge");
+  assert.deepEqual(sheetNotes(sh).hits.map(h => h.id), ["t1"]);
+});
