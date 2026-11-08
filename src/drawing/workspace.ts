@@ -21,6 +21,7 @@ import { FIELD_LABEL, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSiz
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 
 export interface DrawingModel {
@@ -221,6 +222,7 @@ export class DrawingWorkspace {
       this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();
+      void this.renderPalette();
       return this.facts;
     } catch (err) {
       toast(t("The drawing's model could not be loaded: {err}", { err: t((err as Error).message) }), true);
@@ -331,6 +333,10 @@ export class DrawingWorkspace {
       </div>
       <div class="drw-body">
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
+          <details class="drw-pal" open><summary>${esc(t("View palette"))}</summary>
+            <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
+            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
+          </details>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
         </aside>
@@ -351,6 +357,7 @@ export class DrawingWorkspace {
     this.svg.addEventListener("dblclick", e => this.onDbl(e));
     this.svg.addEventListener("wheel", e => this.onWheel(e), { passive: false });
     this.svg.addEventListener("contextmenu", e => e.preventDefault());
+    this.bindPalette();
     document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.(".drw-dd")) this.closeMenus(); });
     new ResizeObserver(() => this.applyViewBox()).observe(this.svg);
     this.renderAll();
@@ -733,6 +740,57 @@ export class DrawingWorkspace {
     this.mode = { kind: "model", orient, dir, at: null };
     void this.kernel.project(dir).then(() => this.renderOverlay(), () => {});
     this.renderStatus();
+  }
+
+  // ---------- view palette (FR-UI-072) ----------
+
+  private palRun = 0;
+
+  /** Draws the palette's pictures from the model's projections (the kernel keeps them for the views). */
+  private async renderPalette() {
+    const run = ++this.palRun;
+    for (const o of PALETTE) {
+      let d = "";
+      try { d = thumbPath(await this.kernel.project(ORIENTS[o])); } catch { /* left blank */ }
+      if (run !== this.palRun) return;
+      this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
+    }
+  }
+
+  /** Dragging a palette view over the sheet previews it under the cursor; dropping places it. */
+  private bindPalette() {
+    let dragged: Orient | null = null;
+    this.el.querySelector(".drw-pal-grid")!.addEventListener("dragstart", e => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pal]"), de = e as DragEvent;
+      if (!b || !de.dataTransfer) return;
+      if (!this.facts) { e.preventDefault(); toast(t("The drawing's model is still loading.")); return; }
+      dragged = b.dataset.pal as Orient;
+      de.dataTransfer.setData(PALETTE_MIME, dragged);
+      de.dataTransfer.effectAllowed = "copy";
+      this.cancelMode();
+      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null };
+      this.renderStatus();
+    });
+    this.el.addEventListener("dragend", () => {
+      if (dragged && this.mode.kind === "model" && this.mode.orient === dragged) this.cancelMode();
+      dragged = null;
+    });
+    this.svg.addEventListener("dragover", e => {
+      if (!dragged || this.mode.kind !== "model") return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "copy";
+      this.mode.at = this.sheetPt(e);
+      this.renderOverlay();
+    });
+    this.svg.addEventListener("dragleave", () => { if (this.mode.kind === "model") { this.mode.at = null; this.renderOverlay(); } });
+    this.svg.addEventListener("drop", e => {
+      if (!dragged || this.mode.kind !== "model") return;
+      e.preventDefault();
+      const m = this.mode;
+      dragged = null;
+      this.placeModel(m, this.sheetPt(e));
+      this.svg.focus({ preventScroll: true });
+    });
   }
 
   private placeModel(m: Extract<Mode, { kind: "model" }>, p: [number, number]) {

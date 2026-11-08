@@ -4520,7 +4520,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.78: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
+  // --- 1.79: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const fp = await ctx.newPage();
@@ -4602,7 +4602,7 @@ try {
       && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 fasteners placed/.test(fast.status ?? "") && fast.configs === 11
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
-      `asm 1.78: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
+      `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
     await ctx.close();
   }
 
@@ -5201,6 +5201,81 @@ try {
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, legends: [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(ru.title === "Спираль" && !/[A-Za-z]{2}/.test(ru.legends), `model 1.55: helix panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ap = await ctx.newPage();
+    ap.on("pageerror", e => errors.push(e.message));
+    ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ap.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A 100 × 60 × 20 block with a Ø16 hole through it.
+    const part = { schema: 1, kind: "part", id: "d_anablock", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await ap.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await ap.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    const runAna = async kind => {
+      if (await ap.isHidden("#ana-panel")) { await ap.click("#display-btn"); await ap.selectOption("#analysis", kind); await ap.click("#display-btn"); }
+      else await ap.selectOption("#ana-panel [data-k=kind]", kind);
+      await ap.waitForFunction(k => window.__sv.surfAna.kind === k && !window.__sv.surfAna.busy, kind, { timeout: 60000 });
+      return ap.evaluate(() => { const a = window.__sv.surfAna; return { areas: Object.fromEntries(Object.entries(a.areas).map(([k, v]) => [k, Math.round(v)])), max: Math.round(a.max * 1000) / 1000, legend: document.querySelectorAll("#ana-panel .ana-legend li").length }; });
+    };
+    // Draft along +Z: top and bottom less the hole, the four sides and the hole wall have none.
+    const hole = Math.PI * 64, wall = 2 * Math.PI * 8 * 20;
+    const dr = await runAna("draft");
+    const near = (a, b, tol) => Math.abs((a ?? 0) - b) <= tol;
+    check(near(dr.areas.pos, 6000 - hole, 30) && near(dr.areas.neg, 6000 - hole, 30) && near(dr.areas.low, 6400 + wall, 30) && dr.legend === 3,
+      `analysis: draft along +Z colours top green, bottom red and the walls yellow, with areas (${JSON.stringify(dr)})`);
+    // Thickness: with a 25 mm minimum the 20 mm top and bottom are thin; the sides are 60 or 100 mm across.
+    await ap.selectOption("#ana-panel [data-k=kind]", "thickness");
+    await ap.fill("#ana-panel [data-k=minWall]", "25");
+    await ap.dispatchEvent("#ana-panel [data-k=minWall]", "change");
+    await ap.waitForFunction(() => window.__sv.surfAna.s.minWall === 25 && !window.__sv.surfAna.busy && window.__sv.surfAna.total > 0, null, { timeout: 60000 });
+    const th = await ap.evaluate(() => Object.fromEntries(Object.entries(window.__sv.surfAna.areas).map(([k, v]) => [k, Math.round(v)])));
+    check(th.thin > 2 * (6000 - hole) - 60 && th.thin < 2 * (6000 - hole) + wall && (th.ok ?? 0) > 6000 && !th.open, `analysis: wall thickness flags the 20 mm top and bottom (and the hole wall 22 mm from the sides) under a 25 mm minimum (${JSON.stringify(th)})`);
+    // Undercut: a plain block with a through hole has none; curvature knows the hole's radius; zebra wears its own material.
+    const uc = await runAna("undercut");
+    const cu = await runAna("curvature");
+    const zb = await runAna("zebra");
+    const zmat = await ap.evaluate(() => window.__sv.viewer.parts.every(p => p.mesh.material.type === "ShaderMaterial"));
+    check(!uc.areas.under && near(uc.areas.up, 6000 - hole, 30) && Math.abs(cu.max - 1 / 8) < 0.01 && zmat, `analysis: no undercut on the block, curvature up to 1/8 mm⁻¹, zebra stripes (${JSON.stringify([uc.areas, cu.max, zmat])})`);
+    // In Russian, then off: the parts get their own material back.
+    await ap.click("#lang-btn");
+    const ruAna = await ap.evaluate(() => document.querySelector("#ana-panel").textContent);
+    await ap.click("#lang-btn");
+    await ap.click("#ana-panel [data-a=close]");
+    const off = await ap.evaluate(() => ({ hidden: document.querySelector("#ana-panel").hidden, own: window.__sv.viewer.parts.every(p => p.mesh.material === p.material) }));
+    check(/Полосы/.test(ruAna) && !/[A-Za-z]{3}/.test(ruAna) && off.hidden && off.own, `analysis: panel in Russian; turning it off restores the parts (${JSON.stringify([ruAna.slice(0, 60), off])})`);
+
+    // Drawing view palette: every standard view drawn; drag the isometric one onto the sheet.
+    await ap.click("#new-more"); await ap.click("#new-drawing");
+    await ap.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ap.waitForFunction(() => [...document.querySelectorAll(".drw-pt path")].every(p => p.getAttribute("d")), null, { timeout: 60000 });
+    const tiles = await ap.evaluate(() => [...document.querySelectorAll(".drw-pt")].map(b => b.dataset.pal).join(","));
+    const svg = await ap.locator(".drw-svg").boundingBox();
+    await ap.locator('[data-pal="iso"]').dragTo(ap.locator(".drw-svg"), { targetPosition: { x: svg.width * 0.75, y: svg.height * 0.3 } });
+    await ap.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.length === 4, null, { timeout: 10000 });
+    await ap.keyboard.press("Escape");
+    const iso = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return { orient: v.orient, style: v.style, x: v.x, y: v.y, parent: v.parent ?? null }; });
+    check(tiles === "front,top,right,iso,back,bottom,left" && iso.orient === "iso" && iso.style === "hlr" && !iso.parent && iso.x > 200 && iso.y > 150,
+      `drawing palette: seven standard views, the isometric one dropped where it was let go (${tiles}, ${JSON.stringify(iso)})`);
+    // Clicking a tile, then the sheet, places it too.
+    await ap.click('[data-pal="bottom"]');
+    await ap.locator(".drw-svg").click({ position: { x: svg.width * 0.75, y: svg.height * 0.75 } });
+    await ap.keyboard.press("Escape");
+    const n = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].views.filter(v => v.orient === "bottom").length);
+    check(n === 1, `drawing palette: click a view, then the sheet, places it (${n})`);
     await ctx.close();
   }
 

@@ -6,6 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
+import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
 import { quadrants, virtualCorners, Snapper, SNAP_FILTERS, SEL_FILTER, type Snap } from "./tools/Snapper";
@@ -671,6 +672,7 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   setPcbMode(false);
   $("#back-pcb").hidden = !key.startsWith("sv:pcb:");
   viewer.load(result.parts, result.tree);
+  if (surfAna.kind) void surfAna.refresh();
   state.fileName = name;
   state.fileKey = key;
   document.title = `${name} · MöbiusCAD`;
@@ -711,6 +713,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
     showEntity(hl.hoverFace, hl.hoverEdge, null);
   }
   viewer.load(parts, tree, first && parts.length > 0);
+  if (surfAna.kind) void surfAna.refresh();
   if (!first) remeasure();
   state.fileName = name;
   state.fileKey = "";
@@ -1832,6 +1835,11 @@ function normalTo(given?: [number, number, number]) {
   window.addEventListener("resize", () => set(false));
 }
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
+// Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
+const surfAna = new SurfaceAnalysis(viewer, {
+  faceNormal: () => (state.selection?.kind === "face" && state.selection.face?.normal && state.selection.face.type === "plane" ? state.selection.face.normal : null),
+}, $("#ana-panel"), k => { $<HTMLSelectElement>("#analysis").value = k ?? ""; });
+$<HTMLSelectElement>("#analysis").addEventListener("change", e => surfAna.set(((e.target as HTMLSelectElement).value || null) as Parameters<typeof surfAna.set>[0]));
 
 function applyThemeToViewer() {
   const dark = document.documentElement.dataset.theme === "dark";
@@ -2338,4 +2346,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { modeller, asm, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
