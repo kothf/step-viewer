@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.68.0] - 2026-11-08
+
+### Added
+
+- **Dimensions on drawings** (FR-DRW-021): **Dimension** (D) works like SolidWorks' Smart Dimension. Click a line for its length, a circle for its diameter (an arc for its radius), two points (corners or circle centres) for the distance between them, a point and a line or two parallel lines for the square distance, or two lines at an angle for the angle; the dimension follows the cursor as a preview, and the side you move to makes it horizontal, vertical or aligned. Edges highlight under the cursor and corners snap.
+- Dimensions are drawn to ISO 129: thin extension lines with a gap, filled arrows (outside when there is no room), 3.5 mm text above the line, reading from the bottom or the right. Select a dimension by its text to drag it, change its direction, decimals, prefix and suffix, type text over the value, or give it a tolerance: ±, deviations (stacked), limits, or an ISO 286 fit such as H7.
+- Dimensions are associative (AT-P5-3): they hold on to the model's edges by the names of the faces they join, so after the part changes they find their edges again and show the new values.
+- **Model items** (FR-DRW-020, Annotate ▾): the part's driving sketch dimensions and extrude depths go into the view where each reads best (looking square at its sketch, or for a depth, from the side), once each, outside the view.
+- **Hole callouts** (FR-DRW-022, Annotate ▾): click a hole's edge, then place the callout. The text comes from the hole feature (count, diameter, depth or THRU, thread, counterbore and countersink), or from the cylinder for other holes; it can be typed over.
+- **Centre marks and centrelines** (FR-DRW-023): drawn automatically on round holes and bosses seen end-on and on cylinders seen from the side, in the centre line type; a view setting turns them off.
+- **Notes** (Annotate ▾): text on the sheet or on a view (it moves with the view), with a leader when an edge is clicked first.
+- Annotations export to PDF, SVG and DXF (ANNOT and CENTER layers) and follow the interface language, with a decimal comma in Russian.
+
 ## [1.67.0] - 2026-11-08
 
 ### Added
@@ -643,7 +656,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.67.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.68.0...HEAD
+[1.68.0]: https://github.com/kothf/step-viewer/compare/v1.67.0...v1.68.0
 [1.67.0]: https://github.com/kothf/step-viewer/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/kothf/step-viewer/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
