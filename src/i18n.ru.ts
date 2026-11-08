@@ -2981,4 +2981,11 @@ export const RU: Record<string, string> = {
   "Click the edges of the parting line.": "Щёлкните рёбра линии разъёма.",
   "Draft works on ribs normal to the sketch.": "Уклон работает для рёбер жёсткости, перпендикулярных эскизу.",
   "The draft angle must be between 0° and 45°.": "Угол уклона должен быть от 0° до 45°.",
+  // 1.101.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
+  "Chain dimension": "Цепной размер",
+  "Baseline dimension": "Размеры от базы",
+  "Ordinate dimension": "Координатный размер",
+  "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
+  "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
+  "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
 };

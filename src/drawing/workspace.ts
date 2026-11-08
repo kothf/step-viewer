@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -81,6 +81,8 @@ interface Pick { kind: "pt" | "line" | "circle"; ref: GeoRef; e: MEdge }
 type AnnotMode =
   /** Smart dimension (FR-DRW-021): pick one or two entities, then place. */
   | { kind: "dim"; view: string | null; picks: Pick[]; at: Pt | null }
+  /** Chain, baseline or ordinate dimensions (FR-DRW-021): the first point is the base, each further point adds dimensions at once. */
+  | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null }
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
@@ -93,7 +95,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "hole", "note", "gtol", "datum", "surf", "balloon"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "hole", "note", "gtol", "datum", "surf", "balloon"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -103,7 +105,7 @@ const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
+  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
   ["surf", "Surface finish"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
@@ -319,6 +321,9 @@ export class DrawingWorkspace {
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
           <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
             <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-an="chain">${esc(t("Chain dimension"))}</button>
+              <button role="menuitem" data-an="base">${esc(t("Baseline dimension"))}</button>
+              <button role="menuitem" data-an="ord">${esc(t("Ordinate dimension"))}</button>
               <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
               <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
               <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
@@ -421,6 +426,7 @@ export class DrawingWorkspace {
     else if (m.kind === "brokenout") s = m.pts.length < 3 ? t("Click the corners of the area to cut away on the view.") : t("Click more corners; click the first corner or press Enter to cut.");
     else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
+    else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
@@ -939,12 +945,13 @@ export class DrawingWorkspace {
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
-  private startAnnot(kind: AnnotMode["kind"]) {
+  private startAnnot(kind: AnnotMode["kind"], how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
+    else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
     else this.mode = { kind, view: null, leader: null, at: null };
@@ -1022,6 +1029,36 @@ export class DrawingWorkspace {
     return { ...base, k, refs };
   }
 
+  /** A point for chain, baseline and ordinate dimensions: a corner or a circle's centre (a line is no point). */
+  private pointAt(viewId: string, p: Pt): GeoRef | null {
+    const pk = this.pickAt(viewId, p);
+    return !pk || pk.kind === "line" ? null : pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref;
+  }
+
+  /** The dimensions one more point adds to a chain, baseline or ordinate set (FR-DRW-021), placed clear of the view:
+   *  horizontal ones above it, vertical ones to its right, baseline ones stacked 7 mm apart. The axis comes from the first step. */
+  private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef): { dims: DimAnnot[]; axis: "h" | "v" } | null {
+    const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = this.facts?.topo ?? null;
+    if (!vid || !v || !pl || !m.picks.length) return null;
+    const { P } = projector(viewDir(this.sheet, v));
+    const pt = (r: GeoRef) => { const q = refPoint(r, topo); return q ? P(q) : null; };
+    const q0 = pt(m.picks[0]), ql = pt(m.picks[m.picks.length - 1]), q = pt(ref);
+    if (!q0 || !ql || !q || Math.hypot(q[0] - ql[0], q[1] - ql[1]) < 1e-6) return null;
+    const axis = m.axis ?? (Math.abs(q[0] - q0[0]) >= Math.abs(q[1] - q0[1]) ? "h" : "v");
+    const n = m.picks.length - 1, gap = 8 / pl.s, step = 7 / pl.s, [, , bx1, by1] = pl.box;
+    const pos = (a: [number, number], b: [number, number], k: number): Pt => axis === "h" ? [round((a[0] + b[0]) / 2), round(by1 + gap + k * step)] : [round(bx1 + gap + k * step), round((a[1] + b[1]) / 2)];
+    const dim = (refs: GeoRef[], k: DimAnnot["k"], at: Pt): DimAnnot => ({ id: uid("a_"), t: "dim", view: vid, k, refs, pos: at });
+    const dims: DimAnnot[] = [];
+    if (m.how === "chain") dims.push(dim([m.picks[n], ref], axis, pos(ql, q, 0)));
+    else if (m.how === "base") dims.push(dim([m.picks[0], ref], axis, pos(q0, q, n)));
+    else {
+      const k = axis === "h" ? "oh" : "ov", at = (w: [number, number]): Pt => axis === "h" ? [round(w[0]), round(by1 + gap)] : [round(bx1 + gap), round(w[1])];
+      if (!n) dims.push(dim([m.picks[0], m.picks[0]], k, at(q0)));
+      dims.push(dim([m.picks[0], ref], k, at(q)));
+    }
+    return { dims, axis };
+  }
+
   private annotClick(m: AnnotMode, p: Pt) {
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
@@ -1036,6 +1073,15 @@ export class DrawingWorkspace {
         this.addAnnot({ ...d, id: uid("a_") }, "Dimension");
         m.picks = []; m.view = null;
       }
+    } else if (m.kind === "dimset") {
+      if (!vid) return;
+      const ref = this.pointAt(vid, p);
+      if (!ref) { toast(t("Click a point: a corner or a circle centre.")); return; }
+      if (!m.picks.length) { m.view = vid; m.picks = [ref]; this.renderStatus(); return; }
+      const next = this.dimSetNext(m, ref);
+      if (!next) return;
+      m.axis = next.axis; m.picks.push(ref);
+      this.store!.change(m.how === "ord" ? "Ordinate dimension" : m.how === "base" ? "Baseline dimension" : "Chain dimension", d => { (d.sheets[this.sheetIdx].annots ??= []).push(...next.dims); });
     } else if (m.kind === "hole") {
       if (!m.e) {
         if (!vid) return;
@@ -1177,6 +1223,13 @@ export class DrawingWorkspace {
         const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.facts?.topo ?? null);
         if (d && g) s += `<g class="drw-preview">${svgBody(dimPrims(d, g, pl, this.ctx().dec).prims, H, "currentColor")}</g>`;
       }
+    } else if (m.kind === "dimset") {
+      const topo = this.facts?.topo ?? null;
+      for (const r of m.picks) { const q = refPoint(r, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
+      const ref = this.pointAt(vid, at), q = ref && refPoint(ref, topo);
+      if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; }
+      const next = ref && this.dimSetNext(m, ref);
+      if (next) s += `<g class="drw-preview">${svgBody(next.dims.flatMap(d => { const g = dimGeo(d, P, topo); return g ? dimPrims(d, g, pl, this.ctx().dec).prims : []; }), H, "currentColor")}</g>`;
     } else if (m.kind === "hole") {
       if (!m.e) { const hov = this.pickAt(vid, at, "circle"); if (hov) s += show(hov, "drw-edge"); }
       else {
@@ -1261,8 +1314,14 @@ export class DrawingWorkspace {
       const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: undefined, txt: undefined }, g, this.ctx().dec).main) : "?";
       const tol = a.tol?.t ?? "";
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
+      // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
+      const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.facts?.topo ?? null) : null;
+      const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c"
+        ? [["rad", "Radius"], ["dia", "Diameter"], ...((e0.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3 ? [["arc", "Arc length"] as [DimAnnot["k"], string]] : [])]
+        : a.k === "ang" || a.k === "chamfer" ? [["ang", "Angle"], ["chamfer", "Chamfer"]] : null;
       return `<fieldset class="pm-group"><legend>${esc(t("Dimension"))}</legend>
         ${val != null ? `<p class="drw-note">${esc(t("Value"))}: <b translate="no">${esc(val)}</b>${a.src ? ` · ${esc(t("model item"))}` : ""}</p>` : ""}
+        ${kinds ? `<label class="drw-f">${esc(t("Type"))}<select data-d="k">${kinds.map(([k, l]) => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : ""}
         ${lin ? `<label class="drw-f">${esc(t("Direction"))}<select data-d="k">${(["h", "v", "al"] as const).map(k => `<option value="${k}"${a.k === k ? " selected" : ""}>${esc(t(k === "h" ? "Horizontal" : k === "v" ? "Vertical" : "Aligned"))}</option>`).join("")}</select></label>` : ""}
         <label class="drw-f">${esc(t("Decimals"))}<select data-d="prec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(n => `<option value="${n}"${a.prec === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Prefix"))}<input data-d="pre" value="${esc(a.pre ?? "")}" translate="no"></label>
@@ -1895,7 +1954,7 @@ export class DrawingWorkspace {
     if (b.dataset.an) {
       this.closeMenus();
       const an = b.dataset.an;
-      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else this.startAnnot(an as AnnotMode["kind"]);
+      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else if (an === "chain" || an === "base" || an === "ord") this.startAnnot("dimset", an); else this.startAnnot(an as AnnotMode["kind"]);
       return;
     }
     if (b.dataset.grow) {
