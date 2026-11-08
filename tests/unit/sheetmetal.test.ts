@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature } from "../../src/sheetmetal/types";
+import type { SmBaseFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { occ } from "./occ";
@@ -173,4 +173,26 @@ test("sheet metal: sketched bend and jog keep the flat pattern (FR-FT-120)", asy
   // Too small for two bends of radius 2.
   const bad = m.evaluate(doc([s, base(), jl, { ...jg, offset: { v: 1 } }])).statuses.find(x => x.id === "jg");
   assert.equal(bad?.ok, false);
+});
+
+test("sheet metal: tab beside a face joins the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const tb = rect("t", 100, 10, 120, 40);
+  const tf: SmTabFeature = { id: "tb", type: "smtab", name: "Tab1", sketch: "t" };
+  const r = run(doc([s, base(), tb, tf]));
+  close(r.props.volume, (100 * 50 + 20 * 30) * 2, 1e-6);
+  close(r.size[0], 120, 1e-6);
+  const loops = flatLoops(r.sheet!);
+  assert.equal(loops.outer.length, 1);
+  assert.equal(loops.outer[0].length, 8);
+  // A flange on the tab's far edge.
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["tb:p0:top", "tb:p0:tl2"] }], length: { v: 15 }, angle: { v: Math.PI / 2 } };
+  const r2 = run(doc([s, base(), tb, tf, fl]));
+  close(r2.props.volume, (100 * 50 + 20 * 30 - 4 * 30 + ((Math.PI / 2) * 3 + 11) * 30) * 2, 1e-5);
+  // Over the face: refused.
+  const over = m.evaluate(doc([s, base(), rect("o", 90, 10, 120, 40), { ...tf, sketch: "o" }])).statuses.find(x => x.id === "tb");
+  assert.equal(over?.ok, false);
+  assert.equal(over?.code, "E-SM-TABOVER");
 });

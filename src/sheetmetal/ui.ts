@@ -6,7 +6,7 @@ import { t } from "../i18n";
 import type { EdgeRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
 import { flatSize, type SheetState } from "./sheet";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmSketchBendFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
 export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smflat" | "smdxf";
 
@@ -23,8 +23,8 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smflat: "▭" };
+export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
@@ -60,7 +60,14 @@ const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error
 export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog", c: DraftCtx): Feature | string {
   const base = c.doc.features.find((f): f is SmBaseFeature => f.type === "smbase");
   if (type === "smbase") {
-    if (base) return t("This part already has a base flange.");
+    if (base) {
+      // With a base flange, a closed sketch on a face of the sheet makes a tab (SolidWorks' Base Flange/Tab).
+      const closed = (s: SketchFeature) => !sketchProfile(s).error;
+      const sel = c.selected ? c.sketches.find(s => s.id === c.selected && closed(s)) : undefined;
+      const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && closed(s)).at(-1);
+      if (!sk) return t("Draw a closed sketch on a flat face of the sheet for a tab.");
+      return { id: c.id, type: "smtab", name: c.name("smtab"), sketch: sk.id } satisfies SmTabFeature;
+    }
     const sel = c.selected ? c.sketches.find(s => s.id === c.selected && usable(s)) : undefined;
     const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && usable(s)).at(-1);
     if (!sk) return t("Draw a sketch first: a closed profile for a plate, or an open chain of lines for a bent flange.");
@@ -82,6 +89,7 @@ export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjo
 /** Why ✓ can't keep the draft yet (null: it can). */
 export function smCheck(f: Feature): string | null {
   if (f.type === "smbase" && !f.sketch) return t("Pick a sketch for the base flange.");
+  if (f.type === "smtab" && !f.sketch) return t("Pick a closed sketch for the tab.");
   if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
   return null;
@@ -150,6 +158,14 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
         + group(t("Type and size"), sel("kind", t("Type"), [["closed", t("Closed")], ["open", t("Open")]], f.kind) + numField("length", t("Length"), f.length, "length")
           + (f.kind === "open" ? numField("gap", t("Gap distance"), f.gap ?? { v: 1 }, "length") : ""))
         + group(t("Position"), sel("position", t("Position"), [["inside", t("Material inside")], ["outside", t("Material outside")]], f.position ?? "inside")),
+    };
+  }
+  if (f.type === "smtab") {
+    const closed = k.sketches.filter(s => !sketchProfile(s).error || s.id === f.sketch);
+    return {
+      title: t("Tab"),
+      body: group(t("Profile"), `<label class="pm-field"><span>${esc(t("Sketch"))}</span><select data-k="sketch">${closed.map(s => `<option value="${s.id}"${s.id === f.sketch ? " selected" : ""}>${esc(k.label(s.name))}</option>`).join("")}</select></label>`
+        + help(t("A closed sketch on a flat face, beside it and touching its edge: the tab takes the sheet's thickness and joins the flat pattern."))),
     };
   }
   if (f.type === "smbend" || f.type === "smjog") {

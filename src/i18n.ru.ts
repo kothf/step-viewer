@@ -2623,6 +2623,14 @@ export const RU: Record<string, string> = {
 
   // Sheet metal: sketched bend and jog (FR-FT-120)
   "Sketched Bend": "Сгиб по эскизу",
+  "Tab": "Язычок",
+  "Draw a closed sketch on a flat face of the sheet for a tab.": "Для язычка нарисуйте замкнутый эскиз на плоской грани листа.",
+  "Pick a closed sketch for the tab.": "Выберите замкнутый эскиз для язычка.",
+  "A closed sketch on a flat face, beside it and touching its edge: the tab takes the sheet's thickness and joins the flat pattern.": "Замкнутый эскиз на плоской грани, рядом с ней и касаясь её ребра: язычок получает толщину листа и входит в развёртку.",
+  "A tab needs a closed sketch on a flat face of the sheet.": "Для язычка нужен замкнутый эскиз на плоской грани листа.",
+  "Sketch the tab on a flat face of the sheet.": "Нарисуйте язычок на плоской грани листа.",
+  "Draw the tab beside the face, touching its edge, not over it.": "Рисуйте язычок рядом с гранью, касаясь её ребра, а не поверх неё.",
+  "The tab must touch an edge of the face.": "Язычок должен касаться ребра грани.",
   "Sketched-Bend": "Сгиб-по-эскизу",
   "Jog": "Ступенька",
   "Sketched bend: fold a flat face along a line sketched on it": "Сгиб по эскизу: согнуть плоскую грань по линии, нарисованной на ней",

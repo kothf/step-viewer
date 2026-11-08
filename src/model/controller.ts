@@ -5581,7 +5581,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** Whether a feature uses a sketch up (SolidWorks hides it once used). */
 function absorbs(g: Feature, sketch: string): boolean {
-  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog") return g.sketch === sketch;
+  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab") return g.sketch === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
   if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);

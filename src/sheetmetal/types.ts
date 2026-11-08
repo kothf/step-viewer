@@ -105,8 +105,14 @@ export interface SmJogFeature {
   radius?: Num;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smflat"]);
+/** Tab: a closed sketch on a flat face of the sheet adds material there (same thickness), joined to the face. */
+export interface SmTabFeature {
+  id: string; type: "smtab"; name: string; suppressed?: boolean;
+  sketch: string;
+}
+
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

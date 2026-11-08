@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmBaseFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature } from "./types";
+import type { BendCalc, BendPosition, SmBaseFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -610,6 +610,41 @@ export function jog(prev: SheetState, f: SmJogFeature, line3: [V3, V3]): { state
   const gap = (want - h0) / slope;
   if (gap < -1e-9) throw new SheetError("E-SM-JOGSMALL", "The jog offset is too small for the bend radius and angle.");
   const { st, ops } = at(Math.max(0, gap));
+  return { state: st, ops };
+}
+
+/** Tab: the closed regions of a sketch on a flat face become panels joined to that face. */
+export function tab(prev: SheetState, f: SmTabFeature, sk: SketchFeature, frame: Frame): { state: SheetState; ops: SheetOp[] } {
+  const st = clone(prev);
+  const prof = sketchProfile(sk);
+  if (prof.error || !prof.faces.length) throw new SheetError("E-SM-TABSKETCH", "A tab needs a closed sketch on a flat face of the sheet.");
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  const tol = 1e-4 * (1 + st.T);
+  const first = (() => { const s0 = prof.faces[0].outer[0]; return s0.kind === "circle" ? [s0.c[0] + s0.r, s0.c[1]] as V2 : (s0 as Line).a; })();
+  const host = st.panels.find(p => { const z = local(p.M, w(first))[2]; return Math.abs(z) < tol || Math.abs(z - st.T) < tol; });
+  if (!host) throw new SheetError("E-SM-TABFACE", "Sketch the tab on a flat face of the sheet.");
+  const to = (p: V2): V2 => { const l = local(host.M, w(p)); return [l[0], l[1]]; };
+  // The sketch's normal along the panel's or against it (then arcs turn the other way).
+  const same = dot(frame.n, host.M.z) > 0;
+  const map = (s: Seg): Seg => {
+    if (s.kind === "line") return { ...s, a: to(s.a), b: to(s.b) };
+    if (s.kind === "arc") return { ...s, c: to(s.c), a: to(s.a), b: to(s.b), ccw: same ? s.ccw : !s.ccw };
+    if (s.kind === "circle") return { ...s, c: to(s.c) };
+    throw new SheetError("E-SM-CURVE", "Sheet metal profiles use lines, arcs and circles.");
+  };
+  const hostPoly = loopPolygon(host.outer, 32);
+  const size = Math.max(1, ...hostPoly.flatMap(p => [Math.abs(p[0]), Math.abs(p[1])]));
+  const ops: SheetOp[] = [];
+  prof.faces.forEach((pf, i) => {
+    const outer = oriented(pf.outer.map(map), true);
+    const poly = loopPolygon(outer, 32);
+    // The tab sits beside the face: no corner inside it, and some edge shared with it.
+    if (poly.some(p => inPolygon(p, hostPoly) && !onLoop(host.outer, p, size * 1e-6))) throw new SheetError("E-SM-TABOVER", "Draw the tab beside the face, touching its edge, not over it.");
+    if (!poly.some(p => onLoop(host.outer, p, size * 1e-6))) throw new SheetError("E-SM-TABTOUCH", "The tab must touch an edge of the face.");
+    const panel: Panel = { id: `${f.id}:p${i}`, outer, holes: pf.holes.map(h => oriented(h.map(map), false)), M: host.M, n: 0 };
+    st.panels.push(panel);
+    ops.push({ kind: "panel", panel });
+  });
   return { state: st, ops };
 }
 

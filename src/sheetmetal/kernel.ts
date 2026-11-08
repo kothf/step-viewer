@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { apply, applyDir, baseFlange, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -32,7 +32,11 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   if (!sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   if (f.type === "smflat") return { body: flatBody(api, sm, f.id), sm };
   let res: { state: SheetState; ops: SheetOp[] };
-  if (f.type === "smbend" || f.type === "smjog") {
+  if (f.type === "smtab") {
+    const sk = doc.features.find(x => x.id === f.sketch);
+    if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a closed sketch for the tab.");
+    res = tab(sm, f, sk, frameOfSketch(sk));
+  } else if (f.type === "smbend" || f.type === "smjog") {
     const sk = doc.features.find(x => x.id === f.sketch);
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the bend line.");
     const ln = bendSketchLine(sk, frameOfSketch(sk));

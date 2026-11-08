@@ -6964,6 +6964,20 @@ try {
     const sba = (Math.PI / 2) * (R + 0.42 * T);
     check(sb0.title === "Sketched Bend" && sb0.sketch === "s2" && !sbb.bad && /Sketched-Bend1$/.test(sbb.names) && Math.abs(sbb.size[0] - (70 - sba / 2 + R + T)) < 2e-3 && Math.abs(sbb.size[2] - (T + R + 30 - sba / 2)) < 2e-3,
       `sheet metal: Sketched Bend folds the plate along a line sketched on its face (${JSON.stringify({ sb0, sbb, want: [70 - sba / 2 + R + T, T + R + 30 - sba / 2] })})`);
+    // Tab: a closed sketch beside the plate's back edge, on its bottom face; Base Flange/Tab makes a tab now.
+    const tv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.evaluate(() => window.__sv.model.store.change("Tab sketch", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [P("r1", 10, 50), P("r2", 40, 50), P("r3", 40, 65), P("r4", 10, 65), { id: "m1", t: "line", a: "r1", b: "r2" }, { id: "m2", t: "line", a: "r2", b: "r3" }, { id: "m3", t: "line", a: "r3", b: "r4" }, { id: "m4", t: "line", a: "r4", b: "r1" }] });
+    }));
+    await settle();
+    await smMenu("Base Flange/Tab");
+    const tb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch }));
+    await mp.click("#mc-ok");
+    await settle();
+    const tb1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(tb0.title === "Tab" && tb0.type === "smtab" && tb0.sketch === "s3" && !tb1.bad && Math.abs(tb1.v - tv0 - 30 * 15 * T) < 1e-3,
+      `sheet metal: Base Flange/Tab on a part with a base flange adds a tab beside a face (${JSON.stringify({ tb0, tb1, tv0 })})`);
     await ctx.close();
   }
 
