@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.67.0] - 2026-11-08
+
+### Added
+
+- Collision detection while dragging components: tick it in the Move panel and a drag stops where the component would enter another, even on a fast drag (FR-MATE-002).
+- Inferred mates: hold Alt while dragging a component by a face and drop it on a face of another component; a cylinder on a cylinder makes a concentric mate, a flat face on a flat face a coincident one (FR-MATE-007).
+- Direct editing on any body, imported ones too (FR-FT-101): **Move Face** pushes flat faces out or in along their normals (the new side faces merge into the faces next to them), and **Delete Face** removes faces and heals the gap from the faces around them. Both are in the Sweep ▾ menu.
+
 ## [1.66.0] - 2026-11-08
 
 ### Added
@@ -635,7 +643,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.66.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.67.0...HEAD
+[1.67.0]: https://github.com/kothf/step-viewer/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/kothf/step-viewer/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/kothf/step-viewer/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/kothf/step-viewer/compare/v1.63.0...v1.64.0

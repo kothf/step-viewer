@@ -65,7 +65,9 @@ export class AsmController {
   private building = false;
   private again = false;
   private first = true;
-  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf> } | null = null;
+  private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef } | null = null;
+  /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
+  collide = (() => { try { return localStorage.getItem("mc:asmCollide") === "1"; } catch { return false; } })();
   /** Mate geometry of each part's faces, in part coordinates, learnt from the shown meshes (by part key, face name). */
   private geo = new Map<string, Map<string, Geo>>();
   private centres = new Map<string, V3>();
@@ -691,8 +693,9 @@ export class AsmController {
     }
   }
 
+  private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
   private solveDoc(doc: AsmDoc, extra: Mate[] = [], start?: Record<string, Tf>) {
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100) });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size() });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -701,6 +704,64 @@ export class AsmController {
     const r = this.solveDoc(d);
     this.solved = r;
     if (r.ok) for (const c of d.components) c.tf = r.tfs[c.id];
+  }
+
+  /** Alt-drag drop (FR-MATE-007): a cylinder on a cylinder makes a concentric mate, a flat face on a flat face a coincident one. */
+  private inferMate(grab: MateRef, ray: THREE.Ray, dropped: Record<string, Tf>): boolean {
+    if (!this.doc) return false;
+    const v = this.host.viewer, rc = new THREE.Raycaster(ray.origin, ray.direction);
+    let best: { i: number; face: string; dist: number } | null = null;
+    v.parts.forEach((p, i) => {
+      if (topOf(this.shownIds[i]) === grab.comp || !p.mesh.visible || !this.comp(this.shownIds[i])) return;
+      p.mesh.updateWorldMatrix(true, false);
+      const h = rc.intersectObject(p.mesh, false)[0];
+      if (!h || h.faceIndex == null || (best && h.distance >= best.dist)) return;
+      const j = p.data.faces.findIndex(f => h.faceIndex! >= f.triStart && h.faceIndex! < f.triStart + f.triCount), face = this.faceNames[i]?.[j];
+      if (face) best = { i, face, dist: h.distance };
+    });
+    const hit = best as { i: number; face: string; dist: number } | null;
+    if (!hit) return false;
+    const target: MateRef = { comp: this.shownIds[hit.i], face: hit.face };
+    const ga = this.worldGeo(target), gb = this.worldGeo(grab);
+    if (!ga || !gb || ga.k !== gb.k) return false;
+    const type: MateType = ga.k === "axis" ? "concentric" : "coincident";
+    const n = (this.doc.mates ?? []).filter(x => x.type === type).length + 1;
+    const mate: Mate = { id: uid("m_"), name: `${MATE_LABEL[type]}${n}`, type, a: target, b: grab, ...(type === "coincident" ? { align: "anti" as const } : {}) };
+    const start = { ...dropped };
+    const r = this.solveDoc(this.doc, [mate], start);
+    if (!r.ok) { toast(t("This mate cannot be solved with the others: the assembly would be over-defined."), true); return false; }
+    this.change(d => { d.mates ??= []; d.mates.push(mate); for (const c of d.components) if (r.tfs[c.id]) c.tf = r.tfs[c.id]; });
+    toast(t("{name} added.", { name: mate.name }));
+    return true;
+  }
+
+  /** Pairs of shown parts ("i:j", i < j) whose meshes intersect where they are shown now; only pairs with a part in `only` when given. */
+  private clashes(only?: Set<number>): Set<string> {
+    const parts = this.host.viewer.parts, out = new Set<string>();
+    const boxes = parts.map(p => { p.mesh.updateWorldMatrix(true, false); p.mesh.geometry.boundingBox ?? p.mesh.geometry.computeBoundingBox(); return p.mesh.visible ? p.mesh.geometry.boundingBox!.clone().applyMatrix4(p.mesh.matrixWorld) : null; });
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
+      if (only && !only.has(i) && !only.has(j)) continue;
+      // Parts of one sub-assembly move together and never collide with each other.
+      if (topOf(this.shownIds[i]) === topOf(this.shownIds[j])) continue;
+      const a = boxes[i], b = boxes[j];
+      if (!a || !b || !a.intersectsBox(b)) continue;
+      const bvh = parts[i].mesh.geometry.boundsTree;
+      if (!bvh) continue;
+      m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
+      if (bvh.intersectsGeometry(parts[j].mesh.geometry, m)) out.add(`${i}:${j}`);
+    }
+    return out;
+  }
+
+  /** Whether the shown parts at these transforms enter one another (pairs already touching when the drag began do not count). */
+  private wouldClash(tfs: Record<string, Tf>, touching: Set<string>) {
+    this.previewTfs(tfs);
+    const moved = new Set<number>();
+    this.shownIds.forEach((id, i) => { const c = this.comp(topOf(id)); if (c && tfs[c.id] && tfs[c.id].some((v, k) => Math.abs(v - c.tf[k]) > 1e-12)) moved.add(i); });
+    if (!moved.size) return false;
+    for (const k of this.clashes(moved)) if (!touching.has(k)) return true;
+    return false;
   }
 
   /** Moves the shown meshes to these transforms without a rebuild (drag and mate previews). */
@@ -1194,7 +1255,10 @@ export class AsmController {
       e.preventDefault();
       const n = this.host.viewer.camera.getWorldDirection(new THREE.Vector3());
       const p = new THREE.Vector3(...hit.point);
-      this.drag = { id, idx: hit.idx, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated: this.mateLive(id) };
+      this.drag = { id, idx: hit.idx, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, p), start: p, delta: new THREE.Vector3(), moved: false, mated: this.mateLive(id), ...(this.collide ? { touching: this.clashes() } : {}) };
+      // Alt-drag (FR-MATE-007): the grabbed face is mated to the face it is dropped on.
+      const face = this.faceNames[hit.idx]?.[hit.face], own = this.shownIds[hit.idx];
+      if (e.altKey && face && own === id && this.geo.get(c.part)?.get(face)) this.drag.grab = { comp: id, face };
       canvas().setPointerCapture?.(e.pointerId);
     }, true);
     vp.addEventListener("pointermove", e => {
@@ -1203,16 +1267,48 @@ export class AsmController {
       e.stopPropagation();
       const q = ray(e).intersectPlane(d.plane, new THREE.Vector3());
       if (!q) return;
-      d.delta.copy(q).sub(d.start);
-      d.moved = d.delta.lengthSq() > 1e-12;
       const c = this.comp(d.id);
       if (!c || !this.doc) return;
-      const tfs: Record<string, Tf> = {};
-      for (const x of this.doc.components) tfs[x.id] = x.tf;
-      tfs[d.id] = compose(translation([d.delta.x, d.delta.y, d.delta.z]), c.tf);
-      // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
-      if (d.mated) { const r = this.solveDoc(this.doc, [], tfs); if (!r.ok) return; d.result = r.tfs; this.previewTfs(r.tfs); }
-      else { d.result = tfs; this.previewTfs(tfs); }
+      const doc = this.doc;
+      const at = (delta: THREE.Vector3): Record<string, Tf> | null => {
+        const tfs: Record<string, Tf> = {};
+        for (const x of doc.components) tfs[x.id] = x.tf;
+        tfs[d.id] = compose(translation([delta.x, delta.y, delta.z]), c.tf);
+        // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
+        if (!d.mated) return tfs;
+        const r = this.solveDoc(doc, [], tfs);
+        return r.ok ? r.tfs : null;
+      };
+      const want = q.clone().sub(d.start), next = at(want);
+      if (!next) return;
+      // Collision detection: walk from where it was towards the pointer in small steps (so a fast drag
+      // cannot jump through a thin part), and stop at the first contact.
+      let hitAt = -1;
+      const from = d.delta.clone(), n = Math.min(60, Math.max(1, Math.ceil(want.distanceTo(from) / (this.size() * 0.02))));
+      if (d.touching) {
+        for (let k = 1; k <= n; k++) {
+          const tf = k === n ? next : at(from.clone().lerp(want, k / n));
+          if (tf && this.wouldClash(tf, d.touching)) { hitAt = k / n; break; }
+        }
+        if (hitAt < 0) this.previewTfs(next);
+      }
+      if (hitAt > 0 && d.touching) {
+        // Stop at the contact: the furthest point before it that is clear.
+        let lo = hitAt - 1 / n, hi = hitAt, best: Record<string, Tf> | null = lo > 0 ? at(from.clone().lerp(want, lo)) : null;
+        for (let k = 0; k < 10; k++) {
+          const mid = (lo + hi) / 2, tf = at(from.clone().lerp(want, mid));
+          if (tf && !this.wouldClash(tf, d.touching)) { lo = mid; best = tf; } else hi = mid;
+        }
+        if (best) { d.delta.lerp(want, lo); d.result = best; }
+        d.stopped = true;
+        this.previewTfs(d.result ?? this.shownTf);
+        d.moved = d.delta.lengthSq() > 1e-12;
+        return;
+      }
+      d.delta.copy(want);
+      d.moved = d.delta.lengthSq() > 1e-12;
+      d.result = next;
+      this.previewTfs(next);
     }, true);
     vp.addEventListener("pointerup", e => {
       const md = this.mateDown;
@@ -1228,6 +1324,7 @@ export class AsmController {
       e.stopPropagation();
       this.drag = null;
       if (!d.moved || !d.result) { this.renderTree(); this.renderBar(); return; }
+      if (d.grab && this.inferMate(d.grab, ray(e), d.result)) return;
       const res = d.result;
       this.change(doc => { for (const c of doc.components) if (res[c.id]) c.tf = res[c.id]; });
     }, true);
@@ -1443,8 +1540,15 @@ export class AsmController {
       + `<p class="pm-help" translate="no">${esc(c.name)}</p>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Position"))}</legend>${f("x", "X", p[0], "mm")}${f("y", "Y", p[1], "mm")}${f("z", "Z", p[2], "mm")}</fieldset>`
       + `<fieldset class="pm-sec"><legend>${esc(t("Rotation"))}</legend>${f("rx", t("About X"), r[0], "°")}${f("ry", t("About Y"), r[1], "°")}${f("rz", t("About Z"), r[2], "°")}</fieldset>`
-      + `<p class="pm-help muted">${esc(t("Or drag the component in the view."))}</p>`;
+      + `<label class="pm-field pm-check"><input type="checkbox" data-a="collide"${this.collide ? " checked" : ""} /> ${esc(t("Collision detection"))}</label>`
+      + `<p class="pm-help muted">${esc(t("Or drag the component in the view."))}${this.collide ? ` ${esc(t("The drag stops where it would touch another component."))}` : ""}</p><p class="pm-help muted">${esc(t("Hold Alt while dragging a face onto a face of another component to mate them."))}</p>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => { this.moving = null; this.renderPanel(); });
+    pm.querySelector<HTMLInputElement>("[data-a=collide]")!.addEventListener("change", e => {
+      this.collide = (e.target as HTMLInputElement).checked;
+      try { localStorage.setItem("mc:asmCollide", this.collide ? "1" : "0"); } catch { /* per browser only */ }
+      delete pm.dataset.id;
+      this.renderPanel();
+    });
     pm.onkeydown = e => { if (e.key === "Escape") { this.moving = null; this.renderPanel(); } };
     pm.querySelectorAll<HTMLInputElement>("input[data-pose]").forEach(inp => {
       const apply = () => {

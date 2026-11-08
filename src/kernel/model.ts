@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { DeleteFaceFeature, MoveFaceFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -904,6 +904,75 @@ export class Modeller {
     // Outward: the original faces are the inside now; whatever is unnamed is new.
     let n = 0;
     return { shape: result, faces, names: names.map(x => x ?? `${f.id}:new:${n++}`) };
+  }
+
+  /** Delete face (FR-FT-101): BRepAlgoAPI_Defeaturing removes the faces and extends their neighbours to close the gap. */
+  private deleteFaces(f: DeleteFaceFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to delete.");
+    const mk = new oc.BRepAlgoAPI_Defeaturing();
+    mk.SetShape(prev.shape);
+    for (const r of f.faces) mk.AddFaceToRemove(this.resolveFace(prev, r));
+    mk.SetToFillHistory(true);
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-DELFACE", "The faces could not be deleted: the faces around them cannot be extended to close the gap.");
+    return this.carry(mk, [prev], mk.Shape(), f.id);
+  }
+
+  /**
+   * Move face (FR-FT-101), offset: each flat face is pushed out along its normal (a prism of the face
+   * fused on) or pulled in (a prism cut away). The moved face keeps its name; the new side faces are `fid:side:k`.
+   */
+  private moveFaces(f: MoveFaceFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to move.");
+    const d = f.distance.v;
+    if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    let body = prev, k = 0;
+    for (const r of f.faces) {
+      const face = this.resolveFace(body, r), pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-FT-MOVEFLAT", "Move face works on flat faces.");
+      const dir = mul(pl.n, f.flip ? -d : d);
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(dir), false, true);
+      if (!mk.IsDone()) throw new FeatureError("E-FT-MOVEFACE", "The face could not be moved.");
+      let tool = mk.Shape();
+      if (this.volume(tool) < 0) tool = tool.Reversed();
+      const top = mk.LastShape();
+      const faces = this.sub(tool, "FACE");
+      const named: Named = { shape: tool, faces, names: faces.map(x => (x.IsSame(top) ? r.name : `${f.id}:side:${k++}`)) };
+      // The original face goes inside (fuse) or is cut away; its name moves to the prism's far end.
+      const rest: Named = { shape: body.shape, faces: body.faces, names: body.names.map((n, i) => (body.faces[i].IsSame(face) ? `${f.id}:old` : n)) };
+      body = this.mergeSides(this.bool(f.flip ? "cut" : "fuse", rest, named, f.id), f.id);
+    }
+    return body;
+  }
+
+  /**
+   * Merges the new side faces `fid:side:*` into the coplanar faces next to them (ShapeUpgrade_UnifySameDomain,
+   * only across their edges, so split lines and other seams stay). A merged face keeps the older name.
+   */
+  private mergeSides(b: Named, fid: string): Named {
+    const oc = this.oc;
+    const own = (n: string) => n.startsWith(`${fid}:`);
+    const sideEdges = b.faces.filter((_, i) => own(b.names[i])).flatMap(x => this.sub(x, "EDGE"));
+    if (!sideEdges.length) return b;
+    const u = new oc.ShapeUpgrade_UnifySameDomain_2(b.shape, true, true, false);
+    for (const e of this.sub(b.shape, "EDGE")) if (!sideEdges.some(x => x.IsSame(e))) u.KeepShape(e);
+    try { u.Build(); } catch { return b; }
+    const shape = u.Shape(), h = u.History_1().get();
+    const faces = this.sub(shape, "FACE");
+    const names: (string | null)[] = faces.map(() => null);
+    b.faces.forEach((f, i) => {
+      const mods = this.list(h.Modified(f));
+      for (const m of mods.length ? mods : [f]) {
+        const j = faces.findIndex(x => x.IsSame(m));
+        if (j >= 0 && (!names[j] || (own(names[j]!) && !own(b.names[i])))) names[j] = b.names[i];
+      }
+    });
+    let k = 0;
+    return { shape, faces, names: names.map(n => n ?? `${fid}:new:${k++}`) };
   }
 
   /**
@@ -1892,6 +1961,8 @@ export class Modeller {
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
+          else if (f.type === "delface") body = this.deleteFaces(f, body);
+          else if (f.type === "moveface") body = this.moveFaces(f, body);
           else if (f.type === "draft") body = this.draft(f, body, frames);
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
