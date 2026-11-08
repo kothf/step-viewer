@@ -2154,7 +2154,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const ax = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); const fr = window.__sv.model.last().frames[f.id]; return { type: f.type, name: f.name, n: fr?.n.map(v => Math.round(Math.abs(v) * 1e6) / 1e6), row: !!document.querySelector(`#mc-tree .ft-row[data-id="${f.id}"]`) }; });
-    check(refMenu.join("|") === "Plane|Axis|Point|Coordinate system" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
+    check(refMenu.join("|") === "Plane|Axis|Point|Coordinate system|External References" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
     // Point at the centre of the top face, picked in the view.
     await mp.click('#mc-tools [data-fly="plane"]');
     await mp.click("#mc-menu button:nth-child(3)");
