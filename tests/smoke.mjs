@@ -5890,6 +5890,24 @@ try {
     const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
     check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
       `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
+    // 1.90.0 user sheet format (FR-DRW-004): edit the title block from the ISO one, add a logo, save and use it; back to ISO.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.click('.drw-props [data-a="tbedit"]');
+    await ap.waitForSelector("#drw-tb-dlg[open]");
+    await ap.fill('#drw-tb-dlg [data-tb-f="name"]', "Smoke block");
+    await ap.fill('#drw-tb-dlg [data-c="0.label"]', "Firma");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await ap.setInputFiles('#drw-tb-dlg [data-tb="logo"]', { name: "logo.png", mimeType: "image/png", buffer: png });
+    await ap.waitForSelector('#drw-tb-dlg [data-tb-l="w"]');
+    const pvImg = await ap.evaluate(() => !!document.querySelector("#drw-tb-dlg .drw-tb-pv image"));
+    await ap.click('#drw-tb-dlg button[value="ok"]');
+    await ap.waitForFunction(() => !!window.__sv.drw.doc().sheets[0].tb, null, { timeout: 10000 });
+    const fmt = await ap.evaluate(() => { const tb = window.__sv.drw.doc().sheets[0].tb; return { name: tb.name, label: tb.cells[0].label, logo: !!tb.logo, img: /<image /.test(window.__sv.drw.svg()), lib: JSON.parse(localStorage.getItem("mc:sheetFormats") ?? "[]").length, opt: [...document.querySelectorAll('.drw-props [data-s="format"] option')].map(o => o.value).filter(v => v.startsWith("user:")).length }; });
+    await ap.selectOption('.drw-props [data-s="format"]', "iso");
+    const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
+    check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
+      `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
     await ctx.close();
   }
 
@@ -5946,6 +5964,70 @@ try {
     await vp.evaluate(async id => { for (let i = 0; i < 200; i++) { if (!(await window.__sv.vault.vault.files()).find(f => f.id === id).checkout) return; await new Promise(r => setTimeout(r, 100)); } }, ids.base);
     const after = await vp.evaluate(async ({ part }) => { const v = window.__sv.vault.vault, f = (await v.files()).find(x => x.id === part); return [v.latest(f).n, !!f.checkout]; }, ids);
     check(JSON.stringify(box) === JSON.stringify([[`ref:${ids.part}`, true]]) && after[0] === 3 && !after[1], `vault: check-in offers the changed part it references, ticked, and checks it in too (${JSON.stringify([box, after])})`);
+    await ctx.close();
+  }
+
+  // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // A 600 × 400 frame sketched on XY, then Structural Member from the Weldments flyout.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Frame", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 600, 0), P("c", 600, 400), P("d", 0, 400), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Structural Member")');
+    await settle();
+    const p0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, segs: window.__sv.model.mode().draft?.segs?.length, bodies: window.__sv.model.last().bodies?.length, boxes: document.querySelectorAll("#mc-pm input[data-wseg]").length }));
+    // Live preview follows the panel: a bigger tube, then untick one line.
+    await mp.selectOption('#mc-pm select[data-k="wsize"]', "50x50x4");
+    await settle();
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const r = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), cut: (l.cutList ?? []).map(c => [c.desc, c.qty, c.length, c.angle1, c.angle2]) }; });
+    check(p0.title === "Structural Member" && p0.segs === 4 && p0.boxes === 4 && p0.bodies === 4 && p1.bodies === 3 && p1.size === "50x50x4" && !r.bad && r.bodies === 4
+      && JSON.stringify(r.cut) === JSON.stringify([["SHS 50x50x4", 2, 650, 45, 45], ["SHS 50x50x4", 2, 450, 45, 45]]),
+      `weldments: Structural Member along a sketch, mitred corners, live preview, cut list (FR-FT-121) (${JSON.stringify({ p0, p1, r })})`);
+    // Cut List… opens a table: two member rows and the total mass (steel assumed).
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Cut List")');
+    await mp.waitForSelector("#wld-cut[open]");
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    await mp.click('#wld-cut [data-a="close"]');
+    check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    // End cap on an open end: an L of two members butted, a cap on the free end.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("End Cap")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces = [{ name: "m2:k1:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
+    // In Russian: the Structural Member panel.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 

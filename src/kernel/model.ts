@@ -18,6 +18,7 @@ import { splineBezierN } from "../sketch/spline";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
+import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -2943,6 +2944,7 @@ export class Modeller {
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
+          else if (isWeld(f)) body = evalWeld(this as unknown as WeldHost, f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
           else if (f.type === "combine") body = this.combine(f, body);
