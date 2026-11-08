@@ -2712,7 +2712,7 @@ try {
     await ctx.close();
   }
 
-  // --- Part modelling 1.136.0: sketch text (FR-SK-020), embossed by Extrude ---
+  // --- Part modelling 1.137.0: sketch text (FR-SK-020), embossed by Extrude ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -2754,8 +2754,8 @@ try {
     await mp.waitForTimeout(300);
     const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .pm-text h4, #mc-pm .pm-text label, #mc-pm .pm-text .pm-help")].map(e => e.textContent.trim()).join("|"));
     await mp.evaluate(() => document.querySelector("#lang-btn").click());
-    check(ptFly === "Point|Text" && tx.text === "MC" && tx.h === 10 && Math.abs(tx.at[0] - 5) < 1.5 && Math.abs(tx.at[1] - 5) < 1.5 && tx.dof === 2 && emb.ok && emb.v > 2 * 25 && emb.v < 2 * 160, `model 1.136: Text tool from the Point flyout, embossed 2 mm (${ptFly}, ${JSON.stringify(tx)}, ${JSON.stringify(emb)})`);
-    check(/Шрифт/.test(ru) && /Жирный/.test(ru) && /Высота/.test(ru) && /заглавной/.test(ru) && !/Font|Bold|capital/.test(ru), `model 1.136: the text panel in Russian (${ru})`);
+    check(ptFly === "Point|Text" && tx.text === "MC" && tx.h === 10 && Math.abs(tx.at[0] - 5) < 1.5 && Math.abs(tx.at[1] - 5) < 1.5 && tx.dof === 2 && emb.ok && emb.v > 2 * 25 && emb.v < 2 * 160, `model 1.137: Text tool from the Point flyout, embossed 2 mm (${ptFly}, ${JSON.stringify(tx)}, ${JSON.stringify(emb)})`);
+    check(/Шрифт/.test(ru) && /Жирный/.test(ru) && /Высота/.test(ru) && /заглавной/.test(ru) && !/Font|Bold|capital/.test(ru), `model 1.137: the text panel in Russian (${ru})`);
     await ctx.close();
   }
 
