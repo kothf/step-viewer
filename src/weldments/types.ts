@@ -108,6 +108,10 @@ export interface WeldBeadFeature {
   inter?: { len: Num; pitch: Num; stagger?: boolean };
   /** false hides the weld symbol in the view. */
   symbol?: false;
+  /** Weld all around (ISO 2553 circle at the knee of the symbol). */
+  around?: boolean;
+  /** Field (site) weld, made on assembly (ISO 2553 flag). */
+  field?: boolean;
 }
 
 export type WeldFeature = MemberFeature | TrimExtendFeature | EndCapFeature | GussetFeature | WeldBeadFeature;

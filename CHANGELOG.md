@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Russian part names in STEP files** show as Cyrillic in the Model tree and the file info, not as "ÏË31à-ï_÷åðí". Many Russian CAD exports write names as raw Windows-1251 bytes, and OpenCASCADE read them as Latin-1. Names are now decoded again: Windows-1251 when the file's names look Cyrillic (decided once per file, so real Latin-1 names such as "Müller" stay as they are), UTF-8 written through \X\ escapes, and UTF-16 code units written as bytes. The STEP header reader also understands \X4\ and \S\ escapes. Cyrillic text falls back to Noto Sans / DejaVu Sans / Liberation Sans on systems without Segoe UI or Roboto (Linux), for Cyrillic letters only, so Latin text keeps its look.
 
+## [1.168.0] - 2026-11-08
+
+### Added
+
+- **All-around and field weld flags (FR-FT-121).** A fillet bead's panel adds **Weld all around** and **Field weld**: the weld symbol in the view then shows the ISO 2553 circle (○) and the site-weld flag (⚑), as in ○ ⚑ ◺ z4.
+
 ## [1.167.0] - 2026-11-08
 
 ### Added
@@ -1351,7 +1357,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.169.0...HEAD
-[1.169.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.169.0
+[1.169.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.169.0
+[1.168.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.168.0
 [1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0
 [1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
 [1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0

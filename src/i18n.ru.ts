@@ -2979,6 +2979,8 @@ export const RU: Record<string, string> = {
   "Staggered fillet weld, leg {s}, {l} every {e}": "Шахматный угловой шов, катет {s}, {l} с шагом {e}",
   "Intermittent weld": "Прерывистый шов",
   "Show weld symbol": "Показывать обозначение шва",
+  "Weld all around": "Шов по замкнутому контуру",
+  "Field weld": "Монтажный шов",
   "Weld symbol: click to edit the bead": "Обозначение шва: щелчок открывает шов для правки",
   "Weld length": "Длина шва",
   "Staggered": "В шахматном порядке",
