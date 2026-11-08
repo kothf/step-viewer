@@ -4160,7 +4160,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.66: collision detection while dragging (FR-MATE-002) ---
+  // --- 1.67: collision detection while dragging (FR-MATE-002) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4209,11 +4209,11 @@ try {
     await shown(2);
     const free = await mp.evaluate(() => window.__sv.asm.doc.components[1].tf[3]);
     check(stop.on && stop.x >= 10 - 1e-6 && stop.x < 10.6 && free < 0,
-      `asm 1.66: collision detection stops the drag at contact; without it the drag goes through (FR-MATE-002) (${JSON.stringify({ stop, free })})`);
+      `asm 1.67: collision detection stops the drag at contact; without it the drag goes through (FR-MATE-002) (${JSON.stringify({ stop, free })})`);
     await ctx.close();
   }
 
-  // --- 1.66: Alt-drag inferred mates (FR-MATE-007) ---
+  // --- 1.67: Alt-drag inferred mates (FR-MATE-007) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4263,7 +4263,50 @@ try {
       return { type: m?.type, align: m?.align, n: [t[1] * -1, t[5] * -1, t[9] * -1].map(x => Math.round(x * 1e6) / 1e6), row: document.querySelector("#asm-tree .ft-mate .ft-name")?.textContent };
     });
     check(inf.type === "coincident" && inf.align === "anti" && JSON.stringify(inf.n) === "[0,0,-1]" && /^Coincident1 \(plate<1>, box<1>\)$/.test(inf.row),
-      `asm 1.66: Alt-drag a face onto a face makes the inferred coincident mate (FR-MATE-007) (${JSON.stringify(inf)})`);
+      `asm 1.67: Alt-drag a face onto a face makes the inferred coincident mate (FR-MATE-007) (${JSON.stringify(inf)})`);
+    await ctx.close();
+  }
+
+  // --- 1.67: direct editing, Move Face and Delete Face (FR-FT-101) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const R = (id, cx, cy, w, h, plane) => { const P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y }); return { id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(1, cx - w / 2, cy - h / 2), P(2, cx + w / 2, cy - h / 2), P(3, cx + w / 2, cy + h / 2), P(4, cx - w / 2, cy + h / 2), { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` }, { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] }; };
+      d.features.push(R("s1", 0, 0, 100, 60, { std: "XY" }), { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+        R("s2", 20, 0, 20, 10, { face: { name: "f1:end" } }), { id: "f2", type: "extrude", name: "Cut-Extrude1", sketch: "s2", op: "cut", end: "blind", depth: { v: 5 } });
+    }));
+    await settle();
+    // Move Face from the Sweep ▾ menu: the top 5 mm out (the pocket walls grow with it, so it is 10 mm deep).
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Move Face$/ }).click();
+    await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); });
+    await settle();
+    const pv = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, count: document.querySelector("#mc-pm .pm-count")?.textContent, v: window.__sv.model.last().props.volume }));
+    await mp.fill('#mc-pm input[data-num="distance"]', "5");
+    await mp.press('#mc-pm input[data-num="distance"]', "Enter");
+    await settle();
+    const mv = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    // Delete Face: the pocket's floor and walls go, and the top closes over it.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Delete Face$/ }).click();
+    await mp.evaluate(() => { const m = window.__sv.model, names = m.last().faceNames ?? []; m.mode().draft.faces = [...new Set(names.filter(n => n.startsWith("f2:")))].map(name => ({ name })); m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const del = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.name).join(","), faces: window.__sv.model.store.doc.features.at(-1).faces.length }));
+    check(pv.title === "Move Face" && pv.count === "1 face" && Math.abs(mv.v - (100 * 60 * 25 - 20 * 10 * 10)) < 1 && !mv.bad && /MoveFace1/.test(mv.f)
+      && Math.abs(del.v - 100 * 60 * 25) < 1 && !del.bad && /DeleteFace1$/.test(del.f) && del.faces >= 5,
+      `model 1.67: Move Face pushes the top out 5 mm, Delete Face heals the pocket (FR-FT-101) (${JSON.stringify({ pv, mv, del })})`);
     await ctx.close();
   }
 

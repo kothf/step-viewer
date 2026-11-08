@@ -243,6 +243,21 @@ export interface ShellFeature {
   outward?: boolean;
 }
 
+/** Delete face (FR-FT-101): removes the picked faces and heals the gap from the faces around them (defeaturing). */
+export interface DeleteFaceFeature {
+  id: string; type: "delface"; name: string; suppressed?: boolean;
+  faces: FaceRef[];
+}
+
+/** Move face (FR-FT-101): offsets the picked flat faces along their normals (out adds material, in removes it). */
+export interface MoveFaceFeature {
+  id: string; type: "moveface"; name: string; suppressed?: boolean;
+  faces: FaceRef[];
+  distance: Num;
+  /** Move into the body instead of out. */
+  flip?: boolean;
+}
+
 /** Draft (FR-FT-061): tapers the picked faces by an angle about a neutral plane (the pull direction is its normal). */
 export interface DraftFeature {
   id: string; type: "draft"; name: string; suppressed?: boolean;
@@ -472,7 +487,7 @@ export interface ImportFeature {
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
-  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature;
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

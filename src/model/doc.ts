@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -150,7 +150,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "csys") { line(f.x); line(f.z); }
   if (f.type === "hole") plane(f.plane);
-  if (f.type === "shell") faces.push(...f.faces.map(x => x.name));
+  if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
