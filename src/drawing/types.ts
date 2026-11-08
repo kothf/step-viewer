@@ -37,6 +37,9 @@ export interface DrawingView {
    * 3+ points; every leg is parallel or square to the first, which `line` repeats. Legs parallel to the first cut,
    * square legs only step between them; a path that ends on a square leg (half section) cuts no further. */
   path?: number[];
+  /** Aligned section (FR-DRW-012, P6): `path` is [end 1, centre, end 2] and `line` its first leg; the material behind
+   * the second leg is turned about the centre (the parent's view axis) into the plane of the first before it is drawn. */
+  aligned?: boolean;
   /** Section of an assembly: top-level components left whole (FR-DRW-012), drawn uncut. */
   exclude?: string[];
   /** Section / aux: the view looks from this side of the line (+1: left of u1→u2, −1: right). */

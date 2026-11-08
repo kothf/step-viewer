@@ -2,8 +2,8 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
-import type { Stair } from "./views";
-import { geometryDiff, project, readShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import type { Align, Stair } from "./views";
+import { geometryDiff, project, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -14,7 +14,7 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir; shade?: boolean }
-  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; exclude?: string[] }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[] }
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
@@ -138,6 +138,15 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
           if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
           cutShape = a; keep = k; cutList = placedShapes.filter(pc => !out(pc.id));
         }
+      }
+      if (r.align) {
+        // Aligned section (FR-DRW-012): each component's half beyond the second leg is turned into the first leg's plane,
+        // component by component so the hatching still knows whose cut face is whose.
+        const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
+        b.MakeCompound(c);
+        cutList = cutList.map(pc => { const s = alignedShape(oc, pc.shape, r.align!); b.Add(c, s); return { ...pc, shape: s }; });
+        cutShape = c;
+        if (keep) keep = alignedShape(oc, keep, r.align);
       }
       const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep });
       const own = solidOwners(cutList);

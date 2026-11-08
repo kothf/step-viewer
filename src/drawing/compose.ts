@@ -8,7 +8,7 @@ import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, HatchPattern, Sheet } from "./types";
 import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
-import { altReq, boxInView, cutLegs, findView, isShaded, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
+import { alignedLegs, altReq, boxInView, cutLegs, findView, isShaded, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
 
@@ -428,7 +428,9 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
       continue;
     }
     if (!v.line) continue;
-    const legs = v.kind === "section" && v.path ? cutLegs(v.path) : null;
+    const al = v.kind === "section" && v.aligned && v.path ? alignedLegs(v.path) : null;
+    if (al) { out.push(...alignedMarks(v.path!, al.ang, lookDir(v), letter, pl, r)); continue; }
+    const legs = v.kind === "section" && v.path && !v.aligned ? cutLegs(v.path) : null;
     if (legs) { out.push(...pathMarks(legs, lookDir(v), letter, pl, r)); continue; }
     const [a, b] = [toSheet(pl, v.line[0], v.line[1]), toSheet(pl, v.line[2], v.line[3])];
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
@@ -504,6 +506,33 @@ function pathMarks(legs: CutLeg[], q: [number, number], letter: string, pl: Plac
     out.push({ t: "l", p: [tail[0], tail[1], s[0] + q[0] * 3.5, s[1] + q[1] * 3.5], pen: "thin", layer: "ANNOT" });
     out.push(arrowHead(s[0], s[1], -q[0], -q[1]));
     out.push({ t: "t", x: tail[0] + q[0] * 2, y: tail[1] + q[1] * 2 - 1.7, s: letter, h: 5, al: "c", layer: "ANNOT" });
+  }
+  return out;
+}
+
+/**
+ * The cutting line of an aligned section (ISO 128-44): two legs from the centre, thin chain line, thick at the ends
+ * and at the centre; each end runs out past the view with an arrow looking the way its leg is seen (the second
+ * leg's arrow turned back by the section's turn).
+ */
+function alignedMarks(path: number[], ang: number, q: [number, number], letter: string, pl: Placement, r: [number, number, number, number]): Prim[] {
+  const out: Prim[] = [];
+  const [e1, c, e2] = [0, 2, 4].map(i => toSheet(pl, path[i], path[i + 1]));
+  const dir = (a: [number, number], b: [number, number]): [number, number] => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+  const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
+  const d1 = dir(c, e1), d2 = dir(c, e2);
+  const s1 = run(e1, d1, exitAt(e1, d1, r) + 4), s2 = run(e2, d2, exitAt(e2, d2, r) + 4);
+  out.push({ t: "l", p: [...s1, ...c] as [number, number, number, number], pen: "center", layer: "ANNOT" });
+  out.push({ t: "l", p: [...c, ...s2] as [number, number, number, number], pen: "center", layer: "ANNOT" });
+  for (const [s, d] of [[s1, d1], [s2, d2]] as [[number, number], [number, number]][]) out.push({ t: "l", p: [...s, ...run(s, d, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  out.push({ t: "l", p: [...run(c, d1, 3), ...c] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  out.push({ t: "l", p: [...c, ...run(c, d2, 3)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  const cs = Math.cos(-ang), sn = Math.sin(-ang), q2: [number, number] = [q[0] * cs - q[1] * sn, q[0] * sn + q[1] * cs];
+  for (const [s, qq] of [[s1, q], [s2, q2]] as [[number, number], [number, number]][]) {
+    const tail: [number, number] = [s[0] + qq[0] * 8, s[1] + qq[1] * 8];
+    out.push({ t: "l", p: [tail[0], tail[1], s[0] + qq[0] * 3.5, s[1] + qq[1] * 3.5], pen: "thin", layer: "ANNOT" });
+    out.push(arrowHead(s[0], s[1], -qq[0], -qq[1]));
+    out.push({ t: "t", x: tail[0] + qq[0] * 2, y: tail[1] + qq[1] * 2 - 1.7, s: letter, h: 5, al: "c", layer: "ANNOT" });
   }
   return out;
 }
