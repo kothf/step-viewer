@@ -83,7 +83,11 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
         }
         if (d.t === "angle") continue;
         let a: [number, number] | null = null, b: [number, number] | null = null;
-        if (d.e.length === 1) { const l = line(d.e[0]); if (l) [a, b] = l; }
+        if (d.off) {
+          // Offset of concentric curves: along a ray from the centre, rim to rim.
+          const rim = (id: string): [number, number] | null => { const e = E.get(id); if (e?.t === "circle") { const c = pt(e.c); return c && [c[0] + e.r, c[1]]; } if (e?.t === "arc") { const c = pt(e.c), q = pt(e.a); return c && q && [c[0] + Math.hypot(q[0] - c[0], q[1] - c[1]), c[1]]; } return null; };
+          a = rim(d.e[0]); b = rim(d.e[1]);
+        } else if (d.e.length === 1) { const l = line(d.e[0]); if (l) [a, b] = l; }
         else {
           const p0 = anchor(d.e[0]), p1 = anchor(d.e[1]), l0 = line(d.e[0]), l1 = line(d.e[1]);
           const foot = (p: [number, number], l: [[number, number], [number, number]]): [number, number] => {

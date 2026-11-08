@@ -103,12 +103,12 @@ const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
 const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
-  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕",
+  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕", offset: "⇉",
 };
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
-  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection", curvature: "Equal curvature", pierce: "Pierce",
+  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection", curvature: "Equal curvature", pierce: "Pierce", offset: "Offset",
 };
 
 /** A relation's name: a fix that follows a model edge is "On edge". */
@@ -128,6 +128,10 @@ export class SketchEditor {
   /** Sketch chamfer distance and offset distance (mm), set in the panel. */
   chamferDist = 2;
   offsetDist = 5;
+  /** Offset options (FR-SK-034): both sides, end caps for an open chain offset both ways, and linked (offset relations + one dimension). */
+  offsetBoth = false;
+  offsetCap: "none" | "arc" | "line" = "arc";
+  offsetLink = true;
   /** Offset preview under the cursor (polylines in sketch coordinates). */
   private offsetPreview: V2[][] = [];
   selection = new Set<string>();
@@ -1690,8 +1694,10 @@ export class SketchEditor {
   }
 
   /**
-   * Offsets the clicked circle, or the chain of lines and arcs through the clicked curve, by `offsetDist` to the cursor's side.
-   * Corners are re-joined where the offset curves meet; arcs keep their centres (concentric). Static copy (P1).
+   * Offsets the clicked circle, or the chain of lines and arcs through the clicked curve, by `offsetDist` to the cursor's side
+   * (and the other side too with `offsetBoth`, open chains then closed by `offsetCap` arcs or lines).
+   * Corners are re-joined where the offset curves meet; arcs keep their centres (concentric). With `offsetLink` (SolidWorks'
+   * default) the copies keep offset relations and one distance dimension, so they follow the source; otherwise a static copy.
    * With apply false it only returns the preview polylines.
    */
   private offsetAt(p: V2, apply: boolean): V2[][] {
@@ -1701,23 +1707,104 @@ export class SketchEditor {
       if (apply) this.host.toast(t("Click a line, arc or circle to offset."));
       return [];
     }
-    const d = this.offsetDist;
-    if (e.t === "circle") {
-      const c = this.pt(e.c), r = e.r + (Math.hypot(p[0] - c[0], p[1] - c[1]) < e.r ? -d : d);
-      if (!(r > 1e-9)) { if (apply) this.host.toast(t("The offset is larger than the radius."), "error"); return []; }
-      if (!apply) return [Array.from({ length: 73 }, (_, i) => [c[0] + r * Math.cos((i * Math.PI) / 36), c[1] + r * Math.sin((i * Math.PI) / 36)] as V2)];
-      this.sk.ents.push({ id: uid("c"), t: "circle", c: e.c, r });
-      this.commit("Offset entities");
-      this.render();
-      return [];
-    }
-    const { segs, closed } = this.chainOf(e.id);
-    // Side: +1 to the left of the clicked curve as the chain runs (it runs forward on the clicked curve).
     let side: number;
     if (e.t === "line") side = Math.sign(cross2(sub2(this.pt(e.b), this.pt(e.a)), sub2(p, this.pt(e.a)))) || 1;
-    else { const c = this.pt(e.c); side = Math.hypot(p[0] - c[0], p[1] - c[1]) < Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]) ? 1 : -1; }
-    type Off = { g: Curve; at: (x: V2) => V2; sg: { id: string; rev: boolean }; s: V2; e: V2 };
-    const offs: Off[] = [];
+    else {
+      const c = this.pt(e.c), r = e.t === "circle" ? e.r : Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]);
+      side = Math.hypot(p[0] - c[0], p[1] - c[1]) < r ? 1 : -1;
+    }
+    const sides = this.offsetBoth ? [side, -side] : [side];
+    const built = sides.map(sd => this.offsetSide(e, sd));
+    const bad = built.findIndex(b => !b);
+    if (bad >= 0) { if (apply) this.host.toast(t("The offset is larger than the radius."), "error"); return []; }
+    const parts = built as OffsetBuild[];
+    if (!apply) {
+      const out = parts.flatMap(b => b.preview);
+      if (parts.length === 2 && !parts[0].closed && this.offsetCap !== "none") for (const k of [0, 1] as const) out.push(this.capPreview(parts, k));
+      return out;
+    }
+    const link = this.offsetLink;
+    let lead: SkRel | null = null;
+    for (const b of parts) {
+      const made = b.apply();
+      if (!link) continue;
+      made.forEach((m, i) => {
+        const caps: string[] = [];
+        if (!b.closed && i === 0) caps.push(m.srcStart, m.dstStart);
+        if (!b.closed && i === made.length - 1) caps.push(m.srcEnd, m.dstEnd);
+        const rel: SkRel = { id: uid("r"), t: "offset", e: [m.src, m.dst, ...caps] };
+        if (lead) rel.of = lead.id; else lead = rel;
+        this.sk.rels.push(rel);
+      });
+    }
+    if (link && lead) {
+      const L = lead as SkRel, src = this.ent(L.e[0])!, dst = this.ent(L.e[1])!;
+      const isLine = src.t === "line";
+      const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "distance", e: [L.e[0], L.e[1]], val: { v: this.offsetDist } };
+      if (!isLine) dim.off = true;
+      // Text beside the middle of the offset curve, outside the gap.
+      const pts = this.dimPoints(dim);
+      if (pts) {
+        const m: V2 = [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
+        const along = isLine ? norm2(sub2(this.pt((dst as SkEnt & { t: "line" }).b), this.pt((dst as SkEnt & { t: "line" }).a))) : [-(pts[1][1] - pts[0][1]), pts[1][0] - pts[0][0]] as V2;
+        const u = norm2(along), k = this.px(m) * 40;
+        dim.pos = [m[0] + u[0] * k, m[1] + u[1] * k];
+      }
+      this.sk.dims.push(dim);
+    }
+    if (parts.length === 2 && !parts[0].closed && this.offsetCap !== "none") {
+      for (const k of [0, 1] as const) {
+        const a = parts[0].made![k === 0 ? 0 : parts[0].made!.length - 1], b = parts[1].made![k === 0 ? 0 : parts[1].made!.length - 1];
+        const pa = k === 0 ? a.dstStart : a.dstEnd, pb = k === 0 ? b.dstStart : b.dstEnd, c = k === 0 ? a.srcStart : a.srcEnd;
+        if (this.offsetCap === "line") { this.sk.ents.push({ id: uid("l"), t: "line", a: pa, b: pb }); continue; }
+        // Arc about the source end, bulging away from the chain: counter-clockwise from one offset end to the other.
+        const C = this.pt(c), A = this.pt(pa), out = this.capOut(parts[0], k);
+        const ccwAB = cross2(sub2(A, C), out) > 0;
+        this.sk.ents.push({ id: uid("a"), t: "arc", c, a: ccwAB ? pa : pb, b: ccwAB ? pb : pa });
+      }
+    }
+    this.commit("Offset entities");
+    this.offsetPreview = [];
+    this.render();
+    return [];
+  }
+
+  /** The outward direction at a chain end of the source (k = 0 start, 1 end): away from the chain along its end tangent. */
+  private capOut(b: OffsetBuild, k: 0 | 1): V2 {
+    const o = b.offs[k === 0 ? 0 : b.offs.length - 1];
+    const s = k === 0 ? o.s : o.e;
+    const src = this.ent(o.sg.id) as SkEnt & { t: "line" | "arc" };
+    let tan: V2;
+    if (src.t === "line") tan = norm2(sub2(o.e, o.s));
+    else { const c = this.pt(src.c), rr = sub2(s, c); tan = norm2(o.sg.rev ? [rr[1], -rr[0]] : [-rr[1], rr[0]]); }
+    return k === 0 ? [-tan[0], -tan[1]] : tan;
+  }
+
+  private capPreview(parts: OffsetBuild[], k: 0 | 1): V2[] {
+    const a = k === 0 ? parts[0].starts[0] : parts[0].ends.at(-1)!, b = k === 0 ? parts[1].starts[0] : parts[1].ends.at(-1)!;
+    if (this.offsetCap === "line") return [a, b];
+    const o = parts[0].offs[k === 0 ? 0 : parts[0].offs.length - 1], C = k === 0 ? o.s : o.e, out = this.capOut(parts[0], k);
+    const r = Math.hypot(a[0] - C[0], a[1] - C[1]), a0 = Math.atan2(a[1] - C[1], a[0] - C[0]);
+    const dir = cross2(sub2(a, C), out) > 0 ? 1 : -1;
+    return Array.from({ length: 25 }, (_, i) => [C[0] + r * Math.cos(a0 + (dir * Math.PI * i) / 24), C[1] + r * Math.sin(a0 + (dir * Math.PI * i) / 24)] as V2);
+  }
+
+  /** The offset of the clicked curve's chain (or circle) to one side: preview polylines, and `apply` that adds the entities. Null when an arc would vanish. */
+  private offsetSide(e: SkEnt & { t: "line" | "arc" | "circle" }, side: number): OffsetBuild | null {
+    const d = this.offsetDist;
+    if (e.t === "circle") {
+      const c = this.pt(e.c), r = e.r - side * d;
+      if (!(r > 1e-9)) return null;
+      const res: OffsetBuild = {
+        closed: true, offs: [], starts: [], ends: [],
+        preview: [Array.from({ length: 73 }, (_, i) => [c[0] + r * Math.cos((i * Math.PI) / 36), c[1] + r * Math.sin((i * Math.PI) / 36)] as V2)],
+        apply: () => { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: e.c, r }); return (res.made = [{ src: e.id, dst: id, srcStart: "", dstStart: "", srcEnd: "", dstEnd: "" }]); },
+      };
+      return res;
+    }
+    const { segs, closed } = this.chainOf(e.id);
+    // Side: +1 to the left of the clicked curve as the chain runs (it runs forward on the clicked curve; for an arc, left = inside).
+    const offs: OffsetSeg[] = [];
     for (const sg of segs) {
       const o = this.ent(sg.id) as SkEnt & { t: "line" | "arc" };
       const s0 = this.pt(sg.rev ? o.b : o.a), e0 = this.pt(sg.rev ? o.a : o.b);
@@ -1729,7 +1816,7 @@ export class SketchEditor {
         const c = this.pt(o.c), r = Math.hypot(s0[0] - c[0], s0[1] - c[1]);
         // Forward (counter-clockwise) the left side is the inside.
         const r2 = r + (sg.rev ? side : -side) * d;
-        if (!(r2 > 1e-9)) { if (apply) this.host.toast(t("The offset is larger than the radius."), "error"); return []; }
+        if (!(r2 > 1e-9)) return null;
         const at = (x: V2): V2 => [c[0] + ((x[0] - c[0]) * r2) / r, c[1] + ((x[1] - c[1]) * r2) / r];
         offs.push({ g: { kind: "circle", c, r: r2 }, at, sg, s: s0, e: e0 });
       }
@@ -1746,27 +1833,32 @@ export class SketchEditor {
     const n = offs.length;
     const starts: V2[] = offs.map((_, i) => (i === 0 && !closed ? offs[0].at(offs[0].s) : joint((i - 1 + n) % n, i)));
     const ends: V2[] = offs.map((_, i) => (i === n - 1 && !closed ? offs[i].at(offs[i].e) : starts[(i + 1) % n]));
-    if (!apply) {
-      return offs.map((o, i) => {
-        if (o.g.kind === "line") return [starts[i], ends[i]];
-        const c = o.g.c, r = o.g.r;
-        const a0 = Math.atan2(starts[i][1] - c[1], starts[i][0] - c[0]);
-        let sw = Math.atan2(ends[i][1] - c[1], ends[i][0] - c[0]) - a0;
-        if (o.sg.rev) { while (sw >= 0) sw -= Math.PI * 2; } else { while (sw <= 0) sw += Math.PI * 2; }
-        return Array.from({ length: 49 }, (_, k) => [c[0] + r * Math.cos(a0 + (sw * k) / 48), c[1] + r * Math.sin(a0 + (sw * k) / 48)] as V2);
-      });
-    }
-    const ptIds = starts.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
-    const endIds = closed ? ptIds.map((_, i) => ptIds[(i + 1) % n]) : [...ptIds.slice(1), (() => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: ends[n - 1][0], y: ends[n - 1][1] }); return id; })()];
-    offs.forEach((o, i) => {
-      const src = this.ent(o.sg.id) as SkEnt & { t: "line" | "arc" };
-      if (src.t === "line") { const id = uid("l"); this.sk.ents.push({ id, t: "line", a: ptIds[i], b: endIds[i] }); this.sk.rels.push({ id: uid("r"), t: "parallel", e: [src.id, id] }); }
-      else this.sk.ents.push({ id: uid("a"), t: "arc", c: src.c, a: o.sg.rev ? endIds[i] : ptIds[i], b: o.sg.rev ? ptIds[i] : endIds[i] });
+    const preview = offs.map((o, i) => {
+      if (o.g.kind === "line") return [starts[i], ends[i]];
+      const c = o.g.c, r = o.g.r;
+      const a0 = Math.atan2(starts[i][1] - c[1], starts[i][0] - c[0]);
+      let sw = Math.atan2(ends[i][1] - c[1], ends[i][0] - c[0]) - a0;
+      if (o.sg.rev) { while (sw >= 0) sw -= Math.PI * 2; } else { while (sw <= 0) sw += Math.PI * 2; }
+      return Array.from({ length: 49 }, (_, k) => [c[0] + r * Math.cos(a0 + (sw * k) / 48), c[1] + r * Math.sin(a0 + (sw * k) / 48)] as V2);
     });
-    this.commit("Offset entities");
-    this.offsetPreview = [];
-    this.render();
-    return [];
+    const res: OffsetBuild = {
+      closed, offs, starts, ends, preview,
+      apply: () => {
+        const ptIds = starts.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
+        const endIds = closed ? ptIds.map((_, i) => ptIds[(i + 1) % n]) : [...ptIds.slice(1), (() => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: ends[n - 1][0], y: ends[n - 1][1] }); return id; })()];
+        const made: OffsetMade[] = [];
+        offs.forEach((o, i) => {
+          const src = this.ent(o.sg.id) as SkEnt & { t: "line" | "arc" };
+          const srcStart = o.sg.rev ? src.b : src.a, srcEnd = o.sg.rev ? src.a : src.b;
+          let dst: string;
+          if (src.t === "line") { dst = uid("l"); this.sk.ents.push({ id: dst, t: "line", a: ptIds[i], b: endIds[i] }); this.sk.rels.push({ id: uid("r"), t: "parallel", e: [src.id, dst] }); }
+          else { dst = uid("a"); this.sk.ents.push({ id: dst, t: "arc", c: src.c, a: o.sg.rev ? endIds[i] : ptIds[i], b: o.sg.rev ? ptIds[i] : endIds[i] }); }
+          made.push({ src: src.id, dst, srcStart, dstStart: ptIds[i], srcEnd, dstEnd: endIds[i] });
+        });
+        return (res.made = made);
+      },
+    };
+    return res;
   }
 
   // ---------- mirror entities (FR-SK-037) ----------
@@ -2426,6 +2518,15 @@ export class SketchEditor {
     const kind = (id: string) => (id === ORIGIN ? "point" : this.ent(id)?.t);
     const centreOf = (id: string): V2 => { const e = this.ent(id); return e && (e.t === "circle" || e.t === "arc") ? this.pt(e.c) : this.pt(id); };
     if (d.e.length === 1 && kind(d.e[0]) === "line") { const l = this.ent(d.e[0]) as SkEnt & { t: "line" }; return [this.pt(l.a), this.pt(l.b)]; }
+    if (d.off) {
+      // Radial offset of concentric curves: both rims on the ray from the centre towards the text.
+      const e0 = this.ent(d.e[0]), e1 = this.ent(d.e[1]);
+      if (!e0 || !e1 || (e0.t !== "arc" && e0.t !== "circle") || (e1.t !== "arc" && e1.t !== "circle")) return null;
+      const c = this.pt(e0.c), rad = (x: SkEnt & { t: "arc" | "circle" }) => (x.t === "circle" ? x.r : Math.hypot(this.pt(x.a)[0] - this.pt(x.c)[0], this.pt(x.a)[1] - this.pt(x.c)[1]));
+      const ref = d.pos && Math.hypot(d.pos[0] - c[0], d.pos[1] - c[1]) > 1e-9 ? d.pos : e1.t === "arc" ? this.pt(e1.a) : ([c[0] + 1, c[1]] as V2);
+      const u = norm2(sub2(ref, c));
+      return [[c[0] + u[0] * rad(e0), c[1] + u[1] * rad(e0)], [c[0] + u[0] * rad(e1), c[1] + u[1] * rad(e1)]];
+    }
     if (d.e.length === 2 && kind(d.e[0]) !== "line" && kind(d.e[1]) !== "line") return [centreOf(d.e[0]), centreOf(d.e[1])];
     if (d.e.length === 2) {
       // Point/line or line/line: from the point (or second line's start) to its foot on the line.
@@ -2882,6 +2983,13 @@ export class SketchEditor {
     }
   }
 }
+
+// ---------- offset helpers ----------
+
+type OffsetSeg = { g: Curve; at: (x: V2) => V2; sg: { id: string; rev: boolean }; s: V2; e: V2 };
+/** One offset curve made: source and copy, and their end points in chain order. */
+type OffsetMade = { src: string; dst: string; srcStart: string; dstStart: string; srcEnd: string; dstEnd: string };
+type OffsetBuild = { closed: boolean; offs: OffsetSeg[]; starts: V2[]; ends: V2[]; preview: V2[][]; apply: () => OffsetMade[]; made?: OffsetMade[] };
 
 // ---------- 2D helpers ----------
 
