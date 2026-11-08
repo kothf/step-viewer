@@ -475,7 +475,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-014** (P1, M) Circle: centre-radius, 3-point (P2: perimeter tangent circle).
 - **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint.
 - **FR-SK-016** (P1, M) Polygon: n sides (3–64), inscribed/circumscribed, centre + vertex; adds construction circle and equal relations.
-- **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension.
+- **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension. **Done (1.144.0)**: `slot`/`cslot`/`aslot`/`aslot3` tools, live preview, width + length/radius dims with the Modify box.
 - **FR-SK-018** (P2, M) Ellipse and elliptical arc.
 - **FR-SK-019** (P2, M) Spline: interpolating through points, with optional tangency handles at ends and points; degree 3; P5: control-polygon spline and curvature handles.
 - **FR-SK-020** (P4, S) Text: font (bundled open fonts), height, along a curve option; usable for extrude/cut (embossing).
