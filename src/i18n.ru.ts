@@ -3494,4 +3494,9 @@ export const RU: Record<string, string> = {
   "Style spline": "Сплайн по контрольным точкам",
   "Style spline: click its control points; double-click ends it": "Сплайн по контрольным точкам: щёлкайте его контрольные точки; двойной щелчок завершает его",
   "Click the control points; the curve follows them without passing through. Double-click ends it": "Щёлкайте контрольные точки; кривая следует за ними, не проходя через них. Двойной щелчок завершает её",
+  "Aligned section": "Ломаный разрез",
+  "Click the end of the first leg on a view.": "Щёлкните конец первого участка на виде.",
+  "Click the centre: the second leg turns about it into the first leg's plane.": "Щёлкните центр: второй участок поворачивается вокруг него в плоскость первого.",
+  "Click the end of the second leg.": "Щёлкните конец второго участка.",
+  "The two legs of an aligned section must meet at an angle.": "Два участка ломаного разреза должны сходиться под углом.",
 };

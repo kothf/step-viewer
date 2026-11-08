@@ -169,9 +169,28 @@ export function staircase(legs: CutLeg[], m: [number, number]): { pts: number[];
 
 /** A staircase cutter for the kernel: (t, o) points with `FAR` ends, the frame they live in, and the hatched planes. */
 export interface Stair { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }
+/** An aligned section's turn: the half beyond the plane through `c` square to `s` (on the second leg's side) is turned by `ang` (radians) about the axis through `c` along `axis`. */
+export interface Align { c: V3; s: V3; axis: V3; ang: number }
+
+/**
+ * The legs of an aligned section in parent view axes: unit directions from the centre to each end, and the turn
+ * (radians, counter-clockwise about the parent's view normal) that lays the second leg along the first one's extension.
+ */
+export function alignedLegs(path: number[]): { c: [number, number]; d1: [number, number]; d2: [number, number]; ang: number } | null {
+  if (path.length !== 6) return null;
+  const c: [number, number] = [path[2], path[3]];
+  const l1 = Math.hypot(path[0] - c[0], path[1] - c[1]), l2 = Math.hypot(path[4] - c[0], path[5] - c[1]);
+  if (l1 < 1e-9 || l2 < 1e-9) return null;
+  const d1: [number, number] = [(path[0] - c[0]) / l1, (path[1] - c[1]) / l1], d2: [number, number] = [(path[4] - c[0]) / l2, (path[5] - c[1]) / l2];
+  // Turn d2 onto −d1.
+  const ang = Math.atan2(d2[0] * -d1[1] - d2[1] * -d1[0], d2[0] * -d1[0] + d2[1] * -d1[1]);
+  // Straight (no turn) or folded back onto the first leg: not an aligned section.
+  if (Math.abs(ang) < 0.0087 || Math.abs(ang) > Math.PI - 0.0087) return null;
+  return { c, d1, d2, ang };
+}
 
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; exclude?: string[]; shade?: boolean; key: string } {
+export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; key: string } {
   if (v.kind === "detail" && v.parent && depth < 20) {
     const p = findView(sheet, v.parent);
     if (p) { const r = viewReq(sheet, p, depth + 1); return isShaded(v) && !r.p && !r.shade ? { ...r, shade: true, key: `${r.key}|sh` } : r; }
@@ -183,7 +202,15 @@ export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDi
       const { x, y } = viewAxes(viewDir(sheet, par));
       const exclude = v.exclude?.length ? [...v.exclude].sort() : undefined;
       const ex = exclude ? `|ex|${exclude.join(",")}` : "";
-      const legs = v.path ? cutLegs(v.path) : null;
+      const al = v.aligned && v.path ? alignedLegs(v.path) : null;
+      if (al) {
+        const n0 = viewAxes(viewDir(sheet, par)).n;
+        const P = (u: number, w: number) => add(mul(x, u), y, w);
+        const c = P(al.c[0], al.c[1]), sv = P(al.d2[0] - al.d1[0], al.d2[1] - al.d1[1]), sl = Math.hypot(sv[0], sv[1], sv[2]) || 1;
+        const align: Align = { c, s: [sv[0] / sl, sv[1] / sl, sv[2] / sl], axis: n0, ang: al.ang };
+        return { view, p: c, align, exclude, key: `${dirKey(view)}|al|${c.map(k => k.toFixed(6)).join(",")}|${align.s.map(k => k.toFixed(6)).join(",")}|${al.ang.toFixed(6)}${ex}` };
+      }
+      const legs = v.path && !v.aligned ? cutLegs(v.path) : null;
       if (legs) {
         const n = viewAxes(view).n, mu = n[0] * x[0] + n[1] * x[1] + n[2] * x[2], mv = n[0] * y[0] + n[1] * y[1] + n[2] * y[2];
         const ml = Math.hypot(mu, mv) || 1, m: [number, number] = [mu / ml, mv / ml];

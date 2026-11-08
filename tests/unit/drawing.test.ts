@@ -548,3 +548,28 @@ test("section hatching by material and component: loops know their solid, patter
   const fixed = sectionHatch([sq], { ...hs, pattern: "ansi37" }, ["a"], ["Steel (carbon)"]);
   assert.deepEqual([...new Set(fixed.map(ang))].sort((a, b) => a - b), [45, 135]);
 });
+
+test("aligned section: the second leg turns about the centre into the first leg's plane (FR-DRW-012)", async () => {
+  const { section, alignedShape, viewAxes, shapeInfo } = await import("../../src/kernel/drawing");
+  const { alignedLegs } = await import("../../src/drawing/views");
+  const oc = await occ();
+  // A square plate, legs along −x and +y from the centre: a 90° turn.
+  const plate = new oc.BRepPrimAPI_MakeBox_3(new oc.gp_Pnt_3(-50, -50, 0), 100, 100, 10).Shape();
+  const al = alignedLegs([-40, 0, 0, 0, 0, 40])!;
+  assert.ok(Math.abs(al.ang + Math.PI / 2) < 1e-9, `angle ${al.ang}`);
+  assert.equal(alignedLegs([-40, 0, 0, 0, 40, 0]), null);
+  assert.equal(alignedLegs([-40, 0, 0, 0, -30, 0]), null);
+  const n = viewAxes({ dir: [0, 0, 1], up: [0, 1, 0] }).n;
+  const s: V3 = [(al.d2[0] - al.d1[0]) / Math.SQRT2, (al.d2[1] - al.d1[1]) / Math.SQRT2, 0];
+  const turned = alignedShape(oc, plate, { c: [0, 0, 0], s, axis: n, ang: al.ang });
+  const props = new oc.GProp_GProps_1();
+  oc.BRepGProp.VolumeProperties_1(turned, props, false, false, false);
+  assert.ok(Math.abs(props.Mass() - 100 * 100 * 10) < 1e-3, `volume ${props.Mass()}`);
+  const [lo, hi] = shapeInfo(oc, turned).box;
+  assert.ok(Math.abs(lo[0] + 50) < 1e-6 && Math.abs(hi[0] - 50) < 1e-6 && Math.abs(lo[1] + 50) < 1e-6 && Math.abs(hi[1] - 50) < 1e-6);
+  // Cut along the first leg's line: 50 mm of the kept half plus the 50 mm leg turned onto it.
+  const cut = section(oc, turned, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
+  const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
+  const total = cut.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
+  assert.ok(Math.abs(total - 100 * 10) < 1e-6, `cut area ${total}`);
+});
