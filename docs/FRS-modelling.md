@@ -471,7 +471,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-010** (P1, M) Point.
 - **FR-SK-011** (P1, M) Line: click-click chains; click-drag-release makes a single line; double-click or Esc ends the chain; moving back to the last end point switches to a tangent arc (A key toggles arc mode explicitly).
 - **FR-SK-012** (P1, M) Construction line (centerline): any entity can be toggled construction (Q key, or a property). Construction entities do not form profiles.
-- **FR-SK-013** (P1, M) Rectangle: corner-corner, centre-corner; produces 4 lines with horizontal/vertical and coincident relations. P2: 3-point corner, 3-point centre, parallelogram. **Done (1.148.0).**
+- **FR-SK-013** (P1, M) Rectangle: corner-corner, centre-corner; produces 4 lines with horizontal/vertical and coincident relations. P2: 3-point corner, 3-point centre, parallelogram. **Done (1.152.0).**
 - **FR-SK-014** (P1, M) Circle: centre-radius, 3-point (P2: perimeter tangent circle).
 - **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint.
 - **FR-SK-016** (P1, M) Polygon: n sides (3–64), inscribed/circumscribed, centre + vertex; adds construction circle and equal relations.
