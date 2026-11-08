@@ -3170,6 +3170,10 @@ export const RU: Record<string, string> = {
   "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.": "Швы строятся вдоль прямых и круглых рёбер между плоскими и цилиндрическими гранями; остальные рёбра пропущены.",
   "The faces of the two sets do not meet along a straight or round edge.": "Грани двух наборов не встречаются по прямому или круглому ребру.",
   // 1.89.0: sketch snapping to model geometry.
+  "Automatic relations": "Автоматические взаимосвязи",
+  "Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them.": "Отрезки привязываются горизонтально, вертикально, перпендикулярно, параллельно или по касательной и сохраняют эту взаимосвязь; удерживайте Ctrl, чтобы рисовать без них.",
+  "Show relations": "Показывать взаимосвязи",
+  "Relation glyphs next to the entities; hover one to see what it ties, click to select it.": "Значки взаимосвязей рядом с объектами; наведите на значок, чтобы увидеть связанные объекты, щёлкните, чтобы выбрать.",
   "Snap to model geometry": "Привязка к геометрии модели",
   "Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges.": "Точки привязываются к вершинам модели, серединам рёбер и центрам окружностей и остаются связанными с ними; автоматический размер берёт рёбра модели.",
   // 1.90.0: user sheet formats (FR-DRW-004).
