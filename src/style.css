@@ -1099,3 +1099,5 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-plot .mo-pg { stroke: var(--line); stroke-width: 0.5; vector-effect: non-scaling-stroke; }
 .motion .mo-plot .mo-pt { fill: var(--muted, currentColor); font-size: 7px; }
 .motion .mo-plot .mo-ph { stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.motion .mo-aspan { position: absolute; top: 3px; bottom: 3px; min-width: 2px; background: color-mix(in srgb, var(--warn-text) 35%, transparent); border-block: 2px solid var(--warn-text); pointer-events: none; }
+.motion .mo-alert { color: var(--warn-text); font-weight: 600; }
