@@ -1847,6 +1847,10 @@ export class ModelController {
     return {
       doc: this.doc, before: this.doc.features.slice(0, index), selected: this.selected, last: this.last,
       faceAt: (x, y) => this.host.faceAt(x, y), faceRef: id => this.faceRef(id), faceType: id => this.host.viewer.parts[0]?.data.faces[id]?.type,
+      toScreen: p => {
+        const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect(), q = new THREE.Vector3(...p).project(v.camera);
+        return q.z > 1 ? null : [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+      },
       changed: () => this.draftChanged(),
     };
   }
@@ -4787,7 +4791,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || (key === "angle" && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.

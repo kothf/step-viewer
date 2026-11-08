@@ -11,11 +11,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **3-point rectangles and parallelogram (FR-SK-013)**: the Rectangle ▾ menu adds 3-point corner rectangle (two corners set the first side at any angle, the third click the width), 3-point centre rectangle (centre, middle of a side, then a corner) and Parallelogram (three corners, the fourth follows), all with a live preview and the relations that keep their shape.
 
+## [1.147.0] - 2026-11-08
+
+### Added
+
+- **Structural member groups (FR-FT-121).** Each segment in the Structural Member panel has a group list. Segments moved to a new group get their own profile position, rotation angle and mirror, so a frame's rails and posts can face different ways within one feature. Group 1 keeps the settings above.
+- **Pick member path segments in the view (FR-FT-121).** While a Structural Member is open, clicking a line or arc of the path sketch (or a face of the member's preview) ticks or unticks that segment, as in SolidWorks; a segment of another sketch starts the selection over with that sketch.
+
 ## [1.146.0] - 2026-11-08
 
 ### Added
 
 - **Section hatching by material and component** (FR-DRW-012): a section's cut faces are hatched by the material of the part they belong to (ANSI32 steel, ANSI33 brass, bronze and copper, ANSI38 aluminium, ANSI34 plastics and rubber, ANSI37 lead and zinc, ANSI31 anything else), and in an assembly (or a multibody part) neighbouring components are hatched at another angle and spacing so they tell apart. Hatch pattern in the view panel of a section or broken-out section picks one pattern for the whole view instead.
+
 ## [1.144.0] - 2026-11-08
 
 ### Added
@@ -1254,7 +1262,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.148.0...HEAD
-[1.148.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.148.0
+[1.148.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.148.0
+[1.147.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.147.0
 [1.146.0]: https://github.com/kothf/step-viewer/compare/v1.144.0...v1.146.0
 [1.144.0]: https://github.com/kothf/step-viewer/compare/v1.143.0...v1.144.0
 [1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0

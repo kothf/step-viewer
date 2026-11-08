@@ -7509,7 +7509,13 @@ try {
     await mp.click('#mc-pm input[data-wseg="l4"]');
     await settle();
     const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
-    await mp.click('#mc-pm input[data-wseg="l4"]');
+    // Clicking the line in the view ticks it again (SolidWorks picks path segments in the graphics area).
+    const l4At = await mp.evaluate(() => { const v = window.__sv.viewer; v.controls.target.set(300, 200, 0); v.camera.up.set(0, 1, 0); v.camera.position.set(300, 200, 1600); v.camera.lookAt(300, 200, 0); v.controls.update(); v.fit(false); v.camera.updateMatrixWorld(); const r = v.renderer.domElement.getBoundingClientRect(), q = new v.camera.position.constructor(0, 200, 0).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
+    await mp.mouse.click(l4At[0] + 2, l4At[1] + 1);
+    await settle();
+    const p1b = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft.segs.map(s => s.ent).join(","), box: document.querySelector('#mc-pm input[data-wseg="l4"]')?.checked }));
+    check(p1b.segs === "l1,l2,l3,l4" && p1b.box === true, `weldments: clicking a path line in the view ticks it (${JSON.stringify({ l4At, p1b })})`);
+    if (p1b.segs !== "l1,l2,l3,l4") { await mp.click('#mc-pm input[data-wseg="l4"]'); }
     await settle();
     await mp.click("#mc-ok");
     await settle();
@@ -7634,6 +7640,20 @@ try {
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
+    // Groups: the last line of that member in a new group, turned 90° on its own.
+    const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgroup:j3"]', "new");
+    await settle();
+    const gl = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).filter(x => /^Group/.test(x)));
+    await mp.fill('#mc-pm input[data-num="groups.0.angle"]', "90");
+    await mp.press('#mc-pm input[data-num="groups.0.angle"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
+    check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
