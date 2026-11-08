@@ -11,11 +11,15 @@ import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
+import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
+import { activate as activatePartConfig } from "../model/configs";
+import { refreshExprs } from "../model/params";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
-import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
+import type { AsmFeatureStatus } from "../model/kernelClient";
+import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
 import type { Viewer } from "../viewer/Viewer";
@@ -106,6 +110,10 @@ export class AsmController {
   fastening: { kind: FastenerKind; size: string; length: number; placed: number } | null = null;
   /** Mate reference panel (FR-MATE-011): the component, the reference's name and its faces (up to three). */
   refing: { comp: string; name: string; faces: string[] } | null = null;
+  /** Assembly feature panel (FR-ASM-027): the hole or cut being made or edited; `at`/`n`/`x` in `ref.comp`'s coordinates. */
+  featuring: { edit?: string; type: "hole" | "cut"; ref?: MateRef; at?: V3; n?: V3; x?: V3; dia: number; w: number; h: number; depth: number | null; comps: string[] | null } | null = null;
+  /** Assembly feature results of the last build. */
+  featStatus: AsmFeatureStatus[] = [];
   /** Mates to add once a just inserted component's faces are known (after its first build). */
   private autoMates: ({ comp: string; hole: { axis: MateRef; seat: MateRef } } | { comp: string; target: string; name: string })[] = [];
   /** Resolves when the rebuild in flight and any queued one are done (tests wait on it). */
@@ -121,7 +129,7 @@ export class AsmController {
 
   get active() { return !!this.doc; }
   /** Clicks in the view pick mate faces (Smart measure leaves them alone). */
-  get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing; }
+  get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing || !!this.featuring; }
 
   /** The document with pattern instances added (what the kernel builds and the BOM counts). */
   private expand(doc: AsmDoc): Expanded {
@@ -248,6 +256,7 @@ export class AsmController {
           const r = await this.kernel.assembly(ex.doc);
           if (this.doc !== doc && this.again) continue;
           this.statuses = r.statuses;
+          this.featStatus = r.features ?? [];
           this.props = r.props;
           this.shownIds = r.parts.map(p => p.id);
           this.learn(ex.doc, r.parts);
@@ -722,6 +731,129 @@ export class AsmController {
     return true;
   }
 
+  // ---------- assembly features (FR-ASM-027) ----------
+
+  /** Hole or cut extrude through components; `edit` reopens an existing one. */
+  startFeature(edit?: AsmFeature) {
+    if (!this.doc) return;
+    this.closeTools();
+    this.featuring = edit
+      ? { edit: edit.id, type: edit.type, ref: { ...edit.ref }, at: [...edit.at] as V3, n: [...edit.n] as V3, x: [...edit.x] as V3, dia: edit.dia ?? 6, w: edit.w ?? 10, h: edit.h ?? 10, depth: edit.depth ?? null, comps: edit.comps ? [...edit.comps] : null }
+      : { type: "hole", dia: 6, w: 10, h: 10, depth: null, comps: null };
+    this.renderAll();
+    this.drawFeaturePreview();
+  }
+
+  /** A click on a flat face: where the feature starts, going into that face. */
+  private pickFeatureFace(x: number, y: number) {
+    const f = this.featuring, hit = this.host.partAt(x, y);
+    if (!f || !hit) return;
+    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face], c = this.comp(id);
+    const g = c && face ? this.geo.get(c.part)?.get(face) : null;
+    if (!c || !face || g?.k !== "plane") { toast(t("Click a flat face where the feature starts."), true); return; }
+    const inv = invert(c.tf);
+    f.ref = { comp: id, face };
+    f.at = applyPoint(inv, hit.point);
+    f.n = g.n;
+    // The rectangle's width along the part's X (or Y when X is square to the face).
+    const ax: V3 = Math.abs(g.n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    f.x = ax;
+    this.renderPanel();
+    this.drawFeaturePreview();
+  }
+
+  /** The feature the panel describes, or null while it has no start face or a bad size. */
+  private draftFeature(): AsmFeature | null {
+    const f = this.featuring;
+    if (!f?.ref || !f.at || !f.n || !f.x) return null;
+    const old = f.edit ? this.doc?.features?.find(x => x.id === f.edit) : undefined;
+    const n = (this.doc?.features ?? []).filter(x => x.type === f.type).length + 1;
+    const feat: AsmFeature = { id: f.edit ?? uid("af_"), name: old && old.type === f.type ? old.name : `${f.type === "hole" ? "Hole" : "Cut-Extrude"}${n}`, type: f.type, ref: f.ref, at: f.at, n: f.n, x: f.x };
+    if (f.type === "hole") { if (!(f.dia > 0)) return null; feat.dia = f.dia; }
+    else { if (!(f.w > 0 && f.h > 0)) return null; feat.w = f.w; feat.h = f.h; }
+    if (f.depth !== null) { if (!(f.depth > 0)) return null; feat.depth = f.depth; }
+    if (f.comps) feat.comps = [...f.comps];
+    if (old?.suppressed) feat.suppressed = true;
+    return feat;
+  }
+
+  okFeature() {
+    const feat = this.draftFeature();
+    if (!feat) { toast(t("Click a flat face where the feature starts."), true); return; }
+    this.featuring = null;
+    this.clearOverlay();
+    this.change(d => {
+      d.features ??= [];
+      const i = d.features.findIndex(x => x.id === feat.id);
+      if (i >= 0) d.features[i] = feat; else d.features.push(feat);
+    });
+  }
+
+  deleteFeature(id: string) {
+    this.change(d => { d.features = (d.features ?? []).filter(x => x.id !== id); if (!d.features.length) delete d.features; });
+  }
+
+  /** The tool, translucent red, where the feature will cut (through all: as deep as the assembly is big). */
+  private drawFeaturePreview() {
+    this.clearOverlay();
+    const f = this.featuring, c = f?.ref && this.comp(f.ref.comp);
+    if (!f || !c || !f.at || !f.n || !f.x) { this.host.viewer.invalidate(); return; }
+    const at = applyPoint(c.tf, f.at), n = unit(applyDir(c.tf, f.n));
+    let x = applyDir(c.tf, f.x);
+    const k = x[0] * n[0] + x[1] * n[1] + x[2] * n[2];
+    x = unit([x[0] - k * n[0], x[1] - k * n[1], x[2] - k * n[2]]);
+    const y: V3 = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
+    const H = f.depth ?? this.size() * 2;
+    const geo = f.type === "hole" ? new THREE.CylinderGeometry(f.dia / 2, f.dia / 2, H, 48) : new THREE.BoxGeometry(f.w, H, f.h);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xe03131, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
+    // Geometry axis Y → -n (into the material), centred half the depth below the face.
+    const m4 = new THREE.Matrix4().makeBasis(new THREE.Vector3(...x), new THREE.Vector3(-n[0], -n[1], -n[2]), new THREE.Vector3(...y));
+    m4.setPosition(at[0] - n[0] * H / 2, at[1] - n[1] * H / 2, at[2] - n[2] * H / 2);
+    mesh.applyMatrix4(m4);
+    mesh.renderOrder = 10;
+    this.overlay.add(mesh);
+    this.host.viewer.invalidate();
+  }
+
+  private renderFeaturePanel() {
+    const pm = $("#asm-pm"), f = this.featuring!;
+    pm.hidden = false;
+    pm.dataset.id = "afeat";
+    const hole = f.type === "hole";
+    const num = (k: string, label: string, v: number) => `<label class="pm-field"><span>${esc(t(label))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-fv="${k}" value="${esc(String(Math.round(v * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">mm</span></span></label>`;
+    const comps = this.doc!.components.filter(c => !c.suppressed);
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(hole ? t("Assembly hole") : t("Assembly cut extrude"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Type"))}</legend><div class="pm-mates"><button class="btn small${hole ? " on" : ""}" data-ft="hole" aria-pressed="${hole}">⌀ ${esc(t("Hole"))}</button><button class="btn small${hole ? "" : " on"}" data-ft="cut" aria-pressed="${!hole}">▭ ${esc(t("Cut extrude"))}</button></div></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Start face"))}</legend><div class="pm-field"><span>${esc(t("Face"))}</span><button class="pm-box${f.ref ? "" : " focus"}" translate="no">${esc(f.ref ? this.refText(f.ref) : t("Click a flat face"))}</button></div>`
+      + `<p class="pm-help muted">${esc(t("The feature goes into the material from the point you click."))}</p></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Size"))}</legend>` + (hole ? num("dia", "Diameter", f.dia) : num("w", "Width", f.w) + num("h", "Height", f.h))
+      + `<label class="pm-field pm-check"><input type="checkbox" data-a="through"${f.depth === null ? " checked" : ""} /> ${esc(t("Through all"))}</label>`
+      + (f.depth === null ? "" : num("depth", "Depth", f.depth)) + `</fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Feature scope"))}</legend><label class="pm-field pm-check"><input type="checkbox" data-a="allc"${f.comps === null ? " checked" : ""} /> ${esc(t("All components it reaches"))}</label>`
+      + (f.comps === null ? "" : `<div class="pm-items">${comps.map(c => `<label class="pm-field pm-check" translate="no"><input type="checkbox" data-fc="${esc(c.id)}"${f.comps!.includes(c.id) ? " checked" : ""} /> ${esc(c.name)}</label>`).join("")}</div>`)
+      + `</fieldset>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okFeature());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
+    pm.querySelectorAll<HTMLElement>("[data-ft]").forEach(b => b.addEventListener("click", () => { f.type = b.dataset.ft as "hole" | "cut"; this.renderPanel(); this.drawFeaturePreview(); }));
+    pm.querySelectorAll<HTMLInputElement>("[data-fv]").forEach(i => {
+      i.addEventListener("change", () => {
+        const v = Number(i.value.replace(",", "."));
+        if (!Number.isFinite(v) || v <= 0) { i.setAttribute("aria-invalid", "true"); return; }
+        i.removeAttribute("aria-invalid");
+        const k = i.dataset.fv!;
+        if (k === "depth") f.depth = v; else f[k as "dia" | "w" | "h"] = v;
+        this.drawFeaturePreview();
+      });
+      i.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); i.dispatchEvent(new Event("change")); this.okFeature(); } });
+    });
+    pm.querySelector<HTMLInputElement>("[data-a=through]")!.addEventListener("change", e => { f.depth = (e.target as HTMLInputElement).checked ? null : 10; this.renderPanel(); this.drawFeaturePreview(); });
+    pm.querySelector<HTMLInputElement>("[data-a=allc]")!.addEventListener("change", e => { f.comps = (e.target as HTMLInputElement).checked ? null : comps.map(c => c.id); this.renderPanel(); });
+    pm.querySelectorAll<HTMLInputElement>("[data-fc]").forEach(i => i.addEventListener("change", () => {
+      const id = i.dataset.fc!;
+      f.comps = i.checked ? [...new Set([...(f.comps ?? []), id])] : (f.comps ?? []).filter(x => x !== id);
+    }));
+  }
+
   /** Closes whichever tool panel is open (mate, pattern, explode, interference, move). */
   closeTools() {
     if (this.mating) this.cancelMate();
@@ -729,6 +861,7 @@ export class AsmController {
     if (this.exploding) { this.exploding = null; this.clearPicks(); this.applyExplode(); }
     if (this.interfere) { this.interfere = null; this.clearOverlay(); }
     if (this.refing) { this.refing = null; this.clearPicks(); }
+    if (this.featuring) { this.featuring = null; this.clearOverlay(); }
     this.fastening = null;
     this.moving = null;
     this.renderAll();
@@ -969,16 +1102,17 @@ export class AsmController {
       const c = doc.components.find(x => x.id === p.id);
       if (!c) continue;
       this.shownTf[c.id] = c.tf.slice();
-      if (seen.has(c.part)) continue;
+      const again = seen.has(c.part);
       seen.add(c.part);
-      const inv = invert(c.tf), m = new Map<string, Geo>();
+      const inv = invert(c.tf), m = again ? this.geo.get(c.part) ?? new Map<string, Geo>() : new Map<string, Geo>();
       p.data.faces.forEach((f, j) => {
         const name = p.faces[j];
-        if (!name) return;
+        if (!name || (again && m.has(name))) return;
         if (f.type === "plane" && f.normal) m.set(name, { k: "plane", p: applyPoint(inv, f.centroid), n: unit(applyDir(inv, f.normal)) });
         else if (f.type === "cylinder" && f.axis) m.set(name, { k: "axis", p: applyPoint(inv, f.center), d: unit(applyDir(inv, f.axis)), r: f.radius ?? 0 });
       });
       this.geo.set(c.part, m);
+      if (again) continue;
       this.volumes.set(c.part, p.data.volume);
       const b0 = p.data.bboxMin, b1 = p.data.bboxMax;
       this.centres.set(c.part, applyPoint(inv, [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2, (b0[2] + b1[2]) / 2]));
@@ -1368,7 +1502,7 @@ export class AsmController {
         if (!c) return;
         c.part = key;
         c.name = `${base}<${d.components.filter(x => x.part === key).length}>`;
-        for (const k of Object.keys(d.parts)) if (!d.components.some(x => x.part === k)) delete d.parts[k];
+        for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
       });
       const lost = (this.doc.mates ?? []).filter(m => (m.a.comp === id || m.b.comp === id) && this.solved?.missing.includes(m.id)).length;
       if (lost) toast(t("{n} mate could not find its face on the new component.|{n} mates could not find their faces on the new component.", { n: lost }), "warn");
@@ -1475,6 +1609,41 @@ export class AsmController {
   }
   setOpacity(id: string, op: number | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (op !== null && op < 1) c.opacity = op; else delete c.opacity; } }); }
 
+  /** Assembly configurations (FR-ASM-026). */
+  addAsmConfig() {
+    const n = (this.doc?.configs?.length ?? 1) + 1;
+    let id = "";
+    this.change(d => { id = addConfig(d, `${t("Configuration")} ${n}`, uid("cf_")); });
+    return id;
+  }
+  activateAsmConfig(id: string) { if (this.doc?.activeConfig !== id) this.change(d => { activateConfig(d, id); }); }
+  deleteAsmConfig(id: string) {
+    if ((this.doc?.configs?.length ?? 0) < 2) { toast(t("An assembly keeps at least one configuration."), true); return; }
+    this.change(d => { deleteConfig(d, id); });
+  }
+
+  /** The part configurations a component can use (its part's own list), and the one it uses. */
+  partConfigs(id: string): { names: string[]; current: string | null } {
+    const c = this.comp(id), pd = c && this.doc?.parts[c.part]?.doc;
+    return { names: pd?.configs?.map(x => x.name) ?? [], current: pd?.config ?? null };
+  }
+
+  /** Uses another configuration of the component's part: a part entry with that configuration active (FR-ASM-026). */
+  setComponentConfig(id: string, name: string) {
+    const c = this.comp(id), entry = c && this.doc?.parts[c.part];
+    if (!c || !entry || entry.asm || entry.doc.config === name || !entry.doc.configs?.some(x => x.name === name)) return;
+    const pd = structuredClone(entry.doc);
+    activatePartConfig(pd, name);
+    refreshExprs(pd);
+    const key = this.sourceKey(pd);
+    this.change(d => {
+      d.parts[key] ??= { ...structuredClone(entry), doc: pd };
+      const x = d.components.find(q => q.id === id);
+      if (x) x.part = key;
+      for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
+    });
+  }
+
   /** Display states (FR-ASM-025). */
   addDisplayState() {
     const n = (this.doc?.states?.length ?? 1) + 1;
@@ -1489,7 +1658,7 @@ export class AsmController {
   }
   private renameState(id: string) {
     const row = $("#asm-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`), name = row?.querySelector<HTMLElement>(".ft-name");
-    const st = this.doc?.states?.find(s => s.id === id);
+    const st = this.doc?.states?.find(s => s.id === id) ?? this.doc?.configs?.find(s => s.id === id);
     if (!row || !name || !st) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
@@ -1504,7 +1673,7 @@ export class AsmController {
       if (done) return;
       done = true;
       const v = inp.value.trim();
-      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id); if (s2) s2.name = v; });
+      if (apply && v && v !== st.name) this.change(d => { const s2 = d.states?.find(x => x.id === id) ?? d.configs?.find(x => x.id === id); if (s2) s2.name = v; });
       else this.renderTree();
     };
     inp.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.preventDefault(); finish(false); } });
@@ -1565,7 +1734,7 @@ export class AsmController {
       if (d.patterns) { for (const p of d.patterns) { p.seeds = p.seeds.filter(x => x !== id); if (p.dir?.comp === id) p.dir = null; } d.patterns = d.patterns.filter(p => p.seeds.length); if (!d.patterns.length) delete d.patterns; }
       if (d.explodes) for (const v of d.explodes) { for (const st of v.steps) st.comps = st.comps.filter(x => x !== id && !x.includes(`~${id}~`)); v.steps = v.steps.filter(st => st.comps.length); }
       // A part no component uses any more leaves the file.
-      for (const k of Object.keys(d.parts)) if (!d.components.some(x => x.part === k)) delete d.parts[k];
+      for (const k of Object.keys(d.parts)) if (!partUsed(d, k)) delete d.parts[k];
     });
     if (this.moving === id) this.moving = null;
     if (this.selected === id) this.selected = null;
@@ -1633,7 +1802,7 @@ export class AsmController {
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
-        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else this.closeTools(); return; }
+        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -1733,6 +1902,7 @@ export class AsmController {
         else if (this.exploding) this.pickExplode(e.clientX, e.clientY);
         else if (this.fastening) this.pickHole(e.clientX, e.clientY);
         else if (this.refing) this.pickRefFace(e.clientX, e.clientY);
+        else if (this.featuring) this.pickFeatureFace(e.clientX, e.clientY);
         return;
       }
       const d = this.drag;
@@ -1765,6 +1935,7 @@ export class AsmController {
     const b = (c: string, label: string, title: string, dis = false) => `<button class="mc-b" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}><span class="mc-l">${esc(label)}</span></button>`;
     $("#asm-tools").innerHTML = b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
       + b("fastener", t("Fasteners"), t("Fastener library: ISO screws, nuts and washers, placed on a hole"))
+      + b("afeat", t("Assembly cut"), t("Assembly feature: a hole or cut extrude through several components, kept in the assembly only"), !this.doc.components.length)
       + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
       + b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !this.doc.components.length)
       + b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !this.doc.components.length)
@@ -1791,6 +1962,7 @@ export class AsmController {
   command(c: string) {
     const sel = this.comp(this.selected);
     if (c === "insert") this.insertComponent();
+    else if (c === "afeat") { if (this.featuring) this.closeTools(); else this.startFeature(); }
     else if (c === "fastener") { if (this.fastening) this.closeTools(); else this.startFasteners(); }
     else if (c === "mate") { if (this.mating) this.cancelMate(); else this.startMate(); }
     else if (c === "pattern") { if (this.patterning) this.closeTools(); else this.startPattern(); }
@@ -1826,7 +1998,8 @@ export class AsmController {
       const ltxt = lk ? (gone ? t("Linked file not found: {file}. The last loaded copy is shown.", { file: lk.path }) : t("Linked to {file}", { file: lk.path })) : "";
       const link = lk ? `<span class="ft-link${gone ? " ft-err" : " muted"}" title="${esc(ltxt)}" role="img" aria-label="${esc(ltxt)}">${gone ? "⚠" : "⛓"}</span>` : "";
       const flex = sub && c.flexible ? `<span class="ft-flex muted" title="${esc(t("Flexible: its own mates solve in this assembly"))}">${esc(t("flexible"))}</span>` : "";
-      html += row(c.id, sub ? (c.flexible ? "⬚" : "◫") : "▣", mark + c.name, `${c.hidden || c.suppressed ? " sup" : ""} ft-comp${sub ? " ft-sub" : ""}${sub && c.flexible ? " ft-flexible" : ""}`, link + flex + err + tools);
+      const pcfg = !sub && (doc.parts[c.part]?.doc.configs?.length ?? 0) > 1 ? ` (${doc.parts[c.part].doc.config})` : "";
+      html += row(c.id, sub ? (c.flexible ? "⬚" : "◫") : "▣", mark + c.name + pcfg, `${c.hidden || c.suppressed ? " sup" : ""} ft-comp${sub ? " ft-sub" : ""}${sub && c.flexible ? " ft-flexible" : ""}`, link + flex + err + tools);
       if (sub) {
         const kids = (this.expanded?.doc.components ?? []).filter(k => k.id.startsWith(`${c.id}/`) && !k.id.slice(c.id.length + 1).includes("/"));
         if (kids.length) html += `<div class="ft-group" role="group">${kids.map(k => row(k.id, "▣", k.name, " ft-inst")).join("")}</div>`;
@@ -1855,9 +2028,25 @@ export class AsmController {
         if (inst.length) html += `<div class="ft-group" role="group">${inst.map(c => row(c.id, "▣", c.name, " ft-inst")).join("")}</div>`;
       }
     }
+    if (doc.features?.length) {
+      html += row("folder:features", "⌀", t("Assembly features"), " ft-mates");
+      html += `<div class="ft-group" role="group">`;
+      for (const f of doc.features) {
+        const fs = this.featStatus.find(x => x.id === f.id), bad = !!fs && !fs.ok && !f.suppressed;
+        const msg = fs?.message ? t(fs.message) : "";
+        const err = bad ? `<span class="ft-err" title="${esc(msg)}" role="img" aria-label="${esc(t("Error"))}: ${esc(msg)}">⚠</span>` : "";
+        const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
+        html += row(f.id, f.type === "hole" ? "⌀" : "▭", f.name, `${f.suppressed ? " sup" : ""} ft-afeat${bad ? " bad" : ""}`, err + tools);
+      }
+      html += `</div>`;
+    }
     if (doc.explodes?.length) {
       html += row("folder:explodes", "⇱", t("Exploded views"), " ft-mates");
       html += `<div class="ft-group" role="group">${doc.explodes.map(v => row(v.id, "⇱", v.name, ` ft-explode${this.exploded === v.id ? " on" : ""}`, `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="xp" title="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}" aria-label="${esc(this.exploded === v.id ? t("Collapse") : t("Explode"))}">${this.exploded === v.id ? "⇲" : "⇱"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`)).join("")}</div>`;
+    }
+    if (doc.configs?.length) {
+      html += row("folder:configs", "⚙", t("Configurations"), " ft-mates");
+      html += `<div class="ft-group" role="group">${doc.configs.map(s => row(s.id, s.id === doc.activeConfig ? "●" : "○", s.id === "cf_default" && s.name === "Default" ? t("Default") : s.name, ` ft-config${s.id === doc.activeConfig ? " on" : ""}`, `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`)).join("")}</div>`;
     }
     if (doc.states?.length) {
       html += row("folder:states", "◐", t("Display states"), " ft-mates");
@@ -1872,6 +2061,10 @@ export class AsmController {
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { if (a === "del") this.deleteDisplayState(id); else this.activateDisplayState(id); return; }
+        const cf = this.doc?.configs?.find(x => x.id === id);
+        if (cf) { if (a === "del") this.deleteAsmConfig(id); else this.activateAsmConfig(id); return; }
+        const af = this.doc?.features?.find(x => x.id === id);
+        if (af) { if (a === "del") this.deleteFeature(id); else { this.selected = id; this.renderTree(); this.renderBar(); } return; }
         if (pt && a === "del") { this.deletePattern(id); return; }
         if (xv && a === "del") { this.deleteExplode(id); return; }
         if (xv && a === "xp") { this.toggleExplode(id); return; }
@@ -1886,6 +2079,8 @@ export class AsmController {
       });
       r.addEventListener("dblclick", () => {
         const c = this.comp(id), mt = this.doc?.mates?.find(x => x.id === id), pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
+        const af = this.doc?.features?.find(x => x.id === id);
+        if (af) { this.startFeature(af); return; }
         if (mt) this.startMate(mt); else if (pt) this.startPattern(pt); else if (xv) this.toggleExplode(id); else if (c && !c.fixed) this.moveComponent(id);
       });
       r.addEventListener("contextmenu", e => {
@@ -1894,7 +2089,12 @@ export class AsmController {
         if (c) this.menu(c, e.clientX, e.clientY);
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { this.popup([[t("Activate"), () => this.activateDisplayState(id)], [t("Rename"), () => this.renameState(id)], [t("Add display state"), () => this.addDisplayState()], [t("Delete"), () => this.deleteDisplayState(id)]], e.clientX, e.clientY); return; }
-        if (id === "asm") { this.popup([[t("Add display state"), () => this.addDisplayState()], ...(this.linkCount() ? [[t("Update links…"), () => this.updateLinks()] as [string, () => void]] : [])], e.clientX, e.clientY); return; }
+        const cf = this.doc?.configs?.find(x => x.id === id);
+        if (cf) { this.popup([[t("Activate"), () => this.activateAsmConfig(id)], [t("Rename"), () => this.renameState(id)], [t("Add configuration"), () => this.addAsmConfig()], [t("Delete"), () => this.deleteAsmConfig(id)]], e.clientX, e.clientY); return; }
+        if (id === "folder:configs") { this.popup([[t("Add configuration"), () => this.addAsmConfig()]], e.clientX, e.clientY); return; }
+        if (id === "asm") { this.popup([[t("Add configuration"), () => this.addAsmConfig()], [t("Add display state"), () => this.addDisplayState()], ...(this.linkCount() ? [[t("Update links…"), () => this.updateLinks()] as [string, () => void]] : [])], e.clientX, e.clientY); return; }
+        const af = this.doc?.features?.find(x => x.id === id);
+        if (af) { this.popup([[t("Edit feature"), () => this.startFeature(af)], [af.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.features?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deleteFeature(id)]], e.clientX, e.clientY); return; }
         if (id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
@@ -1913,6 +2113,7 @@ export class AsmController {
     this.popup([
       ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
       ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Mate references…"), () => this.startMateRef(c.id)] as [string, () => void]]),
+      ...(this.partConfigs(c.id).names.length > 1 ? [[t("Configuration…"), () => this.popup(this.partConfigs(c.id).names.map(n => [`${n === this.partConfigs(c.id).current ? "● " : ""}${n}`, () => this.setComponentConfig(c.id, n)] as [string, () => void]), x, y)] as [string, () => void]] : []),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
@@ -1949,6 +2150,7 @@ export class AsmController {
     if (this.interfere) { this.renderInterference(); return; }
     if (this.fastening) { this.renderFastenerPanel(); return; }
     if (this.refing) { this.renderRefPanel(); return; }
+    if (this.featuring) { this.renderFeaturePanel(); return; }
     const pm = $("#asm-pm");
     if (pm.dataset.id === "mate") delete pm.dataset.id;
     const c = this.comp(this.moving);

@@ -30,6 +30,9 @@ export interface Rebuild {
 
 const RECYCLE_HEAP = 1.5 * 1024 ** 3;
 
+/** An assembly feature's result: the components it cut, or why it cut none (FR-ASM-027). */
+export interface AsmFeatureStatus { id: string; ok: boolean; cut: string[]; message?: string }
+
 export class ModelKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -132,9 +135,9 @@ export class ModelKernel {
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
-  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }> {
+  async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
     await this.start();
-    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
+    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
   }
 
   /** Overlapping component pairs, with the overlap volume and triangles (FR-ASM-020). */

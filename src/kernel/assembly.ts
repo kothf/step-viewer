@@ -2,7 +2,7 @@
 // own Modeller (which keeps its feature cache) and meshed once; components place it by a location
 // (shared geometry, no copy) and the mesh by transforming its vertices.
 import { Modeller, type ModelMesh, type Named } from "./model";
-import type { AsmComponentStatus, AsmDoc, Tf } from "../asm/types";
+import type { AsmComponentStatus, AsmDoc, AsmFeature, Tf } from "../asm/types";
 import type { BodyProps, V3 } from "../model/types";
 
 interface Source { json: string; modeller: Modeller; body: Named | null; error?: string; mesh?: ModelMesh; quality?: number }
@@ -59,7 +59,88 @@ export class Assembler {
         },
       });
     }
+    this.applyFeatures(doc, placed, quality);
     return { placed, statuses };
+  }
+
+  /** Feature statuses of the last evaluation: a feature that cut nothing or failed has a message. */
+  featureStatus: { id: string; ok: boolean; cut: string[]; message?: string }[] = [];
+
+  /**
+   * Assembly features (FR-ASM-027): each tool solid (a cylinder or box from the start face into the
+   * material) is cut from the placed components it reaches. Cut components get their own world mesh.
+   */
+  private applyFeatures(doc: AsmDoc, placed: Placed[], quality: number) {
+    const oc = this.oc;
+    this.featureStatus = [];
+    const feats = (doc.features ?? []).filter(f => !f.suppressed);
+    if (!feats.length || !placed.length) return;
+    const all = new oc.Bnd_Box_1();
+    for (const p of placed) oc.BRepBndLib.Add(p.body.shape, all, false);
+    const lo = all.CornerMin(), hi = all.CornerMax();
+    const big = 2 * Math.hypot(hi.X() - lo.X(), hi.Y() - lo.Y(), hi.Z() - lo.Z()) + 10;
+    const m = new Modeller(oc);
+    const cutIds = new Set<string>();
+    for (const f of feats) {
+      const st = { id: f.id, ok: true, cut: [] as string[], message: undefined as string | undefined };
+      this.featureStatus.push(st);
+      const owner = doc.components.find(c => c.id === f.ref.comp);
+      if (!owner) { st.ok = false; st.message = "The component it starts on is gone."; continue; }
+      const tool = this.toolOf(f, owner.tf, big);
+      if (!tool) { st.ok = false; st.message = "The size must be more than 0."; continue; }
+      const tb = new oc.Bnd_Box_1();
+      oc.BRepBndLib.Add(tool, tb, false);
+      for (const p of placed) {
+        if (f.comps && !f.comps.includes(p.id)) continue;
+        const pb = new oc.Bnd_Box_1();
+        oc.BRepBndLib.Add(p.body.shape, pb, false);
+        if (pb.IsOut_4(tb)) continue;
+        try {
+          const before = m.props(p.body).volume;
+          const body = m.cutBy(p.body, tool, f.id);
+          if (Math.abs(m.props(body).volume - before) < 1e-9 * Math.max(1, before)) continue;
+          p.body = body;
+          st.cut.push(p.id);
+          cutIds.add(p.id);
+        } catch (err) { st.ok = false; st.message = (err as Error).message; }
+      }
+      if (st.ok && !st.cut.length) { st.ok = false; st.message = "The feature does not cut any component."; }
+    }
+    for (const p of placed) {
+      if (!cutIds.has(p.id)) continue;
+      // Its own geometry now: meshed in place, not shared with the part's other instances.
+      p.src = {};
+      p.tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+      const name = p.name, body = p.body;
+      let mesh: ModelMesh | null = null;
+      p.mesh = () => (mesh ??= m.mesh(body, name, [0.72, 0.74, 0.78], quality));
+    }
+  }
+
+  /** The tool solid of a feature in world coordinates (null for a zero size). */
+  private toolOf(f: AsmFeature, tf: Tf, big: number): any {
+    const oc = this.oc;
+    const P = (v: number[]) => [tf[0] * v[0] + tf[1] * v[1] + tf[2] * v[2] + tf[3], tf[4] * v[0] + tf[5] * v[1] + tf[6] * v[2] + tf[7], tf[8] * v[0] + tf[9] * v[1] + tf[10] * v[2] + tf[11]];
+    const D = (v: number[]) => { const w = [tf[0] * v[0] + tf[1] * v[1] + tf[2] * v[2], tf[4] * v[0] + tf[5] * v[1] + tf[6] * v[2], tf[8] * v[0] + tf[9] * v[1] + tf[10] * v[2]]; const l = Math.hypot(w[0], w[1], w[2]) || 1; return w.map(q => q / l); };
+    const at = P(f.at), n = D(f.n);
+    let x = D(f.x);
+    const k = x[0] * n[0] + x[1] * n[1] + x[2] * n[2];
+    x = [x[0] - k * n[0], x[1] - k * n[1], x[2] - k * n[2]];
+    const xl = Math.hypot(x[0], x[1], x[2]);
+    if (xl < 1e-9) return null;
+    x = x.map(q => q / xl);
+    const y = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
+    // From a hair above the face down to the depth (or through everything).
+    const up = 1e-3, H = (f.depth ?? big) + up;
+    const pnt = (v: number[]) => new oc.gp_Pnt_3(v[0], v[1], v[2]), dir = (v: number[]) => new oc.gp_Dir_4(v[0], v[1], v[2]);
+    const base = [0, 1, 2].map(i => at[i] + n[i] * up - n[i] * H);
+    if (f.type === "hole") {
+      if (!(f.dia! > 0)) return null;
+      return new oc.BRepPrimAPI_MakeCylinder_3(new oc.gp_Ax2_2(pnt(base), dir(n), dir(x)), f.dia! / 2, H).Shape();
+    }
+    if (!(f.w! > 0 && f.h! > 0)) return null;
+    const o = [0, 1, 2].map(i => base[i] - x[i] * f.w! / 2 - y[i] * f.h! / 2);
+    return new oc.BRepPrimAPI_MakeBox_5(new oc.gp_Ax2_2(pnt(o), dir(n), dir(x)), f.w!, f.h!, H).Shape();
   }
 
   /** Mass properties of the placed components together (density 1). */

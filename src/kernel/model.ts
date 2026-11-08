@@ -679,6 +679,12 @@ export class Modeller {
     return { shape, faces, names: names.map(n => n ?? `${fid}:new:${k++}`) };
   }
 
+  /** `a` minus a tool solid whose faces are named `<fid>:t<i>` (assembly features, FR-ASM-027). */
+  cutBy(a: Named, tool: any, fid: string): Named {
+    const faces = this.sub(tool, "FACE");
+    return this.bool("cut", a, { shape: tool, faces, names: faces.map((_f, i) => `${fid}:t${i}`) }, fid);
+  }
+
   private bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string): Named {
     const oc = this.oc;
     const pr = new oc.Message_ProgressRange_1();
