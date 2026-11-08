@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.261.0] - 2026-11-09
+
+### Added
+
+- **Trim/Extend weld gap (FR-FT-121).** Trim/Extend gets SolidWorks' **Weld gap**: the trimmed members stop that far short of the face, plane or body they are trimmed to. With End butt the stopping member ends short of the other's side, and an End miter splits the gap between the two ends.
+
 ## [1.256.0] - 2026-11-08
 
 ### Added
@@ -1642,7 +1648,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.256.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.261.0...HEAD
+[1.261.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.261.0
 [1.256.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.256.0
 [1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0

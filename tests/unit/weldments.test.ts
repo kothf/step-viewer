@@ -115,6 +115,11 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const pl: Feature = { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 200 } };
   const rq = run(m, doc([k, mem, pl, { ...tr, boundary: undefined, plane: { plane: "p" } } as Feature]));
   assert.deepEqual(rq.cut.map(c => c.length), [500, 200]);
+  // Weld gap: the beam stops 3 mm short of the face, the body or the plane.
+  const g3 = { gap: { v: 3 } };
+  assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3 } as Feature])).cut.map(c => c.length), [500, 377]);
+  assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, kind: "body" } as Feature])).cut.map(c => c.length), [500, 383]);
+  assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, boundary: undefined, plane: { std: "YZ" } } as Feature])).cut.map(c => c.length), [500, 397]);
 
   // End cap on the beam's free end, 5 thick, 2 in from its outline.
   const cap: Feature = { id: "c", type: "endcap", name: "End cap1", faces: [{ name: "m:beam:end" }], thickness: { v: 5 }, inset: { v: 2 } };
@@ -376,7 +381,12 @@ test("Trim/Extend end miter between two members (FR-FT-121)", async () => {
   // End butt 2: the other way round.
   const b2 = run(m, doc([a, b, ma, mb, { ...tr, kind: "butt2" } as Feature]));
   assert.deepEqual(b2.cut.map(c => [c.qty, Math.round(c.length!)]).sort(), [[1, 380], [1, 420]]);
-  near(b1.volume, b2.volume, 1e-6 * b1.volume);
+  near(b1.volume, b2.volume, 1e-6 * b1.volume);  // Weld gap: a 2 mm mitre gap takes 1 mm square to the mitre plane off each end (√2 along the beams);
+  // with End butt 1 the stopping member ends 3 mm short of the other's side.
+  const rg = run(m, doc([a, b, ma, mb, { ...tr, gap: { v: 2 } } as Feature]));
+  near(rg.cut[0].length!, 420 - Math.SQRT2, 1e-3);
+  const bg = run(m, doc([a, b, ma, mb, { ...tr, kind: "butt1", gap: { v: 3 } } as Feature]));
+  assert.deepEqual(bg.cut.map(c => [c.qty, Math.round(c.length!)]).sort(), [[1, 377], [1, 420]]);
 });
 
 test("cut list item keys stay put when the volume changes (FR-FT-121)", () => {
