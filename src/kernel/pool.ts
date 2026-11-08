@@ -12,18 +12,19 @@ const IDLE_MS = 30_000;
 const RECYCLE_HEAP = 1024 ** 3;
 
 /**
- * How many helper workers to run: with the caller's own worker, one kernel thread per logical core
- * except one left for the page (UI, drawing, garbage collection), at most 8 in all, fewer on
- * low-memory devices. On 4 cores that is 2 helpers: a third one made builds slower there.
+ * How many helper workers to run besides the caller's own worker. Measured: on 4 real cores 2 helpers
+ * were best (3 slower); on a 4-core/8-thread i7 1–2 were best and 6 was 4–5 s slower, because every
+ * OCCT instance competes at start-up and `hardwareConcurrency` counts hyperthreads. So: cores − 2 up to
+ * 4 threads, a quarter of the threads above (at least 2), never more than 3; 1 on ≤ 4 GB devices.
  * `?workers=N` sets it; 0 turns parallel builds off.
  */
 export function helperCount(): number {
   const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("workers") : null;
   if (q != null && q !== "" && Number.isFinite(+q)) return Math.max(0, Math.min(16, Math.floor(+q)));
   const nav = typeof navigator !== "undefined" ? navigator as Navigator & { deviceMemory?: number } : null;
-  const cores = nav?.hardwareConcurrency || 2;
-  let n = Math.min(cores - 1, 8) - 1;
-  if (nav?.deviceMemory && nav.deviceMemory <= 4) n = Math.min(n, 2);
+  const threads = nav?.hardwareConcurrency || 2;
+  let n = threads <= 4 ? threads - 2 : Math.min(3, Math.max(2, Math.floor(threads / 4)));
+  if (nav?.deviceMemory && nav.deviceMemory <= 4) n = Math.min(n, 1);
   return Math.max(0, n);
 }
 
