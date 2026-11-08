@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.185.0] - 2026-11-08
+
+### Added
+
+- **DXF 2000 and single-sheet PDF (FR-DRW-030).** Export ▾ DXF 2000 (this sheet) writes an AutoCAD 2000 (AC1015) file in millimetres with the same layers and line types as the R12 export, polylines as LWPOLYLINE and Cyrillic text as Unicode escapes, for programs that no longer read R12. Export ▾ PDF (this sheet) writes only the sheet you are on.
+
 ## [1.183.0] - 2026-11-08
 
 ### Added
@@ -1417,7 +1423,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.183.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.185.0...HEAD
+[1.185.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.185.0
 [1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
 [1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
 [1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0

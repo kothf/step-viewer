@@ -633,3 +633,28 @@ test("detail profile: lines, arcs and polylines are trimmed to a polygon (FR-DRW
   const circ = clipDetail({ id: "d", name: "", kind: "detail", c: [0, 0], r: 1, x: 0, y: 0 } as any, [{ k: "l", c: 0, p: [-5, 0, 5, 0] }]);
   assert.ok(Math.abs(len(circ[0]) - 2) < 1e-9);
 });
+
+test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (FR-DRW-030)", async () => {
+  const { sheetDxf2000 } = await import("../../src/drawing/output");
+  const prims: any[] = [
+    { t: "l", p: [0, 0, 100, 0], pen: "thick", layer: "VISIBLE" },
+    { t: "a", o: [50, 50], r: 10, a0: 0, a1: Math.PI, pen: "thick", layer: "VISIBLE" },
+    { t: "a", o: [50, 50], r: 5, a0: 0, a1: 2 * Math.PI, pen: "hidden", layer: "HIDDEN" },
+    { t: "p", p: [0, 0, 10, 0, 10, 10], pen: "thin", layer: "ANNOT", closed: true },
+    { t: "p", p: [0, 0, 3, 1, 3, -1], pen: "thin", layer: "ANNOT", fill: true, closed: true },
+    { t: "t", x: 10, y: 10, s: "Масштаб 2:1 Ø16", h: 3.5, al: "c", layer: "TEXT" },
+  ];
+  const d = sheetDxf2000(prims, 420, 297);
+  if (process.env.DXF_OUT) (await import("node:fs")).writeFileSync(process.env.DXF_OUT, d);
+  const lines = d.split("\n");
+  const val = (code: string, name: string) => { for (let i = 0; i + 1 < lines.length; i += 2) if (lines[i] === code && lines[i + 1] === name) return lines[i + 3]; return null; };
+  assert.equal(val("9", "$ACADVER"), "AC1015");
+  // Every handle is unique and below $HANDSEED.
+  const hs: number[] = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) if ((lines[i] === "5" || lines[i] === "105") && lines[i - 2] !== "9") hs.push(parseInt(lines[i + 1], 16));
+  const seed = parseInt(lines[lines.indexOf("$HANDSEED") + 2], 16);
+  assert.equal(new Set(hs).size, hs.length);
+  assert.ok(Math.max(...hs) < seed);
+  assert.ok(d.includes("LWPOLYLINE") && d.includes("*Model_Space") && d.includes("ACAD_GROUP"));
+  assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
+});
