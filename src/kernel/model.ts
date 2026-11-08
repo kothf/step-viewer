@@ -782,7 +782,134 @@ export class Modeller {
         if (j >= 0) out.names[j] = `${f.id}:${f.type}:${i}`;
       }
     });
+    if (f.type === "fillet" && f.setbacks?.length) return this.setbackCorners(f, prev, out, edges, used, (i: number) => Math.max(radV(i), rad2(i)));
     return out;
+  }
+
+  /**
+   * Setback fillets (FR-FT-033): at each picked corner the fillets of the edges meeting there are cut
+   * by planes square to the edges `d` mm from the vertex; the fillet pieces inside and the corner blend
+   * are taken out and the opening is filled with one patch (BRepOffsetAPI_MakeFilling) tangent to the
+   * faces around it, named `fid:setback:k`.
+   */
+  private setbackCorners(f: FilletFeature, prev: Named, body: Named, edges: any[], used: number[], rad: (i: number) => number): Named {
+    const oc = this.oc;
+    const corners = (f.setbacks ?? []).map((s, k) => {
+      if ("point" in s.v) throw new FeatureError("E-FT-VERTEX", "Pick a vertex of the body.");
+      if (!(s.d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+      // The corner: the end of a filleted edge nearest the click (the clicked edge may be one the preview made).
+      const at = s.v.at;
+      let vtx: any = null, best = Infinity;
+      for (const i of used) for (const x of [oc.TopExp.FirstVertex(edges[i], false), oc.TopExp.LastVertex(edges[i], false)]) {
+        const dd = d3(this.xyz(oc.BRep_Tool.Pnt(x)), at);
+        if (dd < best) { best = dd; vtx = x; }
+      }
+      if (!vtx) throw new FeatureError("E-FT-SETBACK3", "A setback needs a corner where three or more filleted edges meet.");
+      const o = this.xyz(oc.BRep_Tool.Pnt(vtx));
+      const legs: { i: number; p: V3; t: V3 }[] = [];
+      for (const i of used) {
+        const e = edges[i];
+        // Vertices in curve order (not the edge's orientation), so they match the parameters.
+        const first = oc.TopExp.FirstVertex(e, false).IsSame(vtx);
+        if (!first && !oc.TopExp.LastVertex(e, false).IsSame(vtx)) continue;
+        const c = new oc.BRepAdaptor_Curve_2(e);
+        const u0 = first ? c.FirstParameter() : c.LastParameter();
+        const len = oc.GCPnts_AbscissaPoint.Length_7(c, c.FirstParameter(), c.LastParameter(), 1e-7);
+        if (s.d >= len - 1e-6) throw new FeatureError("E-FT-SETBACK", "The setback is longer than an edge at the corner.");
+        const u = new oc.GCPnts_AbscissaPoint_2(c, first ? s.d : -s.d, u0).Parameter();
+        const p = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+        c.D1(u, p, v);
+        legs.push({ i, p: this.xyz(p), t: mul(unit(this.xyz(v)), first ? 1 : -1) });
+      }
+      if (legs.length < 3) throw new FeatureError("E-FT-SETBACK3", "A setback needs a corner where three or more filleted edges meet.");
+      return { k, o, d: s.d, legs, reach: s.d + 2 * Math.max(...legs.map(l => rad(l.i))) };
+    });
+    // Cut the fillet faces of every leg where its plane crosses them.
+    const big = this.size(body.shape) * 2 + 100;
+    const seq = new oc.TopTools_SequenceOfShape_1();
+    for (const c of corners) for (const l of c.legs) {
+      const pl = new oc.BRepBuilderAPI_MakeFace_9(new oc.gp_Pln_3(this.P(l.p), this.D(l.t)), -big, big, -big, big).Face();
+      body.faces.forEach((x, j) => {
+        if (body.names[j] !== `${f.id}:fillet:${l.i}`) return;
+        const sec = new oc.BRepAlgoAPI_Section_3(x, pl, false);
+        sec.ComputePCurveOn1(true);
+        sec.Approximation(true);
+        sec.Build(new oc.Message_ProgressRange_1());
+        if (sec.IsDone()) for (const e of this.sub(sec.Shape(), "EDGE")) if (d3(this.edgeMid(e), c.o) < c.reach) seq.Append_1(e);
+      });
+    }
+    if (seq.Length()) {
+      const sp = new oc.BRepFeat_SplitShape_2(body.shape);
+      sp.Add_1(seq);
+      sp.Build(new oc.Message_ProgressRange_1());
+      if (!sp.IsDone()) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      body = this.carry(sp, [body], sp.Shape(), f.id);
+    }
+    // The faces inside each corner: made by the fillet, on the vertex side of every leg's plane.
+    const old = new Set(prev.names);
+    const gone = new Set<number>();
+    const loops: { k: number; faces: number[] }[] = corners.map(c => {
+      const faces: number[] = [];
+      body.faces.forEach((x, j) => {
+        if (old.has(body.names[j]) || gone.has(j)) return;
+        const m = this.centroid(x);
+        if (d3(m, c.o) < c.reach && c.legs.every(l => dot(sub3(m, l.p), l.t) < 0)) { faces.push(j); gone.add(j); }
+      });
+      if (!faces.length) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      return { k: c.k, faces };
+    });
+    // Each opening filled with a patch tangent to the faces around it.
+    const patches: Named[] = [];
+    for (const lp of loops) {
+      const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      bb.MakeCompound(comp);
+      for (const j of lp.faces) bb.Add(comp, body.faces[j]);
+      const wires = this.subWires(new oc.ShapeAnalysis_FreeBounds_3(comp, false, false, false).GetClosedWires());
+      if (wires.length !== 1) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      const mk = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+      for (const e of this.sub(wires[0], "EDGE")) {
+        const j = body.faces.findIndex((x, q) => !gone.has(q) && this.sub(x, "EDGE").some(g => g.IsSame(e)));
+        if (j >= 0) mk.Add_2(e, body.faces[j], oc.GeomAbs_Shape.GeomAbs_G1, true);
+        else mk.Add_1(e, oc.GeomAbs_Shape.GeomAbs_C0, true);
+      }
+      try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+      if (!mk.IsDone()) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      const faces = this.sub(mk.Shape(), "FACE");
+      patches.push({ shape: mk.Shape(), faces, names: faces.map((_, q) => `${f.id}:setback:${lp.k}${q ? `:${q}` : ""}`) });
+    }
+    // Sew the kept faces and the patches back into solids.
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-3, true, true, true, false);
+    const kept = body.faces.map((x, j) => ({ x, name: body.names[j] })).filter((_x, j) => !gone.has(j));
+    for (const k of kept) sew.Add(k.x);
+    for (const p of patches) sew.Add(p.shape);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+    bb.MakeCompound(comp);
+    let open = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const sh = oc.TopoDS.Shell_1(ex.Current());
+      if (!oc.BRep_Tool.IsClosed_1(sh)) { open++; continue; }
+      let solid = new oc.ShapeFix_Solid_1().SolidFromShell(sh);
+      if (this.volume(solid) < 0) solid = solid.Reversed();
+      bb.Add(comp, solid);
+    }
+    if (open || this.solids(comp) !== this.solids(body.shape)) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+    const shape = this.solids(comp) === 1 ? new oc.TopExp_Explorer_2(comp, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE).Current() : comp;
+    // Names: by identity through the sewing, else the nearest centroid.
+    const map: [any, string, V3][] = [...kept.map(k => [k.x, k.name] as [any, string]), ...patches.flatMap(p => p.faces.map((x, q) => [x, p.names[q]] as [any, string]))]
+      .map(([x, n]) => [sew.IsModified(x) ? sew.Modified(x) : x, n, this.centroid(x)] as [any, string, V3]);
+    const faces = this.sub(shape, "FACE");
+    let q = 0;
+    const names = faces.map(x => {
+      const hit = map.find(([g]) => g.IsSame(x));
+      if (hit) return hit[1];
+      const c = this.centroid(x);
+      let best: [any, string, V3] | null = null;
+      for (const e of map) if (!best || d3(e[2], c) < d3(best[2], c)) best = e;
+      return best && d3(best[2], c) < 1e-2 * (1 + this.size(x)) ? best[1] : `${f.id}:new:${q++}`;
+    });
+    return { shape, faces, names };
   }
 
   /** A stable key for an edge: the sorted names of the faces that hold it. */

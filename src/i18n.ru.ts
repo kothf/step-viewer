@@ -3146,4 +3146,12 @@ export const RU: Record<string, string> = {
   "Start point": "Начальная точка",
   "Automatic": "Автоматически",
   "The loft joins the start points of the profiles. Pick matching corners to stop it twisting.": "Лофт соединяет начальные точки профилей. Выберите соответствующие углы, чтобы он не закручивался.",
+  // 1.134.0: setback fillets (FR-FT-033).
+  "Setback parameters": "Параметры отступа",
+  "Setback vertices": "Вершины с отступом",
+  "Setback distance": "Расстояние отступа",
+  "Click the box, then near a corner where three or more filleted edges meet: the fillets stop the setback distance from the corner and one smooth patch blends it. Click the box again to go back to picking edges.": "Нажмите на поле, затем рядом с углом, где сходятся три или более скругляемых ребра: скругления заканчиваются на расстоянии отступа от угла, а угол сглаживает одна гладкая поверхность. Нажмите на поле ещё раз, чтобы вернуться к выбору рёбер.",
+  "A setback needs a corner where three or more filleted edges meet.": "Для отступа нужен угол, в котором сходятся три или более скругляемых ребра.",
+  "The setback is longer than an edge at the corner.": "Отступ длиннее одного из рёбер у угла.",
+  "The corner could not be set back.": "Не удалось сделать отступ на углу.",
 };

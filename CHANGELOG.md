@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.134.0] - 2026-11-08
+
+### Added
+
+- **Setback fillets (FR-FT-033)**: an edge fillet's Setback parameters take corners where three or more filleted edges meet. At each one the fillets stop a setback distance from the corner and one smooth patch, tangent to the faces around it, blends the corner instead of the rolling-ball corner. Each corner has its own distance.
+
 ## [1.131.0] - 2026-11-08
 
 ### Added
@@ -1151,7 +1157,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.131.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.134.0...HEAD
+[1.134.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.134.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
 [1.129.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.129.0
 [1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0

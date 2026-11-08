@@ -6041,6 +6041,62 @@ try {
     await ctx.close();
   }
 
+  // --- 1.134: Setback fillets (FR-FT-033) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await runCmd(mp, "Fillet");
+    await settle();
+    // The three edges at the corner (50, −30, 20), radius 3.
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.radius = { v: 3 }; f.edges = [{ faces: ["eb:side:bl1", "eb:side:bl2"] }, { faces: ["eb:end", "eb:side:bl1"] }, { faces: ["eb:end", "eb:side:bl2"] }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.click('#mc-pm [data-k="sbfocus"]');
+    // Click the fillet's tangent line on the top face next to the corner: that corner gets a setback.
+    const [cx, cy] = await toPage([44, -27, 20]);
+    await mp.mouse.move(cx, cy); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const sd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { n: f.setbacks?.length ?? 0, d: f.setbacks?.[0]?.d, inp: document.querySelector('#mc-pm input[data-sb="0"]')?.value }; });
+    await mp.fill('#mc-pm input[data-sb="0"]', "8");
+    await mp.press('#mc-pm input[data-sb="0"]', "Enter");
+    await settle();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm .pm-field > span")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1), l = window.__sv.model.last(); return { type: f.type, d: f.setbacks?.[0]?.d, patch: l.faceNames?.some(n => /:setback:0$/.test(n)) ?? null }; });
+    const v3 = await state();
+    // The same fillet without the setback: the patch adds a little material to the round corner.
+    await mp.evaluate(() => window.__sv.model.store.change("No setback", d => { delete d.features.at(-1).setbacks; }));
+    await settle();
+    const v4 = await state();
+    check(sd.n === 1 && sd.d === 6 && sd.inp === "6" && done.type === "fillet" && done.d === 8 && done.patch === true && !v3.bad && !v4.bad && v3.v > v4.v && v3.v < v4.v + 50,
+      `model 1.134: setback fillet at a clicked corner, distance typed (FR-FT-033) (${JSON.stringify({ sd, done, v3, v4 })})`);
+    check(/Параметры отступа/.test(ru) && /Вершины с отступом/.test(ru) && !/Setback|Click the box/.test(ru), `model 1.134: setback panel in Russian (${ru.slice(0, 300)})`);
+    await ctx.close();
+  }
+
   // --- 1.131: Loft connectors (FR-FT-082) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

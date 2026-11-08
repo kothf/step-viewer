@@ -1662,7 +1662,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
 | FR-FT-012 | Extrude end condition **Up to body** | The other P2 end conditions are built (`EndKind`); Up to body is missing | Partly |
-| FR-FT-033 | Setback fillets (P3, S) | No | Not built |
+| FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
 | FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | Two distances is built; vertex and offset-face are missing | Partly |
 | FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | Simple, counterbore, countersink, tapped and heat-set insert; blind or through all | Partly |
 | FR-FT-060 | Shell with multi-thickness faces (P3) | One thickness | Partly |
