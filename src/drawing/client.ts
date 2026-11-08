@@ -81,7 +81,7 @@ export class DrawingKernel {
   project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; key: string }): Promise<Projection> {
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; key: string }): Promise<Projection> {
     const { view, key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
@@ -89,7 +89,7 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p } : { type: "project", view })).then(r => {
+      p = this.loaded.then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly } : { type: "project", view })).then(r => {
         if (gen === this.gen) this.cache.set(key, r.proj);
         this.inflight.delete(key);
         return r.proj;

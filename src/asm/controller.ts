@@ -286,6 +286,7 @@ export class AsmController {
       if (this.mating || this.patterning || this.exploding) this.drawPicks();
       if (this.patterning) this.drawPatternPreview();
       if (this.exploded || this.exploding) this.applyExplode();
+      this.motionLooks.clear();
       this.motion?.rebuilt();
     })();
   }
@@ -2344,8 +2345,39 @@ export class AsmController {
     this.previewTfs(all);
   }
 
+  /** Parts whose look a motion study changed: viewer part index → what it had. */
+  private motionLooks = new Map<number, { visible: boolean; opacity: number }>();
+
+  /**
+   * Shows components at these opacities (by component id, a top-level id covers its sub-assembly's and
+   * pattern-free children); 0 hides. Components left out get their own look back.
+   */
+  motionLook(op: Record<string, number>) {
+    const v = this.host.viewer;
+    this.shownIds.forEach((id, i) => {
+      const p = v.parts[i];
+      if (!p) return;
+      const k = op[id] ?? op[topOf(id)];
+      const was = this.motionLooks.get(i);
+      if (k == null) {
+        if (!was) return;
+        p.visible = was.visible; p.opacity = was.opacity; this.motionLooks.delete(i);
+        v.applyPartAppearance(p);
+        return;
+      }
+      if (!was) this.motionLooks.set(i, { visible: p.visible, opacity: p.opacity });
+      const base = this.motionLooks.get(i)!;
+      p.visible = base.visible && k > 0.005;
+      p.opacity = Math.min(base.opacity, k) >= 0.999 ? 1 : k;
+      v.applyPartAppearance(p);
+      if (p.opacity < 1) { p.edgeMaterial.transparent = true; p.edgeMaterial.opacity = Math.min(p.edgeMaterial.opacity, p.opacity); }
+    });
+    v.invalidate();
+  }
+
   /** Puts the components back where the document has them (and the shown exploded view). */
   motionRestore() {
+    this.motionLook({});
     cancelAnimationFrame(this.explodeAnim);
     this.previewTfs(this.shownTf);
     if (this.exploded) this.applyExplode();

@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.95.0] - 2026-11-08
+## [1.101.0] - 2026-11-08
 
 ### Added
 
@@ -29,6 +29,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Camera moves take 300 ms, down from 450 ms. They apply at once when the system asks for reduced motion.
+
+## [1.98.0] - 2026-11-08
+
+### Added
+
+- Motion studies: appearance tracks fade a component in or out, or hide and show it, over the study (opacity keys 0–100 %, **Hidden** / **Shown** set a key), as SolidWorks' component visibility and transparency keys (FR-FT-122).
+- Motion timeline: Alt+←/→ moves the selected key one frame (Shift: ten), without passing its neighbours.
+
+## [1.97.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121):
+  - **Custom profile (sketch)** in Structural Member: the largest closed region of a 2D sketch (holes included; lines, arcs and circles kept exact) is the cross-section, with the sketch origin on the path or any of the nine box points. The cut list names it after the sketch.
+  - Corners where three or more members meet: the first member runs through (End butt 2: the last) and the others stop square at its faces, so the cut list shows real lengths.
+  - **End Cap**: a thickness arrow to drag in the view (also from the tree, like extrude depth) and a **Thickness inward** option.
+
+## [1.96.0] - 2026-11-08
+
+### Added
+
+- **Broken-out section** (FR-DRW-015): select a model, projected or auxiliary view and click Broken-out section in its panel, then click the corners of an area on the view. Enter, or a click on the first corner, cuts the material inside away down to the middle of the model and hatches the cut.
+  - Depth from the front (mm) sets how deep it goes; hatch spacing and angle are set as for sections. Redraw the outline and Remove broken-out section are in the same group.
+  - Detail views of the view show the cut too, and it is kept in the drawing file and in every export.
 
 ## [1.94.0] - 2026-11-08
 
@@ -951,8 +975,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.95.0...HEAD
-[1.95.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.95.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.101.0...HEAD
+[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.101.0
+[1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
+[1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
+[1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
 [1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0
 [1.92.0]: https://github.com/kothf/step-viewer/compare/v1.90.0...v1.92.0
 [1.90.0]: https://github.com/kothf/step-viewer/compare/v1.89.0...v1.90.0

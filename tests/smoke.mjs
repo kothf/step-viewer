@@ -4807,6 +4807,26 @@ try {
     const exploded = await pos();
     await mp.evaluate(() => window.__sv.motion.seek(2.5));
     const cam1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray() }; });
+    // Appearance keys: pin 2 fades out over the study (half way at 2.5 s, hidden at 5 s); Alt+← moves the end key a frame.
+    const look = await mp.evaluate(async () => {
+      const m = window.__sv.motion, a = window.__sv.asm, id = a.doc.components[1].id, p = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)];
+      const listed = [...document.querySelectorAll('#motion select[data-mo="add"] option')].some(o => o.value === `look:${id}`);
+      m.addTrack(`look:${id}`);
+      m.seek(2.5);
+      const half = { op: p().opacity, vis: p().visible, mat: p().material.transparent };
+      m.seek(5);
+      const end = { vis: p().visible };
+      const tr = m.study.tracks.find(k => k.kind === "look");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true }));
+      const moved = m.study.tracks.find(k => k.kind === "look").keys.map(k => k.t);
+      const label = document.querySelector(`#motion [data-track="${tr.id}"] .mo-kind`)?.textContent;
+      m.deleteTrack(tr.id);
+      m.seek(5);
+      return { listed, half, end, moved, label, back: { op: p().opacity, vis: p().visible } };
+    });
     // Recording: a GIF of a 1 s study and a WebM video.
     const rec = await mp.evaluate(async () => {
       const m = window.__sv.motion;
@@ -4835,10 +4855,12 @@ try {
     const back = await pos();
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
-      && Math.abs(exploded.x - 50) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(exploded.x - 50) < 0.01
+      && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor, explode and orbit wizard, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -5939,6 +5961,24 @@ try {
     const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
     check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
       `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
+    // 1.96.0 broken-out section (FR-DRW-015): outline an area of the projected view, Enter cuts it to the middle and hatches the floor.
+    await ap.keyboard.press("Escape");
+    const tv = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, uc: pl.uc, vc: pl.vc, w: (pl.box[2] - pl.box[0]) / pl.s, h: (pl.box[3] - pl.box[1]) / pl.s }; }, pv0.id);
+    const at2 = (u, v) => clickAt(tv.x + (u - tv.uc) * tv.s, tv.y + (v - tv.vc) * tv.s);
+    await at2(tv.uc, tv.vc);
+    await ap.click('.drw-props [data-a="brokenout"]');
+    const bu0 = tv.uc - tv.w * 0.4, bu1 = tv.uc - tv.w * 0.2, bv0 = tv.vc - tv.h * 0.2, bv1 = tv.vc + tv.h * 0.2;
+    await at2(bu0, bv0); await at2(bu1, bv0); await at2(bu1, bv1); await at2(bu0, bv1);
+    await ap.keyboard.press("Enter");
+    await ap.waitForFunction(id => window.__sv.drw.proj(id)?.cut?.length > 0, tv.id, { timeout: 60000 });
+    const bo = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { poly: v.broken?.poly.length, d: v.broken?.d, mode: window.__sv.drw.mode(), depth: document.querySelector('.drw-props [data-v="bdepth"]')?.value ?? null }; }, tv.id);
+    check(bo.poly === 8 && bo.mode === "none" && bo.depth && +bo.depth > 0, `drawing: broken-out section cuts the outlined area and hatches it (${JSON.stringify([tv, bo])})`);
+    await ap.fill('.drw-props [data-v="bdepth"]', "1");
+    await ap.keyboard.press("Enter");
+    const bo2 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken?.d, tv.id);
+    await ap.click('.drw-props [data-a="unbroken"]');
+    const bo3 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken ?? null, tv.id);
+    check(bo2 != null && Math.abs(bo2 - bo.d) > 0.5 && bo3 === null, `drawing: the broken-out depth can be typed; Remove takes it off (${JSON.stringify([bo.d, bo2, bo3])})`);
     await ctx.close();
   }
 
@@ -6241,6 +6281,45 @@ try {
     await settle();
     const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
     check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
+    // The end cap's thickness arrow: dragging it outwards thickens the plate.
+    const capId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    // Look at the cap from close by, so the arrow is on screen.
+    await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrow; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(-1, -1, 0.8).multiplyScalar(250)); v.camera.lookAt(a.base); v.controls.update(); });
+    await mp.waitForTimeout(300);
+    const ends = await mp.evaluate(() => {
+      const a = window.__sv.modeller.arrow, v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      if (!a) return null;
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (ends) {
+      await mp.mouse.move(ends.from[0], ends.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(ends.from[0] + ((ends.to[0] - ends.from[0]) * i) / 6, ends.from[1] + ((ends.to[1] - ends.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const thick = await mp.evaluate(() => window.__sv.model.mode().draft?.thickness?.v);
+    await mp.click("#mc-ok");
+    await settle();
+    const plate2 = await mp.evaluate(() => (window.__sv.model.last().cutList ?? []).find(c => c.kind === "plate")?.plate);
+    check(ends && /^5 mm$/.test(ends.label ?? "") && thick > 10 && thick < 20 && plate2?.[2] === thick, `weldments: dragging the end cap arrow sets its thickness (${JSON.stringify({ ends, thick, plate2 })})`);
+    // A custom profile from a closed sketch, and three members meeting at a corner.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Custom", d => {
+        d.features.push({ id: "pr", type: "sketch", name: "Profile", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1", 0, 0), P("q2", 30, 0), P("q3", 30, 10), P("q4", 0, 10), L("r1", "q1", "q2"), L("r2", "q2", "q3"), L("r3", "q3", "q4"), L("r4", "q4", "q1")] },
+          { id: "k3", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [1000, 0, 0], fixed: true }, { id: "X", p: [1300, 0, 0] }, { id: "Y", p: [1000, 300, 0] }, { id: "Z", p: [1000, 0, 300] }], segs: [{ id: "x", t: "line", pts: ["A", "X"] }, { id: "y", t: "line", pts: ["A", "Y"] }, { id: "z", t: "line", pts: ["A", "Z"] }] },
+          { id: "m3", type: "member", name: "Structural Member3", profile: "sketch", size: "", psketch: "pr", segs: [{ sketch: "s2", ent: "k1" }], corner: "none" },
+          { id: "m4", type: "member", name: "Structural Member4", profile: "shs", size: "40x40x3", segs: ["x", "y", "z"].map(ent => ({ sketch: "k3", ent })), corner: "butt1" });
+      });
+    });
+    await settle();
+    const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
+    check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

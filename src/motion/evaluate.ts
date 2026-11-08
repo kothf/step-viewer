@@ -96,16 +96,19 @@ export interface Frame {
   axis: { mate: string; motion: "rotary" | "linear"; amount: number }[];
   /** Exploded view progress by view id. */
   explode: { id: string; k: number }[];
+  /** Component id → opacity (0 hidden … 1 opaque) for components with appearance keys. */
+  look: Record<string, number>;
   camera: CamKey | null;
 }
 
 /** Evaluates every track that is on at `t`; `mates` are the assembly's, by id (for base values and types). */
 export function frameAt(study: MotionStudy, t: number, mates: Map<string, Mate>): Frame {
-  const f: Frame = { values: {}, axis: [], explode: [], camera: null };
+  const f: Frame = { values: {}, axis: [], explode: [], look: {}, camera: null };
   const on = study.tracks.filter(k => !k.off);
   for (const k of on) {
     if (k.kind === "mate") { const v = valueAt(k.keys, t); if (v != null && mates.has(k.mate)) f.values[k.mate] = v; }
     else if (k.kind === "explode") { const v = valueAt(k.keys, t); if (v != null) f.explode.push({ id: k.view, k: clamp(v, 0, 1) }); }
+    else if (k.kind === "look") { const v = valueAt(k.keys, t); if (v != null) f.look[k.comp] = clamp(v, 0, 1); }
     else if (k.kind === "camera") f.camera = cameraAt(k.keys, t);
   }
   for (const k of on) {
@@ -129,6 +132,11 @@ export function axisLock(m: Mate, axis: Extract<Geo, { k: "axis" }>, rel0: Tf, m
   const d = unit(axis.d);
   const move = motion === "rotary" ? rotation(axis.p, d, amount) : translation([d[0] * amount, d[1] * amount, d[2] * amount]);
   return { id: `${m.id}~motor`, name: "", type: "lock", a: { comp: m.a.comp, face: "" }, b: { comp: m.b.comp, face: "" }, rel: compose(move, rel0), keep: motion === "rotary" ? "rot" : "slide", along: d };
+}
+
+/** Appearance keys that fade a component out over [t0, t1] (or in, with `fadeIn`), from and to `full` opacity. */
+export function fadeKeys(t0: number, t1: number, fadeIn = false, full = 1): Key[] {
+  return fadeIn ? [{ t: t0, v: 0 }, { t: t1, v: full, interp: "ease" }] : [{ t: t0, v: full }, { t: t1, v: 0, interp: "ease" }];
 }
 
 /** Number of frames a study is solved at, both ends included. */

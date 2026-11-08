@@ -11,7 +11,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, Track } from "./types";
 
@@ -118,6 +118,9 @@ export class MotionManager {
     return { value: mates.filter(m => VALUE_MATES.has(m.type)), axis: mates.filter(m => AXIS_MATES.has(m.type)) };
   }
 
+  /** A component's own opacity (what an appearance track starts from). */
+  private compOpacity(id: string) { return this.asm.doc?.components.find(c => c.id === id)?.opacity ?? 1; }
+
   addTrack(spec: string) {
     const [kind, ref] = [spec.slice(0, spec.indexOf(":")), spec.slice(spec.indexOf(":") + 1)];
     const s = this.study, mate = (this.asm.doc?.mates ?? []).find(m => m.id === ref);
@@ -125,6 +128,7 @@ export class MotionManager {
       kind === "mate" && mate ? { id: uid("mt_"), kind: "mate", mate: ref, keys: [{ t: 0, v: mate.value ?? 0 }, { t: s.duration, v: mate.value ?? 0 }] }
       : kind === "motor" && mate ? { id: uid("mt_"), kind: "motor", mate: ref, motion: mate.type === "distance" ? "linear" : "rotary", profile: "constant", speed: 10, amp: mate.type === "distance" ? 10 : 30 * DEG, freq: 0.5, start: 0, end: s.duration }
       : kind === "explode" && ref ? { id: uid("mt_"), kind: "explode", view: ref, keys: explodeKeys(s.duration) }
+      : kind === "look" && this.asm.doc?.components.some(c => c.id === ref) ? { id: uid("mt_"), kind: "look", comp: ref, keys: fadeKeys(0, s.duration, false, this.compOpacity(ref)) }
       : kind === "camera" ? { id: uid("mt_"), kind: "camera", keys: [this.camKey(0)] }
       : null;
     if (!tr) return;
@@ -147,8 +151,8 @@ export class MotionManager {
     this.edit(s => {
       const k = s.tracks.find(x => x.id === trackId)!;
       if (k.kind === "camera") { k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9); k.keys.push(this.camKey(tq)); k.keys = sortKeys(k.keys); idx = k.keys.findIndex(x => x.t === tq); }
-      else if (k.kind === "mate" || k.kind === "explode") {
-        const v = valueAt(k.keys, tq) ?? (k.kind === "mate" ? (this.asm.doc?.mates ?? []).find(m => m.id === k.mate)?.value ?? 0 : 0);
+      else if (k.kind === "mate" || k.kind === "explode" || k.kind === "look") {
+        const v = valueAt(k.keys, tq) ?? (k.kind === "mate" ? (this.asm.doc?.mates ?? []).find(m => m.id === k.mate)?.value ?? 0 : k.kind === "look" ? this.compOpacity(k.comp) : 0);
         k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9);
         k.keys.push({ t: tq, v });
         k.keys = sortKeys(k.keys);
@@ -231,6 +235,7 @@ export class MotionManager {
     this.ensure(i);
     const f = frameAt(s, tq, new Map((this.asm.doc.mates ?? []).map(m => [m.id, m])));
     this.asm.motionShow(this.frames[i] ?? this.asm.restTfs(), f.explode);
+    this.asm.motionLook(f.look);
     if (f.camera) this.setCamera(f.camera);
     this.viewer.invalidate();
     this.updateHead(i);
@@ -406,6 +411,7 @@ export class MotionManager {
     if (k.kind === "mate") return { icon: "◆", kind: t("Mate keys"), name: mate?.name ?? "?" };
     if (k.kind === "motor") return { icon: k.motion === "rotary" ? "⟳" : "⇄", kind: k.motion === "rotary" ? t("Rotary motor") : t("Linear motor"), name: mate?.name ?? "?" };
     if (k.kind === "explode") return { icon: "✸", kind: t("Explode"), name: this.asm.doc?.explodes?.find(v => v.id === k.view)?.name ?? "?" };
+    if (k.kind === "look") return { icon: "◐", kind: t("Appearance"), name: this.asm.doc?.components.find(c => c.id === k.comp)?.name ?? "?" };
     return { icon: "◉", kind: t("Camera"), name: "" };
   }
 
@@ -416,9 +422,10 @@ export class MotionManager {
     const s = this.study, doc = this.asm.doc, dr = this.drivable();
     const studyOpts = (this.studies.length ? this.studies : [s]).map(x => `<option value="${esc(x.id)}"${x.id === s.id ? " selected" : ""} translate="no">${esc(x.name)}</option>`).join("");
     const addOpts = [`<option value="">${esc(t("Add track…"))}</option>`,
-      ...dr.value.map(m => `<option value="mate:${esc(m.id)}">${esc(t("Mate keys"))}: ${esc(m.name)}</option>`),
-      ...[...dr.value, ...dr.axis].map(m => `<option value="motor:${esc(m.id)}">${esc(t("Motor"))}: ${esc(m.name)}</option>`),
-      ...(doc.explodes ?? []).map(v => `<option value="explode:${esc(v.id)}">${esc(t("Explode"))}: ${esc(v.name)}</option>`),
+      ...dr.value.map(m => `<option value="mate:${esc(m.id)}" translate="no">${esc(t("Mate keys"))}: ${esc(m.name)}</option>`),
+      ...[...dr.value, ...dr.axis].map(m => `<option value="motor:${esc(m.id)}" translate="no">${esc(t("Motor"))}: ${esc(m.name)}</option>`),
+      ...(doc.explodes ?? []).map(v => `<option value="explode:${esc(v.id)}" translate="no">${esc(t("Explode"))}: ${esc(v.name)}</option>`),
+      ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
       ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`])].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
     const step = s.duration <= 3 ? 0.5 : s.duration <= 20 ? 1 : s.duration <= 60 ? 5 : 10;
@@ -492,6 +499,8 @@ export class MotionManager {
     if (tr.kind === "camera") return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp) + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
     const k = key as Key;
     if (tr.kind === "explode") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Exploded"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp);
+    if (tr.kind === "look") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Opacity"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
+      + `<button class="btn small" data-p="hide">${esc(t("Hidden"))}</button><button class="btn small" data-p="show">${esc(t("Shown"))}</button>`;
     const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate), ang = mate?.type === "angle";
     return field(t("Time"), "t", fmt(k.t), t("s")) + field(ang ? t("Angle") : t("Distance"), "v", fmt(ang ? k.v / DEG : k.v), ang ? "°" : "mm") + interpSel(k.interp);
   }
@@ -607,6 +616,8 @@ export class MotionManager {
     // Properties.
     on("[data-p]", "change", (_e, el) => this.setProp(el.dataset.p!, el as HTMLInputElement));
     on("button[data-p=setcam]", "click", () => this.setProp("setcam", null));
+    on("button[data-p=hide]", "click", () => this.setProp("hide", null));
+    on("button[data-p=show]", "click", () => this.setProp("show", null));
   }
 
   private setProp(p: string, el: HTMLInputElement | HTMLSelectElement | null) {
@@ -616,7 +627,7 @@ export class MotionManager {
     const bad = () => el?.setAttribute("aria-invalid", "true");
     const tr0 = this.study.tracks.find(k => k.id === sel.track);
     if (!tr0) return;
-    const numeric = !["interp", "motion", "profile", "flip", "setcam"].includes(p);
+    const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
     this.edit(st => {
@@ -640,7 +651,8 @@ export class MotionManager {
       if (p === "t") k.t = this.snap(v);
       else if (p === "interp") { if (raw === "ease") k.interp = "ease"; else delete k.interp; }
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
-      else if (p === "v" && tr.kind === "explode") (k as Key).v = Math.max(0, Math.min(1, v / 100));
+      else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
+      else if ((p === "hide" || p === "show") && tr.kind === "look") (k as Key).v = p === "hide" ? 0 : 1;
       else if (p === "v" && tr.kind === "mate") { const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate); (k as Key).v = mate?.type === "angle" ? v * DEG : v; }
       const sorted = sortKeys(keys.filter(x => x === k || Math.abs(x.t - k.t) > 1e-9));
       (tr as { keys: unknown[] }).keys = sorted;
@@ -650,11 +662,35 @@ export class MotionManager {
     this.render();
   }
 
+  /** Moves the selected key by `dt` seconds (Alt+←/→, Shift for ten frames), keeping it inside the study and off its neighbours. */
+  moveKey(dt: number) {
+    const sel = this.sel, tr0 = sel && this.study.tracks.find(k => k.id === sel.track);
+    if (!sel || sel.key == null || !tr0 || tr0.kind === "motor") return;
+    const keys = sortKeys(tr0.keys as { t: number }[]), k = keys[sel.key];
+    if (!k) return;
+    const lo = sel.key > 0 ? keys[sel.key - 1].t + 1 / this.study.fps : 0;
+    const hi = sel.key < keys.length - 1 ? keys[sel.key + 1].t - 1 / this.study.fps : this.study.duration;
+    const tq = this.snap(Math.max(lo, Math.min(hi, k.t + dt)));
+    if (Math.abs(tq - k.t) < 1e-9) return;
+    this.edit(st => {
+      const tr = st.tracks.find(x => x.id === sel.track) as { keys: { t: number }[] } | undefined;
+      if (!tr) return;
+      const ks = sortKeys(tr.keys);
+      ks[sel.key!].t = tq;
+      tr.keys = ks;
+    });
+    this.time = tq;
+    this.render();
+    this.showAt(tq);
+    (this.pane.querySelector(`[data-key="${CSS.escape(`${sel.track}:${sel.key}`)}"]`) as HTMLElement | null)?.focus();
+  }
+
   private key(e: KeyboardEvent) {
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.key === " ") { e.preventDefault(); this.play(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && this.sel) { e.preventDefault(); this.deleteSel(); }
+    else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && e.altKey && this.sel?.key != null) { e.preventDefault(); this.moveKey((e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 10 : 1) / this.study.fps); }
     else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); this.seek(this.snap(this.time + (e.key === "ArrowRight" ? 1 : -1) / this.study.fps)); }
     else if (e.key === "Home") { e.preventDefault(); this.seek(0); }
     else if (e.key === "End") { e.preventDefault(); this.seek(this.study.duration); }

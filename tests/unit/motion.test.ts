@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, explodeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
@@ -124,6 +124,23 @@ test("camera keys: an orbit keeps its height and distance, swinging a quarter tu
   // Without an up vector the eye swings on the great circle.
   const s = cameraAt([{ t: 0, pos: [10, 0, 0], target: [0, 0, 0] }, { t: 1, pos: [0, 20, 0], target: [0, 0, 0] }], 0.5)!;
   close(Math.hypot(...s.pos), 15, 1e-9);
+});
+
+test("appearance keys: opacity per component, clamped to 0..1, fades ease out and in", () => {
+  const study: MotionStudy = { id: "s", name: "S", duration: 2, fps: 10, tracks: [
+    { id: "a", kind: "look", comp: "q", keys: fadeKeys(0, 2) },
+    { id: "b", kind: "look", comp: "p", keys: [{ t: 0, v: -1 }, { t: 1, v: 3 }] },
+    { id: "c", kind: "look", comp: "r", keys: fadeKeys(1, 2, true, 0.5), off: true },
+  ] };
+  const mates = new Map<string, Mate>();
+  let f = frameAt(study, 0, mates);
+  assert.deepEqual(f.look, { q: 1, p: 0 });
+  f = frameAt(study, 1, mates);
+  close(f.look.q, 0.5);
+  assert.equal(f.look.p, 1);
+  close(frameAt(study, 0.5, mates).look.q, 1 - 0.125);
+  assert.equal(frameAt(study, 2, mates).look.q, 0);
+  assert.deepEqual(fadeKeys(1, 2, true, 0.5).map(k => k.v), [0, 0.5]);
 });
 
 test("playback: once stops at the end, loop wraps, reciprocate comes back", () => {

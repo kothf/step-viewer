@@ -70,6 +70,8 @@ type Mode =
   | { kind: "crop"; view: string; p1: Pt | null; at: Pt | null }
   /** Break view (FR-DRW-015): the two ends of the band to leave out, along u (vertical lines) or v. */
   | { kind: "break"; view: string; axis: "u" | "v"; a: number | null; at: Pt | null }
+  /** Broken-out section (FR-DRW-015): the outline's corners on the selected view (model view axes); Enter or a click on the first corner closes it. */
+  | { kind: "brokenout"; view: string; pts: Pt[]; at: Pt | null }
   | AnnotMode;
 type Pt = [number, number];
 /** A pick for a dimension: a point (edge end or circle centre), a line or a circle, in a view. */
@@ -413,6 +415,7 @@ export class DrawingWorkspace {
     else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
+    else if (m.kind === "brokenout") s = m.pts.length < 3 ? t("Click the corners of the area to cut away on the view.") : t("Click more corners; click the first corner or press Enter to cut.");
     else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
@@ -604,6 +607,7 @@ export class DrawingWorkspace {
     if (m.kind === "model") { this.placeModel(m, p); return; }
     if (m.kind === "section" || m.kind === "detail" || m.kind === "aux") { this.kindClick(m, p); return; }
     if (m.kind === "crop" || m.kind === "break") { this.trimClick(m, p); return; }
+    if (m.kind === "brokenout") { this.brokenClick(m, p); return; }
     if (isAnnotMode(m)) { this.annotClick(m, p); return; }
     if (m.kind === "projected") {
       if (!m.parent) { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; m.at = p; this.renderStatus(); this.renderOverlay(); } return; }
@@ -1547,6 +1551,66 @@ export class DrawingWorkspace {
     this.setView("Break view", v => { (v.breaks ??= []).push({ axis, a: round(a), b: round(b) }); });
   }
 
+  // ---------- broken-out section (FR-DRW-015) ----------
+
+  /** Where the model starts and ends along a view's direction (n · p over the model box). */
+  private depthRange(v: DrawingView): [number, number] | null {
+    const b = this.facts?.box;
+    if (!b) return null;
+    const n = viewDir(this.sheet, v).dir;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const d = b[i & 1][0] * n[0] + b[(i >> 1) & 1][1] * n[1] + b[(i >> 2) & 1][2] * n[2];
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    return [lo, hi];
+  }
+
+  private startBroken() {
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    if (!v || v.kind === "detail" || v.kind === "section" || !this.placements.get(v.id)) { toast(t("Select a model, projected or auxiliary view first.")); return; }
+    this.mode = { kind: "brokenout", view: v.id, pts: [], at: null };
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private brokenClick(m: Extract<Mode, { kind: "brokenout" }>, p: Pt) {
+    const pl = this.placements.get(m.view);
+    if (!pl) return;
+    if (m.pts.length >= 3) {
+      const f = toSheet(pl, m.pts[0][0], m.pts[0][1]);
+      if (Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishBroken(m); return; }
+    }
+    m.pts.push(fromSheet(pl, p[0], p[1]));
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private finishBroken(m: Extract<Mode, { kind: "brokenout" }>) {
+    const v = findView(this.sheet, m.view);
+    this.mode = { kind: "none" };
+    if (!v || m.pts.length < 3) { this.renderOverlay(); this.renderStatus(); return; }
+    const r = this.depthRange(v);
+    // Cut down to the middle of the model by default; the depth can be typed afterwards.
+    const d = r ? (r[0] + r[1]) / 2 : v.broken?.d ?? 0;
+    const poly = m.pts.flatMap(q => [round(q[0]), round(q[1])]);
+    this.setView("Broken-out section", w => { w.broken = { poly, d: round(d) }; });
+  }
+
+  /** The outline of a broken-out section being drawn. */
+  private brokenMarks(H: number): string {
+    const m = this.mode;
+    if (m.kind !== "brokenout") return "";
+    const pl = this.placements.get(m.view);
+    if (!pl) return "";
+    const pts = m.pts.map(q => toSheet(pl, q[0], q[1]));
+    if (m.at) pts.push(m.at);
+    const tol = this.snapTol();
+    let s = pts.length > 1 ? `<polyline class="drw-cut" fill="none" points="${pts.map(q => `${q[0]},${H - q[1]}`).join(" ")}"/>` : "";
+    if (m.pts.length >= 3) s += `<circle class="drw-snap" cx="${pts[0][0]}" cy="${H - pts[0][1]}" r="${tol / 2}"/>`;
+    return s;
+  }
+
   /** The crop rectangle or break band being drawn. */
   private trimMarks(H: number): string {
     const m = this.mode;
@@ -1570,6 +1634,7 @@ export class DrawingWorkspace {
   private modeMarks(H: number): string {
     const m = this.mode;
     if (m.kind === "crop" || m.kind === "break") return this.trimMarks(H);
+    if (m.kind === "brokenout") return this.brokenMarks(H);
     if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
     const at = m.at;
     const id = at ? this.kindParent(m, at) : m.parent;
@@ -1699,6 +1764,7 @@ export class DrawingWorkspace {
           </div>
           ${v.crop || v.breaks?.length ? `<div class="row">${v.crop ? `<button class="btn small" data-a="uncrop">${esc(t("Remove crop"))}</button>` : ""}${v.breaks?.length ? `<button class="btn small" data-a="unbreak">${esc(t("Remove breaks"))}</button>` : ""}</div>` : ""}
         </fieldset>`}
+        ${v.kind === "detail" || v.kind === "section" ? "" : this.brokenProps(v)}
         <div class="row"><button class="btn small danger" data-a="del">${esc(t("Delete view"))}</button></div>`;
       return;
     }
@@ -1800,6 +1866,8 @@ export class DrawingWorkspace {
       case "hbreak": this.startTrim("break", "v"); break;
       case "uncrop": this.setView("Remove crop", v => { delete v.crop; }); break;
       case "unbreak": this.setView("Remove breaks", v => { delete v.breaks; }); break;
+      case "brokenout": this.startBroken(); break;
+      case "unbroken": this.setView("Remove broken-out section", v => { delete v.broken; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
       case "align": this.realign(); break;
@@ -1828,6 +1896,21 @@ export class DrawingWorkspace {
         this.fit();
       })(); break;
     }
+  }
+
+  /** The broken-out section group of the view panel. */
+  private brokenProps(v: DrawingView): string {
+    const r = this.depthRange(v), b = v.broken;
+    let s = `<fieldset class="pm-group drw-broken"><legend>${esc(t("Broken-out section"))}</legend>`;
+    if (!b) s += `<div class="row"><button class="btn small" data-a="brokenout" title="${esc(t("Click the corners of an area; the material in it is cut away down to a depth and hatched"))}">${esc(t("Broken-out section"))}</button></div>`;
+    else {
+      const h = hatchOf(v);
+      s += `<label class="drw-f">${esc(t("Depth from the front (mm)"))}<input data-v="bdepth" inputmode="decimal" value="${r ? round(r[1] - b.d) : ""}"></label>
+        <label class="drw-f">${esc(t("Hatch spacing (mm)"))}<input data-v="hgap" inputmode="decimal" value="${h.gap}"></label>
+        <label class="drw-f">${esc(t("Hatch angle"))}<select data-v="hang">${[45, 135, 30, 60].map(a => `<option value="${a}"${a === h.angle ? " selected" : ""}>${a}°</option>`).join("")}</select></label>
+        <div class="row"><button class="btn small" data-a="brokenout">${esc(t("Redraw the outline"))}</button><button class="btn small" data-a="unbroken">${esc(t("Remove broken-out section"))}</button></div>`;
+    }
+    return s + `</fieldset>`;
   }
 
   /** Extra properties of section, detail and auxiliary views. */
@@ -1963,6 +2046,11 @@ export class DrawingWorkspace {
       const g = parseFloat(val.replace(",", "."));
       if (!(g >= 0.5)) { toast(t("Type a spacing of at least 0.5 mm."), true); this.renderProps(); return; }
       this.setView("Hatch spacing", v => { v.hatch = { ...v.hatch, gap: g }; });
+    } else if (vk === "bdepth") {
+      const v0 = this.sel ? findView(this.sheet, this.sel) : null, r = v0 ? this.depthRange(v0) : null;
+      const dep = parseFloat(val.replace(",", "."));
+      if (!r || !v0?.broken || !(dep > 0 && dep < r[1] - r[0])) { toast(t("Type a depth between 0 and {max} mm.", { max: r ? round(r[1] - r[0]) : "?" }), true); this.renderProps(); return; }
+      this.setView("Broken-out depth", v => { if (v.broken) v.broken = { ...v.broken, d: round(r[1] - dep) }; });
     } else if (vk === "hang") this.setView("Hatch angle", v => { v.hatch = { ...v.hatch, angle: +val }; });
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
     else if (sk === "projection") this.setSheet("Projection type", sh => { sh.projection = val as Sheet["projection"]; });
@@ -1991,6 +2079,7 @@ export class DrawingWorkspace {
     else if (mod && !typing && (k === "y" || (k === "z" && e.shiftKey))) this.store?.redo();
     else if (typing || mod || e.altKey) used = false;
     else if (k === "escape") { if (this.mode.kind !== "none") this.cancelMode(); else if (this.el.querySelector(".drw-menu:not([hidden])")) this.closeMenus(); else if (this.sel || this.selA) { this.sel = null; this.selA = null; this.renderAll(); } else used = false; }
+    else if (k === "enter" && this.mode.kind === "brokenout" && (tgt as Element) === this.svg) this.finishBroken(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
     else if ((k === "delete" || k === "backspace") && this.selA && (tgt as Element) === this.svg) this.deleteAnnot();
     else if ((k === "delete" || k === "backspace") && this.sel && ((tgt as Element) === this.svg || tgt.closest(".drw-tree"))) void this.deleteSel();
