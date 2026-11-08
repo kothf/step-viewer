@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs, curveJoint } from "../../src/sketch/solver";
 import { entBezier } from "../../src/sketch/conic";
+import { piercePoint } from "../../src/sketch/external";
 import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
 
 const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
@@ -256,4 +257,27 @@ test("spline tangent and equal curvature at a shared end (FR-SK-050, FR-SK-051)"
   assert.deepEqual(curveJoint(s3, "l", "s"), ["b", "c"]);
   s3.rels = [];
   assert.equal(curveJoint(s3, "l", "s"), null);
+});
+
+test("pierce: crossing points and the held point (FR-SK-051)", () => {
+  const F = { o: [0, 0, 0] as [number, number, number], x: [1, 0, 0] as [number, number, number], y: [0, 1, 0] as [number, number, number], n: [0, 0, 1] as [number, number, number] };
+  const near = (q: number[] | null, x: number, y: number) => { assert.ok(q); assert.ok(Math.hypot(q[0] - x, q[1] - y) < 1e-9, `${q} ≠ ${x},${y}`); };
+  // A slanted line, extended past its ends.
+  near(piercePoint({ type: "line", start: [1, 2, 3], end: [2, 4, 5], mid: [1.5, 3, 4], closed: false }, F, [0, 0]), -0.5, -1);
+  // In the plane: none.
+  assert.equal(piercePoint({ type: "line", start: [0, 0, 0], end: [1, 0, 0], mid: [0.5, 0, 0], closed: false }, F, [0, 0]), null);
+  // A circle of radius 5 about X through the origin crosses at y = ±5; the nearer one wins.
+  const c = { type: "circle", start: [0, 5, 0] as [number, number, number], end: [0, 5, 0] as [number, number, number], mid: [0, -5, 0] as [number, number, number], closed: true, center: [0, 0, 0] as [number, number, number], axis: [1, 0, 0] as [number, number, number], radius: 5 };
+  near(piercePoint(c, F, [0, 4]), 0, 5);
+  near(piercePoint(c, F, [0, -4]), 0, -5);
+  // Lifted 6 above the plane, it never reaches it.
+  assert.equal(piercePoint({ ...c, center: [0, 0, 6] }, F, [0, 0]), null);
+  // Other curves by their polyline.
+  near(piercePoint({ type: "curve", start: [0, 0, -1], end: [2, 0, 1], mid: [1, 0, 0], closed: false, pts: [0, 0, -1, 1, 0, -0.5, 2, 0, 1] }, F, [0, 0]), 4 / 3, 0);
+  // The solver holds a pierced point like a fixed one.
+  const s = sk([pt("p", 3, 4), pt("q", 0, 0), ln("l", "p", "q")], [{ id: "r", t: "pierce", e: ["p"], ext: { faces: ["a", "b"] } }, rel("horizontal", "l")]);
+  const r = solve(s);
+  assert.equal(r.status, "ok");
+  const p = s.ents.find(e => e.id === "p") as SkEnt & { t: "point" };
+  assert.ok(Math.abs(p.x - 3) < 1e-9 && Math.abs(p.y - 4) < 1e-9);
 });

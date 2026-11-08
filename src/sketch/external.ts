@@ -53,3 +53,49 @@ export function applyExt(sk: SketchFeature, ent: SkEnt, g: ExtGeo): boolean {
 
 /** How many On edge relations of a sketch have lost their edge. */
 export const danglingCount = (sk: SketchFeature) => sk.rels.filter(r => r.ext && r.dangling).length;
+
+/**
+ * Pierce (FR-SK-051): where a model edge crosses the sketch plane, in sketch coordinates, the crossing
+ * nearest `near` when there are several. Straight edges count as infinite lines and arcs as whole circles;
+ * other curves use their polyline `pts` (the rebuild then finds the exact point). Null when the edge
+ * lies in the plane or never reaches it.
+ */
+export function piercePoint(ed: ModelEdge & { pts?: ArrayLike<number> }, f: Frame, near: V2): V2 | null {
+  const h = (w: V3) => (w[0] - f.o[0]) * f.n[0] + (w[1] - f.o[1]) * f.n[1] + (w[2] - f.o[2]) * f.n[2];
+  const hits: V3[] = [];
+  const size = 1 + Math.hypot(ed.start[0] - ed.end[0], ed.start[1] - ed.end[1], ed.start[2] - ed.end[2]) + (ed.radius ?? 0);
+  if (ed.type === "line") {
+    const ha = h(ed.start), hb = h(ed.end);
+    if (Math.abs(ha - hb) < 1e-9 * size) return null;
+    const s = ha / (ha - hb);
+    hits.push([0, 1, 2].map(k => ed.start[k] + (ed.end[k] - ed.start[k]) * s) as V3);
+  } else if ((ed.type === "circle" || ed.type === "arc") && ed.center && ed.axis && ed.radius) {
+    // Points of the circle c + r(u cos t + v sin t): h(c) + r(hu cos t + hv sin t) = 0.
+    const ax = ed.axis, c = ed.center, r = ed.radius;
+    const pick = Math.abs(ax[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const cr = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const nu = (a: number[]) => { const l = Math.hypot(a[0], a[1], a[2]); return a.map(x => x / l); };
+    const u = nu(cr(ax, pick)), v = nu(cr(ax, u));
+    const dn = (a: number[]) => a[0] * f.n[0] + a[1] * f.n[1] + a[2] * f.n[2];
+    const hc = h(c), hu = r * dn(u), hv = r * dn(v), m = Math.hypot(hu, hv);
+    if (m < 1e-9 * size || Math.abs(hc) > m) return null;
+    const phi = Math.atan2(hv, hu), d = Math.acos(Math.max(-1, Math.min(1, -hc / m)));
+    for (const t of [phi + d, phi - d]) hits.push([0, 1, 2].map(k => c[k] + r * (u[k] * Math.cos(t) + v[k] * Math.sin(t))) as V3);
+  } else if (ed.pts && ed.pts.length >= 6) {
+    const p = ed.pts;
+    for (let i = 0; i + 5 < p.length; i += 3) {
+      const a: V3 = [p[i], p[i + 1], p[i + 2]], b: V3 = [p[i + 3], p[i + 4], p[i + 5]];
+      const ha = h(a), hb = h(b);
+      if ((ha > 0) === (hb > 0) && ha !== 0) continue;
+      if (Math.abs(ha - hb) < 1e-12) continue;
+      const s = ha / (ha - hb);
+      hits.push([0, 1, 2].map(k => a[k] + (b[k] - a[k]) * s) as V3);
+    }
+  }
+  let best: V2 | null = null, bd = Infinity;
+  for (const w of hits) {
+    const q = uvOf(f, w), d = Math.hypot(q[0] - near[0], q[1] - near[1]);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
