@@ -88,6 +88,30 @@ test("revolve a ring (AT-P1-8)", async () => {
   assert.ok(mesh.index.array.length > 0);
 });
 
+test("revolve about a profile line on the axis; holes on a revolved web go into the material (exam bugs 15, 18)", async () => {
+  const m = new Modeller(await occ());
+  // A closed profile whose bottom line lies on the axis (sketch x on world X): Ø20 x 10 then Ø12 x 10.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const pts = [P("p0", 0, 0), P("p1", 0, 10), P("p2", 10, 10), P("p3", 10, 6), P("p4", 20, 6), P("p5", 20, 0)];
+  const ids = pts.map(p => p.id);
+  const lines: SkEnt[] = ids.map((a, i) => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }));
+  const s: SketchFeature = { id: "r", type: "sketch", name: "r", plane: { std: "XZ" }, rels: [], dims: [], ents: [...pts, ...lines] };
+  const rev: Feature = { id: "f1", type: "revolve", name: "Revolve1", sketch: "r", op: "boss", axis: "l5", angle: { v: Math.PI * 2 } };
+  const r = run(m, doc([s, rev]));
+  close(r.props!.volume, Math.PI * (100 * 10 + 36 * 10), 1e-5);
+  // The flat shoulder at x = 10 faces +X; a through hole drilled from it removes a full Ø2 x 10 core.
+  const normal = (n: string) => { try { return m.planeFrame({ face: { name: n } }, r.body, {}).n; } catch { return null; } };
+  const shoulder = r.body!.names.find(n => { const v = normal(n); return !!v && Math.abs(v[0] - 1) < 1e-9 && Math.abs(m.planeFrame({ face: { name: n } }, r.body, {}).o[0] - 10) < 1e-6; });
+  assert.ok(shoulder, "the shoulder face");
+  const hole: Feature = { id: "h", type: "hole", name: "Hole1", kind: "simple", diameter: { v: 2 }, end: "through", depth: { v: 10 }, pts: [[0, 0]], plane: { face: { name: shoulder! } } } as Feature;
+  const fr = m.planeFrame({ face: { name: shoulder! } }, r.body, {});
+  // A point 8 mm out from the axis on the shoulder (inside the Ø20 ring, outside the Ø12 neck).
+  const at: V3 = [10, 8, 0], q = [at[0] - fr.o[0], at[1] - fr.o[1], at[2] - fr.o[2]];
+  (hole as unknown as { pts: number[][] }).pts = [[q[0] * fr.x[0] + q[1] * fr.x[1] + q[2] * fr.x[2], q[0] * fr.y[0] + q[1] * fr.y[1] + q[2] * fr.y[2]]];
+  const r2 = run(m, doc([s, rev, hole]));
+  close(r2.props!.volume, Math.PI * (100 * 10 + 36 * 10) - Math.PI * 10, 1e-3);
+});
+
 test("revolve up to a plane, direction 2 and thin revolve (FR-FT-022)", async () => {
   const m = new Modeller(await occ());
   const s = rect("r", 35, 10, 10, 20, { std: "XZ" });
