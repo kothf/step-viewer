@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.250.0] - 2026-11-08
+## [1.252.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: a Proximity result is drawn in the view as a dashed line between the two components' nearest points, moving with the playhead (FR-FT-122).
+
+## [1.250.0] - 2026-11-08
+
+### Added
+
+- **Flat pattern views in drawings (FR-FT-120)**: a sheet metal part's drawing now offers a Flat pattern tile in the View palette, and Flat pattern in a model view's Configuration list. The view shows the unfolded part, with each bend line drawn as a centre line and a bend note along it ("UP 90° R2", in the sheet's language), as SolidWorks does. Either can be turned off in the view's properties.
 
 ## [1.248.0] - 2026-11-08
 
@@ -1617,7 +1623,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.250.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.252.0...HEAD
+[1.252.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.252.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
 [1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
 [1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0

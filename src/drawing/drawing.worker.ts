@@ -2,7 +2,8 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
-import type { Align, Stair } from "./views";
+import { FLAT_CONFIG, type Align, type Stair } from "./views";
+import { flatBends, flatPatternDoc, flatToXY } from "../sheetmetal/sheet";
 import { geometryDiff, project, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
@@ -132,6 +133,17 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = { topo: topology(oc, shape), items: [], holes: [] }; }
       else throw new Error("Nothing to load");
       post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra });
+    } else if (r.type === "config" && r.name === FLAT_CONFIG) {
+      // Flat pattern (FR-FT-120): the part with its flat pattern shown, laid on XY with the top face up.
+      const d = partDoc && flatPatternDoc(partDoc);
+      if (!d) throw new Error("Only a sheet metal part has a flat pattern");
+      const md = new Modeller(oc), res = md.evaluate(d);
+      if (!res.body || !res.sheet) throw new Error("The flat pattern could not be made.");
+      const t = flatToXY(res.sheet), trsf = new oc.gp_Trsf_1();
+      trsf.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
+      const flat = res.body.shape.Moved(new oc.TopLoc_Location_2(trsf), false);
+      variants.set(r.name, { shape: flat, mat: d.material?.name ?? null });
+      post({ id: r.id, ok: true, ...shapeInfo(oc, flat), topo: topology(oc, flat, res.body.names), items: [], holes: [], threads: [], sketches: [], bends: flatBends(res.sheet) });
     } else if (r.type === "config") {
       if (!partDoc) throw new Error("Only a part has configurations");
       if (!partDoc.configs?.some(c => c.name === r.name)) throw new Error(`The part has no configuration "${r.name}"`);
