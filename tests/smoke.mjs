@@ -8061,6 +8061,22 @@ try {
     await settle();
     const moved = gs.key === "d1" ? gd.d1 : gd.d2, kept = gs.key === "d1" ? gd.d2 : gd.d1, was = gs.key === "d1" ? 50 : 70;
     check(gs.n === 2 && JSON.stringify(gs.keys) === '["d1","d2"]' && JSON.stringify(gs.labels) === '["50 mm","70 mm"]' && moved > was + 5 && moved < was + 40 && kept === 120 - was, `weldments: gusset leg arrows (${JSON.stringify({ gs, gd })})`);
+    // Gusset location: at the start, centred on it and moved in by an offset.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wloc"]', "start");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgside"]', "both");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wgOffset"]');
+    await settle();
+    const gLoc = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { loc: d?.loc, side: d?.side, off: d?.offset?.v, field: !!document.querySelector('#mc-pm [data-num="offset"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const glBad = await mp.evaluate(() => window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"));
+    check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();
