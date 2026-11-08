@@ -3058,6 +3058,12 @@ export const RU: Record<string, string> = {
   "The end face must be flat and square to the flange's edges.": "Торцевая грань должна быть плоской и перпендикулярной рёбрам кромки.",
   "No flange to close against was found beyond this face.": "За этой гранью не найдена кромка, к которой можно замкнуть угол.",
   "The flange would be cut away.": "Кромка была бы срезана полностью.",
+  "UP": "ВВЕРХ",
+  "DOWN": "ВНИЗ",
+  "Bend lines": "Линии сгиба",
+  "Bend notes": "Примечания к сгибам",
+  "Click on the sheet to place the flat pattern view. Esc cancels.": "Щёлкните на листе, чтобы разместить вид развёртки. Esc — отмена.",
+  "Only a sheet metal part has a flat pattern": "Развёртка есть только у деталей из листового металла",
   "Corner gap": "Зазор в углу",
   "Flanges on edges that meet at a corner run on and are mitred, with this gap between them.": "Кромки на рёбрах, сходящихся в углу, продлеваются и стыкуются под углом с этим зазором между ними.",
   "Click two flat faces that meet at a corner, such as a beam and a post.": "Щёлкните две плоские грани, сходящиеся в углу, например балку и стойку.",
@@ -3165,6 +3171,10 @@ export const RU: Record<string, string> = {
   "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.": "Швы строятся вдоль прямых и круглых рёбер между плоскими и цилиндрическими гранями; остальные рёбра пропущены.",
   "The faces of the two sets do not meet along a straight or round edge.": "Грани двух наборов не встречаются по прямому или круглому ребру.",
   // 1.89.0: sketch snapping to model geometry.
+  "Automatic relations": "Автоматические взаимосвязи",
+  "Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them.": "Отрезки привязываются горизонтально, вертикально, перпендикулярно, параллельно или по касательной и сохраняют эту взаимосвязь; удерживайте Ctrl, чтобы рисовать без них.",
+  "Show relations": "Показывать взаимосвязи",
+  "Relation glyphs next to the entities; hover one to see what it ties, click to select it.": "Значки взаимосвязей рядом с объектами; наведите на значок, чтобы увидеть связанные объекты, щёлкните, чтобы выбрать.",
   "Snap to model geometry": "Привязка к геометрии модели",
   "Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges.": "Точки привязываются к вершинам модели, серединам рёбер и центрам окружностей и остаются связанными с ними; автоматический размер берёт рёбра модели.",
   // 1.90.0: user sheet formats (FR-DRW-004).

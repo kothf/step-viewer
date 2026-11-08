@@ -311,3 +311,31 @@ test("sheet metal: closed corner runs flange ends on to meet (FR-FT-120)", async
   // A face with no flange beyond it.
   assert.equal(m.evaluate(doc([s, base(), fl("f", "sl1"), fl("g", "sl2"), cc("f:p0:s0", "overlap")])).statuses.find(x => x.id === "c")!.ok, false);
 });
+
+test("sheet metal: the flat pattern laid on XY for drawings (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const { flatPatternDoc, flatToXY, flatBends } = await import("../../src/sheetmetal/sheet");
+  // A plate on a tilted sketch plane would do too; here the flange makes the folded part non-flat.
+  const s = rect("s", 0, 0, 100, 50);
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 20 }, angle: { v: Math.PI / 2 } };
+  const d = doc([s, base(), fl]);
+  assert.equal(flatPatternDoc(doc([s])), null, "not sheet metal");
+  const fd = flatPatternDoc(d)!;
+  assert.equal(fd.features.at(-1)!.type, "smflat");
+  assert.equal(d.features.length, 3, "the original is left alone");
+  const r = m.evaluate(fd);
+  const t = flatToXY(r.sheet!), tr = new oc.gp_Trsf_1();
+  tr.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
+  const moved = r.body!.shape.Moved(new oc.TopLoc_Location_2(tr), false);
+  const box = new oc.Bnd_Box_1();
+  oc.BRepBndLib.Add(moved, box, false);
+  const lo = box.CornerMin(), hi = box.CornerMax(), g = box.GetGap();
+  close(hi.Z() - lo.Z() - 2 * g, 2, 1e-5);
+  close(lo.Z() + g, 0, 1e-5);
+  const bends = flatBends(r.sheet!);
+  assert.equal(bends.length, 1);
+  close(bends[0].a[2], 2); close(bends[0].angle, Math.PI / 2); close(bends[0].r, 2);
+  // The bend line lies across the pattern, inside its box.
+  for (const p of [bends[0].a, bends[0].b]) assert.ok(p[0] >= lo.X() - 1e-6 && p[0] <= hi.X() + 1e-6 && p[1] >= lo.Y() - 1e-6 && p[1] <= hi.Y() + 1e-6);
+});
