@@ -384,7 +384,7 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
   if (!f.boundary) throw new FeatureError("E-WLD-TRIM", "Pick the boundary: a flat face or a body.");
   const list = h.bodyList(prev);
   const bi = bodyOf(h, list, prev, f.boundary);
-  if (f.kind === "mitre") return endMitre(h, f, doc, prev, list, bi, frames);
+  if (f.kind === "mitre" || f.kind === "butt1" || f.kind === "butt2") return endMitre(h, f, doc, prev, list, bi, frames);
   let plane: { p: V3; n: V3 } | null = null;
   if (f.kind === "face") {
     const fr = h.planeFrame({ face: f.boundary }, prev, frames);
@@ -452,6 +452,7 @@ function endMitre(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named, 
   const [A, B] = ends.map(e => e.s);
   const r = sub(A.a, B.a), b = dot(A.w, B.w), d = dot(A.w, r), e2 = dot(B.w, r), den = 1 - b * b;
   if (den < 1e-9) throw bad("The members are parallel: an end miter needs members at an angle.");
+  const butt = f.kind === "butt1" ? 0 : f.kind === "butt2" ? 1 : -1;
   const ta = (b * e2 - d) / den, tb = (e2 - b * d) / den;
   const C = mul(add(add(A.a, mul(A.w, ta)), add(B.a, mul(B.w, tb))), 0.5);
   // Each member's end nearer C, and the direction out of that end.
@@ -469,8 +470,16 @@ function endMitre(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named, 
     let body = list[i];
     const reach = Math.max(0, dot(sub(C, P), out)) + 4 * R;
     if (!f.noExtend) body = bool(h, "fuse", body, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
-    const away = dot(out, n) > 0 ? n : mul(n, -1);
-    body = bool(h, "cut", body, halfBox(h, C, away, 4 * (s.L + reach + R * 10), nm), f.id);
+    let at = C, away = dot(out, n) > 0 ? n : mul(n, -1);
+    if (butt >= 0) {
+      // Butt: one member stops at the other's near side (cut on that side's plane), the other runs on
+      // to the first one's far side and is cut square.
+      const o = ends[1 - k], q = unit(sub(out, mul(o.s.w, dot(out, o.s.w))));
+      const ext = outline(o.pl.shape.outer, 8).map(p => { const v = o.pl.p2(p); return dot(add(mul(o.pl.u, v[0]), mul(o.pl.v, v[1])), q); });
+      if (k === butt) { at = add(C, mul(q, Math.min(...ext))); away = q; }
+      else { at = add(C, mul(out, Math.max(...ext) / Math.max(1e-6, dot(out, q)))); away = out; }
+    }
+    body = bool(h, "cut", body, halfBox(h, at, away, 4 * (s.L + reach + R * 10), nm), f.id);
     list[i] = unify(h, pieceNear(h, body, mid));
   });
   return h.compoundOf(list);

@@ -307,4 +307,11 @@ test("Trim/Extend end miter between two members (FR-FT-121)", async () => {
   near(r.cut[0].length!, 420, 1e-3);
   assert.deepEqual([r.cut[0].angle1, r.cut[0].angle2].sort(), [0, 45]);
   near(r.volume, 2 * (base.volume / 2) * (400 / 300), 0.01 * base.volume);
+  // End butt 1: the X beam stops at the Y beam's side (x = 20), the Y beam runs on to the X beam's far side (y = −20).
+  const b1 = run(m, doc([a, b, ma, mb, { ...tr, kind: "butt1" } as Feature]));
+  assert.deepEqual(b1.cut.map(c => [c.qty, Math.round(c.length!), c.angle1, c.angle2]).sort(), [[1, 380, 0, 0], [1, 420, 0, 0]], JSON.stringify(b1.cut));
+  // End butt 2: the other way round.
+  const b2 = run(m, doc([a, b, ma, mb, { ...tr, kind: "butt2" } as Feature]));
+  assert.deepEqual(b2.cut.map(c => [c.qty, Math.round(c.length!)]).sort(), [[1, 380], [1, 420]]);
+  near(b1.volume, b2.volume, 1e-6 * b1.volume);
 });

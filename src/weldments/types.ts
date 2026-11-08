@@ -59,8 +59,8 @@ export interface TrimExtendFeature {
   /** Bodies to trim: any face of each member segment. */
   bodies: FaceRef[];
   boundary?: FaceRef;
-  /** face: cut at a flat face's plane; body: stop at another body; mitre: this member and the boundary member are both lengthened to where their axes meet and cut on the bisector plane (End miter). */
-  kind: "face" | "body" | "mitre";
+  /** face: cut at a flat face's plane; body: stop at another body; mitre: this member and the boundary member are both lengthened to where their axes meet and cut on the bisector plane (End miter); butt1/butt2: the same two members butted, the first (butt1) or the boundary member (butt2) stopping at the other's side, the other running on to its far side, cut square (End butt). */
+  kind: "face" | "body" | "mitre" | "butt1" | "butt2";
   /** Members that end short of the boundary are not lengthened. */
   noExtend?: boolean;
 }

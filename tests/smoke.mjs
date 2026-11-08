@@ -7714,6 +7714,18 @@ try {
     await settle();
     const mit = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 420) < 0.01).map(c => [c.qty, c.angle1 + c.angle2]) }; });
     check(mh && !mit.bad && JSON.stringify(mit.rows) === "[[2,45]]", `weldments: Trim/Extend End miter joins two separate members (${JSON.stringify({ mh, mit })})`);
+    // The same corner as End butt 1 (picked in the panel's type list): one beam stops at the other's side.
+    const trId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), trId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "butt1");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; m.draft.boundary = { name: "xmb:vb:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
+    check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Trim/Extend End miter (FR-FT-121).** Trim/Extend has an End miter type, as in SolidWorks: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message.
+- **Trim/Extend End miter and End butt (FR-FT-121).** Trim/Extend has an End miter type, as in SolidWorks: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message. **End butt 1** and **End butt 2** join the same two members square: one stops at the other's side and the other runs on to its far side.
 
 ## [1.151.0] - 2026-11-08
 
