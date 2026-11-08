@@ -3615,6 +3615,21 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
+    // Aligned section (FR-DRW-012): first leg along −x on the top view, centre at the origin, second leg up +y; it turns into the first leg's plane.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="aligned"]');
+    for (const [u, w] of [[-45, 0], [0, 0], [0, 25]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(top.x, top.y - 75);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const alv = vs.find(v => v.kind === "section" && v.aligned);
+    const alProj = alv && await dp.evaluate(i => window.__sv.drw.proj(i), alv.id);
+    const alArea = (alProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
+      `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
     // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
     [x, y] = await at(top.id, -45, -25);
     await dp.mouse.click(x, y);

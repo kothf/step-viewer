@@ -204,6 +204,40 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
   return { box: [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]], volume: Math.abs(p.Mass()) };
 }
 
+/**
+ * An aligned section's model (FR-DRW-012): the part of `shape` on the `s` side of the plane through `c` is turned by
+ * `ang` about the axis through `c` along `axis`, so the second leg's cut lies in the first leg's plane; the other part
+ * stays. Both go into one compound, which is then cut like a straight section.
+ */
+export function alignedShape(oc: any, shape: any, al: { c: V3; s: V3; axis: V3; ang: number }): any {
+  const info = shapeInfo(oc, shape);
+  const [lo, hi] = info.box;
+  const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10
+    + 2 * Math.hypot(al.c[0] - (lo[0] + hi[0]) / 2, al.c[1] - (lo[1] + hi[1]) / 2, al.c[2] - (lo[2] + hi[2]) / 2);
+  const half = (n: V3) => {
+    // A box L deep on the n side of the plane, 2L wide across it.
+    const t: V3 = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const u0: V3 = [n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]], ul = Math.hypot(...u0);
+    const u: V3 = [u0[0] / ul, u0[1] / ul, u0[2] / ul];
+    const w: V3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+    const o = [0, 1, 2].map(i => al.c[i] - u[i] * L - w[i] * L);
+    const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(o[0], o[1], o[2]), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(u[0], u[1], u[2]));
+    const box = new oc.BRepPrimAPI_MakeBox_5(ax, 2 * L, 2 * L, L).Shape();
+    const mk = new oc.BRepAlgoAPI_Common_3(shape, box, new oc.Message_ProgressRange_1());
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone()) throw new Error("The section could not be cut");
+    return mk.Shape();
+  };
+  const keep = half([-al.s[0], -al.s[1], -al.s[2]]), turn = half(al.s);
+  const tr = new oc.gp_Trsf_1();
+  tr.SetRotation_1(new oc.gp_Ax1_2(new oc.gp_Pnt_3(al.c[0], al.c[1], al.c[2]), new oc.gp_Dir_4(al.axis[0], al.axis[1], al.axis[2])), al.ang);
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  b.Add(comp, keep);
+  b.Add(comp, new oc.BRepBuilderAPI_Transform_2(turn, tr, true).Shape());
+  return comp;
+}
+
 /** The shapes of a TopTools_ListOfShape (the bindings have no list iterator: walk a copy). */
 function shapeList(oc: any, l: any): any[] {
   const out: any[] = [];
