@@ -53,6 +53,8 @@ export interface SmFlangeFeature {
   /** Shorten the flange from the edge's start / end. */
   off0?: Num;
   off1?: Num;
+  /** Picked edges meeting at a corner: the gap left between their mitred flanges (default 0.1 mm). */
+  gap?: Num;
 }
 
 /** Hem: the edge folded back on itself. */
@@ -66,6 +68,16 @@ export interface SmHemFeature {
   /** Material inside (default: the hem's fold sits at the old edge) or outside (the hem is added beyond it). */
   position?: "inside" | "outside";
   flip?: boolean;
+}
+
+/** Break corner: outside corners of flat faces rounded or chamfered through the thickness. */
+export interface SmCornerFeature {
+  id: string; type: "smcorner"; name: string; suppressed?: boolean;
+  /** Thickness edges at the corners (between two side faces of one flat face). */
+  edges: EdgeRef[];
+  kind: "chamfer" | "fillet";
+  /** Chamfer distance along both edges, or fillet radius. */
+  size: Num;
 }
 
 /** Flat pattern: the folded sheet unfolded onto the plane of its first face. */
@@ -111,8 +123,8 @@ export interface SmTabFeature {
   sketch: string;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smflat"]);
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

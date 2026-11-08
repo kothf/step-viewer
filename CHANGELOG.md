@@ -5,11 +5,75 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.193.0] - 2026-11-08
+## [1.212.0] - 2026-11-08
 
 ### Added
 
 - **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+
+## [1.208.0] - 2026-11-08
+
+### Added
+
+- Drawings of an assembly: a model view can show **one component alone** (view panel → Components), so part details go on the assembly's own drawing. Its projected and section views follow, and its centre marks, smart dimensions and hole callouts use only that component's edges.
+
+### Fixed
+
+- Switching a drawing between first and third angle projection left the views where they were, so the view under the front view silently became a bottom view. Each projected view now stays the same view and moves across its parent, and a projected view dragged across its parent stops on its own side (as in SolidWorks).
+
+## [1.206.0] - 2026-11-08
+
+### Added
+
+- **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
+
+## [1.205.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
+
+## [1.202.0] - 2026-11-08
+
+### Added
+
+- Revision clouds on drawing sheets (Annotation → **Revision cloud**): click the corners of the changed area, then the first corner again or Enter. The cloud takes the last revision letter from the revision table (shown in a triangle), its arc size and letter can be changed in the panel, and it is picked on its outline only, so views inside it stay draggable. It goes into every export like the rest of the sheet.
+
+## [1.200.0] - 2026-11-08
+
+### Added
+
+- Drawing model views of a part with configurations can show another configuration (FR-DRW-010): pick it under **Configuration** in the view panel. Projected, section and detail views made from that view follow it, and dimensions on them measure that configuration.
+
+## [1.199.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Mate value** results (Add track… → Mate value), as SolidWorks' Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
+
+## [1.197.0] - 2026-11-08
+
+### Added
+
+- Drawing notes can link to sheet properties (FR-DRW-023): `$PRP:"Material"` (also `$PRPSHEET:`) shows the title block's value, so the note follows the model and the sheet. The Note panel's **Link to property** list inserts one. Unknown names stay as typed.
+
+## [1.196.0] - 2026-11-08
+
+### Fixed
+
+- **↑ and ↓ did nothing in the Top and Bottom views.** Tilting the view from Top or Bottom (to look down a hole, say) silently did nothing, because the tilt axis was taken from the world's up direction, which has no sideways part when looking straight down. They now tilt about the screen's horizontal axis. Turning up from Front also went over the top and back; it now stops at the top, as intended.
+
+## [1.194.0] - 2026-11-08
+
+### Added
+
+- **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+
+## [1.191.0] - 2026-11-08
+
+### Added
+
+- Motion studies: a trace path can be traced **Relative to** another component, as in SolidWorks' Trace Path. The path is then the one seen from that component (the shape a cam or slot would need), drawn moving with it, and its plots and CSV are in that component's coordinates (FR-FT-122).
 
 ## [1.190.0] - 2026-11-08
 
@@ -1447,8 +1511,18 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.193.0...HEAD
-[1.193.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.193.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.212.0...HEAD
+[1.212.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.212.0
+[1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0
+[1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0
+[1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
+[1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
+[1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
+[1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
+[1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
+[1.196.0]: https://github.com/kothf/step-viewer/compare/v1.194.0...v1.196.0
+[1.194.0]: https://github.com/kothf/step-viewer/compare/v1.191.0...v1.194.0
+[1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0
 [1.190.0]: https://github.com/kothf/step-viewer/compare/v1.189.0...v1.190.0
 [1.189.0]: https://github.com/kothf/step-viewer/compare/v1.187.0...v1.189.0
 [1.187.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.187.0

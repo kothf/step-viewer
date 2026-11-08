@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmBaseFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { occ } from "./occ";
@@ -228,4 +228,56 @@ test("sheet metal: holes cut in flat faces show in the flat pattern (FR-FT-120)"
   assert.equal(dr.entities.filter(e => e.kind === "circle").length, 2);
   // Without cuts the flat pattern keeps its exact sketch outline.
   assert.equal(run(doc([s, base(), fl, flat])).sheet!.flatEdges, undefined);
+});
+
+test("sheet metal: edge flanges on edges meeting at a corner are mitred (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const { apply } = await import("../../src/sheetmetal/sheet");
+  const s = rect("s", 0, 0, 100, 50);
+  // Front (y = 0) and right (x = 100) edges: the front edge ends where the right one starts.
+  const fl = (gap: number): SmFlangeFeature => ({ id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }], length: { v: 30 }, angle: { v: Math.PI / 2 }, gap: { v: gap } });
+  for (const gap of [0.1, 5]) {
+    const r = run(doc([s, base(), fl(gap)]));
+    close(r.size[0], 100, 1e-6); close(r.size[1], 50, 1e-6); close(r.size[2], 30, 1e-6);
+    const st = r.sheet!;
+    for (const [id, axis] of [["f:p0", 0], ["f:p1", 1]] as const) {
+      const p = st.panels.find(x => x.id === id)!;
+      const mi = p.outer.filter(x => x.ent === "miter");
+      assert.equal(mi.length, 1, `${id} has one mitre edge`);
+      // The mid-planes meet 1 mm (T/2) inside the outer corner; each flange stops gap/2 short of it.
+      const pts = [mi[0].a, mi[0].b].map(q => apply(p.M, [q[0], q[1], 1]));
+      for (const q of pts) close(axis === 0 ? q[0] : q[1], axis === 0 ? 99 - gap / 2 : 1 + gap / 2, 1e-6);
+    }
+    assert.equal(flatLoops(st).outer.length, 1);
+    run(doc([s, base(), fl(gap), flat]));
+  }
+});
+
+test("sheet metal: break corner chamfers and rounds outside corners (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const bc = (kind: "chamfer" | "fillet", size: number, edges = [{ faces: ["b:p0:sl1", "b:p0:sl2"] as [string, string] }]): SmCornerFeature => ({ id: "c", type: "smcorner", name: "Break-Corner1", edges, kind, size: { v: size } });
+  // Chamfer 10 at (100, 0): a 10 × 10 triangle off the plate, and a new side face named after the outline piece.
+  let r = run(doc([s, base(), bc("chamfer", 10)]));
+  close(r.props.volume, (5000 - 50) * 2);
+  const p0 = r.sheet!.panels[0];
+  const piece = p0.outer.find(x => x.ent.startsWith("x"))!;
+  assert.equal(piece.kind, "line");
+  assert.ok(r.body!.names.includes(`b:p0:${piece.ent}`), "the chamfer face is named");
+  assert.equal(flatLoops(r.sheet!).outer[0].length, 5);
+  // The picked faces may come in either order; two corners at once.
+  r = run(doc([s, base(), bc("fillet", 10, [{ faces: ["b:p0:sl2", "b:p0:sl1"] }, { faces: ["b:p0:sl2", "b:p0:sl3"] }])]));
+  close(r.props.volume, (5000 - 2 * 100 * (1 - Math.PI / 4)) * 2, 1e-6);
+  assert.equal(r.sheet!.panels[0].outer.filter(x => x.kind === "arc").length, 2);
+  run(doc([s, base(), bc("fillet", 10), flat]));
+  // An edge flange on the chamfer's edge.
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", `b:p0:${piece.ent}`] }], length: { v: 15 }, angle: { v: Math.PI / 2 } };
+  r = run(doc([s, base(), bc("chamfer", 10), fl]));
+  close(r.size[2], 15, 1e-6);
+  // Too big for the edge, and an edge that isn't at a corner.
+  const bad = (f: SmCornerFeature) => m.evaluate(doc([s, base(), f])).statuses.find(x => x.id === "c")!;
+  assert.equal(bad(bc("chamfer", 60)).ok, false);
+  assert.equal(bad(bc("chamfer", 5, [{ faces: ["b:p0:sl1", "b:p0:sl3"] }])).ok, false);
 });

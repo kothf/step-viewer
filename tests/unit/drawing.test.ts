@@ -146,6 +146,12 @@ test("section/aux directions: a view from the right of a line is the third-angle
   // Detail views reuse their parent's projection.
   const det = { id: "d", name: "D", kind: "detail" as const, parent: "a", c: [0, 0] as [number, number], r: 5, x: 0, y: 0 };
   assert.equal(viewReq({ ...sheet, views: [...sheet.views, det] }, det).key, req.key);
+  // A model view of some components alone: its own views carry the list and a key of their own.
+  const solo = { ...sheet, views: [{ ...sheet.views[0], only: ["c2"] }, sheet.views[1]] };
+  const sr = viewReq(solo, solo.views[1]);
+  assert.deepEqual(sr.only, ["c2"]);
+  assert.notEqual(sr.key, req.key);
+  assert.equal(viewReq(sheet, sheet.views[1]).only, undefined);
 });
 
 test("detail clipping and section hatching", async () => {
@@ -657,4 +663,74 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(Math.max(...hs) < seed);
   assert.ok(d.includes("LWPOLYLINE") && d.includes("*Model_Space") && d.includes("ACAD_GROUP"));
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
+});
+
+test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
+  const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
+  const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
+  assert.equal(expandProps('MATERIAL: $PRP:"Material"', props), "MATERIAL: Steel");
+  assert.equal(expandProps('$PRP:"Weight" / $PRP:"PartNo" / $PRPSHEET:"SW-Sheet Scale" / $PRP:"Description"', props), "1.25 kg / MC-001 / 2:1 / Plate");
+  assert.equal(expandProps('$PRP:"Nope"', props), '$PRP:"Nope"');
+  useProps({ material: "Brass" });
+  const r = notePrims({ id: "n", t: "note", pos: [0, 0], text: 'M: $PRP:"material"' }, [0, 0], null);
+  assert.equal((r.prims[0] as any).s, "M: Brass");
+});
+
+test("view configuration: projected, section and detail views follow their model view", async () => {
+  const { viewConfig, viewReq } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "Sheet1", size: "A3", landscape: true, scale: [1, 1], projection: "first", views: [
+    { id: "f", name: "F", orient: "front", x: 100, y: 100, config: "Tall" },
+    { id: "t", name: "T", parent: "f", side: [0, 1], x: 100, y: 200 },
+    { id: "d", name: "D", kind: "detail", parent: "t", c: [0, 0], r: 5, x: 200, y: 200 },
+    { id: "g", name: "G", orient: "top", x: 300, y: 100 },
+  ] } as any;
+  assert.equal(viewConfig(sheet, sheet.views[2]), "Tall");
+  assert.equal(viewConfig(sheet, sheet.views[3]), undefined);
+  const r = viewReq(sheet, sheet.views[1]);
+  assert.equal(r.cfg, "Tall");
+  assert.ok(r.key.endsWith("|cfg|Tall"));
+  assert.ok(!viewReq(sheet, sheet.views[3]).key.includes("|cfg|"));
+});
+
+test("switching first/third angle keeps each projected view the same view and moves it across its parent", async () => {
+  const { switchProjection, projectedDir, viewDir } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [
+    { id: "f", name: "F", orient: "front" as const, x: 100, y: 150 },
+    { id: "t", name: "T", parent: "f", side: [0, -1] as [number, number], x: 100, y: 80 },
+    { id: "r", name: "R", parent: "f", side: [1, 0] as [number, number], x: 200, y: 150 },
+    { id: "rr", name: "RR", parent: "r", side: [1, 0] as [number, number], x: 280, y: 150 }] };
+  const before = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  switchProjection(sheet as any, "third");
+  const after = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  assert.deepEqual(after, before);
+  assert.deepEqual(sheet.views.map(v => [v.x, v.y]), [[100, 150], [100, 220], [0, 150], [-80, 150]]);
+  assert.equal(sheet.projection, "third");
+  void projectedDir;
+});
+
+
+test("a component-only view keeps the topology of its components only", async () => {
+  const { topoOnly } = await import("../../src/drawing/views");
+  const topo = { edges: [{ k: "c1@f1|c1@f2" }, { k: "c2@f1|c2@f3" }, { k: "s1/c3@f0|s1/c3@f1" }], cyls: [{ f: "c1@f4" }, { f: "c2@f2" }, {}] };
+  const a = topoOnly(topo, ["c2"]);
+  assert.deepEqual(a.edges.map(e => e.k), ["c2@f1|c2@f3"]);
+  assert.deepEqual(a.cyls.map(c => c.f), ["c2@f2"]);
+  assert.deepEqual(topoOnly(topo, ["s1"]).edges.map(e => e.k), ["s1/c3@f0|s1/c3@f1"]);
+  assert.equal(topoOnly(topo, undefined), topo);
+});
+
+test("revision cloud: scallops bulge outwards whichever way the corners go", async () => {
+  const { cloudPrims } = await import("../../src/drawing/annot");
+  for (const pts of [[0, 0, 30, 0, 30, 20, 0, 20], [0, 0, 0, 20, 30, 20, 30, 0]]) {
+    const r = cloudPrims({ id: "c", t: "cloud", pos: [100, 50], pts, arc: 10 });
+    const arcs = r.prims.filter(p => p.t === "a") as any[];
+    assert.equal(arcs.length, 3 + 2 + 3 + 2);
+    for (const a of arcs) {
+      const m = (a.a0 + a.a1) / 2, x = a.o[0] + a.r * Math.cos(m), y = a.o[1] + a.r * Math.sin(m);
+      assert.ok(x < 100 + 1e-9 || x > 130 - 1e-9 || y < 50 + 1e-9 || y > 70 - 1e-9, "bulge outside the rectangle");
+    }
+    assert.deepEqual(r.box.map(v => Math.round(v * 100) / 100), [95, 45, 135, 75]);
+  }
+  const rv = cloudPrims({ id: "c", t: "cloud", pos: [0, 0], pts: [0, 0, 10, 0, 10, 10], rev: "B" });
+  assert.ok(rv.prims.some(p => p.t === "t" && p.s === "B"));
 });

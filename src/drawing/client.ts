@@ -14,6 +14,8 @@ import { dirKey, type Align, type Stair } from "./views";
 export interface CompInfo { id: string; part: string; name: string }
 export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[] }
 
+const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps });
+
 export class DrawingKernel {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
@@ -23,6 +25,9 @@ export class DrawingKernel {
   /** Bumped at every load: answers for an older model are dropped. */
   gen = 0;
   readonly cache = new Map<string, Projection>();
+  /** Facts of the part's other configurations (FR-DRW-010), by name, once built. */
+  readonly configs = new Map<string, ModelFacts>();
+  private cfgLoading = new Map<string, Promise<ModelFacts>>();
   private inflight = new Map<string, Promise<Projection>>();
 
   constructor(private base: string) {}
@@ -58,6 +63,8 @@ export class DrawingKernel {
     this.loaded = null;
     this.cache.clear();
     this.inflight.clear();
+    this.configs.clear();
+    this.cfgLoading.clear();
   }
 
   /** Loads the model; the projection cache starts over. */
@@ -65,8 +72,29 @@ export class DrawingKernel {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps }));
+    this.configs.clear();
+    this.cfgLoading.clear();
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(facts);
     return this.loaded;
+  }
+
+  /** Builds another configuration of the loaded part (once) and gives its facts. */
+  config(name: string): Promise<ModelFacts> {
+    const have = this.configs.get(name);
+    if (have) return Promise.resolve(have);
+    let p = this.cfgLoading.get(name);
+    if (!p) {
+      if (!this.loaded) return Promise.reject(new Error("No model loaded"));
+      const gen = this.gen;
+      p = this.loaded.then(() => this.call<ModelFacts>({ type: "config", name })).then(r => {
+        const f = facts(r);
+        if (gen === this.gen) this.configs.set(name, f);
+        return f;
+      });
+      p.catch(() => { if (gen === this.gen) this.cfgLoading.delete(name); });
+      this.cfgLoading.set(name, p);
+    }
+    return p;
   }
 
   get hasModel() { return !!this.loaded; }
@@ -99,7 +127,7 @@ export class DrawingKernel {
   project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; key: string }): Promise<Projection> {
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
     const { view, key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
@@ -107,7 +135,8 @@ export class DrawingKernel {
     if (!p) {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
-      p = this.loaded.then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude } : { type: "project", view, shade: req.shade })).then(r => {
+      const cfg = req.cfg;
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
         if (gen === this.gen) this.cache.set(key, r.proj);
         this.inflight.delete(key);
         return r.proj;

@@ -15,7 +15,8 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
-import { TRACE_COLORS, TRACE_PLOTS, accels, pathLength, plotSvg, plotUnit, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
+import { MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -23,6 +24,8 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const fmt = (v: number, d = 2) => String(Math.round(v * 10 ** d) / 10 ** d);
 const num = (s: string) => Number(s.trim().replace(",", "."));
 const DEG = Math.PI / 180;
+/** A rigid 3×4 transform as a three.js matrix. */
+const tfMatrix = (m: Tf) => new THREE.Matrix4().set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], 0, 0, 0, 1);
 
 /** The selected key (by index into the track's sorted keys) or motor bar. */
 type Sel = { track: string; key?: number } | null;
@@ -57,11 +60,19 @@ export class MotionManager {
   private traceKey = "";
   /** Each trace's world points per frame (by trace id). */
   private tracePts = new Map<string, V3[]>();
+  /** Mate value results: distance and angle per frame. */
+  private mateVals = new Map<string, { dist: number[]; angle: number[] }>();
   /** Each trace's component angle (degrees from the first frame) per frame (by trace id). */
   private traceAng = new Map<string, number[]>();
+  /** The last interference check (Results → Interference): pairs with their time spans, for the frames it was run on. */
+  clash: { study: string; key: string; items: ClashItem[]; ignored: number } | null = null;
+  /** The interference results are what the panel under the timeline shows (until a key, motor or trace is selected). */
+  private clashOpen = false;
+  /** Count pairs that already touch at the start (SolidWorks: treat coincidence as interference). */
+  clashAll = false;
   /** The selected key or motor; setting it drops the other selected keys. */
   get sel(): Sel { return this._sel; }
-  set sel(v: Sel) { this._sel = v; this.more = []; if (v) this.selTrace = null; }
+  set sel(v: Sel) { this._sel = v; this.more = []; if (v) { this.selTrace = null; this.clashOpen = false; } }
   /** The copied keys (Ctrl+C or the key menu): each with its track, the unit of that track and its time after the first. */
   private clip: { items: { track: string; unit: string; dt: number; key: AnyKey }[] } | null = null;
   /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
@@ -320,6 +331,59 @@ export class MotionManager {
     return tfs;
   }
 
+  // ---------- interference (Results → Interference Detection) ----------
+
+  /** What an interference check depends on: the solved frames, placement and explode keys. */
+  private clashKey() {
+    return JSON.stringify([this.key0(), this.study.tracks.filter(k => (k.kind === "pose" || k.kind === "explode") && !k.off), this.clashAll]);
+  }
+
+  /** Poses every frame and lists the pairs of components that enter one another, with when; shows them in the panel. */
+  checkInterference(): ClashItem[] {
+    const s = this.study, n = frameCount(s), doc = this.asm.doc;
+    if (!doc) return [];
+    this.ensure(n - 1);
+    const mates = new Map((doc.mates ?? []).map(m => [m.id, m]));
+    const per: [string, string][][] = [];
+    for (let k = 0; k < n; k++) {
+      this.asm.motionShow(this.tfsAt(k), frameAt(s, k / s.fps, mates).explode);
+      per.push(this.asm.motionClashes());
+    }
+    // Pairs touching at the start (a pin in its hole, faces mated together) are left out unless asked for.
+    const ignore = this.clashAll ? new Set<string>() : new Set(per[0].map(([a, b]) => pairKey(a, b)));
+    const items = clashItems(per, s.fps, ignore);
+    this.clash = { study: s.id, key: this.clashKey(), items, ignored: ignore.size };
+    this.sel = null;
+    this.selTrace = null;
+    this.clashOpen = true;
+    this.render();
+    this.showAt(this.time);
+    return items;
+  }
+
+  private compName(id: string) { return this.asm.doc?.components.find(c => c.id === id)?.name ?? id; }
+
+  /** Red bands along the bottom of the ruler where anything interferes (from the last check). */
+  private clashLane(): string {
+    const c = this.clash;
+    if (!c?.items.length || c.study !== this.study.id) return "";
+    const spans = c.items.flatMap(it => it.spans), f = 1 / this.study.fps;
+    return spans.map(([a, b]) => `<span class="mo-cspan" aria-hidden="true" style="left:${this.x(a)};width:calc(${this.x(Math.min(this.study.duration, b + f) - a)})"></span>`).join("");
+  }
+
+  private clashProps(): string {
+    const c = this.clash!, stale = c.key !== this.clashKey();
+    const rows = c.items.map(it => `<li class="mo-clash"><span translate="no">${esc(this.compName(it.a))} ↔ ${esc(this.compName(it.b))}</span> `
+      + it.spans.map(([a, b]) => `<button class="btn small" data-clt="${a}" title="${esc(t("Go to {t} s", { t: fmt(a) }))}">${esc(a === b ? `${fmt(a)} ${t("s")}` : `${fmt(a)}–${fmt(b)} ${t("s")}`)}</button>`).join(" ") + `</li>`).join("");
+    return `<strong>${esc(t("Interference"))}</strong> `
+      + `<span class="muted">${esc(c.items.length ? t("{n} pairs of components interfere.", { n: c.items.length }) : t("No interference found."))}${c.ignored ? " " + esc(t("{n} pairs touching at the start left out.", { n: c.ignored })) : ""}${stale ? " " + esc(t("The study changed since the check.")) : ""}</span>`
+      + `<label class="mo-f"><input type="checkbox" data-mo="clashall"${this.clashAll ? " checked" : ""} /><span>${esc(t("Treat coincidence as interference"))}</span></label>`
+      + `<button class="btn small" data-mo="clash">${esc(t("Check again"))}</button>`
+      + (c.items.length ? `<button class="btn small" data-mo="clashcsv" title="${esc(t("Save the interfering pairs and times as CSV"))}">CSV</button>` : "")
+      + `<button class="btn small" data-mo="clashclose">${esc(t("Close"))}</button>`
+      + (rows ? `<ul class="mo-clashes">${rows}</ul>` : "");
+  }
+
   // ---------- trace paths (Results → Trace Path) ----------
 
   private get traces(): TracePath[] { return this.study.traces ?? []; }
@@ -358,6 +422,25 @@ export class MotionManager {
     this.showAt(this.time);
   }
 
+  /** Adds a mate value result (Results → Plot of a mate's distance or angle) and selects it. */
+  addMatePlot(mate: string) {
+    const m = (this.asm.doc?.mates ?? []).find(k => k.id === mate);
+    if (!m) return;
+    const id = uid("tr_"), color = TRACE_COLORS[this.traces.length % TRACE_COLORS.length];
+    const angular = m.type === "angle" || m.type === "limitangle" || m.type === "gear" || m.type === "hinge";
+    this.edit(st => { (st.traces ??= []).push({ id, comp: "", mate, p: [0, 0, 0], color, plot: angular ? "angle" : "dist" }); });
+    this.sel = null;
+    this.selTrace = id;
+    this.render();
+    this.showAt(this.time);
+  }
+
+  /** A mate value result's distance (mm) and angle (degrees) over the whole study. */
+  mateValues(id: string): { dist: number[]; angle: number[] } {
+    this.tracePath(id);
+    return this.mateVals.get(id) ?? { dist: [], angle: [] };
+  }
+
   deleteTrace(id: string) {
     this.edit(st => { st.traces = (st.traces ?? []).filter(x => x.id !== id); if (!st.traces.length) delete st.traces; });
     if (this.selTrace === id) this.selTrace = null;
@@ -387,7 +470,7 @@ export class MotionManager {
   /** Draws the paths (solving every frame once when the study or the traces change) and moves the markers to frame `i`. */
   private syncTraces(i: number) {
     const tr = this.traces, g = this.traceGroup;
-    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); return; }
+    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); this.mateVals.clear(); return; }
     const s = this.study, n = frameCount(s);
     const key = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off), tr]);
     if (key !== this.traceKey) {
@@ -395,13 +478,24 @@ export class MotionManager {
       this.traceKey = key;
       this.tracePts.clear();
       this.traceAng.clear();
-      for (const c of [...g.children]) { c.removeFromParent(); const o = c as THREE.Line; o.geometry?.dispose(); (o.material as THREE.Material)?.dispose(); }
+      this.mateVals.clear();
+      for (const c of [...g.children]) {
+        c.removeFromParent();
+        c.traverse(o => { const m = o as THREE.Line; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); });
+      }
       const all: Record<string, Tf>[] = [];
       for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
+      const mates = new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m]));
       for (const x of tr) {
-        const pts = tracePoints(all, x.comp, x.p);
+        if (x.mate) {
+          const m = mates.get(x.mate), ga = m && this.asm.localGeo(m.a), gb = m && this.asm.localGeo(m.b);
+          this.mateVals.set(x.id, m && ga && gb ? mateMeasures(all, m.a.comp, m.b.comp, ga, gb) : { dist: [], angle: [] });
+          continue;
+        }
+        // Relative to a component: the path is kept in its coordinates and drawn in a group that moves with it.
+        const fr = x.rel ? relativeFrames(all, x.rel) : all, pts = tracePoints(fr, x.comp, x.p);
         this.tracePts.set(x.id, pts);
-        this.traceAng.set(x.id, traceAngles(all, x.comp));
+        this.traceAng.set(x.id, traceAngles(fr, x.comp));
         if (x.off || pts.length < 1) continue;
         const geo = new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(q[0], q[1], q[2])));
         const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: x.color, depthTest: false, transparent: true }));
@@ -411,13 +505,24 @@ export class MotionManager {
           new THREE.PointsMaterial({ color: x.color, size: x.id === this.selTrace ? 9 : 7, sizeAttenuation: false, depthTest: false, transparent: true }));
         dot.renderOrder = 999;
         dot.userData.dot = x.id;
-        g.add(line, dot);
+        const sub = new THREE.Group();
+        sub.userData.trace = x.id;
+        sub.userData.rel = x.rel;
+        sub.matrixAutoUpdate = false;
+        sub.add(line, dot);
+        g.add(sub);
       }
     }
     if (!g.parent) this.viewer.scene.add(g);
-    for (const c of g.children) {
-      const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
-      if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+    const now = tr.some(x => x.rel) ? this.tfsAt(i) : null;
+    for (const sub of g.children) {
+      const rel = sub.userData.rel as string | undefined, r = rel && now?.[rel];
+      sub.matrix.copy(r ? tfMatrix(r) : new THREE.Matrix4());
+      sub.matrixWorldNeedsUpdate = true;
+      for (const c of sub.children) {
+        const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
+        if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+      }
     }
     this.updatePlot(i);
   }
@@ -430,6 +535,7 @@ export class MotionManager {
   }
 
   private plotHtml(x: TracePath, i: number): string {
+    if (x.mate) return this.matePlotHtml(x, i);
     const pts = this.tracePts.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
     if (!pts.length) return "";
     const ang = this.traceAng.get(x.id) ?? [], vals = traceSeries(pts, s.fps, q, ang), j = Math.min(pts.length - 1, Math.max(0, i)), p = pts[j];
@@ -441,14 +547,40 @@ export class MotionManager {
     return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
   }
 
+  private matePlotHtml(x: TracePath, i: number): string {
+    const mv = this.mateVals.get(x.id), s = this.study, q = (x.plot ?? "dist") as TracePlot;
+    if (!mv?.dist.length) return `<span class="muted">${esc(t("The mate's references are not available."))}</span>`;
+    const j = Math.min(mv.dist.length - 1, Math.max(0, i)), dr = rates(mv.dist, s.fps), ar = rates(mv.angle, s.fps);
+    const vals = q === "speed" ? dr : q === "angle" ? mv.angle : q === "aspeed" ? ar : mv.dist;
+    const label = t(MATE_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance");
+    const read = t("At {t} s: distance {d} mm ({v} mm/s); angle {a}° ({w}°/s)", { t: fmt(j / s.fps), d: fmt(mv.dist[j]), v: fmt(dr[j]), a: fmt(mv.angle[j]), w: fmt(ar[j]) });
+    return plotSvg(vals, s.fps, this.time, t(plotUnit(q)), x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
+  }
+
   private traceProps(x: TracePath): string {
+    if (x.mate) {
+      const i = Math.round(this.time * this.study.fps);
+      return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${MATE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+        + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
+        + `<button class="btn small" data-tr="csv" title="${esc(t("Save the values as CSV (time, distance, angle)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
+        + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
+    }
     const pts = this.tracePts.get(x.id) ?? [], i = Math.round(this.time * this.study.fps);
     return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${TRACE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+      + this.relField(x)
       + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
       + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
+  }
+
+  /** "Relative to": world, or another top-level component the path is seen from (it then moves with that component). */
+  private relField(x: TracePath): string {
+    const own = x.comp.split("/")[0], comps = (this.asm.doc?.components ?? []).filter(c => !c.suppressed && c.id !== own);
+    return `<label class="mo-f"><span>${esc(t("Relative to"))}</span><select data-tr="rel"><option value="">${esc(t("World"))}</option>`
+      + comps.map(c => `<option value="${esc(c.id)}" translate="no"${x.rel === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("") + `</select></label>`;
   }
 
   private setCamera(k: CamKey) {
@@ -643,7 +775,8 @@ export class MotionManager {
       ...this.movable().filter(c => !s.tracks.some(k => k.kind === "pose" && k.comp === c.id)).map(c => `<option value="pose:${esc(c.id)}" translate="no">${esc(t("Placement"))}: ${esc(c.name)}</option>`),
       ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
       ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`]),
-      `<option value="trace:">${esc(t("Trace path…"))}</option>`].join("");
+      `<option value="trace:">${esc(t("Trace path…"))}</option>`,
+      ...(doc.mates ?? []).filter(m => !m.suppressed).map(m => `<option value="mplot:${esc(m.id)}" translate="no">${esc(t("Mate value"))}: ${esc(m.name)}</option>`)].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
     const shown = s.duration / this.zoom;
     const step = shown <= 0.6 ? 0.05 : shown <= 1.5 ? 0.1 : shown <= 3 ? 0.5 : shown <= 20 ? 1 : shown <= 60 ? 5 : 10;
@@ -655,6 +788,11 @@ export class MotionManager {
       return `<div class="mo-name${sel ? " sel" : ""}${k.off ? " off" : ""}" data-track="${esc(k.id)}"><span class="mo-ico" aria-hidden="true">${l.icon}</span><span class="mo-kind">${esc(l.kind)}</span>${l.name ? `<span class="mo-tn" translate="no">${esc(l.name)}</span>` : ""}`
         + `<span class="mo-acts"><input type="checkbox" data-on="${esc(k.id)}"${k.off ? "" : " checked"} title="${esc(t("Track on"))}" aria-label="${esc(t("Track on"))}" />${ib(`del:${k.id}`, "✕", t("Delete track"))}</span></div>`;
     }).join("") + this.traces.map(x => {
+      if (x.mate) {
+        const m = (doc.mates ?? []).find(k => k.id === x.mate);
+        return `<div class="mo-name mo-trace${this.selTrace === x.id ? " sel" : ""}" data-trace="${esc(x.id)}"><span class="mo-ico" aria-hidden="true" style="color:${esc(x.color)}">∿</span><span class="mo-kind">${esc(t("Mate value"))}</span><span class="mo-tn" translate="no">${esc(m?.name ?? "?")}</span>`
+          + `<span class="mo-acts">${ib(`tdel:${x.id}`, "✕", t("Delete result"))}</span></div>`;
+      }
       const c = doc.components.find(k => k.id === x.comp || k.id === x.comp.split("/")[0]);
       return `<div class="mo-name mo-trace${this.selTrace === x.id ? " sel" : ""}${x.off ? " off" : ""}" data-trace="${esc(x.id)}"><span class="mo-ico" aria-hidden="true" style="color:${esc(x.color)}">〰</span><span class="mo-kind">${esc(t("Trace path"))}</span><span class="mo-tn" translate="no">${esc(c?.name ?? "?")}</span>`
         + `<span class="mo-acts"><input type="checkbox" data-ton="${esc(x.id)}"${x.off ? "" : " checked"} title="${esc(t("Show the path"))}" aria-label="${esc(t("Show the path"))}" />${ib(`tdel:${x.id}`, "✕", t("Delete trace path"))}</span></div>`;
@@ -691,11 +829,12 @@ export class MotionManager {
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`
       + `<button class="btn small" data-mo="orbit" title="${esc(t("Rotate the model once round over the study (camera keys)"))}">${esc(t("Rotate model"))}</button>`
+      + `<button class="btn small" data-mo="clash" title="${esc(t("Check where components enter one another over the study"))}">${esc(t("Interference"))}</button>`
       + `<span class="mo-sp"></span>`
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
-      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
+      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}${this.clashLane()}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
     this.pane.prepend(this.grip);
     const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw");
@@ -733,6 +872,7 @@ export class MotionManager {
     const tx = this.selTrace ? this.traces.find(k => k.id === this.selTrace) : undefined;
     if (tx) return this.traceProps(tx);
     const sel = this.sel, tr = sel && this.study.tracks.find(k => k.id === sel.track);
+    if ((!sel || !tr) && this.clashOpen && this.clash?.study === this.study.id) return this.clashProps();
     if (!sel || !tr) return `<span class="muted">${esc(t("Select a key or a motor to edit it; double-click a track to add a key."))}</span>`;
     const field = (label: string, key: string, v: string, unitTxt = "") => `<label class="mo-f"><span>${esc(label)}</span><input type="text" inputmode="decimal" class="mo-n" data-p="${key}" value="${esc(v)}" />${unitTxt ? `<span class="muted">${esc(unitTxt)}</span>` : ""}</label>`;
     const interpSel = (v: Interp | undefined) => `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="interp">${INTERPS.map(([k, l]) => `<option value="${k}"${(v ?? "linear") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
@@ -818,17 +958,24 @@ export class MotionManager {
       else if (a === "gif") { if (this.recording) this.recording = null; else void this.recordGif(); }
       else if (a.startsWith("del:")) this.deleteTrack(a.slice(4));
       else if (a.startsWith("tdel:")) this.deleteTrace(a.slice(5));
+      else if (a === "clash") this.checkInterference();
+      else if (a === "clashclose") { this.clashOpen = false; this.render(); }
+      else if (a === "clashcsv" && this.clash) download(new Blob([clashCsv(this.clash.items, id => this.compName(id))], { type: "text/csv" }), `${this.fileBase()}-interference.csv`);
     });
+    on("input[data-mo=clashall]", "change", (_e, el) => { this.clashAll = (el as HTMLInputElement).checked; this.checkInterference(); });
+    on("button[data-clt]", "click", (_e, el) => this.seek(Number(el.dataset.clt)));
     on("select[data-mo=study]", "change", (_e, el) => { this.stop(); this.studyId = (el as HTMLSelectElement).value; this.sel = null; this.render(); this.showAt(0); });
-    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v) this.addTrack(v); });
+    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v.startsWith("mplot:")) this.addMatePlot(v.slice(6)); else if (v) this.addTrack(v); });
     on(".mo-name[data-trace]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = null; this.selTrace = el.dataset.trace!; this.render(); this.showAt(this.time); });
     on("input[data-ton]", "change", (_e, el) => { const v = (el as HTMLInputElement).checked; this.setTrace(el.dataset.ton!, x => { if (v) delete x.off; else x.off = true; }); });
     on("select[data-tr=plot]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value as TracePlot; this.setTrace(this.selTrace!, x => { if (v === "dist") delete x.plot; else x.plot = v; }); });
+    on("select[data-tr=rel]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; this.setTrace(this.selTrace!, x => { if (v) x.rel = v; else delete x.rel; }); });
     on("input[data-tr=color]", "change", (_e, el) => { const v = (el as HTMLInputElement).value; this.setTrace(this.selTrace!, x => { x.color = v; }); });
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
-      if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps, this.traceAngle(x.id))], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
+      if (x?.mate) { const mv = this.mateValues(x.id); download(new Blob([mateCsv(mv.dist, mv.angle, this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-mate.csv`); }
+      else if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps, this.traceAngle(x.id))], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
     });
     on("select[data-mo=mode]", "change", (_e, el) => this.edit(st => { st.play = (el as HTMLSelectElement).value as MotionStudy["play"]; }));
     on("select[data-mo=speed]", "change", (_e, el) => { this.speed = Number((el as HTMLSelectElement).value); if (this.playing) { this.pause(); this.play(); } });

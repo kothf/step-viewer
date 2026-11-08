@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, pathLength, plotSvg, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, mateCsv, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -260,7 +260,53 @@ test("trace paths: points through the frames, speed, series, length, CSV and plo
   assert.deepEqual(traceAngles(frames, "missing"), [0, 0, 0]);
   const csv2 = traceCsv(line, 10, [0, 5, 10, 15]).trim().split("\n");
   assert.ok(csv2[0].endsWith(",angle (deg)") && csv2[2].endsWith(",5"));
+  // Relative to a component: a point riding on a turning, moving base stays put in the base's coordinates, and
+  // spinning together means no relative turn; a frame without the base keeps its last transform.
+  const tr = (a: number, x: number) => { const m = turn(a); m[3] = x; return m; };
+  const ride = [0, 1, 2, 3].map(k => ({ base: tr(k * 0.3, k * 5), pin: compose(tr(k * 0.3, k * 5), [1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, 4]) }));
+  const rel = relativeFrames(ride, "base");
+  tracePoints(rel, "pin", [0, 0, 0]).forEach(p => assert.ok(Math.hypot(p[0] - 2, p[1] - 3, p[2] - 4) < 1e-9, String(p)));
+  traceAngles(rel, "pin").forEach(v => assert.ok(Math.abs(v) < 1e-6));
+  assert.ok(Math.abs(traceAngles(ride, "pin")[3]) > 50);
+  const gap = relativeFrames([...ride, { pin: ride[3].pin }], "base");
+  assert.ok(Math.hypot(...tracePoints(gap, "pin", [0, 0, 0])[4].map((v, k) => v - [2, 3, 4][k])) < 1e-9);
+  assert.equal(relativeFrames([{ pin: ride[0].pin }], "base")[0].pin, ride[0].pin);
+  // Mate values: a plane sliding 5 mm per frame along its normal from a fixed plane, signed; a crank plane turning
+  // 60° per frame about Z against a fixed plane keeps counting past 180°; two crossing axes give the gap between the lines.
+  const P = { k: "plane" as const, p: [0, 0, 0] as [number, number, number], n: [1, 0, 0] as [number, number, number] };
+  const slide = [0, 1, 2, 3].map(k => ({ g: IDENTITY, s: translation([10 - 5 * k, 0, 0]) }));
+  const sv = mateMeasures(slide, "g", "s", P, P);
+  assert.deepEqual(sv.dist, [10, 5, 0, -5]);
+  assert.deepEqual(sv.angle, [0, 0, 0, 0]);
+  const crank = [0, 1, 2, 3, 4, 5, 6].map(k => ({ g: IDENTITY, c: turn(k * Math.PI / 3) }));
+  const cv = mateMeasures(crank, "g", "c", P, P);
+  cv.angle.forEach((v, k) => assert.ok(Math.abs(Math.abs(v) - 60 * k) < 1e-6, `crank ${k}: ${v}`));
+  const ax = (p: [number, number, number], d: [number, number, number]) => ({ k: "axis" as const, p, d, r: 1 });
+  const xv = mateMeasures([{ g: IDENTITY, s: IDENTITY }], "g", "s", ax([0, 0, 0], [1, 0, 0]), ax([0, 3, 7], [0, 0, 1]));
+  assert.ok(Math.abs(xv.dist[0] - 3) < 1e-9 && Math.abs(Math.abs(xv.angle[0]) - 90) < 1e-9);
+  const pv = mateMeasures([{ g: IDENTITY, s: IDENTITY }, {}], "g", "s", ax([0, 4, 0], [0, 1, 0]), ax([0, 0, 2], [0, 1, 0]));
+  assert.deepEqual(pv.dist, [4, 4].map(() => pv.dist[0]));
+  assert.ok(Math.abs(pv.dist[0] - 2) < 1e-9);
+  const mc = mateCsv([10, 5], [0, 45], 10).trim().split("\n");
+  assert.equal(mc[0], "t (s),distance (mm),angle (deg)");
+  assert.equal(mc[2], "0.1,5,45");
   const svg = plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance");
   assert.match(svg, /<polyline points="[^"]+"/);
   assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
+});
+
+test("motion interference over a study: per-frame pairs become spans per pair; pairs touching at the start can be left out (FR-FT-122)", async () => {
+  const { clashItems, clashCsv, pairKey } = await import("../../src/motion/interfere");
+  const per: [string, string][][] = [[["p", "q"]], [["p", "q"]], [["b", "a"], ["p", "q"]], [["a", "b"]], [], [["b", "a"]]];
+  const all = clashItems(per, 10);
+  assert.deepEqual(all.map(x => x.key), ["p|q", "a|b"]);
+  assert.deepEqual(all[1].frames, [2, 3, 5]);
+  assert.deepEqual(all[1].spans, [[0.2, 0.3], [0.5, 0.5]]);
+  assert.deepEqual(all[0].spans, [[0, 0.2]]);
+  const moving = clashItems(per, 10, new Set([pairKey("q", "p")]));
+  assert.deepEqual(moving.map(x => x.key), ["a|b"]);
+  const csv = clashCsv(moving, id => (id === "a" ? "Pin, 1" : "Plate")).trim().split("\n");
+  assert.equal(csv[0], "component 1,component 2,from (s),to (s)");
+  assert.deepEqual(csv.slice(1), ['"Pin, 1",Plate,0.2,0.3', '"Pin, 1",Plate,0.5,0.5']);
+  assert.deepEqual(clashItems([], 30), []);
 });
