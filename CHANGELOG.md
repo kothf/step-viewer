@@ -5,11 +5,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.123.0] - 2026-11-08
+## [1.125.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as SolidWorks' timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
+
+## [1.122.0] - 2026-11-08
+
+### Added
+
+- **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
+## [1.121.0] - 2026-11-08
+
+### Added
+
+- **Command bar** (FRS 13.2, FR-UI-010 to FR-UI-013, FR-UI-117 to FR-UI-119): one tabbed bar under the header holds every 3D command, as in SolidWorks' CommandManager.
+  - A part shows the tabs **Features**, **Sketch**, **Surfaces**, **Weldments** and **Evaluate**. An assembly shows **Assembly** and **Evaluate**. A plain model shows **Evaluate**.
+  - The measuring tools, which had their own row in the header, are now on the **Evaluate** tab.
+  - Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab strip.
+  - Entering a sketch switches to the Sketch tab; leaving it goes back to Features.
+  - The bar switches to icons only when it is too narrow, and the arrow keys move between tabs.
+- **Make assembly from part** (New ▾): a new assembly with the open part as its first component, fixed at the origin, including unsaved changes.
+- **Ctrl+K command search** (FR-UI-014): type part of a command's name and press Enter to run it.
+- **Check sketch for feature** (FR-SK-073): the sketch panel checks the sketch for an extrude, revolve, loft or sweep profile, sweep path or rib, and points at open ends, overlaps, crossings and zero-length lines.
+- **Sizes typed while drawing**: while you draw a line, rectangle or circle, typing a number opens length or size boxes; Enter places the shape with driving dimensions.
+
+### Changed
+
+- The right panel's tabs (Measurements, Section, Display, Properties) moved from the header to the top of the right panel.
+- The part and assembly status lines keep their place below the view; the filter bar no longer shifts the view.
+
+## [1.120.0] - 2026-11-08
+
+### Added
+
+- **Curved structural members (FR-FT-121).** Arcs in a Structural Member's path sketch now make bent members: the profile is revolved along the arc, and the cut list gives the arc length. Where a line runs on smoothly from an arc nothing is cut. At a sharp corner the line runs through the arc, and two arcs meet in a mitre. The segment list and the Corners group show arcs as "Arc n" and lines as "Line n".
 
 ## [1.119.0] - 2026-11-08
 
@@ -1095,8 +1126,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.123.0...HEAD
-[1.123.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.123.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.125.0...HEAD
+[1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
+[1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
+[1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
 [1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0

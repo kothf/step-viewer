@@ -471,3 +471,34 @@ test("offset and half sections: the staircase cutter, hatched faces on every cut
   assert.deepEqual(marks([-60, 10, 0, 10, 0, 0, 60, 0]), { arrows: 2, thick: 6, letters: 2 });
   assert.deepEqual(marks([-60, 0, 10, 0, 10, -40]), { arrows: 1, thick: 4, letters: 1 });
 });
+
+test("shaded views: triangles facing the viewer, back to front, drawn under the visible edges (FR-DRW-010)", async () => {
+  const { shadeTris } = await import("../../src/kernel/drawing");
+  const { viewReq } = await import("../../src/drawing/views");
+  const { viewPrims, placement } = await import("../../src/drawing/compose");
+  const { sheetSvg } = await import("../../src/drawing/output");
+  const { oc, shape } = await block();
+  const top = { dir: [0, 0, 1] as V3, up: [0, 1, 0] as V3 };
+  const t = shadeTris(oc, shape, top, 0.2);
+  assert.equal(t.length % 7, 0);
+  let area = 0;
+  for (let i = 0; i < t.length; i += 7) area += Math.abs((t[i + 2] - t[i]) * (t[i + 5] - t[i + 1]) - (t[i + 4] - t[i]) * (t[i + 3] - t[i + 1])) / 2;
+  assert.ok(Math.abs(area - (100 * 60 - Math.PI * 25)) < 2, `only the top face shows: ${area}`);
+  assert.ok(t.every((g, i) => i % 7 !== 6 || (g > 0.3 && g < 1)));
+  // An isometric view sees three faces, sorted back to front; its greys differ by face.
+  const iso = shadeTris(oc, shape, { dir: [1, -1, 1], up: [0, 0, 1] }, 0.2);
+  assert.ok(new Set(iso.filter((_, i) => i % 7 === 6)).size >= 3);
+  const sheet = { id: "s", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [], annots: [] } as never;
+  const v = { id: "v", name: "Top", orient: "top", x: 200, y: 150, style: "shadedEdges" } as never;
+  const req = viewReq(sheet, v);
+  assert.ok(req.shade && req.key.endsWith("|sh"));
+  assert.ok(!viewReq(sheet, { ...(v as object), style: "hlr" } as never).shade);
+  const proj = { ...project(oc, shape, top), shade: t };
+  const pl = placement(sheet, v, proj, null);
+  const pr = viewPrims(v, proj, pl);
+  const firstLine = pr.findIndex(p => p.t !== "p" || p.gray === undefined);
+  assert.equal(pr.slice(0, firstLine).length, t.length / 7, "the shading comes first");
+  assert.ok(pr.slice(firstLine).some(p => p.layer === "VISIBLE"), "shaded with edges keeps the visible edges");
+  assert.ok(!viewPrims({ ...(v as object), style: "shaded" } as never, proj, pl).some(p => p.layer === "VISIBLE" || p.layer === "HIDDEN"), "shaded alone has no edges");
+  assert.match(sheetSvg(pr, 420, 297), /fill="#[0-9a-f]{6}" stroke="#[0-9a-f]{6}"/);
+});

@@ -185,6 +185,32 @@ test("gusset faces on the two picked faces are named for the leg arrows (FR-FT-1
   near(r.volume - base.volume, 0.5 * 50 * 70 * 5, 1e-6);
 });
 
+test("curved members: arcs of the path sketch are revolved, tangent joints stay open, a corner at an arc is mitred (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // A line, a quarter arc of radius 100 tangent to it, and a line on from the arc.
+  const sk: SketchFeature = { id: "s", type: "sketch", name: "Path", plane: { std: "XY" }, rels: [], dims: [], ents: [
+    P("p0", 0, 0), P("p1", 300, 0), P("c", 300, 100), P("p2", 400, 100), P("p3", 400, 400),
+    { id: "l1", t: "line", a: "p0", b: "p1" }, { id: "a1", t: "arc", c: "c", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" },
+  ] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: ["l1", "a1", "l2"].map(ent => ({ sketch: "s", ent })), corner: "miter" };
+  const A = profileArea(profileShape("shs", "40x40x3")!);
+  const r = run(m, doc([sk, mem]));
+  assert.equal(r.info.length, 3);
+  near(r.volume, A * (600 + 50 * Math.PI), 1e-4);
+  assert.deepEqual(r.cut.map(c => [c.qty, c.length]).sort((x, y) => x[1] - y[1]), [[1, 157.1], [2, 300]]);
+  assert.ok(r.body!.names.some(n => n.startsWith("m:a1:side:")) && r.body!.names.includes("m:a1:start") && r.body!.names.includes("m:a1:end"));
+  // A half circle leaving the line at a right angle: the corner is mitred.
+  const sk2: SketchFeature = { id: "t", type: "sketch", name: "Path2", plane: { std: "XY" }, rels: [], dims: [], ents: [
+    P("q0", 0, 0), P("q1", 300, 0), P("qc", 400, 0), P("q2", 500, 0),
+    { id: "k1", t: "line", a: "q0", b: "q1" }, { id: "k2", t: "arc", c: "qc", a: "q1", b: "q2" },
+  ] };
+  const r2 = run(m, doc([sk2, { ...mem, id: "n", segs: ["k1", "k2"].map(ent => ({ sketch: "t", ent })) }]));
+  assert.equal(r2.info.length, 2);
+  near(r2.volume, A * (300 + 100 * Math.PI), 2e-3);
+  assert.deepEqual(r2.cut.map(c => [c.length, c.angle1, c.angle2]).sort((x, y) => x[0] - y[0]), [[320, 0, 45], [334.2, 0, 45]]);
+});
+
 test("custom profile from a sketch: holes, arcs, sketch origin on the path (FR-FT-121)", async () => {
   const m = new Modeller(await occ());
   // 40 × 20 rectangle with its corner on the sketch origin and a Ø10 hole in the middle.

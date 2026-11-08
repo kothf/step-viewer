@@ -9,6 +9,8 @@ const escXml = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&
 export const FONT_K = 1 / 0.72;
 export const FONT = "'DejaVu Sans', Arial, Helvetica, sans-serif";
 
+const grayHex = (g: number) => { const v = Math.max(0, Math.min(255, Math.round(g * 255))).toString(16).padStart(2, "0"); return `#${v}${v}${v}`; };
+
 /** SVG elements of the primitives for a W × H sheet (y flipped). */
 export function svgBody(prims: Prim[], H: number, color = "#000"): string {
   const parts: string[] = [];
@@ -24,6 +26,10 @@ export function svgBody(prims: Prim[], H: number, color = "#000"): string {
         const x0 = p.o[0] + p.r * Math.cos(p.a0), y0 = p.o[1] + p.r * Math.sin(p.a0), x1 = p.o[0] + p.r * Math.cos(p.a1), y1 = p.o[1] + p.r * Math.sin(p.a1);
         parts.push(`<path d="M${f(x0)} ${f(H - y0)}A${f(p.r)} ${f(p.r)} 0 ${p.a1 - p.a0 > Math.PI ? 1 : 0} 0 ${f(x1)} ${f(H - y1)}" fill="none" ${style(p.pen)} data-l="${p.layer}"/>`);
       }
+    } else if (p.t === "p" && p.gray !== undefined) {
+      // Shaded triangles: a hairline stroke in the same grey closes the antialiasing seams between them.
+      const c = grayHex(p.gray);
+      parts.push(`<path d="M${f(p.p[0])} ${f(H - p.p[1])}${Array.from({ length: p.p.length / 2 - 1 }, (_, i) => `L${f(p.p[2 * i + 2])} ${f(H - p.p[2 * i + 3])}`).join("")}Z" fill="${c}" stroke="${c}" stroke-width="0.08" stroke-linejoin="round" data-l="${p.layer}"/>`);
     } else if (p.t === "p") {
       let d = "";
       for (let i = 0; i < p.p.length; i += 2) d += `${i ? "L" : "M"}${f(p.p[i])} ${f(H - p.p[i + 1])}`;
@@ -136,6 +142,8 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
     else if (p.t === "a") {
       if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) { g(0, "CIRCLE"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); }
       else { g(0, "ARC"); g(8, p.layer); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); g(50, p.a0 * 180 / Math.PI); g(51, p.a1 * 180 / Math.PI); }
+    } else if (p.t === "p" && p.gray !== undefined) {
+      continue; // DXF has no shading
     } else if (p.t === "p" && p.fill && p.p.length >= 6 && p.p.length <= 8) {
       // A filled arrowhead: SOLID takes its corners in Z order (1, 2, 4, 3).
       const q = p.p, k = q.length / 2, c = (i: number) => [q[2 * Math.min(i, k - 1)], q[2 * Math.min(i, k - 1) + 1]];
@@ -202,6 +210,13 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
           [cx, cy] = [ex, ey];
         }
         doc.lines(segs, sx, sy, [1, 1], "S", false);
+      } else if (p.t === "p" && p.gray !== undefined) {
+        const g = Math.round(p.gray * 255), segs: number[][] = [];
+        for (let j = 2; j < p.p.length; j += 2) segs.push([p.p[j] - p.p[j - 2], -(p.p[j + 1] - p.p[j - 1])]);
+        usePen("thin");
+        doc.setFillColor(g, g, g); doc.setDrawColor(g, g, g); doc.setLineWidth(0.08);
+        doc.lines(segs, p.p[0], H - p.p[1], [1, 1], "FD", true);
+        doc.setDrawColor(0, 0, 0); doc.setLineWidth(PEN_W.thin);
       } else if (p.t === "p") {
         usePen(p.pen);
         const segs: number[][] = [];

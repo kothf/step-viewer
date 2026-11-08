@@ -7,8 +7,8 @@ import type { PartDoc } from "../model/types";
 
 export type SheetSize = "A4" | "A3" | "A2" | "A1" | "A0" | "ANSI A" | "ANSI B" | "ANSI C" | "ANSI D" | "ANSI E" | "custom";
 export type Projection = "first" | "third";
-/** Display style (FR-DRW-010): visible + hidden dashed, hidden removed, all edges as visible (wireframe). */
-export type DisplayStyle = "hlv" | "hlr" | "wire";
+/** Display style (FR-DRW-010): visible + hidden dashed, hidden removed, all edges as visible (wireframe), shaded, shaded with visible edges. */
+export type DisplayStyle = "hlv" | "hlr" | "wire" | "shaded" | "shadedEdges";
 export type TangentEdges = "visible" | "thin" | "hidden";
 export type Orient = "front" | "back" | "left" | "right" | "top" | "bottom" | "iso" | "current";
 

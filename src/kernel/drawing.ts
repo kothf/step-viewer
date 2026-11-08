@@ -21,6 +21,8 @@ export interface Projection {
   ms: number;
   /** Section views: the cut faces as closed 2D loops (fill even-odd). */
   cut?: number[][];
+  /** Shaded views (FR-DRW-010): triangles facing the viewer, back to front, 7 numbers each: u0 v0 u1 v1 u2 v2 grey. */
+  shade?: number[];
 }
 /** A view direction: `dir` points from the model towards the viewer; `up` is the sheet's +y. */
 export interface ViewDir { dir: V3; up: V3 }
@@ -383,6 +385,30 @@ export function triangles(oc: any, shape: any, lin: number): Tris {
     }
   }
   return { position: pos, index: idx };
+}
+
+/**
+ * Shading for a view (FR-DRW-010): the shape's triangles that face the viewer, in the view's axes, sorted back to
+ * front for painting, each with a grey from a light over the viewer's left shoulder. `lin` is the mesh's chord error.
+ */
+export function shadeTris(oc: any, shape: any, view: ViewDir, lin: number): number[] {
+  const { x, y, n } = viewAxes(view);
+  const L = unit([n[0] + 0.35 * y[0] - 0.3 * x[0], n[1] + 0.35 * y[1] - 0.3 * x[1], n[2] + 0.35 * y[2] - 0.3 * x[2]]);
+  const { position: P, index: I } = triangles(oc, shape, lin);
+  const tris: { d: number; q: number[] }[] = [];
+  for (let t = 0; t + 2 < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const A: V3 = [P[a], P[a + 1], P[a + 2]], B: V3 = [P[b], P[b + 1], P[b + 2]], C: V3 = [P[c], P[c + 1], P[c + 2]];
+    const nn = cross([B[0] - A[0], B[1] - A[1], B[2] - A[2]], [C[0] - A[0], C[1] - A[1], C[2] - A[2]]);
+    const len = Math.hypot(...nn);
+    if (len < 1e-12) continue;
+    const N: V3 = [nn[0] / len, nn[1] / len, nn[2] / len];
+    if (dot(N, n) <= 1e-6) continue;
+    const g = Math.round((0.32 + 0.6 * Math.max(0, dot(N, L))) * 64) / 64;
+    tris.push({ d: (dot(A, n) + dot(B, n) + dot(C, n)) / 3, q: [dot(A, x), dot(A, y), dot(B, x), dot(B, y), dot(C, x), dot(C, y), g] });
+  }
+  tris.sort((p, q) => p.d - q.d);
+  return tris.flatMap(t => t.q);
 }
 
 export interface ShapeFacts { volume: number; area: number; com: V3; box: [V3, V3] }
