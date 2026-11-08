@@ -7498,7 +7498,13 @@ try {
     await mp.click('#mc-pm input[data-wseg="l4"]');
     await settle();
     const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
-    await mp.click('#mc-pm input[data-wseg="l4"]');
+    // Clicking the line in the view ticks it again (SolidWorks picks path segments in the graphics area).
+    const l4At = await mp.evaluate(() => { const v = window.__sv.viewer; v.controls.target.set(300, 200, 0); v.camera.up.set(0, 1, 0); v.camera.position.set(300, 200, 1600); v.camera.lookAt(300, 200, 0); v.controls.update(); v.fit(false); v.camera.updateMatrixWorld(); const r = v.renderer.domElement.getBoundingClientRect(), q = new v.camera.position.constructor(0, 200, 0).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
+    await mp.mouse.click(l4At[0] + 2, l4At[1] + 1);
+    await settle();
+    const p1b = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft.segs.map(s => s.ent).join(","), box: document.querySelector('#mc-pm input[data-wseg="l4"]')?.checked }));
+    check(p1b.segs === "l1,l2,l3,l4" && p1b.box === true, `weldments: clicking a path line in the view ticks it (${JSON.stringify({ l4At, p1b })})`);
+    if (p1b.segs !== "l1,l2,l3,l4") { await mp.click('#mc-pm input[data-wseg="l4"]'); }
     await settle();
     await mp.click("#mc-ok");
     await settle();

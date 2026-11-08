@@ -3000,7 +3000,7 @@ export const RU: Record<string, string> = {
   "The profile outline could not be closed.": "Не удалось замкнуть контур профиля.",
   "The two faces are parallel: a gusset needs faces that meet at a corner.": "Грани параллельны: для косынки нужны грани, сходящиеся в углу.",
   "There are no weldment members yet: add a Structural Member first.": "Элементов сварной конструкции пока нет: сначала добавьте элемент конструкции.",
-  "Tick the path segments in the panel.": "Отметьте сегменты траектории на панели.",
+  "Click a line or arc of the path sketch, or tick the segments in the panel.": "Щёлкните линию или дугу эскиза траектории или отметьте сегменты на панели.",
   "Top centre": "Сверху по центру",
   "Top left": "Сверху слева",
   "Top right": "Сверху справа",

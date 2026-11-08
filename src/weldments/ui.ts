@@ -10,6 +10,7 @@ import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } f
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
 import { cornerKey } from "./types";
+import { segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
 export const WELD_TOOL_SET: ReadonlySet<string> = new Set(["member", "trimext", "endcap", "gusset", "weldbead"]);
@@ -25,6 +26,8 @@ export interface WeldCtx {
   faceAt(x: number, y: number): { faceId: number; point: V3 } | null;
   faceRef(faceId: number): FaceRef | null;
   faceType(faceId: number): string | undefined;
+  /** A world point on the screen (client pixels), or null when it is behind the camera. */
+  toScreen(p: V3): [number, number] | null;
   changed(): void;
 }
 
@@ -310,9 +313,62 @@ export function bindWeldPanel(pm: HTMLElement, f: WeldFeature, ctx: WeldCtx) {
   }));
 }
 
+/** The path segment drawn nearest a click (within 10 px on screen), tried in the member's sketch first. */
+export function segmentAt(ctx: WeldCtx, x: number, y: number, f: MemberFeature): { sketch: string; ent: string } | null {
+  const frames = ctx.last?.frames ?? {};
+  const cur = f.segs[0]?.sketch;
+  const sks = pathSketches(ctx).sort((a, b) => +(b.id === cur) - +(a.id === cur));
+  let best: { sketch: string; ent: string } | null = null, bd = 10;
+  for (const sk of sks) {
+    for (const ent of pathLines(sk)) {
+      let pts: V3[];
+      try {
+        const s = segOf({ sketch: sk.id, ent }, ctx.doc, frames);
+        if (s.arc) {
+          const { c, n, r, ang } = s.arc, u = [(s.a[0] - c[0]) / r, (s.a[1] - c[1]) / r, (s.a[2] - c[2]) / r] as V3;
+          const v: V3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+          pts = Array.from({ length: 33 }, (_, i) => { const a = ang * i / 32, co = Math.cos(a) * r, si = Math.sin(a) * r; return [c[0] + u[0] * co + v[0] * si, c[1] + u[1] * co + v[1] * si, c[2] + u[2] * co + v[2] * si] as V3; });
+        } else pts = [s.a, s.b];
+      } catch { continue; }
+      const sp = pts.map(p => ctx.toScreen(p));
+      for (let i = 1; i < sp.length; i++) {
+        const p = sp[i - 1], q = sp[i];
+        if (!p || !q) continue;
+        const dx = q[0] - p[0], dy = q[1] - p[1], l2 = dx * dx + dy * dy;
+        const tt = l2 ? Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / l2)) : 0;
+        const d = Math.hypot(p[0] + dx * tt - x, p[1] + dy * tt - y);
+        if (d < bd - 1e-9) { bd = d; best = { sketch: sk.id, ent }; }
+      }
+    }
+    if (best) return best;
+  }
+  return best;
+}
+
+/**
+ * A click while a structural member is open (SolidWorks-style): a path segment near the click, or a face
+ * of the member's own preview, is ticked or unticked. A segment of another sketch starts over with it.
+ */
+function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
+  let hit = segmentAt(ctx, e.clientX, e.clientY, f);
+  if (!hit) {
+    const fh = ctx.faceAt(e.clientX, e.clientY), fr = fh ? ctx.faceRef(fh.faceId) : null;
+    const ent = fr?.name.startsWith(`${f.id}:`) ? fr.name.split(":")[1] : undefined;
+    if (ent && f.segs.some(s => s.ent === ent)) hit = { sketch: f.segs[0].sketch, ent };
+  }
+  if (!hit) { toast(t("Click a line or arc of the path sketch, or tick the segments in the panel.")); return; }
+  const sk = pathSketches(ctx).find(s => s.id === hit!.sketch)!;
+  const same = f.segs[0]?.sketch === sk.id;
+  const on = new Set(same ? f.segs.map(s => s.ent) : []);
+  if (on.has(hit.ent)) on.delete(hit.ent); else on.add(hit.ent);
+  f.segs = pathLines(sk).filter(x => on.has(x)).map((ent): WeldSegRef => ({ sketch: sk.id, ent }));
+  if (same) setGroups(f, (f.groups ?? []).map(g => ({ ...g, ents: g.ents.filter(x => on.has(x)) })));
+  else delete f.groups;
+}
+
 /** A click in the view while a weldment feature is open. Returns the new focus (or the old one). */
 export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: string | undefined): string | undefined {
-  if (f.type === "member") { toast(t("Tick the path segments in the panel.")); return focus; }
+  if (f.type === "member") { pickSegment(ctx, e, f); return focus; }
   const hit = ctx.faceAt(e.clientX, e.clientY);
   const fr = hit ? ctx.faceRef(hit.faceId) : null;
   if (!hit || !fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return focus; }

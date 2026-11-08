@@ -1847,6 +1847,10 @@ export class ModelController {
     return {
       doc: this.doc, before: this.doc.features.slice(0, index), selected: this.selected, last: this.last,
       faceAt: (x, y) => this.host.faceAt(x, y), faceRef: id => this.faceRef(id), faceType: id => this.host.viewer.parts[0]?.data.faces[id]?.type,
+      toScreen: p => {
+        const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect(), q = new THREE.Vector3(...p).project(v.camera);
+        return q.z > 1 ? null : [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+      },
       changed: () => this.draftChanged(),
     };
   }
