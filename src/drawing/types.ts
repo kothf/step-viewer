@@ -176,7 +176,11 @@ export interface WeldSide { sym: WeldSym; size?: string; len?: string }
  *  arrow points at; `arrow`/`other` the arrow-side and other-side welds; `around` = all round, `field` = site weld, `tail` a note. */
 export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number, number]; leader?: GeoRef; arrow?: WeldSide; other?: WeldSide; around?: boolean; field?: boolean; tail?: string }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot;
+/** A datum target (ISO 5459, FR-DRW-023): `pos` is the frame circle's centre (view axes, or sheet mm without a view); `leader` the
+ *  target on the model; `label` e.g. "A1" (lower half), `size` e.g. "Ø8" (upper half, area targets); `kind` the target marker;
+ *  `d` the area diameter or line length in model mm; `tp` (view axes) the clicked point the target sits nearest to on its edge. */
+export interface DatumTargetAnnot { id: string; t: "dtarget"; view?: string; pos: [number, number]; leader?: GeoRef; tp?: [number, number]; label: string; size?: string; kind: "point" | "line" | "area"; d?: number }
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot;
 
 export interface Sheet {
   id: string;

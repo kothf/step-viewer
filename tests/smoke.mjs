@@ -7751,7 +7751,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 20 && mode === "note", `drawing: annotation tab shows the 20 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 21 && mode === "note", `drawing: annotation tab shows the 21 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -9204,6 +9204,22 @@ try {
     const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
     const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
     check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
+    // Datum target (ISO 5459): click a point on the bottom edge, place the frame below; then make it a hatched area.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="dtarget"]');
+    const tx = fr[0] + (fr[2] - fr[0]) * 0.6;
+    await clickSheet(tx, fr[1]);
+    await clickSheet(tx - 12, fr[1] - 14);
+    await dp.waitForTimeout(150);
+    const dt = () => dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "dtarget"); return a && JSON.parse(JSON.stringify(a)); });
+    const d1 = await dt(), q1 = await prims();
+    const cross = q1.filter(p => p.t === "l" && p.pen === "thick").length, lab = q1.some(p => p.t === "t" && p.s === "A1");
+    const dpanel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dtkind"]'));
+    check(d1 && d1.leader && d1.tp && d1.label === "A1" && d1.kind === "point" && cross === 2 && lab && dpanel, `drawing: datum target A1 on the clicked point of an edge, with its cross (${JSON.stringify({ d1, cross, lab, dpanel })})`);
+    if (dpanel) { await dp.selectOption('#drw .drw-props [data-d="dtkind"]', "area"); await dp.waitForTimeout(150); }
+    const d2 = await dt(), q2 = await prims();
+    const area = q2.some(p => p.t === "a" && p.pen === "phantom"), sz = q2.some(p => p.t === "t" && p.s === "Ø8");
+    check(d2?.kind === "area" && d2.size === "Ø8" && area && sz, `drawing: datum target area: phantom circle, hatching and its size in the frame (${JSON.stringify({ d2, area, sz })})`);
     await ctx.close();
   }
 
