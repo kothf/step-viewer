@@ -12,7 +12,7 @@
 // sides; a bend's `<bend>:in`, `:out`, `:s0`, `:s1`, `:start`, `:end`. Panel ids are
 // `<feature id>:p<n>` and bend ids `<feature id>:b<n>`, so a picked edge between `…:top` and
 // `…:<edge>` says which panel edge it is without looking at geometry.
-import type { Frame, SketchFeature, V2, V3 } from "../model/types";
+import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
 import type { BendCalc, BendPosition, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 
@@ -953,4 +953,27 @@ export function flatSize(st: SheetState): { w: number; h: number; min: V2; max: 
 /** Bend lines on the flat pattern's top face, in world coordinates (drawn in the view when flattened). */
 export function flatBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[] {
   return st.bends.map(b => { const [p, q] = bendLine(b); return { a: apply(st.root, [p[0], p[1], st.T]), b: apply(st.root, [q[0], q[1], st.T]), up: b.up }; });
+}
+
+/** A copy of a sheet metal part with its flat pattern shown (the Flat-Pattern feature on, or added last); null for other parts. */
+export function flatPatternDoc(doc: PartDoc): PartDoc | null {
+  if (!doc.features.some(f => f.type === "smbase" && !f.suppressed)) return null;
+  const d: PartDoc = structuredClone(doc);
+  d.rollback = null;
+  const f = d.features.find(x => x.type === "smflat");
+  if (f) f.suppressed = false;
+  else d.features.push({ id: "__flat", type: "smflat", name: "Flat-Pattern" });
+  return d;
+}
+
+/** A bend line on the flat pattern, in flat coordinates on the top face (z = T), with what its note says. */
+export interface FlatBend { a: V3; b: V3; up: boolean; angle: number; r: number }
+export function flatBends(st: SheetState): FlatBend[] {
+  return st.bends.map(b => { const [p, q] = bendLine(b); return { a: [p[0], p[1], st.T], b: [q[0], q[1], st.T], up: b.up, angle: b.angle, r: b.r }; });
+}
+
+/** The rigid move that lays the flat pattern on the world XY plane (flat coordinates), as a 3×4 row-major matrix: root⁻¹. */
+export function flatToXY(st: SheetState): number[] {
+  const R = st.root, rows = [R.x, R.y, R.z];
+  return rows.flatMap(r => [r[0], r[1], r[2], -(r[0] * R.o[0] + r[1] * R.o[1] + r[2] * R.o[2])]);
 }

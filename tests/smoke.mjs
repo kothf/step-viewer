@@ -2134,6 +2134,55 @@ try {
     });
     check(capOpts === "none|arc|line" && ob.offs === 2 && ob.linked === 1 && ob.dim === 3 && ob.caps === 2 && ob.r.every(r => near(r, 3, 0.01)) && ob5.ys.join(",") === "35,45" && ob5.status === "ok",
       `model 1.240: Offset both sides caps the open line with arcs and one dimension drives both copies (${capOpts}, ${JSON.stringify(ob)}, ${JSON.stringify(ob5)})`);
+    // 1.251.0 (FR-SK-052/053): a line drawn on from a slanted one snaps perpendicular (glyph at the cursor, relation
+    // added), Ctrl suppresses it, a hovered line gives parallel; hovering a relation glyph lights up its entities.
+    await tool("line");
+    const lineIds = () => mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").map(e => e.id));
+    const before = await lineIds();
+    await click([72, 12]); await click([82, 17]);
+    const [mx, my] = await toPage([77.15, 27]);
+    await mp.mouse.move(mx, my); await mp.waitForTimeout(60);
+    const glyph = await mp.evaluate(() => document.querySelector(".sk-infer")?.dataset.rel ?? null);
+    await click([77.15, 27]);
+    await mp.keyboard.down("Control");
+    await click([87.15, 32.2]);
+    await mp.keyboard.up("Control");
+    await mp.keyboard.press("Escape");
+    await click([95, 28]);
+    const [hx, hy] = await toPage([77, 14.5]);
+    await mp.mouse.move(hx, hy); await mp.waitForTimeout(60);
+    await click([84.9, 23]);
+    await mp.keyboard.press("Escape");
+    const inf = await mp.evaluate(old => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      const made = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+      const dir = l => { const a = P(l.a), b = P(l.b); return [b.x - a.x, b.y - a.y]; };
+      const rel = (t, a, b) => sk.rels.find(r => r.t === t && r.e[0] === a && r.e[1] === b);
+      if (made.length !== 4) return { n: made.length };
+      const [l1, l2, l3, l4] = made;
+      const d1 = dir(l1), d2 = dir(l2), d4 = dir(l4);
+      const perp = rel("perpendicular", l1.id, l2.id);
+      const end3 = P(l3.b);
+      return {
+        n: made.length, perp: !!perp, dot: Math.abs(d1[0] * d2[0] + d1[1] * d2[1]) / Math.hypot(...d1) / Math.hypot(...d2),
+        ctrlFree: !sk.rels.some(r => r.e.includes(l3.id)) && Math.abs(end3.x - 87.15) < 0.05 && Math.abs(end3.y - 32.2) < 0.05,
+        par: !!rel("parallel", l1.id, l4.id), cross: Math.abs(d1[0] * d4[1] - d1[1] * d4[0]) / Math.hypot(...d1) / Math.hypot(...d4),
+        perpId: perp?.id, l1: l1.id, status: ed.info.status,
+      };
+    }, before);
+    const hot = await mp.evaluate(({ id, l1 }) => {
+      const ed = window.__sv.model.editor(), el = document.querySelector(`.sk-rel[data-id="${id}"]`);
+      if (!el) return { glyph: false };
+      el.dispatchEvent(new PointerEvent("pointerenter"));
+      const lit = ed.relHot.has(l1);
+      el.dispatchEvent(new PointerEvent("pointerleave"));
+      ed.showRels = false; ed.render();
+      const hidden = !document.querySelector(`.sk-rel[data-id="${id}"]`);
+      ed.showRels = true; ed.render();
+      return { glyph: true, lit, cleared: ed.relHot.size === 0, hidden };
+    }, { id: inf.perpId, l1: inf.l1 });
+    check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
+      `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
@@ -8970,6 +9019,48 @@ try {
     const ru = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')][0]?.textContent);
     await dp.evaluate(() => document.querySelector("#lang-btn").click());
     check(ru === "Активная (Default)", `drawing: configuration list in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: flat pattern view of a sheet metal part, with bend lines and notes (FR-FT-120) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwflat", name: "Bracket", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 50), P("p4", 0, 50),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s1", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+      { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:l1"] }], length: { v: 20 }, angle: { v: Math.PI / 2 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Bracket.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    await dp.waitForFunction(() => { return !!document.querySelector('[data-pal="flat"] path[d^="M"]'); }, null, { timeout: 60000 });
+    await dp.click('[data-pal="flat"]');
+    await dp.waitForTimeout(500);
+    const [sx, sy] = await dp.evaluate(() => window.__sv.drw.sheetPt(330, 90));
+    await dp.mouse.click(sx, sy);
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.some(v => v.config === "@flat"), null, { timeout: 30000 });
+    await dp.keyboard.press("Escape");
+    await ready();
+    const fv = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views.find(x => x.config === "@flat"), p = window.__sv.drw.placement(v.id);
+      const notes = [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent).filter(s => /^(UP|DOWN) /.test(s));
+      return { orient: v.orient, w: (p.box[2] - p.box[0]) / p.s, h: (p.box[3] - p.box[1]) / p.s, notes, props: !!document.querySelector('#drw .drw-props [data-v="bendNotes"]') };
+    });
+    const flatLen = 50 - 4 + Math.PI / 2 * 3 + 16;
+    check(fv.orient === "top" && Math.abs(fv.w - 100) < 0.6 && Math.abs(fv.h - flatLen) < 0.6 && fv.notes.length === 1 && /^(UP|DOWN) 90° R2$/.test(fv.notes[0]) && fv.props,
+      `drawing: a sheet metal part's flat pattern view from the palette, with its bend line and note (${JSON.stringify({ fv, flatLen })})`);
     await ctx.close();
   }
 
