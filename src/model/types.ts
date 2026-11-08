@@ -2,6 +2,8 @@
 // (FRS section 15). Geometry, meshes and naming maps are derived from it.
 // Lengths are millimetres, angles radians.
 
+import type { WeldFeature } from "../weldments/types";
+
 export type V2 = [number, number];
 export type V3 = [number, number, number];
 
@@ -685,7 +687,8 @@ export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFe
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
-  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature;
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
+  | WeldFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
