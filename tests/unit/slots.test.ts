@@ -55,3 +55,24 @@ test("3-point arc slot runs counter-clockwise through the middle point", () => {
   assert.equal(solve(sk).status, "ok");
   assert.equal(threePointArcAxis([0, 0], [1, 1], [2, 2]), null);
 });
+
+test("3-point rectangles and the parallelogram (FR-SK-013): corners and degrees of freedom", async () => {
+  const { quadCorners } = await import("../../src/sketch/shapes");
+  const r = quadCorners("rect3", [0, 0], [30, 40], [-8, 6])!;
+  // Side 50 along (0.6, 0.8), width 10 on the left.
+  near(Math.hypot(r[3][0], r[3][1]), 10); near(r[3][0] * 30 + r[3][1] * 40, 0);
+  near(r[2][0] - r[1][0], r[3][0]); near(r[2][1] - r[1][1], r[3][1]);
+  const c = quadCorners("crect3", [5, 5], [15, 5], [0, 8])!;
+  assert.deepEqual(c.map(q => q.map(v => Math.round(v * 1e6) / 1e6)), [[-5, 2], [15, 2], [15, 8], [-5, 8]]);
+  const g = quadCorners("pgram", [0, 0], [10, 0], [14, 5])!;
+  assert.deepEqual(g[3], [4, 5]);
+  assert.equal(quadCorners("pgram", [0, 0], [10, 0], [20, 0]), null);
+  assert.equal(quadCorners("rect3", [0, 0], [10, 0], [5, 0]), null);
+  const quad = (q: V2[], rels: [string, ...string[]][]) => {
+    const ents: SkEnt[] = q.map((p, i) => ({ id: `p${i}`, t: "point", x: p[0], y: p[1] }));
+    for (let i = 0; i < 4; i++) ents.push({ id: `l${i}`, t: "line", a: `p${i}`, b: `p${(i + 1) % 4}` });
+    return solve({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels: rels.map(([t, ...e], i) => ({ id: `r${i}`, t: t as never, e })), dims: [] }).dof;
+  };
+  assert.equal(quad(r, [["perpendicular", "l0", "l1"], ["parallel", "l0", "l2"], ["parallel", "l1", "l3"]]), 5);
+  assert.equal(quad(g, [["parallel", "l0", "l2"], ["parallel", "l1", "l3"]]), 6);
+});

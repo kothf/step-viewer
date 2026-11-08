@@ -2981,6 +2981,17 @@ try {
       await mp.evaluate(() => document.querySelector("#lang-btn").click());
       return r;
     })();
+    // 1.148.0: 3-point rectangle and parallelogram from the Rectangle menu (FR-SK-013).
+    await mp.click('#mc-tools [data-fly="rect"]');
+    const rfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    const nl0 = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").length);
+    await click([5, -5]); await click([25, -12]); await click([20, -18]);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("pgram"));
+    await click([40, -5]); await click([60, -5]); await click([66, -16]);
+    const quads = await mp.evaluate(n0 => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const ls = sk.ents.filter(e => e.t === "line").slice(n0); const last = ls.slice(-4); const d = last.map(l => [P(l.a).x, P(l.a).y]); return { n: ls.length, perp: sk.rels.filter(r => r.t === "perpendicular").length, par: sk.rels.filter(r => r.t === "parallel").length, fourth: d[3].map(v => Math.round(v * 100) / 100), ok: ed.info.status }; }, nl0);
+    check(rfly === "Corner rectangle|Centre rectangle|3-point corner rectangle|3-point centre rectangle|Parallelogram|Polygon" && quads.n === 8 && quads.perp === 1 && quads.par >= 4 && quads.fourth.join(",") === "46,-16" && quads.ok === "ok",
+      `model 1.148: 3-point rectangle and parallelogram (${rfly}, ${JSON.stringify(quads)})`);
     check(ru === "Добавить размеры", `model 1.144: Add dimensions in Russian (${ru})`);
     await ctx.close();
   }
