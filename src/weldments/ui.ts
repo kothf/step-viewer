@@ -229,6 +229,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
   return {
     title: t("Fillet Bead"),
     body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length") + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
+        + chk("wSymbol", f.symbol !== false, t("Show weld symbol"))
         + chk("wInter", !!f.inter, t("Intermittent weld"))
         + (f.inter ? numField("inter.len", t("Weld length"), f.inter.len, "length") + numField("inter.pitch", t("Pitch"), f.inter.pitch, "length")
           + chk("wStagger", !!f.inter.stagger, t("Staggered")) + help(t("Welds of this length every pitch, centre to centre, from the start of each run of edges. Staggered starts every other run half a pitch on.")) : ""))
@@ -294,6 +295,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
+  if (f.type === "weldbead" && k === "wSymbol") return () => { if (val) delete f.symbol; else f.symbol = false; };
   if (f.type === "weldbead" && k === "wInter") return () => { if (val) f.inter = { len: { v: 50 }, pitch: { v: 100 } }; else delete f.inter; };
   if (f.type === "weldbead" && k === "wStagger") return () => { if (!f.inter) return; if (val) f.inter.stagger = true; else delete f.inter.stagger; };
   return null;
@@ -409,6 +411,26 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
     toggle((focus ?? "wf1") === "wf1" ? f.faces1 : f.faces2);
   }
   return next;
+}
+
+// ---------- weld symbols ----------
+
+/** A bead's weld symbol in ISO 2553 short form: fillet triangle, leg size z, and for intermittent welds the weld length, Z when staggered, and the pitch in brackets. */
+export function weldSymbol(f: WeldBeadFeature): string {
+  const n = (v: number) => String(Math.round(v * 100) / 100);
+  const it = f.inter;
+  return `◺ z${n(f.size.v)}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : "");
+}
+
+/** The weld symbols to show: shown, built beads up to the rollback bar; the one being edited from its draft. */
+export function weldSymbols(features: Feature[], draft: WeldBeadFeature | null, ok: Set<string>): { id: string; text: string }[] {
+  const out: { id: string; text: string }[] = [];
+  for (const g of features) {
+    const f = draft && g.id === draft.id ? draft : g;
+    if (f.type !== "weldbead" || f.suppressed || f.symbol === false || !ok.has(f.id)) continue;
+    out.push({ id: f.id, text: weldSymbol(f) });
+  }
+  return out;
 }
 
 // ---------- cut list ----------

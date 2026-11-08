@@ -807,6 +807,8 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-items li .pm-in span { flex: none; }
 .mc-callout { transform: translate(-50%, -50%); border-color: #e0a800; background: #fff8db; color: #5c4400; }
 :root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
+.mc-callout.wld-sym { border-color: #495057; background: #fff; color: #212529; font-variant-numeric: tabular-nums; }
+:root[data-theme="dark"] .mc-callout.wld-sym { background: #212529; color: #f1f3f5; border-color: #adb5bd; }
 .sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }
 /* Equations panel (FR-PAR-001/005) */
 .eq-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.166.0] - 2026-11-08
+
+### Added
+
+- **Weld symbols on fillet beads (FR-FT-121).** Every fillet bead shows its weld symbol in the 3D view, in ISO 2553 short form: the fillet triangle, the leg size (z4), and for intermittent welds the weld length, Z when staggered and the pitch in brackets (◺ z4 50 Z (100)). Clicking the symbol opens the bead for editing; **Show weld symbol** in the bead's panel hides it.
+
 ## [1.164.0] - 2026-11-08
 
 ### Added
@@ -1332,7 +1338,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.164.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.166.0...HEAD
+[1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
 [1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0
 [1.163.0]: https://github.com/kothf/step-viewer/compare/v1.161.0...v1.163.0
 [1.161.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.161.0

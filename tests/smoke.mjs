@@ -7891,6 +7891,12 @@ try {
     await settle();
     const ib = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.length, c.inter]) }; });
     check(ifs === 3 && !ib.bad && ib.beads.length === 1 && Math.abs(ib.beads[0][0] - (50 + 4 * 28 + 12 * Math.PI - 100)) < 0.2 && JSON.stringify(ib.beads[0][1]) === "[50,100]", `weldments: intermittent fillet bead (${JSON.stringify({ ifs, ib })})`);
+    // Its weld symbol sits on the bead in the view; a click opens the bead for editing.
+    const sym = await mp.evaluate(() => { const el = document.querySelector('#mc-layer .wld-sym[data-weld="w5"]'); const t = el?.textContent; el?.click(); return { t, mode: window.__sv.model.mode().kind, id: window.__sv.model.mode().draft?.id }; });
+    await settle();
+    await mp.click("#mc-cancel");
+    await settle();
+    check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
@@ -7901,7 +7907,7 @@ try {
       const a = as[0];
       if (!a) return { n: 0 };
       const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
-      return { n: as.length, keys: as.map(x => x.key), key: a.key, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 20)), labels: [...document.querySelectorAll("#mc-layer .mc-handle")].map(e => e.textContent) };
+      return { n: as.length, keys: as.map(x => x.key), key: a.key, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 20)), labels: [...document.querySelectorAll("#mc-layer .mc-handle:not(.wld-sym)")].map(e => e.textContent) };
     });
     if (gs.from) {
       await mp.mouse.move(gs.from[0], gs.from[1]);
