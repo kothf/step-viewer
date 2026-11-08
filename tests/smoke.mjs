@@ -3805,9 +3805,10 @@ try {
     const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
     check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
       `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
-    // The deviations start right of the drawn "Ø16H7", measured on the rendered glyphs (exam bug 39).
+    // The deviations start right of the drawn "Ø16H7", measured on the rendered glyphs (exam bug 39). The screen font may not be
+    // DejaVu (exports embed it), and glyph boxes include side bearings, so a sliver under 0.15·h counts as clear; the bug was ~1·h.
     const devGap = await dp.evaluate(() => { const els = [...document.querySelectorAll("#drw svg text")], r = s => els.find(e => e.textContent === s)?.getBoundingClientRect(); const m = r("Ø16H7"), u = r("+0.018"), l = [...els].filter(e => e.textContent === "0").map(e => e.getBoundingClientRect()).find(q => m && Math.abs(q.left - u.left) < 2); return m && u ? { gap: +(u.left - m.right).toFixed(1), lo: l ? +(l.left - m.right).toFixed(1) : null, h: +m.height.toFixed(1) } : null; });
-    check(devGap && devGap.gap > 0 && (devGap.lo === null || devGap.lo > 0), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
+    check(devGap && devGap.gap > -0.15 * devGap.h && (devGap.lo === null || devGap.lo > -0.15 * devGap.h), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);
