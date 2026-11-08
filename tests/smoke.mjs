@@ -2706,8 +2706,9 @@ try {
     // Right-click the top front edge: Select loop takes the four edges round its face.
     const [ex, ey] = await world([0, -15, 20]);
     await mp.mouse.click(ex, ey, { button: "right" });
-    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(1)");
+    // OK and Cancel come first (FR-UI-107), then the edge helpers.
+    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(4)");
     const nLoop = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await idle();
     await mp.waitForTimeout(300);
@@ -2717,8 +2718,8 @@ try {
     // A point on the rim away from vertices and quadrant points (those snap as points, not the edge).
     const [hx, hy] = await world([-10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
     await mp.mouse.click(hx, hy, { button: "right" });
-    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(6)");
     const nSame = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await mp.keyboard.press("Escape");
     check(items === "Select loop|Select tangency|Select straight edges of the same length" && nLoop === 4 && /same radius/.test(items2) && nSame === 8, `model 1.36: fillet edge helpers, select loop and same radius (${items}, ${nLoop}, ${items2}, ${nSame})`);
@@ -4157,7 +4158,7 @@ try {
     await mp.click("#new-more");
     await mp.click("#new-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
-    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden }));
+    const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden, partBar: !document.querySelector("#mc-bar").hidden || !document.querySelector("#mc-empty").hidden }));
     const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
     await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), part);
     await shown(1);
@@ -4195,7 +4196,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -6501,6 +6502,195 @@ try {
     await vp.evaluate(async id => { for (let i = 0; i < 200; i++) { if (!(await window.__sv.vault.vault.files()).find(f => f.id === id).checkout) return; await new Promise(r => setTimeout(r, 100)); } }, ids.base);
     const after = await vp.evaluate(async ({ part }) => { const v = window.__sv.vault.vault, f = (await v.files()).find(x => x.id === part); return [v.latest(f).n, !!f.checkout]; }, ids);
     check(JSON.stringify(box) === JSON.stringify([[`ref:${ids.part}`, true]]) && after[0] === 3 && !after[1], `vault: check-in offers the changed part it references, ticked, and checks it in too (${JSON.stringify([box, after])})`);
+    await ctx.close();
+  }
+
+  // --- View navigation (FRS 13.13: FR-UI-101..104): arrow keys, Z, previous view, zoom to area/selection, Space picker ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const np = await ctx.newPage();
+    np.on("pageerror", e => errors.push(e.message));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.waitForFunction(() => window.__sv);
+    await np.setInputFiles("#file-input", join(fixtures, "cube-10x10mm/Cube 10x10.stp"));
+    await np.waitForFunction(() => window.__sv.viewer.parts.length > 0);
+    const cam = () => np.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray(), h: v.viewHeight() }; });
+    const settleCam = async () => { await np.waitForTimeout(60); await np.waitForFunction(() => !window.__sv.viewer.animating); };
+    const dist = (a, b) => Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1], a.p[2] - b.p[2]);
+    const ang = (a, b) => { const u = a.p.map((x, i) => x - a.t[i]), w = b.p.map((x, i) => x - b.t[i]); const c = u.reduce((s, x, i) => s + x * w[i], 0) / Math.hypot(...u) / Math.hypot(...w); return Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI; };
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.keyboard.press("Control+1"); await settleCam();
+    const c0 = await cam();
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    const c1 = await cam();
+    await np.keyboard.press("Shift+ArrowRight"); await settleCam();
+    const c2 = await cam();
+    check(Math.abs(ang(c0, c1) - 15) < 0.5 && Math.abs(ang(c1, c2) - 90) < 0.5, `navigation: → turns the view 15°, Shift+→ 90° (${ang(c0, c1).toFixed(2)}°, ${ang(c1, c2).toFixed(2)}°)`);
+    await np.keyboard.press("z"); await settleCam();
+    const c3 = await cam();
+    await np.keyboard.press("Shift+Z"); await settleCam();
+    const c4 = await cam();
+    check(c3.h > c2.h * 1.2 && Math.abs(c4.h / c2.h - 1) < 0.01, `navigation: Z zooms out and Shift+Z back in (${c2.h.toFixed(2)} → ${c3.h.toFixed(2)} → ${c4.h.toFixed(2)})`);
+    await np.keyboard.press("Control+ArrowRight"); await settleCam();
+    const c5 = await cam();
+    const moved = Math.hypot(...c5.t.map((x, i) => x - c4.t[i]));
+    check(Math.abs(moved / c4.h - 0.1) < 0.01 && Math.abs(ang(c4, c5)) < 0.1, `navigation: Ctrl+→ pans a tenth of the view without turning it (${(moved / c4.h).toFixed(3)})`);
+    // Previous view walks back: pan, zoom in, zoom out, turn 90, turn 15 → the camera before Ctrl+1's result.
+    for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
+    const back = await cam();
+    check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // Double middle click fits: the same camera as F.
+    await np.keyboard.press("f"); await settleCam();
+    const cf = await cam();
+    await np.keyboard.press("z"); await settleCam();
+    const box = await np.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; });
+    const mx = box.x + box.width / 2, my = box.y + box.height / 2;
+    await np.mouse.move(mx, my);
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await settleCam();
+    const cd = await cam();
+    check(Math.abs(cd.h / cf.h - 1) < 0.01, `navigation: a double middle click fits like F (${cd.h.toFixed(2)} vs ${cf.h.toFixed(2)})`);
+    // Space: the orientation picker at the cursor; its Top gives the same view as Ctrl+5, Esc closes it untouched.
+    await np.mouse.move(mx + 50, my + 20);
+    await np.keyboard.press("Space");
+    const pick = await np.evaluate(() => { const el = document.querySelector(".nav-pick"); if (!el) return null; const r = el.getBoundingClientRect(); return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, n: el.querySelectorAll("button").length }; });
+    await np.click('.nav-pick [data-nv="top"]'); await settleCam();
+    const ct = await cam();
+    await np.keyboard.press("Control+5"); await settleCam();
+    const c5b = await cam();
+    await np.keyboard.press("Space");
+    const before = await cam();
+    await np.keyboard.press("Escape");
+    const after = await cam();
+    const open = await np.evaluate(() => !!document.querySelector(".nav-pick"));
+    check(!!pick && pick.n >= 12 && Math.abs(pick.cx - (mx + 50)) < 2 && ang(ct, c5b) < 0.01 && dist(before, after) < 1e-9 && !open,
+      `navigation: Space opens the orientation picker at the cursor (${pick?.n} buttons), Top = Ctrl+5, Esc closes it without moving the view`);
+    // Zoom to area: a box over a quarter of the view makes the view half as tall.
+    const h0 = (await cam()).h;
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="area"]');
+    await np.mouse.move(mx - box.width / 8, my - box.height / 8);
+    await np.mouse.down();
+    await np.mouse.move(mx + box.width / 8, my + box.height / 8, { steps: 4 });
+    await np.mouse.up();
+    await settleCam();
+    const ca = await cam();
+    check(Math.abs(ca.h / h0 - 0.25) < 0.01 && (await np.evaluate(() => !document.querySelector(".nav-area") && window.__sv.viewer.controls.enabled)), `navigation: Zoom to area frames the box (${(ca.h / h0).toFixed(3)} of the height)`);
+    // Zoom to selection on one face of the 10 mm cube: the face fills the view.
+    await np.evaluate(() => { const v = window.__sv.viewer, p = v.parts[0]; const f = p.data.faces[0]; window.__sv.state.selection = { kind: "face", point: new (v.camera.position.constructor)(...f.centroid), part: p, face: f }; });
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="sel"]'); await settleCam();
+    const cs = await cam();
+    check(cs.h > 8 && cs.h < 25, `navigation: Zoom to selection frames the picked 10 mm face (view height ${cs.h.toFixed(2)} mm)`);
+    // Russian: the picker's labels are translated.
+    await np.click("#lang-btn");
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.mouse.move(mx, my);
+    await np.keyboard.press("Space");
+    const ru = await np.evaluate(() => document.querySelector(".nav-pick")?.textContent ?? "");
+    await np.keyboard.press("Escape");
+    await np.click("#lang-btn");
+    check(ru.includes("Сверху") && ru.includes("Предыдущий вид") && !/[A-Za-z]{3}/.test(ru), `navigation: the orientation picker is translated in Russian (${ru.slice(0, 60)})`);
+    await ctx.close();
+  }
+
+  // --- Commands (FRS 13.13: FR-UND-005, FR-UI-106/107/111): named undo and its list, Enter repeats, right-click OK/Cancel, pushpin ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.click("#new-part");
+    await cp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await cp.waitForTimeout(150); await cp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    const rect = (id, x0, y0, x1, y1) => cp.evaluate(([id, x0, y0, x1, y1]) => window.__sv.model.store.change("Sketch", d => {
+      const P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: id === "s1" ? "Sketch1" : "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, x0, y0), P(2, x1, y0), P(3, x1, y1), P(4, x0, y1), { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` }, { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] });
+    }), [id, x0, y0, x1, y1]);
+    const mode = () => cp.evaluate(() => { const m = window.__sv.model.mode(); return m.kind === "feature" ? `feature:${m.draft.type}` : m.kind; });
+    const nf = () => cp.evaluate(() => window.__sv.model.store.doc.features.length);
+    await rect("s1", -20, -10, 20, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click("#mc-ok");
+    await settle();
+    const tip = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    check((await nf()) === 2 && /Extrude1/.test(tip), `commands: the Undo button names the step it undoes (${tip})`);
+    // Enter with no command running repeats the last one.
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(200);
+    const rep = await mode();
+    // Right-click without a drag while the command runs: OK and Cancel first.
+    const vb = await cp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width * 0.8, y: r.top + r.height * 0.8 }; });
+    await cp.mouse.click(vb.x, vb.y, { button: "right" });
+    await cp.waitForTimeout(100);
+    const menu = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button", { hasText: "Cancel" }).click();
+    await cp.waitForTimeout(150);
+    const afterCancel = await mode();
+    check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 2,
+      `commands: Enter repeats Extrude, a right-click offers OK / Cancel and Cancel closes it (${rep}, [${menu.join(", ")}], ${afterCancel})`);
+    // Undo ▾ lists the steps newest first; picking the second undoes both.
+    await cp.click('#mc-tools [data-fly="undo"]');
+    const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button").nth(1).click();
+    await settle();
+    const undone = await nf();
+    await cp.keyboard.press("Control+y"); await cp.keyboard.press("Control+y");
+    await settle();
+    check(list.length === 2 && /Extrude1/.test(list[0]) && undone === 0 && (await nf()) === 2, `commands: the Undo list names the steps and undoes back to the one picked ([${list.join(", ")}] → ${undone} features)`);
+    // Pushpin: OK makes the feature and opens the same command again.
+    await rect("s2", 30, -10, 50, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.waitForTimeout(300);
+    const pinned = { n: await nf(), mode: await mode(), store: await cp.evaluate(() => localStorage.getItem("mc:pin")), on: await cp.evaluate(() => document.querySelector('#mc-pm [data-k="pin"]')?.getAttribute("aria-pressed")) };
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.keyboard.press("Escape");
+    check(pinned.n === 4 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
+    // Remembered options (FR-UI-043): an extrude made Mid plane makes the next one start as Mid plane.
+    await rect("s3", -20, 30, 20, 50);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.selectOption('#mc-pm select[data-k="end"]', "mid");
+    await cp.waitForTimeout(150);
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    const endNext = await cp.evaluate(() => window.__sv.model.mode().draft.end);
+    await cp.keyboard.press("Escape");
+    await cp.waitForTimeout(150);
+    check(endNext === "mid", `commands: a new extrude starts with the end condition used last (${endNext})`);
+    // What's wrong: a fillet far too big fails; the list names it and a click selects it in the tree.
+    await cp.evaluate(() => window.__sv.model.store.change("Add Fillet1", d => { const ex = d.features.find(f => f.type === "extrude"); d.features.push({ id: "fbad", type: "fillet", name: "Fillet1", radius: { v: 500 }, edges: [{ faces: [`${ex.id}:end`, `${ex.id}:side:s1l1`], hint: [0, -10, 10] }] }); }));
+    await settle();
+    const wrongHead = await cp.evaluate(() => { const el = document.querySelector("#mc-errors"); return el.hidden ? "" : el.textContent; });
+    await cp.click("#mc-errors .mc-wrong-h");
+    const rows = await cp.evaluate(() => [...document.querySelectorAll("#mc-errors [data-wid]")].map(b => b.dataset.wid));
+    if (rows.length) await cp.click(`#mc-errors [data-wid="${rows[0]}"]`);
+    const sel = await cp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id);
+    check(/What's wrong/.test(wrongHead) && rows.includes("fbad") && sel === rows[0], `commands: What's wrong lists the failing fillet and selects it (${wrongHead}; ${rows.join(",")}; ${sel})`);
+    await cp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Russian: the named Undo tooltip and the pushpin are translated.
+    await cp.click("#lang-btn");
+    const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    await cp.click("#lang-btn");
+    check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
     await ctx.close();
   }
 
