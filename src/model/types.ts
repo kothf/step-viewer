@@ -382,8 +382,37 @@ export interface HelixFeature {
   hidden?: boolean;
 }
 
-/** Sweep path: an open (or closed) chain of a sketch's curves, or a helix feature. */
-export type SweepPath = { sketch: string } | { helix: string };
+/** Sweep path: an open (or closed) chain of a sketch's curves, a helix feature or a curve feature. */
+export type SweepPath = { sketch: string } | { helix: string } | { curve: string };
+
+/** The feature a sweep path names. */
+export const pathId = (p: SweepPath): string => "sketch" in p ? p.sketch : "helix" in p ? p.helix : p.curve;
+
+/**
+ * 3D curve (FR-FT-085), usable as a sweep path: `xyz` = a smooth curve through points in space
+ * (mm, part axes; typed or read from a CSV file), `composite` = model edges joined end to end,
+ * `projected` = a sketch's chain of curves projected along its normal onto faces (the nearest
+ * piece in front; `flip` looks against the normal first).
+ */
+export interface CurveFeature {
+  id: string; type: "curve"; name: string; suppressed?: boolean;
+  kind: "xyz" | "composite" | "projected";
+  pts?: V3[];
+  closed?: boolean;
+  edges?: EdgeRef[];
+  sketch?: string;
+  faces?: FaceRef[];
+  flip?: boolean;
+  hidden?: boolean;
+}
+
+/** Swept surface (FR-FT-100): a sketch's chain of curves, open or closed, moved along a path into an open surface. */
+export interface SweepSurfFeature {
+  id: string; type: "sweepsurf"; name: string; suppressed?: boolean;
+  profile: string;
+  path?: SweepPath;
+  orient?: "follow" | "normal";
+}
 
 /**
  * Sweep (FR-FT-080/081): a closed profile sketch, or a circle of the given diameter (circular profile),
@@ -597,7 +626,7 @@ export interface ExtendSurfFeature {
 
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature;
 export type FeatureType = Feature["type"];
