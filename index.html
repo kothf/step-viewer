@@ -162,6 +162,7 @@
     <canvas id="navcube" class="navcube step-only" width="110" height="110"></canvas>
     <div id="tool-hint" class="tool-hint step-only" hidden></div>
     <div id="readout" class="readout step-only" hidden></div>
+    <div id="ana-panel" class="ana-panel step-only" role="region" aria-label="Surface analysis" hidden></div>
     <div id="hint" class="hint" role="status" hidden></div>
     <div id="gerber" class="gerber-vp gerber-only">
       <canvas id="g-canvas" aria-hidden="true"></canvas>
@@ -303,6 +304,7 @@
   <label class="chk" title="Ambient occlusion (off while sectioning)"><input type="checkbox" id="ao" /> Ambient occlusion</label>
   <p class="menu-note">Soft contact shadows in corners and gaps. Looks nicer, costs some speed on large models; off while sectioning.</p>
   <label class="menu-row">Mesh <select id="quality" title="Tessellation quality (applies on next open)"><option value="draft">Draft mesh</option><option value="normal" selected>Normal mesh</option><option value="fine">Fine mesh</option></select></label>
+  <label class="menu-row" title="Colour the model by draft, curvature, wall thickness or undercut, or show zebra stripes">Analysis <select id="analysis"><option value="">None</option><option value="draft">Draft</option><option value="zebra">Zebra stripes</option><option value="curvature">Curvature</option><option value="thickness">Thickness</option><option value="undercut">Undercut</option></select></label>
   <h4 class="menu-h">Measurements</h4>
   <label class="menu-row" title="Units">Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
   <label class="menu-row" title="Decimals">Decimals <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>

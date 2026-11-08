@@ -74,3 +74,13 @@ circle.drw-edge { fill: none; }
 .drw-tbl input { width: 84px; font: inherit; font-size: 12px; padding: 2px 4px; }
 .drw-tbl th input { font-weight: 600; }
 .drw-stack { align-items: center; justify-content: space-between; font-size: 12px; }
+
+/* View palette (FR-UI-072) */
+.drw-pal { border-bottom: 1px solid var(--line); padding: 4px 10px 8px; }
+.drw-pal summary { cursor: pointer; font-weight: 600; font-size: 12px; padding: 4px 0; }
+.drw-pal-note { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
+.drw-pal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+.drw-pt { display: grid; justify-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 11px; cursor: grab; }
+.drw-pt:hover, .drw-pt:focus-visible { border-color: var(--accent); }
+.drw-pt svg { width: 56px; height: 56px; }
+.drw-pt path { fill: none; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
