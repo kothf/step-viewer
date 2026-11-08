@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import type { Feature, FilletFeature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
+import type { Feature, FilletFeature, PartDoc, SketchFeature, SkEnt, V3 } from "../../src/model/types";
 import { occ } from "./occ";
 
 const rect = (id: string, cx: number, cy: number, w: number, h: number, plane: SketchFeature["plane"] = { std: "XY" }): SketchFeature => {
@@ -1503,4 +1503,41 @@ test("loft connectors: the loft joins the picked points, so shifting one twists 
   // One corner along on the top: each side becomes a twisted ruled face and the solid is thinner.
   const twisted = run(m, doc([a, pl, b, loft(["ap1", "bp2"])]));
   assert.ok(twisted.props!.volume < 950 && twisted.props!.volume > 500, `${twisted.props!.volume}`);
+});
+
+test("setback fillets: the corner of three fillets becomes one smooth patch (FR-FT-033)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const s1 = rect("s1", 20, 20, 40, 40);
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 40 } };
+  // The three edges meeting at the corner (40, 40, 40).
+  const edges = [{ faces: ["f1:side:s1l2", "f1:side:s1l3"] }, { faces: ["f1:end", "f1:side:s1l2"] }, { faces: ["f1:end", "f1:side:s1l3"] }] as FilletFeature["edges"];
+  const fil = (setbacks?: FilletFeature["setbacks"]): Feature => ({ id: "f2", type: "fillet", name: "F", radius: { v: 4 }, edges, setbacks });
+  const plain = run(m, doc([s1, ex, fil()]));
+  const at = (d: number) => [{ v: { edge: edges[0], at: [40, 40, 40] as V3 }, d }];
+  const r = run(m, doc([s1, ex, fil(at(8))]));
+  assert.ok(new oc.BRepCheck_Analyzer(r.body!.shape, true, false).IsValid_2());
+  assert.equal(r.body!.names.filter(n => n === "f2:setback:0").length, 1);
+  assert.equal(r.body!.faces.length, plain.body!.faces.length);
+  // A little more material than the round corner, which it replaces.
+  assert.ok(r.props!.volume > plain.props!.volume && r.props!.volume < plain.props!.volume + 50, `${r.props!.volume}`);
+  // The patch meets the faces around it smoothly (G1): normals agree in the middle of every boundary edge.
+  const mm = m as any;
+  const body = r.body!;
+  const patch = body.faces[body.names.indexOf("f2:setback:0")];
+  const pe = mm.sub(patch, "EDGE");
+  assert.equal(pe.length, 9);
+  for (const e of pe) {
+    const mid = mm.edgeMid(e);
+    const other = body.faces.find((x, j) => body.names[j] !== "f2:setback:0" && mm.sub(x, "EDGE").some((g: any) => g.IsSame(e)));
+    const a = mm.normalNear(patch, mid), b = mm.normalNear(other, mid);
+    assert.ok(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > Math.cos(2 * Math.PI / 180), `kink at ${mid}`);
+  }
+  // A longer setback reaches further; a corner of two filleted edges cannot be set back.
+  const far = run(m, doc([s1, ex, fil(at(15))]));
+  assert.ok(far.props!.volume > r.props!.volume);
+  const two = m.evaluate(doc([s1, ex, { ...fil(at(8)), edges: edges.slice(0, 2) } as Feature]));
+  assert.equal(two.statuses.find(s => s.id === "f2")?.code, "E-FT-SETBACK3");
+  const long = m.evaluate(doc([s1, ex, fil(at(45))]));
+  assert.equal(long.statuses.find(s => s.id === "f2")?.code, "E-FT-SETBACK");
 });

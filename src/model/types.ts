@@ -172,6 +172,11 @@ export interface FilletFeature {
   faces1?: FaceRef[];
   faces2?: FaceRef[];
   center?: FaceRef[];
+  /**
+   * Setback fillets (FR-FT-033): at each corner where three or more filleted edges meet, the fillets stop
+   * `d` mm along every edge from the vertex and one smooth patch (`fid:setback:k`) blends the corner.
+   */
+  setbacks?: { v: VertexRef; d: number }[];
 }
 
 export interface ChamferFeature {

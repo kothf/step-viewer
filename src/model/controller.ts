@@ -104,7 +104,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane" | "sbv";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -1559,6 +1559,7 @@ export class ModelController {
       else if (m.kind === "plane") this.pickPlane(e);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
       else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
@@ -1764,6 +1765,17 @@ export class ModelController {
     const list = (f.vertices ??= []);
     const i = list.findIndex(x => !("point" in x) && Math.hypot(x.at[0] - v.at[0], x.at[1] - v.at[1], x.at[2] - v.at[2]) < 1e-6);
     if (i >= 0) list.splice(i, 1); else list.push(v);
+    this.drawDecor(); this.renderPanel(); void this.rebuild();
+  }
+
+  /** Setback fillet (FR-FT-033): a click near an edge end toggles that corner, set back twice the radius to start with. */
+  private pickSetback(e: PointerEvent, f: FilletFeature) {
+    const v = this.pickVertex(e);
+    if (!v || "point" in v) return;
+    const list = (f.setbacks ??= []);
+    const i = list.findIndex(x => !("point" in x.v) && Math.hypot(x.v.at[0] - v.at[0], x.v.at[1] - v.at[1], x.v.at[2] - v.at[2]) < 1e-6);
+    if (i >= 0) list.splice(i, 1); else list.push({ v, d: 2 * f.radius.v });
+    if (!list.length) delete f.setbacks;
     this.drawDecor(); this.renderPanel(); void this.rebuild();
   }
 
@@ -4277,6 +4289,9 @@ export class ModelController {
       } else
       body = kindSel + group(f.type === "fillet" ? t("Items to fillet") : t("Items to chamfer"), `<p class="pm-count">${esc(t("{n} edge|{n} edges", { n: f.edges.length }))}</p>` + items)
         + group(f.type === "fillet" ? t("Fillet parameters") : t("Chamfer parameters"), sizes)
+        + (f.type === "fillet" ? group(t("Setback parameters"), `<div class="pm-field"><span>${esc(t("Setback vertices"))}</span><button class="pm-box${m.focus === "sbv" ? " focus" : ""}" data-k="sbfocus" aria-pressed="${m.focus === "sbv"}" translate="no">${esc(f.setbacks?.length ? t("{n} vertex|{n} vertices", { n: f.setbacks.length }) : t("None"))}</button></div>`
+          + (f.setbacks?.length ? `<ul class="pm-items" aria-label="${esc(t("Setback vertices"))}">${f.setbacks.map((s, i) => `<li><span translate="no">${esc(this.vertexLabel(s.v))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sb="${i}" value="${esc(trimNum(s.d * fu, 6))}" aria-label="${esc(t("Setback distance"))} ${i + 1}" spellcheck="false" /><span class="muted">${unit}</span></span><button class="icon" data-rmsb="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(this.vertexLabel(s.v))}">✕</button></li>`).join("")}</ul>` : "")
+          + `<p class="pm-help muted">${esc(t("Click the box, then near a corner where three or more filleted edges meet: the fillets stop the setback distance from the corner and one smooth patch blends it. Click the box again to go back to picking edges."))}</p>`) : "")
         + group(f.type === "fillet" ? t("Fillet options") : t("Chamfer options"), `<label class="chk pm-chk"><input type="checkbox" data-ui="tangent"${this.tangentProp ? " checked" : ""} />${esc(t("Tangent propagation"))}</label>` + (f.type === "fillet" ? chk("keepFit", f.keepFit, t("Keep features that fit (skip edges that fail)")) : ""));
     }
     if (f.type === "axis" || f.type === "point") {
@@ -4779,6 +4794,29 @@ export class ModelController {
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
     });
     pm.querySelector("[data-k=clearParting]")?.addEventListener("click", () => { if (f.type === "draft") { f.parting = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=sbfocus]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = m.focus === "sbv" ? undefined : "sbv"; this.renderPanel(); this.drawDecor(); } });
+    pm.querySelectorAll<HTMLElement>("[data-rmsb]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "fillet" || !f.setbacks) return;
+      f.setbacks.splice(+b.dataset.rmsb!, 1);
+      if (!f.setbacks.length) delete f.setbacks;
+      this.drawDecor(); this.renderPanel(); void this.rebuild();
+    }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-sb]").forEach(inp => {
+      const apply = () => {
+        if (f.type !== "fillet" || !f.setbacks) return;
+        let v: number;
+        try { v = evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const s = f.setbacks[+inp.dataset.sb!];
+        if (!s || s.d === v) return;
+        s.d = v;
+        void this.rebuild();
+      };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+    });
     pm.querySelectorAll<HTMLElement>("[data-rmv]").forEach(b => b.addEventListener("click", () => {
       if (f.type !== "chamfer" || !f.vertices) return;
       f.vertices.splice(+b.dataset.rmv!, 1);
