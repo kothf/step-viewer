@@ -371,11 +371,16 @@ export class Viewer {
     const up = THREE.Object3D.DEFAULT_UP;
     r.applyAxisAngle(up, THREE.MathUtils.degToRad(-h));
     if (v) {
-      // Over the top stops just short of the pole (the orbit keeps Z up).
-      const right = new THREE.Vector3().crossVectors(up, r).normalize();
-      const polar = r.angleTo(up), lim = 1e-3;
-      const a = THREE.MathUtils.clamp(THREE.MathUtils.degToRad(v), polar - Math.PI + lim, polar - lim);
-      if (right.lengthSq() > 0.5) r.applyAxisAngle(right, a);
+      // Over the top stops just short of the pole (the orbit keeps Z up). A positive turn about
+      // up × r lowers the camera, so the turn is kept between the two poles. Looking straight down
+      // or up (Top, Bottom) up × r is zero: the screen's right axis tilts the view instead.
+      const right = new THREE.Vector3().crossVectors(up, r);
+      if (right.lengthSq() < 1e-12 * r.lengthSq()) right.setFromMatrixColumn(this.camera.matrixWorld, 0).projectOnPlane(up);
+      if (right.lengthSq() > 1e-12) {
+        right.normalize();
+        const polar = r.angleTo(up), lim = 1e-3;
+        r.applyAxisAngle(right, THREE.MathUtils.clamp(THREE.MathUtils.degToRad(v), lim - polar, Math.PI - lim - polar));
+      }
     }
     this.animateTo(tgt, tgt.clone().add(r), animate, end.h);
   }
