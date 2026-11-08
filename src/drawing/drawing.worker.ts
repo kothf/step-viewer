@@ -13,7 +13,7 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir }
-  | { id: number; type: "section"; view: ViewDir; p: V3 }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
 
@@ -89,7 +89,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true, diff: geometryDiff(oc, solidOf(r.a), solidOf(r.b)) });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
-      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p) });
+      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p, 0.02, r.poly) });
     }
   } catch (err) {
     post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });

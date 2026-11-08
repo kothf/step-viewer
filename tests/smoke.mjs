@@ -6007,6 +6007,24 @@ try {
     const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
     check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
       `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
+    // 1.96.0 broken-out section (FR-DRW-015): outline an area of the projected view, Enter cuts it to the middle and hatches the floor.
+    await ap.keyboard.press("Escape");
+    const tv = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, uc: pl.uc, vc: pl.vc, w: (pl.box[2] - pl.box[0]) / pl.s, h: (pl.box[3] - pl.box[1]) / pl.s }; }, pv0.id);
+    const at2 = (u, v) => clickAt(tv.x + (u - tv.uc) * tv.s, tv.y + (v - tv.vc) * tv.s);
+    await at2(tv.uc, tv.vc);
+    await ap.click('.drw-props [data-a="brokenout"]');
+    const bu0 = tv.uc - tv.w * 0.4, bu1 = tv.uc - tv.w * 0.2, bv0 = tv.vc - tv.h * 0.2, bv1 = tv.vc + tv.h * 0.2;
+    await at2(bu0, bv0); await at2(bu1, bv0); await at2(bu1, bv1); await at2(bu0, bv1);
+    await ap.keyboard.press("Enter");
+    await ap.waitForFunction(id => window.__sv.drw.proj(id)?.cut?.length > 0, tv.id, { timeout: 60000 });
+    const bo = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { poly: v.broken?.poly.length, d: v.broken?.d, mode: window.__sv.drw.mode(), depth: document.querySelector('.drw-props [data-v="bdepth"]')?.value ?? null }; }, tv.id);
+    check(bo.poly === 8 && bo.mode === "none" && bo.depth && +bo.depth > 0, `drawing: broken-out section cuts the outlined area and hatches it (${JSON.stringify([tv, bo])})`);
+    await ap.fill('.drw-props [data-v="bdepth"]', "1");
+    await ap.keyboard.press("Enter");
+    const bo2 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken?.d, tv.id);
+    await ap.click('.drw-props [data-a="unbroken"]');
+    const bo3 = await ap.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(x => x.id === id).broken ?? null, tv.id);
+    check(bo2 != null && Math.abs(bo2 - bo.d) > 0.5 && bo3 === null, `drawing: the broken-out depth can be typed; Remove takes it off (${JSON.stringify([bo.d, bo2, bo3])})`);
     await ctx.close();
   }
 

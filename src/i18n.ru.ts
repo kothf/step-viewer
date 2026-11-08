@@ -2862,6 +2862,17 @@ export const RU: Record<string, string> = {
   "H": "В",
   "X": "X",
   "Y": "Y",
+  // 1.96.0: broken-out section (FR-DRW-015).
+  "Click the corners of the area to cut away on the view.": "Щёлкайте по углам области, которую нужно вырезать на виде.",
+  "Click more corners; click the first corner or press Enter to cut.": "Добавьте углы; щёлкните по первому углу или нажмите Enter, чтобы вырезать.",
+  "Select a model, projected or auxiliary view first.": "Сначала выберите основной, проекционный или дополнительный вид.",
+  "Broken-out section": "Местный разрез",
+  "Click the corners of an area; the material in it is cut away down to a depth and hatched": "Щёлкните по углам области: материал в ней вырезается до заданной глубины и штрихуется",
+  "Depth from the front (mm)": "Глубина от передней грани (мм)",
+  "Redraw the outline": "Задать контур заново",
+  "Remove broken-out section": "Удалить местный разрез",
+  "Broken-out depth": "Глубина местного разреза",
+  "Type a depth between 0 and {max} mm.": "Введите глубину от 0 до {max} мм.",
   // 1.90.0: patterns of faces and bodies, sketch- and table-driven patterns (FR-FT-070..073).
   "SketchPattern": "МассивПоЭскизу",
   "TablePattern": "МассивПоТаблице",
