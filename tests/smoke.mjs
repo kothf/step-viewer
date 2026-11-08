@@ -3722,6 +3722,16 @@ try {
     if (selA) await dp.click('#drw [data-tolt="sym"]');
     tx = await texts();
     check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
+    const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
+    [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
+    await dp.mouse.click(x, y);
+    const fitOk = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-tolt="fit"]'));
+    if (fitOk) { await dp.click('#drw [data-tolt="fit"]'); await dp.selectOption('#drw .drw-props [data-d="fshow"]', "both"); }
+    tx = await texts();
+    const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
+    check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
+      `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);

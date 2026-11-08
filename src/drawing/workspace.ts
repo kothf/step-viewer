@@ -22,6 +22,7 @@ import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
+import { fitLimits, splitFit } from "./iso286";
 import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
@@ -1382,6 +1383,21 @@ export class DrawingWorkspace {
     this.store!.change(label, d => { const a = (d.sheets[this.sheetIdx].annots ?? []).find(x => x.id === id); if (a) fn(a); });
   }
 
+  /** Fit display choice and the ISO 286 limits the code gives at this size (FR-DRW-021). */
+  private fitFields(a: DimAnnot, size: number | undefined): string {
+    const code = a.tol?.fit ?? "", pair = code.includes("/");
+    const show = a.tol?.show ?? "code";
+    const sel = `<label class="drw-f">${esc(t("Show"))}<select data-d="fshow"${pair ? " disabled" : ""}>${([["code", "Code"], ["limits", "Deviations"], ["both", "Code and deviations"]] as const).map(([k, l]) => `<option value="${k}"${show === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
+    const sg = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(3).replace(/^0\.000$/, "0");
+    const row = (c: string) => { const l = size != null ? fitLimits(c, size) : null; return l ? `${c}: ${sg(l.up)} / ${sg(l.lo)}` : null; };
+    const parts = splitFit(code), codes = [parts.hole, parts.shaft].filter((c): c is string => !!c);
+    const rows = codes.map(row);
+    const note = !codes.length || rows.some(r => !r)
+      ? `<p class="drw-note drw-fitlim">${esc(t("ISO 286 has no limits for this code and size (letters D to S, grades 3 to 14, up to 500 mm)."))}</p>`
+      : `<p class="drw-note drw-fitlim" translate="no">${rows.map(r => esc(r!)).join("<br>")}</p>`;
+    return sel + note;
+  }
+
   private setTol(tt: Tol["t"] | "") {
     this.setAnnot("Tolerance", a => {
       if (a.t !== "dim") return;
@@ -1417,7 +1433,7 @@ export class DrawingWorkspace {
         <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([["", "None"], ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as const).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
         ${tol && tol !== "fit" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
         ${tol === "dev" || tol === "limit" ? `<label class="drw-f">${esc(t("Lower"))}<input data-d="lo" inputmode="decimal" value="${a.tol?.lo ?? ""}"></label>` : ""}
-        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>` : ""}
+        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>${this.fitFields(a, g?.value)}` : ""}
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
@@ -1505,6 +1521,7 @@ export class DrawingWorkspace {
         else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
+        else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
