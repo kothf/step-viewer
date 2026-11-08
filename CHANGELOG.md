@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.182.0] - 2026-11-08
+## [1.184.0] - 2026-11-08
 
 ### Added
 
 - **Gusset offset and thickness side (FR-FT-121).** Gusset's location gets an **Offset** (in from the start or end, or from the middle towards the end) and, at a start or end location, the thickness goes on the **Inner side**, **Both sides** or the **Outer side**, as in SolidWorks.
+
+## [1.183.0] - 2026-11-08
+
+### Added
+
+- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as SolidWorks' profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
 
 ## [1.181.0] - 2026-11-08
 
@@ -1417,8 +1423,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.182.0...HEAD
-[1.182.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.182.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.184.0...HEAD
+[1.184.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.184.0
+[1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
 [1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
 [1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
 [1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0

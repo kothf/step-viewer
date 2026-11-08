@@ -3570,7 +3570,7 @@ try {
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
-    await dp.click('#drw [data-a="detail"]');
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 25, 0);
@@ -3630,6 +3630,18 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
       `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
+    // Detail profile (FR-DRW-013): four corners round the hole on the top view, closed by clicking the first again.
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="profile"]');
+    for (const [u, w] of [[0, -12], [22, -12], [22, 12], [5, 12], [0, -12]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(330, 170);
+    await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const pdet = vs.find(v => v.kind === "detail" && v.outline);
+    const pprims = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && p.t === "p" && p.closed && p.p.length === 8).length);
+    const ptexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t").map(p => p.s));
+    check(pdet && pdet.outline.length === 8 && pdet.letter === "F" && pprims >= 2 && ptexts.includes("DETAIL F"),
+      `drawing: detail F framed by a clicked profile, outlined on its parent and on the view (${JSON.stringify(pdet?.outline)}, ${pprims} outlines)`);
     // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
     [x, y] = await at(top.id, -45, -25);
     await dp.mouse.click(x, y);
