@@ -8974,7 +8974,7 @@ try {
     const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
     await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
     await ready();
-    await dp.waitForFunction(() => { const t = document.querySelector('[data-pal="flat"]'); return t && !t.hidden; }, null, { timeout: 60000 });
+    await dp.waitForFunction(() => { return !!document.querySelector('[data-pal="flat"] path[d^="M"]'); }, null, { timeout: 60000 });
     await dp.click('[data-pal="flat"]');
     await dp.waitForTimeout(500);
     const [sx, sy] = await dp.evaluate(() => window.__sv.drw.sheetPt(330, 90));

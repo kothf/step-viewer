@@ -425,7 +425,7 @@ export class DrawingWorkspace {
           </div>
           <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
-            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}<button class="drw-pt" draggable="true" data-flatview="1" data-pal="flat" hidden title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t("Flat pattern"))}</span></button></div>
+            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
           </div>
           <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
             <div class="drw-at-grid">${ANNOT_TOOLS.map(([k, label]) => `<button class="btn small drw-at" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${esc(t(label))}</button>`).join("")}</div>
@@ -912,11 +912,15 @@ export class DrawingWorkspace {
       this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
     }
     // A sheet metal part also offers its flat pattern (FR-FT-120).
-    const tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]'), src = this.doc.source;
-    const sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
-    if (!tile) return;
-    tile.hidden = !sm;
-    if (!sm) return;
+    // The drawing may have closed while the thumbnails were drawn.
+    if (run !== this.palRun || !this.store) return;
+    const src = this.doc.source, sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
+    let tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]');
+    if (!sm) { tile?.remove(); return; }
+    if (!tile) {
+      this.el.querySelector(".drw-pal-grid")!.insertAdjacentHTML("beforeend", `<button class="drw-pt" draggable="true" data-flatview="1" data-pal="flat" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t("Flat pattern"))}</span></button>`);
+      tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]')!;
+    }
     let d = "";
     try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" })); } catch { /* left blank */ }
     if (run === this.palRun) tile.querySelector("path")?.setAttribute("d", d);
