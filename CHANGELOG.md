@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.225.0] - 2026-11-08
+## [1.226.0] - 2026-11-08
 
 ### Added
 
@@ -1531,8 +1531,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.225.0...HEAD
-[1.225.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.225.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.226.0...HEAD
+[1.226.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.226.0
 [1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
 [1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
