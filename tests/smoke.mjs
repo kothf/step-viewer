@@ -6787,6 +6787,45 @@ try {
     await settle();
     const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
     check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
+    // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Post", d => {
+        d.features.push({ id: "ps", type: "sketch", name: "Plate", plane: { std: "XY" }, rels: [], dims: [], ents: [P("u1", 1900, -100), P("u2", 2100, -100), P("u3", 2100, 100), P("u4", 1900, 100), L("v1", "u1", "u2"), L("v2", "u2", "u3"), L("v3", "u3", "u4"), L("v4", "u4", "u1")] },
+          { id: "pe", type: "extrude", name: "Plate body", sketch: "ps", op: "boss", end: "blind", depth: { v: 10 }, merge: false },
+          { id: "k5", type: "sketch3d", name: "3DSketch2", rels: [], dims: [], pts: [{ id: "A", p: [2000, 0, 10], fixed: true }, { id: "B", p: [2000, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] },
+          { id: "m5", type: "member", name: "Structural Member5", profile: "shs", size: "40x40x3", segs: [{ sketch: "k5", ent: "post" }], corner: "none" },
+          { id: "g5", type: "gusset", name: "Gusset1", face1: { name: "pe:end", hint: [2050, 50, 10] }, face2: { name: "m5:post:side:5", hint: [2020, 0, 150] }, d1: { v: 50 }, d2: { v: 70 }, thickness: { v: 5 }, shape: "tri", loc: "mid" },
+          { id: "w5", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "pe:end", hint: [2050, 50, 10] }], faces2: [{ name: "m5:post:side:5", hint: [2020, 0, 150] }], size: { v: 4 } });
+      });
+    });
+    await settle();
+    const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
+    check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
+    await mp.waitForTimeout(300);
+    const gs = await mp.evaluate(() => {
+      const as = window.__sv.modeller.arrows ?? [], v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const a = as[0];
+      if (!a) return { n: 0 };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { n: as.length, keys: as.map(x => x.key), key: a.key, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 20)), labels: [...document.querySelectorAll("#mc-layer .mc-handle")].map(e => e.textContent) };
+    });
+    if (gs.from) {
+      await mp.mouse.move(gs.from[0], gs.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(gs.from[0] + ((gs.to[0] - gs.from[0]) * i) / 6, gs.from[1] + ((gs.to[1] - gs.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const gd = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { d1: d?.d1?.v, d2: d?.d2?.v }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const moved = gs.key === "d1" ? gd.d1 : gd.d2, kept = gs.key === "d1" ? gd.d2 : gd.d1, was = gs.key === "d1" ? 50 : 70;
+    check(gs.n === 2 && JSON.stringify(gs.keys) === '["d1","d2"]' && JSON.stringify(gs.labels) === '["50 mm","70 mm"]' && moved > was + 5 && moved < was + 40 && kept === 120 - was, `weldments: gusset leg arrows (${JSON.stringify({ gs, gd })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

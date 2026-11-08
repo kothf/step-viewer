@@ -50,7 +50,10 @@ import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { lang, onLangChange, t } from "../i18n";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
-import type { EndCapFeature } from "../weldments/types";
+import type { EndCapFeature, GussetFeature } from "../weldments/types";
+
+/** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
+type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
 
 export interface ModelHost {
   viewer: Viewer;
@@ -268,8 +271,10 @@ export class ModelController {
   private sketchMark = 0;
   /** The depth arrow of an extrude (FR-FT-017): its mesh, and the drag in progress. */
   /** Drag handle: the extrude depth arrow, or the revolve angle handle (`ang` set: centre on the axis, unit axis, radius vector at 0°). */
-  private arrow: { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } } | null = null;
-  private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number } | null = null;
+  /** `key`: the feature's number it drags; `label`: its value button. Several may show (gusset legs); `arrow` is the one in use. */
+  private arrow: DragArrow | null = null;
+  private arrows: DragArrow[] = [];
+  private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number; key?: string } | null = null;
 
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
@@ -2418,6 +2423,7 @@ export class ModelController {
     }
     this.decor.clear();
     this.arrow = null;
+    this.arrows = [];
     document.getElementById("mc-layer")?.replaceChildren();
     this.planeMeshes = [];
     this.lineMats = [];
@@ -2706,9 +2712,10 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | null {
     const m = this.mode;
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid")) || (f?.type === "endcap" && f.faces.length > 0);
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     if (m.kind !== "none" || !this.selected) return null;
     const f = this.store?.feature(this.selected);
@@ -2719,10 +2726,19 @@ export class ModelController {
   }
 
   private drawArrow() {
+    // While dragging, the redrawn arrows keep the one in use (a gusset has two).
+    const using = this.arrowDrag?.key;
+    this.drawArrows();
+    if (using) this.arrow = this.arrows.find(a => a.key === using) ?? this.arrow;
+  }
+
+  private drawArrows() {
     this.arrow = null;
+    this.arrows = [];
     const f = this.arrowFeature();
     if (!f) return;
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
+    if (f.type === "gusset") { this.drawGussetArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -2735,20 +2751,7 @@ export class ModelController {
     if (f.start === "offset") base.addScaledVector(new THREE.Vector3(...fr.n), (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1));
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
-    const tip = base.clone().addScaledVector(dir, mid ? f.depth.v / 2 : f.depth.v);
-    const obj = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10).translate(0, 0.5, 0), mat);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 18).translate(0, 1.25, 0), mat);
-    // A fat invisible cylinder is what the pointer hits.
-    const pick = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.6, 8).translate(0, 0.8, 0), new THREE.MeshBasicMaterial({ visible: false }));
-    obj.add(shaft, head, pick);
-    obj.position.copy(tip);
-    obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    obj.renderOrder = 2600;
-    shaft.renderOrder = head.renderOrder = 2600;
-    this.decor.add(obj);
-    this.arrow = { obj, pick, base, dir, scale: 1, mid };
+    this.placeArrow(base, dir, f.depth.v, mid, "depth");
     this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
   }
 
@@ -2767,12 +2770,37 @@ export class ModelController {
     const fi = data.faces[best];
     const base = new THREE.Vector3(...fi.center);
     const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(f.inward ? -1 : 1);
-    this.placeArrow(base, dir, f.thickness.v, false);
+    this.placeArrow(base, dir, f.thickness.v, false, "thickness");
     this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
   }
 
-  /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it). */
-  private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean) {
+  /** The leg arrows of a gusset (FR-FT-121): from the inner corner along each supporting face. */
+  private drawGussetArrows(f: GussetFeature) {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return;
+    const faceOf = (name: string) => { const i = names.indexOf(name); const fi = i >= 0 ? data.faces[i] : undefined; return fi?.type === "plane" && fi.normal ? fi : null; };
+    // The plate's faces lying on face 1 and face 2 (their normals point away from those faces).
+    const on1 = faceOf(`${f.id}:on1`), on2 = faceOf(`${f.id}:on2`);
+    if (!on1 || !on2) return;
+    const n1 = new THREE.Vector3(...on1.normal!).negate(), n2 = new THREE.Vector3(...on2.normal!).negate();
+    const L = n1.clone().cross(n2);
+    if (L.length() < 1e-6) return;
+    L.normalize();
+    const leg = (n: THREE.Vector3, other: THREE.Vector3) => { const d = L.clone().cross(n).normalize(); return d.dot(other) < 0 ? d.negate() : d; };
+    const u1 = leg(n1, n2), u2 = leg(n2, n1);
+    const c = Math.min(f.chamfer?.v ?? 0, Math.min(f.d1.v, f.d2.v) * 0.9);
+    // Each face runs from the chamfer (or the corner) to the leg's end along its leg: its centre is half way.
+    const P = new THREE.Vector3(...on1.center).addScaledVector(u1, -(c + f.d1.v) / 2);
+    const P2 = new THREE.Vector3(...on2.center).addScaledVector(u2, -(c + f.d2.v) / 2);
+    P.add(P2).multiplyScalar(0.5);
+    this.placeArrow(P.clone(), u1, f.d1.v, false, "d1");
+    this.handleLabel(f.id, "d1", t("Drag the arrow to change the length along face 1; click to type it"));
+    this.placeArrow(P.clone(), u2, f.d2.v, false, "d2");
+    this.handleLabel(f.id, "d2", t("Drag the arrow to change the length along face 2; click to type it"));
+  }
+
+  /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
+  private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean, key: string) {
     const obj = new THREE.Group();
     const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10).translate(0, 0.5, 0), mat);
@@ -2783,7 +2811,8 @@ export class ModelController {
     obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     obj.renderOrder = shaft.renderOrder = head.renderOrder = 2600;
     this.decor.add(obj);
-    this.arrow = { obj, pick, base, dir, scale: 1, mid };
+    this.arrow = { obj, pick, base, dir, scale: 1, mid, key };
+    this.arrows.push(this.arrow);
   }
 
   private handleLabel(id: string, num: string, title: string) {
@@ -2795,6 +2824,8 @@ export class ModelController {
       setTimeout(() => ($("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${num}]`))?.focus(), 0);
     });
     $("#mc-layer").appendChild(label);
+    const a = this.arrows.at(-1);
+    if (a) a.label = label;
     this.sizeArrow();
   }
 
@@ -2826,7 +2857,8 @@ export class ModelController {
     const obj = new THREE.Group();
     obj.add(arc, head);
     this.decor.add(obj);
-    this.arrow = { obj, pick, base: c, dir: u, scale: 1, mid: !!f.mid, ang: { c, u, r, arc, head } };
+    this.arrow = { obj, pick, base: c, dir: u, scale: 1, mid: !!f.mid, key: "angle", ang: { c, u, r, arc, head } };
+    this.arrows.push(this.arrow);
     this.placeAngle(f.angle.v);
     this.handleLabel(f.id, "angle", t("Drag the handle to change the angle; click to type it"));
   }
@@ -2862,22 +2894,23 @@ export class ModelController {
 
   /** Keeps the arrow a constant size on screen and its value label beside the tip. */
   private sizeArrow() {
-    const a = this.arrow;
-    if (!a) return;
     const v = this.host.viewer;
+    const f = this.arrowFeature();
+    for (const a of this.arrows) {
     const holder = a.ang ? a.ang.head : a.obj;
     const px = v.pxWorld(holder.position);
     a.scale = px * 70;
     holder.scale.setScalar(a.scale);
-    const label = $("#mc-layer").querySelector<HTMLElement>(".mc-handle");
-    const f = this.arrowFeature();
+    const label = a.label;
     if (label && f) {
       const tip = a.ang ? a.ang.head.position.clone().add(a.ang.head.position.clone().sub(a.ang.c).setLength(a.scale * 0.9)) : a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5);
       const s = tip.project(v.camera);
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
-      label.textContent = f.type === "revolve" ? `${trimNum((f.angle.v * 180) / Math.PI, 2)}°`
-        : `${trimNum((f.type === "endcap" ? f.thickness.v : f.depth.v) * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+      const val = (f as unknown as Record<string, Num | undefined>)[a.key]?.v ?? 0;
+      label.textContent = a.key === "angle" ? `${trimNum((val * 180) / Math.PI, 2)}°`
+        : `${trimNum(val * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+    }
     }
   }
 
@@ -2888,10 +2921,14 @@ export class ModelController {
     return rc;
   }
 
+  /** Whether the pointer is on a drag arrow; the one hit becomes the arrow in use. */
   private arrowHit(e: PointerEvent) {
-    if (!this.arrow) return false;
-    this.arrow.obj.updateMatrixWorld(true);
-    return this.ray(e).intersectObject(this.arrow.pick, false).length > 0;
+    const ray = this.ray(e);
+    for (const a of this.arrows) {
+      a.obj.updateMatrixWorld(true);
+      if (ray.intersectObject(a.pick, false).length) { this.arrow = a; return true; }
+    }
+    return false;
   }
 
   /** Distance along the arrow's axis to the point nearest the pointer's ray. */
@@ -2906,16 +2943,19 @@ export class ModelController {
 
   private startArrowDrag(e: PointerEvent) {
     const f = this.arrowFeature();
-    if (!f) return;
+    if (!f || !this.arrow) return;
+    const key = this.arrow.key;
     // Selected in the tree (no command open): dragging edits the feature and applies on release (Instant3D).
     if (this.mode.kind === "none") {
       const i = this.doc.features.findIndex(x => x.id === f.id);
       this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false, instant: true };
       this.renderAll();
+      // The arrows were drawn again: keep dragging the same one.
+      this.arrow = this.arrows.find(a => a.key === key) ?? this.arrow;
     }
     this.arrowDrag = f.type === "revolve"
-      ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e) }
-      : { start: this.axisParam(e), depth: f.type === "endcap" ? f.thickness.v : f.depth.v, moved: false };
+      ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
+      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num>)[key].v, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -2925,8 +2965,8 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap") || !d || !a) return;
-    const key = m.draft.type === "endcap" ? "thickness" : "depth";
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset") || !d || !a) return;
+    const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
     // Round to a step that suits the zoom (Shift: finer).
@@ -2935,7 +2975,7 @@ export class ModelController {
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
     if (!(v > 1e-6)) v = step / fu;
-    const draft = m.draft as { depth?: Num; thickness?: Num };
+    const draft = m.draft as unknown as Record<string, Num>;
     if (Math.abs(v - draft[key]!.v) < 1e-12) return;
     d.moved = true;
     draft[key] = { v };
