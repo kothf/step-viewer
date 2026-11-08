@@ -2,6 +2,7 @@
 // drawing.json and, for a drawing of a STEP / IGES / BREP file, that file under
 // model/. A part's document is kept inside drawing.json, so the file opens alone.
 import { FORMAT, toJson, type Manifest } from "../model/file";
+import { validFormat } from "./formats";
 import { unzipLimited, zip } from "../model/zip";
 import type { DrawingDoc } from "./types";
 
@@ -29,6 +30,8 @@ export async function unpackDrawing(buf: ArrayBuffer): Promise<{ doc: DrawingDoc
   const doc = JSON.parse(dec.decode(dj)) as DrawingDoc;
   if (doc.kind !== "drawing" || !Array.isArray(doc.sheets) || !doc.sheets.length || !doc.source) throw new Error("The document is damaged.");
   doc.props ??= {};
+  // A user title block (FR-DRW-004) is checked like an imported format; one that is not valid is dropped.
+  for (const sh of doc.sheets) if (sh.tb) { const f = validFormat(sh.tb); if (f) sh.tb = f; else delete sh.tb; }
   const model = doc.source.kind === "file" ? files.get(`model/${doc.source.name.replace(/[\\/]/g, "_")}`) : undefined;
   if (doc.source.kind === "file" && !model) throw new Error("The drawing's model is missing from the file.");
   return { doc, model };

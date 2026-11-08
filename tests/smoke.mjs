@@ -4743,6 +4743,105 @@ try {
     await ctx.close();
   }
 
+  // --- motion study (FR-FT-122): mate keys, motors, explode and camera animation, GIF and WebM ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Pin", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const pin = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    for (let k = 0; k < 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin); await shown(k + 1); }
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 30, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    // Pin 2 on pin 1's axis, 10 mm above its top face; an exploded view moving pin 2 along +X.
+    await mp.evaluate(() => {
+      const a = window.__sv.asm, k = a.doc.components[0].part, g = [...a.geo.get(k).entries()], c = a.doc.components;
+      const side = g.find(([, x]) => x.k === "axis")[0], top = g.find(([, x]) => x.k === "plane" && x.n[2] > 0.99)[0], bottom = g.find(([, x]) => x.k === "plane" && x.n[2] < -0.99)[0];
+      a.change(d => {
+        d.mates = [{ id: "mc", name: "Concentric1", type: "concentric", a: { comp: c[0].id, face: side }, b: { comp: c[1].id, face: side } },
+          { id: "md", name: "Distance1", type: "distance", a: { comp: c[0].id, face: top }, b: { comp: c[1].id, face: bottom }, align: "anti", value: 10 }];
+        d.explodes = [{ id: "x1", name: "Exploded1", steps: [{ comps: [c[1].id], dir: [1, 0, 0], dist: 50 }] }];
+      });
+    });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pos = () => mp.evaluate(() => { const g = window.__sv.viewer.parts[1].group, q = g.quaternion; return { x: Math.round(g.position.x * 1000) / 1000, z: Math.round(g.position.z * 1000) / 1000, rz: Math.round(2 * Math.atan2(q.z, q.w) * 1000) / 1000 }; });
+    // Mate keys: Distance1 from 10 to 40 mm over 5 s.
+    const keys = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.addTrack("mate:md");
+      const tr = m.study.tracks[0];
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      const inp = document.querySelector('#motion [data-p="v"]');
+      inp.value = "40"; inp.dispatchEvent(new Event("change"));
+      return { n: window.__sv.asm.doc.motions?.length, keys: m.study.tracks[0].keys.map(k => [k.t, k.v]), rows: document.querySelectorAll("#motion .mo-key").length };
+    });
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const mid = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(5));
+    const end = await pos();
+    // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
+    await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
+    const turn = await pos();
+    // Animation wizard: explode over the study, and rotate the model (camera keys).
+    const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+    await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
+    const exploded = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const cam1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray() }; });
+    // Recording: a GIF of a 1 s study and a WebM video.
+    const rec = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.edit(s => { s.duration = 1; });
+      const gif = await m.recordGif(160), head = new Uint8Array(await gif.slice(0, 6).arrayBuffer());
+      const webm = await m.recordWebm();
+      const wh = webm ? new Uint8Array(await webm.slice(0, 4).arrayBuffer()) : [];
+      return { gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
+    });
+    // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
+    const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
+    await shown(2);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(150);
+    const ru = await mp.evaluate(() => {
+      const bad = [], ok = /^(fps|mm|GIF|WebM)$/;
+      const test = s => { for (const w of s.split(/[^A-Za-z0-9]+/)) if (/^[A-Za-z]{2,}$/.test(w) && !ok.test(w)) bad.push(s.trim().slice(0, 40)); };
+      const root = document.querySelector("#motion");
+      const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = tw.nextNode(); n; n = tw.nextNode()) if (!n.parentElement.closest('[translate="no"]')) test(n.data);
+      for (const e of root.querySelectorAll("[title], [aria-label]")) for (const at of ["title", "aria-label"]) { const v = e.getAttribute(at); if (v) test(v); }
+      return { bad, title: root.querySelector(".mo-title").textContent };
+    });
+    await mp.click("#lang-btn");
+    await mp.click('#motion [data-mo="close"]');
+    const back = await pos();
+    check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
+      && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && Math.abs(exploded.x - 50) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
+      && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
+      `motion study: mate keys, rotary motor, explode and orbit wizard, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, rec, undo, ru, back })})`);
+    await ctx.close();
+  }
+
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -5822,6 +5921,24 @@ try {
     const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
     check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
       `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
+    // 1.90.0 user sheet format (FR-DRW-004): edit the title block from the ISO one, add a logo, save and use it; back to ISO.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.click('.drw-props [data-a="tbedit"]');
+    await ap.waitForSelector("#drw-tb-dlg[open]");
+    await ap.fill('#drw-tb-dlg [data-tb-f="name"]', "Smoke block");
+    await ap.fill('#drw-tb-dlg [data-c="0.label"]', "Firma");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await ap.setInputFiles('#drw-tb-dlg [data-tb="logo"]', { name: "logo.png", mimeType: "image/png", buffer: png });
+    await ap.waitForSelector('#drw-tb-dlg [data-tb-l="w"]');
+    const pvImg = await ap.evaluate(() => !!document.querySelector("#drw-tb-dlg .drw-tb-pv image"));
+    await ap.click('#drw-tb-dlg button[value="ok"]');
+    await ap.waitForFunction(() => !!window.__sv.drw.doc().sheets[0].tb, null, { timeout: 10000 });
+    const fmt = await ap.evaluate(() => { const tb = window.__sv.drw.doc().sheets[0].tb; return { name: tb.name, label: tb.cells[0].label, logo: !!tb.logo, img: /<image /.test(window.__sv.drw.svg()), lib: JSON.parse(localStorage.getItem("mc:sheetFormats") ?? "[]").length, opt: [...document.querySelectorAll('.drw-props [data-s="format"] option')].map(o => o.value).filter(v => v.startsWith("user:")).length }; });
+    await ap.selectOption('.drw-props [data-s="format"]', "iso");
+    const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
+    check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
+      `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
     await ctx.close();
   }
 
@@ -6067,6 +6184,67 @@ try {
     const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
     await cp.click("#lang-btn");
     check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
+  // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // A 600 × 400 frame sketched on XY, then Structural Member from the Weldments flyout.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Frame", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 600, 0), P("c", 600, 400), P("d", 0, 400), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Structural Member")');
+    await settle();
+    const p0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, segs: window.__sv.model.mode().draft?.segs?.length, bodies: window.__sv.model.last().bodies?.length, boxes: document.querySelectorAll("#mc-pm input[data-wseg]").length }));
+    // Live preview follows the panel: a bigger tube, then untick one line.
+    await mp.selectOption('#mc-pm select[data-k="wsize"]', "50x50x4");
+    await settle();
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
+    await mp.click('#mc-pm input[data-wseg="l4"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const r = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), cut: (l.cutList ?? []).map(c => [c.desc, c.qty, c.length, c.angle1, c.angle2]) }; });
+    check(p0.title === "Structural Member" && p0.segs === 4 && p0.boxes === 4 && p0.bodies === 4 && p1.bodies === 3 && p1.size === "50x50x4" && !r.bad && r.bodies === 4
+      && JSON.stringify(r.cut) === JSON.stringify([["SHS 50x50x4", 2, 650, 45, 45], ["SHS 50x50x4", 2, 450, 45, 45]]),
+      `weldments: Structural Member along a sketch, mitred corners, live preview, cut list (FR-FT-121) (${JSON.stringify({ p0, p1, r })})`);
+    // Cut List… opens a table: two member rows and the total mass (steel assumed).
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("Cut List")');
+    await mp.waitForSelector("#wld-cut[open]");
+    const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    await mp.click('#wld-cut [data-a="close"]');
+    check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    // End cap on an open end: an L of two members butted, a cap on the free end.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
+    await settle();
+    await mp.click('#mc-tools [data-fly="weld"]');
+    await mp.click('#mc-menu button:has-text("End Cap")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces = [{ name: "m2:k1:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
+    // In Russian: the Structural Member panel.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 

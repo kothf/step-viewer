@@ -13,7 +13,9 @@ export type Prim =
   | { t: "a"; o: [number, number]; r: number; a0: number; a1: number; pen: Pen; layer: Layer }
   | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean; fill?: boolean }
   /** Text: baseline point, height in mm, horizontal alignment, optional rotation (degrees, CCW). */
-  | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean; rot?: number };
+  | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean; rot?: number }
+  /** An image (a title block logo): bottom-left corner, size in mm, a PNG/JPEG data URL; DXF leaves it out. */
+  | { t: "i"; x: number; y: number; w: number; h: number; src: string; layer: Layer };
 /** Text `rot` is in degrees, counter-clockwise, about the baseline point. */
 
 /** Line widths in mm (ISO 128 pen group 0.35 / 0.18; the frame 0.5). */
@@ -37,6 +39,7 @@ export function rotatePrims(prims: Prim[], o: [number, number], ang: number): Pr
     if (q.t === "l") { const a = r(q.p[0], q.p[1]), b = r(q.p[2], q.p[3]); return { ...q, p: [a[0], a[1], b[0], b[1]] }; }
     if (q.t === "a") return { ...q, o: r(...q.o), a0: q.a0 + ang, a1: q.a1 + ang };
     if (q.t === "p") { const p: number[] = []; for (let i = 0; i + 1 < q.p.length; i += 2) p.push(...r(q.p[i], q.p[i + 1])); return { ...q, p }; }
+    if (q.t === "i") return q;
     const [x, y] = r(q.x, q.y);
     return { ...q, x, y, rot: (q.rot ?? 0) + ang * 180 / Math.PI };
   });

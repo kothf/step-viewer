@@ -916,3 +916,43 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-wrong-l button { width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); padding: 4px 6px; font: inherit; font-size: 12px; cursor: pointer; }
 .mc-wrong-l button.bad { border-left: 3px solid var(--danger); }
 .mc-wrong-l button.warn { border-left: 3px solid #c08400; }
+
+/* Motion study pane (FR-FT-122): SolidWorks' MotionManager under the view. */
+.motion { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 46%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); box-shadow: var(--shadow); font-size: var(--fs-caption); color: var(--text); }
+.motion .mo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.motion .mo-title { font-size: var(--fs-body); margin: 0 6px 0 0; font-weight: 600; }
+.motion .mo-f { display: inline-flex; align-items: center; gap: 4px; }
+.motion .mo-f input[type=text] { width: 9em; }
+.motion .mo-f input.mo-n { width: 4.5em; }
+.motion select, .motion input[type=text] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; min-height: 24px; }
+.motion .mo-ib { width: 26px; height: 24px; font-size: 13px; color: var(--text); }
+.motion .mo-sp { flex: 1; }
+.motion .mo-time { font-family: var(--mono); min-width: 8.5em; text-align: center; }
+.motion .mo-body { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; overflow: auto; min-height: 60px; flex: 1; }
+.motion .mo-names { border-right: 1px solid var(--line); }
+.motion .mo-name { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 6px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; overflow: hidden; }
+.motion .mo-name.sel { background: var(--accent-soft); color: var(--accent-text); }
+.motion .mo-name.off .mo-kind, .motion .mo-name.off .mo-tn { text-decoration: line-through; }
+.motion .mo-lane.off { opacity: 0.55; }
+.motion .mo-rhead { cursor: default; font-weight: 600; color: var(--muted); height: 22px; }
+.motion .mo-kind { color: var(--muted); }
+.motion .mo-name.sel .mo-kind { color: inherit; }
+.motion .mo-tn { overflow: hidden; text-overflow: ellipsis; }
+.motion .mo-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
+.motion .mo-acts .mo-ib { width: 20px; height: 18px; font-size: 10px; }
+.motion .mo-tl { position: relative; min-width: 240px; margin: 0 10px; }
+.motion .mo-ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: col-resize; touch-action: none; }
+.motion .mo-tick { position: absolute; top: 3px; transform: translateX(-50%); color: var(--muted); font-family: var(--mono); pointer-events: none; }
+.motion .mo-tick::after { content: ""; position: absolute; left: 50%; top: 14px; height: 5px; border-left: 1px solid var(--line); }
+.motion .mo-lane { position: relative; height: 26px; border-bottom: 1px solid var(--line); touch-action: none; }
+.motion .mo-span { position: absolute; top: 12px; height: 2px; background: var(--muted); opacity: 0.5; pointer-events: none; }
+.motion .mo-key { position: absolute; top: 6px; width: 13px; height: 13px; margin-left: -7px; padding: 0; transform-origin: center; background: var(--panel); border: 2px solid var(--accent); rotate: 45deg; border-radius: 2px; cursor: ew-resize; }
+.motion .mo-key.sel, .motion .mo-bar.sel { background: var(--accent); }
+.motion .mo-bar { position: absolute; top: 7px; height: 12px; padding: 0; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 6px; cursor: ew-resize; min-width: 6px; }
+.motion .mo-key:focus-visible, .motion .mo-bar:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.motion .mo-head-line { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--danger); pointer-events: none; }
+.motion .mo-empty { margin: 8px 0; }
+.motion .mo-props { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 8px; border-top: 1px solid var(--line); min-height: 34px; }
+.motion .mo-status { padding: 0 8px 4px; min-height: 1em; color: var(--warn-text); }
+.motion .mo-status:empty { display: none; }
+@media (max-width: 768px) { .motion .mo-body { grid-template-columns: 120px 1fr; } .motion { max-height: 60%; } }
