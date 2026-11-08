@@ -5,6 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.186.0] - 2026-11-08
+
+### Added
+
+- **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+
+## [1.183.0] - 2026-11-08
+
+### Added
+
+- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as SolidWorks' profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
+
+## [1.181.0] - 2026-11-08
+
+### Added
+
+- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as SolidWorks does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
+
 ## [1.180.0] - 2026-11-08
 
 ### Added
@@ -1405,7 +1423,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.180.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.186.0...HEAD
+[1.186.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.186.0
+[1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
+[1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
 [1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
 [1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0
 [1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0

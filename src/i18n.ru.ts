@@ -3502,4 +3502,11 @@ export const RU: Record<string, string> = {
   "Click the centre: the second leg turns about it into the first leg's plane.": "Щёлкните центр: второй участок поворачивается вокруг него в плоскость первого.",
   "Click the end of the second leg.": "Щёлкните конец второго участка.",
   "The two legs of an aligned section must meet at an angle.": "Два участка ломаного разреза должны сходиться под углом.",
+  "Code": "Обозначение",
+  "Deviations": "Отклонения",
+  "Code and deviations": "Обозначение и отклонения",
+  "ISO 286 has no limits for this code and size (letters D to S, grades 3 to 14, up to 500 mm).": "В ISO 286 нет предельных отклонений для этого обозначения и размера (буквы от D до S, квалитеты 3–14, до 500 мм).",
+  "Click the corners of the detail profile on a view.": "Щёлкните углы контура выносного элемента на виде.",
+  "Click more corners; click the first corner or press Enter to close the profile.": "Щёлкните ещё углы; щёлкните первый угол или нажмите Enter, чтобы замкнуть контур.",
+  "Click at least three corners that enclose an area.": "Щёлкните хотя бы три угла, ограничивающих область.",
 };

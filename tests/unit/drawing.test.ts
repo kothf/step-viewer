@@ -573,3 +573,63 @@ test("aligned section: the second leg turns about the centre into the first leg'
   const total = cut.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
   assert.ok(Math.abs(total - 100 * 10) < 1e-6, `cut area ${total}`);
 });
+
+test("ISO 286 fit limits: H7, g6, js6, K7, N7, P7, s6 and the dimension text (FR-DRW-021)", async () => {
+  const { fitLimits, parseFit } = await import("../../src/drawing/iso286");
+  const { dimText } = await import("../../src/drawing/annot");
+  const um = (c: string, d: number) => { const l = fitLimits(c, d)!; return [Math.round(l.up * 1000), Math.round(l.lo * 1000)]; };
+  assert.deepEqual(um("H7", 20), [21, 0]);
+  assert.deepEqual(um("g6", 20), [-7, -20]);
+  assert.deepEqual(um("h6", 50), [0, -16]);
+  assert.deepEqual(um("f7", 25), [-20, -41]);
+  assert.deepEqual(um("js6", 20), [6, -6]);
+  assert.deepEqual(um("k6", 20), [15, 2]);
+  assert.deepEqual(um("n6", 40), [33, 17]);
+  assert.deepEqual(um("p6", 20), [35, 22]);
+  assert.deepEqual(um("s6", 60), [72, 53]);
+  assert.deepEqual(um("r6", 100), [73, 51]);
+  assert.deepEqual(um("K7", 20), [6, -15]);
+  assert.deepEqual(um("M7", 20), [0, -21]);
+  assert.deepEqual(um("N7", 20), [-7, -28]);
+  assert.deepEqual(um("P7", 20), [-14, -35]);
+  assert.deepEqual(um("S7", 60), [-42, -72]);
+  assert.deepEqual(um("F8", 10), [35, 13]);
+  assert.deepEqual(um("H11", 120), [220, 0]);
+  assert.equal(fitLimits("Z7", 20), null);
+  assert.equal(fitLimits("H7", 600), null);
+  assert.equal(parseFit("H7/g6"), null);
+  const g = { k: "dia", value: 20 } as any;
+  const base = { t: "dim", id: "d", view: "v", k: "dia", refs: [], pos: [0, 0] } as any;
+  assert.deepEqual(dimText({ ...base, tol: { t: "fit", fit: "H7" } }, g, "."), { main: "Ø20H7" });
+  assert.deepEqual(dimText({ ...base, tol: { t: "fit", fit: "H7", show: "limits" } }, g, "."), { main: "Ø20", up: "+0.021", lo: "0" });
+  assert.deepEqual(dimText({ ...base, tol: { t: "fit", fit: "g6", show: "both" } }, g, ","), { main: "Ø20g6", up: "−0,007", lo: "−0,020" });
+  assert.deepEqual(dimText({ ...base, tol: { t: "fit", fit: "H7/g6", show: "both" } }, g, "."), { main: "Ø20H7/g6" });
+});
+
+test("detail profile: lines, arcs and polylines are trimmed to a polygon (FR-DRW-013)", async () => {
+  const { clipToPoly, inPoly, clipDetail } = await import("../../src/drawing/compose");
+  // An L-shaped profile: the 20 × 20 square minus its top-right quarter.
+  const L = [0, 0, 20, 0, 20, 10, 10, 10, 10, 20, 0, 20];
+  assert.ok(inPoly(L, 5, 15) && inPoly(L, 15, 5) && !inPoly(L, 15, 15) && !inPoly(L, -1, 5));
+  const len = (g: any) => Math.hypot(g.p[2] - g.p[0], g.p[3] - g.p[1]);
+  // A line across at y = 15 keeps x 0..10; at y = 5 keeps 0..20.
+  const a = clipToPoly([{ k: "l", c: 0, p: [-5, 15, 25, 15] }], L);
+  assert.equal(a.length, 1); assert.ok(Math.abs(len(a[0]) - 10) < 1e-9);
+  const b = clipToPoly([{ k: "l", c: 0, p: [-5, 5, 25, 5] }], L);
+  assert.ok(Math.abs(len(b[0]) - 20) < 1e-9);
+  // A diagonal through the notch comes out in two pieces.
+  const d = clipToPoly([{ k: "l", c: 0, p: [0, 20, 20, 0] }], L);
+  assert.equal(d.length, 1);
+  const e = clipToPoly([{ k: "l", c: 0, p: [0, 25, 25, 0] }], L);
+  assert.equal(e.length, 2);
+  // A full circle about (10, 10) of radius 5: the quarter in the notch goes.
+  const c = clipToPoly([{ k: "a", c: 0, o: [10, 10], r: 5, a0: 0, a1: 2 * Math.PI }], L);
+  const sw = c.reduce((t, g: any) => t + g.a1 - g.a0, 0);
+  assert.ok(Math.abs(sw - 1.5 * Math.PI) < 1e-9, `sweep ${sw}`);
+  // A polyline zig-zagging out of the profile and back splits into runs.
+  const p = clipToPoly([{ k: "p", c: 0, p: [2, 15, 8, 15, 15, 15, 15, 5, 18, 5] }], L);
+  assert.equal(p.length, 2);
+  // Views without a profile keep the circle.
+  const circ = clipDetail({ id: "d", name: "", kind: "detail", c: [0, 0], r: 1, x: 0, y: 0 } as any, [{ k: "l", c: 0, p: [-5, 0, 5, 0] }]);
+  assert.ok(Math.abs(len(circ[0]) - 2) < 1e-9);
+});

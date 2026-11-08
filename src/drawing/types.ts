@@ -47,6 +47,8 @@ export interface DrawingView {
   /** Detail: circle centre (parent's view axes, model mm) and radius (model mm). */
   c?: [number, number];
   r?: number;
+  /** Detail drawn by a profile instead of a circle (FR-DRW-013): corners u, v in the parent's view axes; `c`/`r` are its box centre and reach. */
+  outline?: number[];
   /** Letter of a section, detail or auxiliary view (A, B, …). */
   letter?: string;
   /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. `pattern` (FR-DRW-012):
@@ -88,7 +90,9 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3 };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
-export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string }
+export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string;
+  /** Fit display: the code (default), its ISO 286 deviations, or both; a hole/shaft pair always shows the code. */
+  show?: "code" | "limits" | "both" }
 
 /** A dimension: horizontal, vertical or aligned between two points (or a line's ends), radius, diameter, the angle of two lines,
  *  the length of an arc seen end-on ("arc"), a chamfer (the shorter of two lines against the other: "1 × 45°"), or an ordinate
