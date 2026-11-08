@@ -8,7 +8,7 @@ import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, Sheet } from "./types";
 import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
-import { boxInView, findView, lookDir, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
+import { altReq, boxInView, findView, lookDir, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
 
@@ -380,10 +380,15 @@ export function viewLabel(sheet: Sheet, v: DrawingView, pl: Placement, label: (s
 }
 
 /** Everything drawn for one view: its lines, the marks of its child views and its label. */
-export function viewBody(sheet: Sheet, v: DrawingView, proj: Projection | undefined, pl: Placement, label: (s: string, p?: Record<string, string>) => string, ctx?: AnnotCtx): Prim[] {
-  const out = [...(proj ? viewPrims(v, proj, pl) : []), ...childMarks(sheet, v, pl), ...viewLabel(sheet, v, pl, label)];
+export function viewBody(sheet: Sheet, v: DrawingView, proj: Projection | undefined, pl: Placement, label: (s: string, p?: Record<string, string>) => string, ctx?: AnnotCtx, alt?: Projection): Prim[] {
+  const out = [...(proj ? viewPrims(v, proj, pl) : []), ...(alt ? altPrims(v, alt, pl) : []), ...childMarks(sheet, v, pl), ...viewLabel(sheet, v, pl, label)];
   if (ctx) out.push(...viewAnnots(sheet, v, pl, ctx).prims);
   return out;
+}
+
+/** Alternate position lines (FR-DRW-015): the moved components' visible edges as thin phantom lines (ISO 128 type 05). */
+export function altPrims(v: DrawingView, alt: Projection, pl: Placement): Prim[] {
+  return decorPrims(v, pl, alt.vis, "phantom", "PHANTOM");
 }
 
 export interface Composed { prims: Prim[]; boxes: ViewBox[] }
@@ -397,7 +402,8 @@ export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<stri
     const pl = placement(sheet, v, proj, modelBox);
     const r = viewRect(pl);
     boxes.push({ id: v.id, x0: r[0], y0: r[1], x1: r[2], y1: r[3], ready: !!proj });
-    prims.push(...viewBody(sheet, v, proj, pl, label, ctx));
+    const ar = altReq(sheet, v);
+    prims.push(...viewBody(sheet, v, proj, pl, label, ctx, ar ? projections.get(ar.key) : undefined));
   }
   prims.push(...sheetNotes(sheet, label, ctx?.dec, ctx?.bom).prims);
   return { prims, boxes };

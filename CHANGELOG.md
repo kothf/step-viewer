@@ -26,6 +26,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Sketch driven pattern** (pattern ▾): a copy at each free point of a sketch, moved from the seed's centroid or a picked reference point.
   - **Table driven pattern** (pattern ▾): copies moved by X, Y offsets typed one row per copy, along the part's axes or a coordinate system.
 
+## [1.99.0] - 2026-11-08
+
+### Added
+
+- **Alternate position views** (FR-DRW-015), in assembly drawings: select a model, projected or auxiliary view and click Add component… under Alternate position in its panel. Click an edge of a component, then where that point goes: the component (with its sub-assembly's parts) is drawn again there in thin phantom lines (ISO 128 long dash, double dot).
+  - Move across, Move up and Turn (about the picked point, as seen in the view) can be typed; Remove takes one off. Detail views of the view show it too.
+  - The phantom lines are in PDF, SVG, PNG and print, and on their own PHANTOM layer and linetype in DXF.
+
 ## [1.98.0] - 2026-11-08
 
 ### Added
@@ -973,7 +981,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.100.0...HEAD
-[1.100.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.100.0
+[1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
+[1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
 [1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0

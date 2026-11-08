@@ -28,7 +28,7 @@ export function useStyle(st: DraftStyle | undefined) {
   ARROW = TEXT_H * 6 / 7;
   ARROW_KIND = st?.arrow ?? "filled";
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
-  Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, frame: Math.max(0.5, thick * 1.4) });
+  Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
 
 /** A dimension or leader end at (x, y) pointing along (dx, dy), in the style's arrowhead. */
