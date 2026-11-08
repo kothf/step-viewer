@@ -2288,7 +2288,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const vLp = await vol(), stLp = await lastSt();
-    check(patMenu === "Linear pattern|Circular pattern|Mirror" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
+    check(patMenu === "Linear pattern|Circular pattern|Mirror|Sketch driven pattern|Table driven pattern" && Math.abs(vLp - (120000 - 4 * hole)) < 1 && stLp === "lpattern:ok", `model 1.23: linear pattern of a hole along a picked edge, 4 × 20 mm (${patMenu}, ${Math.round(vLp)}, ${stLp})`);
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
@@ -2304,7 +2304,7 @@ try {
     const topS = await world([30, 15, 20]);
     await mp.mouse.click(topS[0], topS[1]);
     await idle();
-    const shellFaces = await mp.evaluate(() => document.querySelector("#mc-pm .pm-count")?.textContent);
+    const shellFaces = await mp.evaluate(() => document.querySelector('#mc-pm [data-focus="faces"]')?.textContent);
     await mp.click("#mc-ok");
     await idle();
     const vSh = await vol(), stSh = await lastSt();
@@ -5785,6 +5785,277 @@ try {
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.88: Intersect panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- 1.98: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two stacked 100 × 60 × 10 blocks: the edge between their −Y sides is the parting line.
+    await mp.evaluate(() => window.__sv.model.store.change("Blocks", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const box = (k, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", -50, -30), P(k + "2", 50, -30), P(k + "3", 50, 30), P(k + "4", -50, 30), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push(box("a", { std: "XY" }), { id: "ea", type: "extrude", name: "Boss-Extrude1", sketch: "a", op: "boss", end: "blind", depth: { v: 10 } },
+        box("b", { face: { name: "ea:end" } }), { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="draft"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="dkind"]', "parting");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { std: "XY" }; m.mode().focus = "faces"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="angle"]', "5");
+    await mp.press('#mc-pm input[data-num="angle"]', "Tab");
+    await settle();
+    const [ex, ey] = await toPage([0, -30, 10]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const dd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { kind: f.kind, edges: f.parting?.map(e => e.faces.slice().sort().join("+")), other: !!document.querySelector('#mc-pm input[data-k="other"]') }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm label.chk")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const d1 = await state();
+    const wedge = 100 * 0.5 * 10 * 10 * Math.tan(5 * Math.PI / 180);
+    check(dd.kind === "parting" && dd.edges?.length === 1 && /ea:side/.test(dd.edges[0]) && /eb:side/.test(dd.edges[0]) && dd.other && Math.abs(Math.abs(120000 - d1.v) - wedge) < 1 && !d1.bad,
+      `model 1.98: parting line draft from a clicked edge, 5° (FR-FT-061) (${JSON.stringify({ dd, d1, wedge })})`);
+    check(/Линия разъёма/.test(ru) && /Направление извлечения/.test(ru) && /Другая грань/.test(ru) && !/Parting line|Direction of pull/.test(ru), `model 1.98: draft panel in Russian (${ru.slice(0, 300)})`);
+    // Loft between two 20 mm squares (the top one 15 mm over), normal to both profiles from the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Squares", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (k, cx, plane) => ({ id: k, type: "sketch", name: k, plane, rels: [], dims: [], ents: [P(k + "1", cx - 10, -10), P(k + "2", cx + 10, -10), P(k + "3", cx + 10, 10), P(k + "4", cx - 10, 10), Ln(k + "l1", k + "1", k + "2"), Ln(k + "l2", k + "2", k + "3"), Ln(k + "l3", k + "3", k + "4"), Ln(k + "l4", k + "4", k + "1")] });
+      d.features.push({ id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } }, { id: "p2", type: "plane", name: "Plane2", mode: "offset", base: { std: "XY" }, offset: { v: 80 } },
+        sq("q1", 0, { plane: "p1" }), sq("q2", 15, { plane: "p2" }));
+    }));
+    await settle();
+    const before = (await state()).v;
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Loft")');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.profiles = ["q1", "q2"]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="startC"]', "normal");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="endC"]', "normal");
+    await settle();
+    const ld = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { s: f.startNormal, e: f.endNormal, len: !!document.querySelector('#mc-pm input[data-k="startLen"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const l1 = await state();
+    check(ld.s && ld.e && ld.len && Math.abs(l1.v - before - 12000) < 15 && !l1.bad, `model 1.98: loft normal to its start and end profiles (FR-FT-082) (${JSON.stringify({ ld, l1, before })})`);
+    await ctx.close();
+  }
+
+  // --- 1.98: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="chamfer"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="mode"]', "vertex");
+    await settle();
+    for (const k of ["distance", "distance2", "distance3"]) {
+      await mp.fill(`#mc-pm input[data-num="${k}"]`, "5");
+      await mp.press(`#mc-pm input[data-num="${k}"]`, "Enter");
+      await settle();
+    }
+    // Click on the top front edge 3 mm from the corner (50, −30, 20): that corner is picked.
+    const [cx, cy] = await toPage([47, -30, 20]);
+    await mp.mouse.move(cx, cy); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const vd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { mode: f.mode, n: f.vertices?.length ?? 0, at: f.vertices?.[0]?.at, d3: !!document.querySelector('#mc-pm input[data-num="distance3"]'), items: document.querySelector("#mc-pm .pm-count")?.textContent }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm .pm-count")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const v1 = await state();
+    check(vd.mode === "vertex" && vd.n === 1 && vd.d3 && Math.abs(v1.v - (120000 - 125 / 6)) < 0.1 && !v1.bad,
+      `model 1.98: vertex chamfer on a clicked corner, 5 mm each way (FR-FT-041) (${JSON.stringify({ vd, v1 })})`);
+    check(/Расстояние 3/.test(ru) && /Вершина/.test(ru) && !/Distance 3|Click near a corner/.test(ru), `model 1.98: vertex chamfer panel in Russian (${ru.slice(0, 300)})`);
+    // Shell 2 mm open at the top (on the plain block); the +X wall gets 5 mm typed in the multi-thickness list.
+    await mp.evaluate(() => window.__sv.model.store.change("Drop chamfer", d => { d.features.pop(); }));
+    await settle();
+    await mp.click('#mc-tools [data-c="shell"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.faces = [{ name: "eb:end" }]; f.thickness = { v: 2 }; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.click('#mc-pm [data-focus="mthick"]');
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.multi = [{ name: "eb:side:bl2", t: 4 }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-mt="0"]', "5");
+    await mp.press('#mc-pm input[data-mt="0"]', "Enter");
+    await settle();
+    const sd = await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; return { focus: m.mode().focus, multi: f.multi }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const v2 = await state();
+    check(sd.focus === "mthick" && sd.multi?.[0]?.t === 5 && Math.abs(v2.v - (120000 - 93 * 56 * 18)) < 1 && !v2.bad,
+      `model 1.98: multi-thickness shell, one wall 5 mm (FR-FT-060) (${JSON.stringify({ sd, v2, want: 120000 - 93 * 56 * 18 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.96: slot hole up to next, extrude up to body (FR-FT-050, FR-FT-012) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="hole"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { face: { name: "eb:end" } }; f.pts = [[0, 0]]; m.mode().focus = "pts"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "next");
+    await settle();
+    const hd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { d: f.diameter.v, L: f.slotLen?.v, kind: f.kind, end: f.end, fields: !!document.querySelector('#mc-pm input[data-num="slotLen"]') }; });
+    const h1 = await state();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const h2 = await state();
+    const r = hd.d / 2, want = 120000 - 20 * (Math.PI * r * r + 2 * r * (hd.L ?? 0));
+    check(hd.kind === "slot" && hd.end === "next" && hd.fields && hd.L > 0 && Math.abs(h1.v - want) < 1 && Math.abs(h2.v - want) < 1 && !h2.bad,
+      `model 1.96: slot hole up to next goes through the block (FR-FT-050) (${JSON.stringify({ hd, h1, h2, want })})`);
+    check(/Длина паза/.test(ru) && /До следующей|До след/.test(ru) && !/Slot length|Up to next/.test(ru), `model 1.96: hole panel in Russian (${ru.slice(0, 300)})`);
+    // Up to body: a Ø10 post grows from the block's top to a separate block 30 mm above.
+    await mp.evaluate(() => window.__sv.model.store.change("Lid and post", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "pl", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { plane: "pl" }, rels: [], dims: [], ents: [P("s1", 10, -10), P("s2", 30, -10), P("s3", 30, 10), P("s4", 10, 10), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e2", type: "extrude", name: "Boss-Extrude2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, merge: false },
+        { id: "c", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", 20, 0), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "e3", type: "extrude", name: "Boss-Extrude3", sketch: "c", op: "boss", end: "body", depth: { v: 1 }, upToBody: { name: "e2:start" } });
+    }));
+    await settle();
+    const ub = await state();
+    check(Math.abs(ub.v - (h2.v + 4000 + Math.PI * 25 * 30)) < 1 && !ub.bad, `model 1.96: extrude up to body stops at the other body (FR-FT-012) (${JSON.stringify({ ub, before: h2.v })})`);
+    await ctx.close();
+  }
+
+  // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bodies: l.props?.bodies ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    const setDraft = fn => mp.evaluate(fn => { const m = window.__sv.model; new Function("f", "names", fn)(m.mode().draft, m.last().faceNames); m.panel(); void m.rebuild(); }, fn);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 10 block with a Ø10 × 5 boss at (−40, −20), and a sketch of two free points on top.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "c", type: "sketch", name: "Sketch2", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", -40, -20), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "ec", type: "extrude", name: "Boss-Extrude2", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("k1", 0, 0), P("k2", 20, 10)] });
+    }));
+    await settle();
+    const v0 = (await state()).v, boss = Math.PI * 25 * 5;
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Sketch driven pattern$/ }).click();
+    await settle();
+    const sk = await mp.evaluate(() => window.__sv.model.mode().draft.sketch);
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    const s1 = await state();
+    // Copy the boss's faces instead of the feature: the same result.
+    await mp.selectOption('#mc-pm select[data-k="copyKind"]', "faces");
+    await settle();
+    await setDraft('f.faces = names.filter(n => n.startsWith("ec:") && n !== "ec:start").map(name => ({ name }));');
+    await settle();
+    const s2 = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const s3 = await state();
+    check(sk === "k" && s1.title === "Sketch driven pattern" && Math.abs(s1.v - (v0 + 2 * boss)) < 2 && Math.abs(s2.v - s1.v) < 2 && !s3.bad && Math.abs(s3.v - s1.v) < 2,
+      `model 1.90: sketch driven pattern copies a boss (feature or faces) to the sketch's points (FR-FT-073, FR-FT-070) (${JSON.stringify({ sk, v0, s1, s2, s3 })})`);
+    // Table driven: rows typed as X, Y offsets.
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Table driven pattern$/ }).click();
+    await settle();
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    await mp.fill('#mc-pm textarea[data-k="tableText"]', "0, 40\n20, 40\n40, 40");
+    await mp.dispatchEvent('#mc-pm textarea[data-k="tableText"]', "change");
+    await settle();
+    const t1 = await state();
+    const rows = await mp.evaluate(() => window.__sv.model.mode().draft.table.length);
+    // In Russian: the panel.
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const t2 = await state();
+    check(rows === 3 && t1.title === "Table driven pattern" && Math.abs(t2.v - (v0 + 5 * boss)) < 3 && !t2.bad,
+      `model 1.90: table driven pattern adds a copy per X, Y row (FR-FT-073) (${JSON.stringify({ rows, t1, t2 })})`);
+    check(ru.title === "Массив, управляемый таблицей" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm|Enter|Esc|Boss-Extrude2/g, "")), `model 1.90: pattern panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
