@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.190.0] - 2026-11-08
+## [1.193.0] - 2026-11-08
 
 ### Added
 
 - **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+
+## [1.190.0] - 2026-11-08
+
+### Added
+
+- **DXF 2000 and single-sheet PDF (FR-DRW-030).** Export ▾ DXF 2000 (this sheet) writes an AutoCAD 2000 (AC1015) file in millimetres with the same layers and line types as the R12 export, polylines as LWPOLYLINE and Cyrillic text as Unicode escapes, for programs that no longer read R12. Export ▾ PDF (this sheet) writes only the sheet you are on.
 
 ## [1.189.0] - 2026-11-08
 
@@ -1441,7 +1447,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.190.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.193.0...HEAD
+[1.193.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.193.0
 [1.190.0]: https://github.com/kothf/step-viewer/compare/v1.189.0...v1.190.0
 [1.189.0]: https://github.com/kothf/step-viewer/compare/v1.187.0...v1.189.0
 [1.187.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.187.0
