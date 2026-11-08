@@ -39,7 +39,8 @@ export interface MotorTrack {
 }
 
 /** An exploded view's progress, 0 collapsed … 1 exploded. */
-export interface ExplodeTrack { id: string; kind: "explode"; view: string; keys: Key[]; off?: boolean }
+/** `seq`: the steps run one after another over the progress (SolidWorks animation wizard), not all at once. */
+export interface ExplodeTrack { id: string; kind: "explode"; view: string; keys: Key[]; seq?: boolean; off?: boolean }
 
 /** A component's appearance (SolidWorks: component visibility and transparency keys): opacity 0 hidden … 1 opaque. */
 export interface LookTrack { id: string; kind: "look"; comp: string; keys: Key[]; off?: boolean }

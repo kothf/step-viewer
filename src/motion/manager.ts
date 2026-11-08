@@ -264,7 +264,9 @@ export class MotionManager {
     }
     const view = this.asm.exploded ?? this.asm.doc?.explodes?.[0]?.id;
     if (!view) { toast(t("Make an exploded view first (Explode)."), "warn"); return; }
-    this.edit(st => { st.tracks = st.tracks.filter(x => !(x.kind === "explode" && x.view === view)); st.tracks.push({ id: uid("mt_"), kind: "explode", view, keys: explodeKeys(s.duration, what === "collapse") }); });
+    // Like SolidWorks' animation wizard, several steps run one after another (collapsing goes back in reverse).
+    const steps = this.asm.doc?.explodes?.find(v => v.id === view)?.steps.length ?? 0;
+    this.edit(st => { st.tracks = st.tracks.filter(x => !(x.kind === "explode" && x.view === view)); st.tracks.push({ id: uid("mt_"), kind: "explode", view, keys: explodeKeys(s.duration, what === "collapse"), ...(steps > 1 ? { seq: true as const } : {}) }); });
   }
 
   private snap(tq: number) { const s = this.study; return Math.max(0, Math.min(s.duration, Math.round(tq * s.fps) / s.fps)); }
@@ -908,7 +910,8 @@ export class MotionManager {
         + interpSel(pk.interp);
     }
     const k = key as Key;
-    if (tr.kind === "explode") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Exploded"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp);
+    if (tr.kind === "explode") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Exploded"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
+      + `<label class="mo-f" title="${esc(t("Move the explode steps one after another instead of all at once"))}"><input type="checkbox" data-p="seq"${tr.seq ? " checked" : ""} /><span>${esc(t("Step by step"))}</span></label>`;
     if (tr.kind === "look") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Opacity"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
       + `<button class="btn small" data-p="hide">${esc(t("Hidden"))}</button><button class="btn small" data-p="show">${esc(t("Shown"))}</button>`;
     const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate), ang = mate?.type === "angle";
@@ -1165,7 +1168,7 @@ export class MotionManager {
       if (!this.scaleKeys(ps, Math.min(...ps.map(q => q.t)), v / 100)) { bad(); toast(t("The keys can't be stretched that far."), "warn"); return; }
       this.render(); this.showAt(this.time); return;
     }
-    const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show"].includes(p);
+    const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
     this.edit(st => {
@@ -1184,6 +1187,7 @@ export class MotionManager {
         if (!tr.flip) delete tr.flip;
         return;
       }
+      if (p === "seq" && tr.kind === "explode") { if ((el as HTMLInputElement).checked) tr.seq = true; else delete tr.seq; return; }
       const keys = sortKeys(tr.keys as (Key | CamKey | PoseKey)[]), k = keys[sel.key ?? -1];
       if (!k) return;
       if (p === "t") k.t = this.snap(v);

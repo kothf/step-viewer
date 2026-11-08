@@ -5,11 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.225.0] - 2026-11-08
+## [1.230.0] - 2026-11-08
 
 ### Added
 
 - **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
+
+## [1.229.0] - 2026-11-08
+
+### Fixed
+
+- The 3D view no longer stays blank after the graphics card resets (a lost WebGL context, which can happen while switching between heavy document tabs). The view and the view cube draw again as soon as the browser gives the context back, with the lighting rebuilt; if it does not come back, a message says to save and reload instead of leaving an empty view with only the X/Y/Z labels.
+- A part opened after a STEP file in another tab no longer shows that STEP file's header (protocol, author, CAD system) in Properties.
+
+## [1.226.0] - 2026-11-08
+
+### Added
+
+- Motion studies: explode steps can run **one after another**, as SolidWorks' animation wizard does. With several steps in the exploded view the Explode wizard moves them in turn (Collapse brings them back in reverse); the **Step by step** box on an explode key turns it on or off for that track (FR-FT-122).
 
 ## [1.219.0] - 2026-11-08
 
@@ -1531,8 +1544,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.225.0...HEAD
-[1.225.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.225.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.230.0...HEAD
+[1.230.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.230.0
+[1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0
+[1.226.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.226.0
 [1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
 [1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
