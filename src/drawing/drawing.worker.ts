@@ -14,8 +14,8 @@ import { activate } from "../model/configs";
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
-  | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string }
-  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string }
+  | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string; only?: string[] }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string; only?: string[] }
   /** Another configuration of the loaded part (FR-DRW-010): built once, its facts returned like a load's. */
   | { id: number; type: "config"; name: string }
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
@@ -77,6 +77,16 @@ function buildPart(doc: PartDoc): { shape: any; mat: string | null; extra: Recor
 }
 
 /** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */
+/** The placed components a view shows alone (a top-level id takes its sub-components along), as one compound. */
+function onlyOf(ids: string[]): { shape: any; list: typeof placedShapes } {
+  const list = placedShapes.filter(pc => ids.some(x => pc.id === x || pc.id.startsWith(`${x}/`)));
+  if (!list.length) throw new Error("None of the view's components are in the assembly.");
+  const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
+  b.MakeCompound(c);
+  for (const pc of list) b.Add(c, pc.shape);
+  return { shape: c, list };
+}
+
 function shapeOf(cfg?: string): { shape: any; mat: string | null } {
   if (!cfg || !partDoc || cfg === partDoc.config) return { shape, mat: modelMat };
   const v = variants.get(cfg);
@@ -132,7 +142,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true, ...shapeInfo(oc, b.shape), ...b.extra });
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
-      const sh = shapeOf(r.cfg).shape;
+      const sh = r.only?.length && placedShapes.length ? onlyOf(r.only).shape : shapeOf(r.cfg).shape;
       const proj = project(oc, sh, r.view);
       if (r.shade) {
         // Mesh chord error: 1/400 of the model's size, so the shading stays light even for big models.
@@ -159,16 +169,17 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (!shape) throw new Error("No model loaded");
       const own0 = shapeOf(r.cfg), modelMat = own0.mat;
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
-      let cutShape = own0.shape, keep: any, cutList = placedShapes.length ? placedShapes : [{ id: "", shape: own0.shape, mat: modelMat }];
+      const only = r.only?.length && placedShapes.length ? onlyOf(r.only) : null, base = only ? only.list : placedShapes;
+      let cutShape = only ? only.shape : own0.shape, keep: any, cutList = base.length ? base : [{ id: "", shape: own0.shape, mat: modelMat }];
       if (r.exclude?.length && placedShapes.length) {
         const out = (id: string) => r.exclude!.some(x => id === x || id.startsWith(`${x}/`));
         const b = new oc.BRep_Builder(), a = new oc.TopoDS_Compound(), k = new oc.TopoDS_Compound();
         b.MakeCompound(a); b.MakeCompound(k);
         let na = 0, nk = 0;
-        for (const pc of placedShapes) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
+        for (const pc of base) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
         if (nk) {
           if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
-          cutShape = a; keep = k; cutList = placedShapes.filter(pc => !out(pc.id));
+          cutShape = a; keep = k; cutList = base.filter(pc => !out(pc.id));
         }
       }
       if (r.align) {

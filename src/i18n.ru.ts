@@ -3534,4 +3534,6 @@ export const RU: Record<string, string> = {
   "Link to property": "Ссылка на свойство",
   "Active ({name})": "Активная ({name})",
   "View configuration": "Конфигурация вида",
+  "All components": "Все компоненты",
+  "View components": "Компоненты вида",
 };

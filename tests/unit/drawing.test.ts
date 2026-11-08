@@ -146,6 +146,12 @@ test("section/aux directions: a view from the right of a line is the third-angle
   // Detail views reuse their parent's projection.
   const det = { id: "d", name: "D", kind: "detail" as const, parent: "a", c: [0, 0] as [number, number], r: 5, x: 0, y: 0 };
   assert.equal(viewReq({ ...sheet, views: [...sheet.views, det] }, det).key, req.key);
+  // A model view of some components alone: its own views carry the list and a key of their own.
+  const solo = { ...sheet, views: [{ ...sheet.views[0], only: ["c2"] }, sheet.views[1]] };
+  const sr = viewReq(solo, solo.views[1]);
+  assert.deepEqual(sr.only, ["c2"]);
+  assert.notEqual(sr.key, req.key);
+  assert.equal(viewReq(sheet, sheet.views[1]).only, undefined);
 });
 
 test("detail clipping and section hatching", async () => {
@@ -684,4 +690,31 @@ test("view configuration: projected, section and detail views follow their model
   assert.equal(r.cfg, "Tall");
   assert.ok(r.key.endsWith("|cfg|Tall"));
   assert.ok(!viewReq(sheet, sheet.views[3]).key.includes("|cfg|"));
+});
+
+test("switching first/third angle keeps each projected view the same view and moves it across its parent", async () => {
+  const { switchProjection, projectedDir, viewDir } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [
+    { id: "f", name: "F", orient: "front" as const, x: 100, y: 150 },
+    { id: "t", name: "T", parent: "f", side: [0, -1] as [number, number], x: 100, y: 80 },
+    { id: "r", name: "R", parent: "f", side: [1, 0] as [number, number], x: 200, y: 150 },
+    { id: "rr", name: "RR", parent: "r", side: [1, 0] as [number, number], x: 280, y: 150 }] };
+  const before = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  switchProjection(sheet as any, "third");
+  const after = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  assert.deepEqual(after, before);
+  assert.deepEqual(sheet.views.map(v => [v.x, v.y]), [[100, 150], [100, 220], [0, 150], [-80, 150]]);
+  assert.equal(sheet.projection, "third");
+  void projectedDir;
+});
+
+
+test("a component-only view keeps the topology of its components only", async () => {
+  const { topoOnly } = await import("../../src/drawing/views");
+  const topo = { edges: [{ k: "c1@f1|c1@f2" }, { k: "c2@f1|c2@f3" }, { k: "s1/c3@f0|s1/c3@f1" }], cyls: [{ f: "c1@f4" }, { f: "c2@f2" }, {}] };
+  const a = topoOnly(topo, ["c2"]);
+  assert.deepEqual(a.edges.map(e => e.k), ["c2@f1|c2@f3"]);
+  assert.deepEqual(a.cyls.map(c => c.f), ["c2@f2"]);
+  assert.deepEqual(topoOnly(topo, ["s1"]).edges.map(e => e.k), ["s1/c3@f0|s1/c3@f1"]);
+  assert.equal(topoOnly(topo, undefined), topo);
 });
