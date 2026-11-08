@@ -73,8 +73,40 @@ export interface SmFlatFeature {
   id: string; type: "smflat"; name: string; suppressed?: boolean;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smflat"]);
+/** Where a sketched bend's bend region sits against the sketch line (the flat pattern keeps its size). */
+export type BendPosition = "center" | "start" | "end";
+
+/** Sketched bend: a line sketched on a flat face folds the face along it. */
+export interface SmSketchBendFeature {
+  id: string; type: "smbend"; name: string; suppressed?: boolean;
+  /** A sketch on a flat face of the sheet holding one line. */
+  sketch: string;
+  angle: Num;
+  /** Bend centreline (default), the bend starting at the line, or ending at it. */
+  position?: BendPosition;
+  /** Fold the other side of the line (the default folds the side without bends, else the smaller one). */
+  flip?: boolean;
+  /** Bend the other way (the default bends towards the sketched face). */
+  reverse?: boolean;
+  radius?: Num;
+}
+
+/** Jog: two opposite bends along a sketched line that offset the rest of the face. */
+export interface SmJogFeature {
+  id: string; type: "smjog"; name: string; suppressed?: boolean;
+  sketch: string;
+  offset: Num;
+  /** What the offset measures: outside faces (default), inside faces, or face to same face. */
+  dim?: "outside" | "inside" | "face";
+  angle: Num;
+  position?: BendPosition;
+  flip?: boolean;
+  reverse?: boolean;
+  radius?: Num;
+}
+
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

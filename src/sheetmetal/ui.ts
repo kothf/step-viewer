@@ -6,9 +6,9 @@ import { t } from "../i18n";
 import type { EdgeRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
 import { flatSize, type SheetState } from "./sheet";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmFlangeFeature, type SmHemFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmSketchBendFeature } from "./types";
 
-export type SmTool = "smbase" | "smflange" | "smhem" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
@@ -16,19 +16,23 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smbase", t("Base Flange/Tab"), t("Base flange: a flat plate from a closed sketch, or a bent flange from an open chain of lines")],
   ["smflange", t("Edge Flange"), t("Edge flange: a bend and a flange on straight edges of the sheet")],
   ["smhem", t("Hem"), t("Hem: fold an edge back on itself, closed or open")],
+  ["smbend", t("Sketched Bend"), t("Sketched bend: fold a flat face along a line sketched on it")],
+  ["smjog", t("Jog"), t("Jog: two opposite bends along a sketched line that offset the rest of the face")],
   ["smflat", t("Flatten"), t("Flatten: show the flat pattern, or fold it back")],
   ["smdxf", t("Flat pattern DXF"), t("Export the flat pattern with its bend lines as DXF")],
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smflat: "▭" };
+export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
   smbase: S('<path d="M2 10l4-3h8l-4 3z" fill="currentColor" fill-opacity=".25"/><path d="M2 10v1.6l4-3M10 10v1.6l4-3"/>'),
   smflange: S('<path d="M2 12h8a2 2 0 0 0 2-2V3"/><path d="M2 14h8a4 4 0 0 0 4-4V3"/>'),
   smhem: S('<path d="M2 6h10a2 2 0 0 1 0 4H6"/><path d="M2 4h10a4 4 0 0 1 0 8H6"/>'),
+  smbend: S('<path d="M2 12h6l5-7"/><path d="M8 3v11" stroke-dasharray="1.6 1.4"/>'),
+  smjog: S('<path d="M1.5 11h5l3-5h5"/><path d="M1.5 13h5.6l3-5h4.4"/>'),
   smflat: S('<path d="M1.5 11h13M4 5h8"/><path d="M8 5v6" stroke-dasharray="1.6 1.4"/><path d="M4 5 1.5 11M12 5l2.5 6"/>'),
   smdxf: S('<path d="M3 2h7l3 3v9H3z"/><path d="M5 9h6M8 6v6" stroke-dasharray="1.6 1.4"/>'),
 };
@@ -49,8 +53,11 @@ export interface DraftCtx {
 
 const usable = (s: SketchFeature) => !sketchProfile(s).error || (() => { const p = sketchPath(s); return !p.error && !p.closed; })();
 
+/** A sketch holding just one line (for sketched bends and jogs). */
+const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
+
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smflange" | "smhem", c: DraftCtx): Feature | string {
+export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog", c: DraftCtx): Feature | string {
   const base = c.doc.features.find((f): f is SmBaseFeature => f.type === "smbase");
   if (type === "smbase") {
     if (base) return t("This part already has a base flange.");
@@ -60,6 +67,13 @@ export function smDraft(type: "smbase" | "smflange" | "smhem", c: DraftCtx): Fea
     return { id: c.id, type: "smbase", name: c.name("smbase"), sketch: sk.id, thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 } satisfies SmBaseFeature;
   }
   if (!base) return t("Make a base flange first.");
+  if (type === "smbend" || type === "smjog") {
+    const sel = c.selected ? c.sketches.find(s => s.id === c.selected && oneLine(s)) : undefined;
+    const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && oneLine(s)).at(-1);
+    if (!sk) return t("Sketch one line on a flat face of the sheet first.");
+    if (type === "smbend") return { id: c.id, type: "smbend", name: c.name("smbend"), sketch: sk.id, angle: { v: Math.PI / 2 } } satisfies SmSketchBendFeature;
+    return { id: c.id, type: "smjog", name: c.name("smjog"), sketch: sk.id, offset: { v: 10 }, angle: { v: Math.PI / 2 } } satisfies SmJogFeature;
+  }
   const edges = c.edge ? [c.edge] : [];
   if (type === "smflange") return { id: c.id, type: "smflange", name: c.name("smflange"), edges, length: { v: 20 }, angle: { v: Math.PI / 2 } } satisfies SmFlangeFeature;
   return { id: c.id, type: "smhem", name: c.name("smhem"), edges, kind: "closed", length: { v: 6 } } satisfies SmHemFeature;
@@ -68,6 +82,7 @@ export function smDraft(type: "smbase" | "smflange" | "smhem", c: DraftCtx): Fea
 /** Why ✓ can't keep the draft yet (null: it can). */
 export function smCheck(f: Feature): string | null {
   if (f.type === "smbase" && !f.sketch) return t("Pick a sketch for the base flange.");
+  if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
   return null;
 }
@@ -137,6 +152,26 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
         + group(t("Position"), sel("position", t("Position"), [["inside", t("Material inside")], ["outside", t("Material outside")]], f.position ?? "inside")),
     };
   }
+  if (f.type === "smbend" || f.type === "smjog") {
+    const lines = k.sketches.filter(s => oneLine(s) || s.id === f.sketch);
+    const sketchSel = `<label class="pm-field"><span>${esc(t("Sketch"))}</span><select data-k="sketch">${lines.map(s => `<option value="${s.id}"${s.id === f.sketch ? " selected" : ""}>${esc(k.label(s.name))}</option>`).join("")}</select></label>`;
+    const pos = sel("position", t("Position"), [["center", t("Bend centerline")], ["start", t("Bend starts at line")], ["end", t("Bend ends at line")]], f.position ?? "center");
+    const radius = group(t("Custom bend radius"), `<label class="chk pm-chk"><input type="checkbox" data-sm="customR"${f.radius ? " checked" : ""} />${esc(t("Use custom bend radius"))}</label>` + (f.radius ? numField("radius", t("Bend radius"), f.radius, "length") : ""));
+    const sides = chk("flip", f.flip, t("Fold the other side")) + chk("reverse", f.reverse, t("Reverse direction"));
+    if (f.type === "smbend") {
+      return {
+        title: t("Sketched Bend"),
+        body: group(t("Bend line"), sketchSel + help(t("One line sketched on a flat face; the side without bends folds, and the flat pattern keeps its size.")) + sides)
+          + group(t("Bend parameters"), numField("angle", t("Bend angle"), f.angle, "angle") + pos) + radius,
+      };
+    }
+    return {
+      title: t("Jog"),
+      body: group(t("Bend line"), sketchSel + sides)
+        + group(t("Jog offset"), sel("dim", t("Measured"), [["outside", t("Outside offset")], ["inside", t("Inside offset")], ["face", t("Face to face")]], f.dim ?? "outside") + numField("offset", t("Offset"), f.offset, "length"))
+        + group(t("Jog position"), pos) + group(t("Jog angle"), numField("angle", t("Bend angle"), f.angle, "angle")) + radius,
+    };
+  }
   const st = k.sheet;
   const sz = st ? flatSize(st) : null;
   return {
@@ -185,6 +220,12 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         if (key === "position") upd(() => { if (val === "inside") delete f.position; else f.position = val as SmFlangeFeature["position"]; });
         if (key === "customR") upd(() => { if (val) f.radius = { v: 2 }; else delete f.radius; }, true);
         if (key === "offs") upd(() => { if (val) { f.off0 = { v: 5 }; f.off1 = { v: 5 }; } else { delete f.off0; delete f.off1; } }, true);
+        return;
+      }
+      if (f.type === "smbend" || f.type === "smjog") {
+        if (key === "position") upd(() => { if (val === "center") delete f.position; else f.position = val as SmSketchBendFeature["position"]; });
+        if (key === "customR") upd(() => { if (val) f.radius = { v: 2 }; else delete f.radius; }, true);
+        if (key === "dim" && f.type === "smjog") upd(() => { if (val === "outside") delete f.dim; else f.dim = val as SmJogFeature["dim"]; });
         return;
       }
       if (f.type === "smhem") {

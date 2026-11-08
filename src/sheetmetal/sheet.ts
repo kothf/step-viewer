@@ -13,8 +13,8 @@
 // `<feature id>:p<n>` and bend ids `<feature id>:b<n>`, so a picked edge between `…:top` and
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, SketchFeature, V2, V3 } from "../model/types";
-import { loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, SmBaseFeature, SmFlangeFeature, SmHemFeature } from "./types";
+import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
+import type { BendCalc, BendPosition, SmBaseFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -349,6 +349,267 @@ export function hem(prev: SheetState, f: SmHemFeature): { state: SheetState; ops
   const d = (f.position ?? "inside") === "inside" ? r + st.T : 0;
   const ops: SheetOp[] = [];
   f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, { angle: Math.PI, r, s, d, off0: 0, off1: 0, flip: !!f.flip }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
+  return { state: st, ops };
+}
+
+// ---------- sketched bends and jogs ----------
+
+type Line = Extract<Seg, { kind: "line" }>;
+type Arc = Extract<Seg, { kind: "arc" }>;
+
+/** Distance from a flat point to an outline piece. */
+function segDist(s: Seg, p: V2): number {
+  if (s.kind === "line") {
+    const ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1], l2 = ux * ux + uy * uy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - s.a[0]) * ux + (p[1] - s.a[1]) * uy) / l2));
+    return Math.hypot(p[0] - s.a[0] - t * ux, p[1] - s.a[1] - t * uy);
+  }
+  if (s.kind === "arc" || s.kind === "circle") return Math.abs(d2(p, s.c) - s.r);
+  return Infinity;
+}
+const onLoop = (loop: Seg[], p: V2, tol: number) => loop.some(s => segDist(s, p) < tol);
+
+/** Where a flat point is on the sheet: the rigid inverse of M. */
+const local = (M: Mat, p: V3): V3 => { const d = sub3(p, M.o); return [dot(d, M.x), dot(d, M.y), dot(d, M.z)]; };
+
+/** An arc's angle sweep: start angle and signed sweep (positive counter-clockwise). */
+function arcSweep(s: Arc): { a0: number; sw: number } {
+  const a0 = Math.atan2(s.a[1] - s.c[1], s.a[0] - s.c[0]), a1 = Math.atan2(s.b[1] - s.c[1], s.b[0] - s.c[0]);
+  let sw = a1 - a0;
+  if (s.ccw) { while (sw <= 1e-12) sw += 2 * Math.PI; } else { while (sw >= -1e-12) sw -= 2 * Math.PI; }
+  return { a0, sw };
+}
+const arcAt = (s: Arc, a: number): V2 => [s.c[0] + s.r * Math.cos(a), s.c[1] + s.r * Math.sin(a)];
+
+/** A loop's pieces cut where the line side(p) = 0 crosses them. */
+function splitAt(loop: Seg[], side: (p: V2) => number, n: V2, k: number, tol: number): Seg[] {
+  const out: Seg[] = [];
+  for (const s of loop) {
+    if (s.kind === "line") {
+      const fa = side(s.a), fb = side(s.b);
+      if ((fa > tol && fb < -tol) || (fa < -tol && fb > tol)) {
+        const t = fa / (fa - fb), m: V2 = [s.a[0] + t * (s.b[0] - s.a[0]), s.a[1] + t * (s.b[1] - s.a[1])];
+        out.push({ ...s, b: m }, { ...s, a: m });
+      } else out.push(s);
+    } else if (s.kind === "arc") {
+      // Circle ∩ line n·p = k: the foot of the centre, then ± along the line.
+      const dc = n[0] * s.c[0] + n[1] * s.c[1] - k;
+      if (Math.abs(dc) >= s.r - tol) { out.push(s); continue; }
+      const h = Math.sqrt(s.r * s.r - dc * dc), f: V2 = [s.c[0] - dc * n[0], s.c[1] - dc * n[1]], e: V2 = [-n[1], n[0]];
+      const { a0, sw } = arcSweep(s);
+      const ts = [p2(f, s2(e, h)), p2(f, s2(e, -h))].map(q => {
+        let a = Math.atan2(q[1] - s.c[1], q[0] - s.c[0]) - a0;
+        if (sw > 0) { while (a < 0) a += 2 * Math.PI; } else { while (a > 0) a -= 2 * Math.PI; }
+        return a / sw;
+      }).filter(t => t > 1e-9 && t < 1 - 1e-9).sort((x, y) => x - y);
+      let at = s.a;
+      for (const t of ts) { const q = arcAt(s, a0 + t * sw); out.push({ ...s, a: at, b: q }); at = q; }
+      out.push({ ...s, a: at, b: s.b });
+    } else if (s.kind === "circle") {
+      if (Math.abs(n[0] * s.c[0] + n[1] * s.c[1] - k) < s.r - tol) throw new SheetError("E-SM-CROSS", "The bend line can't cross a circle of the outline.");
+      out.push(s);
+    } else throw new SheetError("E-SM-CURVE", "Sheet metal profiles use lines, arcs and circles.");
+  }
+  return out;
+}
+
+/** A piece's middle point (for which side of a line it is on). */
+function midOf(s: Seg): V2 {
+  if (s.kind === "line") return [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2];
+  if (s.kind === "arc") { const { a0, sw } = arcSweep(s); return arcAt(s, a0 + sw / 2); }
+  if (s.kind === "circle") return s.c;
+  return [0, 0];
+}
+
+/**
+ * The part of an outer loop on one side of the line n·p = k (`keep` = +1: n·p ≥ k), closed along the
+ * line by a straight edge with id `ent`. The line must cross the loop once (two crossings).
+ */
+function clipOuter(loop: Seg[], n: V2, k: number, keep: 1 | -1, ent: string, tol: number): Seg[] {
+  const side = (p: V2) => keep * (n[0] * p[0] + n[1] * p[1] - k);
+  const pieces = splitAt(loop, side, n, k, tol);
+  const kept = pieces.map(s => side(midOf(s)) > 0);
+  if (kept.every(x => x)) return loop;
+  if (!kept.some(x => x)) throw new SheetError("E-SM-CROSS", "The bend line must cross the face.");
+  // Start right after a dropped piece, so each run of kept pieces is whole.
+  const start = kept.findIndex((x, i) => x && !kept[(i + pieces.length - 1) % pieces.length]);
+  const out: Seg[] = [];
+  let runs = 0;
+  for (let j = 0; j < pieces.length; j++) {
+    const i = (start + j) % pieces.length;
+    if (!kept[i]) continue;
+    if (!kept[(i + pieces.length - 1) % pieces.length]) {
+      runs++;
+      if (out.length) out.push(line(ent, (out.at(-1) as Line).b, (pieces[i] as Line).a));
+    }
+    out.push(pieces[i]);
+  }
+  if (runs !== 1) throw new SheetError("E-SM-CROSS", "The bend line must cross the face once.");
+  out.push(line(ent, (out.at(-1) as Line).b, (out[0] as Line).a));
+  return out;
+}
+
+/** The points where the line n·p = k crosses a loop, sorted along e. */
+function crossings(loop: Seg[], n: V2, k: number, tol: number): V2[] {
+  const side = (p: V2) => n[0] * p[0] + n[1] * p[1] - k;
+  const e: V2 = [-n[1], n[0]];
+  const pts: V2[] = [];
+  for (const s of splitAt(loop, side, n, k, tol)) {
+    if (s.kind === "circle") continue;
+    const a = (s as Line).a, b = (s as Line).b;
+    if (Math.abs(side(a)) <= tol && !pts.some(q => d2(q, a) < tol * 10)) pts.push(a);
+    if (Math.abs(side(b)) <= tol && !pts.some(q => d2(q, b) < tol * 10)) pts.push(b);
+  }
+  return pts.sort((p, q) => (p[0] - q[0]) * e[0] + (p[1] - q[1]) * e[1]);
+}
+
+/** The panel a sketched line lies on, the line in flat coordinates and the face it was sketched on. */
+function linePanel(st: SheetState, p: V3, q: V3): { panel: Panel; a: V2; b: V2; top: boolean } {
+  const tol = 1e-4 * (1 + st.T);
+  for (const panel of st.panels) {
+    const lp = local(panel.M, p), lq = local(panel.M, q);
+    for (const [z, top] of [[st.T, true], [0, false]] as const) {
+      if (Math.abs(lp[2] - z) > tol || Math.abs(lq[2] - z) > tol) continue;
+      const a: V2 = [lp[0], lp[1]], b: V2 = [lq[0], lq[1]];
+      const poly = loopPolygon(panel.outer, 32);
+      const inside = (x: V2) => inPolygon(x, poly) || onLoop(panel.outer, x, tol);
+      if (inside(a) || inside(b) || inside([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2])) return { panel, a, b, top };
+    }
+  }
+  throw new SheetError("E-SM-SKFACE", "Sketch the bend line on a flat face of the sheet.");
+}
+
+/** The one line of a sketched bend's sketch, in world coordinates. */
+export function bendSketchLine(sk: SketchFeature, frame: Frame): [V3, V3] {
+  const path = sketchPath(sk);
+  if (path.error || path.segs.length !== 1 || path.segs[0].kind !== "line") throw new SheetError("E-SM-SKLINE", "The sketch must hold one line.");
+  const s = path.segs[0];
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  return [w(s.a), w(s.b)];
+}
+
+interface Fold { up: boolean; angle: number; r: number }
+
+/**
+ * Folds a panel along a flat line: the panel is split there, the moving side becomes new panels joined
+ * by the bends `folds` (with flat gaps `gaps` between them). The flat pattern keeps its outline.
+ */
+function foldPanel(st: SheetState, panel: Panel, a: V2, b: V2, flip: boolean, position: BendPosition, folds: Fold[], gaps: number[], fid: string): SheetOp[] {
+  const size = Math.max(1, ...loopPolygon(panel.outer, 8).flatMap(p => [Math.abs(p[0]), Math.abs(p[1])]));
+  const tol = size * 1e-7;
+  const l = d2(a, b);
+  if (!(l > tol)) throw new SheetError("E-SM-SKLINE", "The sketch must hold one line.");
+  let e: V2 = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  let n: V2 = [e[1], -e[0]];
+  const sideOf = (p: V2) => n[0] * (p[0] - a[0]) + n[1] * (p[1] - a[1]);
+  // Which side folds: not the one bends hang from; else the smaller one; `flip` swaps.
+  const touching = st.bends.flatMap(bd => {
+    const m0: V2 = [(bd.a0[0] + bd.a1[0]) / 2, (bd.a0[1] + bd.a1[1]) / 2];
+    const lb = d2(bd.a0, bd.a1), o: V2 = [(bd.a1[1] - bd.a0[1]) / lb, -(bd.a1[0] - bd.a0[0]) / lb];
+    return [m0, p2(m0, s2(o, bd.ba))].filter(m => onLoop(panel.outer, m, size * 1e-6)).map(m => Math.sign(sideOf(m)));
+  });
+  const area = (sgn: 1 | -1) => { try { return Math.abs(polyArea(loopPolygon(clipOuter(panel.outer, n, n[0] * a[0] + n[1] * a[1], sgn, "_", tol), 16))); } catch { return 0; } };
+  const pos = touching.includes(1), neg = touching.includes(-1);
+  let moving: 1 | -1 = pos && !neg ? -1 : neg && !pos ? 1 : area(1) <= area(-1) ? 1 : -1;
+  if (flip) moving = -moving as 1 | -1;
+  if ((moving > 0 && pos) || (moving < 0 && neg)) throw new SheetError("E-SM-SKSIDE", "The side that would fold already has bends on it; flip the fixed side.");
+  if (moving < 0) { e = [-e[0], -e[1]]; n = [-n[0], -n[1]]; }
+  // Bend strip starts along n, measured from the line.
+  const bas = folds.map(f => bendAllowance(st, f.angle, f.r));
+  if (bas.some(x => !(x > 1e-9))) throw new SheetError("E-SM-BA", "The bend allowance must be more than 0.");
+  const k0 = n[0] * a[0] + n[1] * a[1];
+  let t = position === "start" ? 0 : position === "end" ? -bas[0] : -bas[0] / 2;
+  const starts: number[] = [];
+  folds.forEach((_f, i) => { starts.push(t); t += bas[i]; if (i < folds.length - 1) t += gaps[i]; });
+  const kFix = k0 + starts[0], kEnd = k0 + t;
+  // No bend on this face may run across the new bends.
+  for (const bd of st.bends) {
+    const lb = d2(bd.a0, bd.a1), o: V2 = [(bd.a1[1] - bd.a0[1]) / lb, -(bd.a1[0] - bd.a0[0]) / lb];
+    for (const [q0, q1] of [[bd.a0, bd.a1], [p2(bd.a0, s2(o, bd.ba)), p2(bd.a1, s2(o, bd.ba))]] as [V2, V2][]) {
+      if (!onLoop(panel.outer, [(q0[0] + q1[0]) / 2, (q0[1] + q1[1]) / 2], size * 1e-6)) continue;
+      const v0 = n[0] * q0[0] + n[1] * q0[1], v1 = n[0] * q1[0] + n[1] * q1[1];
+      if (Math.min(v0, v1) < kEnd - tol && Math.max(v0, v1) > kFix + tol) throw new SheetError("E-SM-SKBENDX", "Another bend on the face runs across the bend line.");
+    }
+  }
+  // Holes go with the side they are on; none may cross the bends.
+  const fixedHoles: Seg[][] = [], movingHoles: Seg[][] = [];
+  for (const h of panel.holes) {
+    const sv = loopPolygon(h, 24).map(p => n[0] * p[0] + n[1] * p[1]);
+    if (Math.max(...sv) <= kFix + tol) fixedHoles.push(h);
+    else if (Math.min(...sv) >= kEnd - tol) movingHoles.push(h);
+    else throw new SheetError("E-SM-SKHOLE", "A hole of the face crosses the bend.");
+  }
+  const ops: SheetOp[] = [];
+  // Cut away everything past the start of the first bend.
+  const big = size * 4 + 10;
+  const P = (u: number, v: number): V2 => [e[0] * u + n[0] * v, e[1] * u + n[1] * v];
+  ops.push({ kind: "cut", M: panel.M, loop: [P(-big, kFix), P(big, kFix), P(big, kFix + big), P(-big, kFix + big)] });
+  const outer0 = panel.outer;
+  let M = panel.M;
+  folds.forEach((f, i) => {
+    const k = k0 + starts[i];
+    const c0 = crossings(outer0, n, k, tol), c1 = crossings(outer0, n, k + bas[i], tol);
+    if (c0.length !== 2 || c1.length !== 2) throw new SheetError("E-SM-CROSS", "The bend line must cross the face once.");
+    const [A0, A1] = c0;
+    const sq = tol * 100 + bas[i] * 1e-6;
+    if (d2(c1[0], p2(A0, s2(n, bas[i]))) > sq || d2(c1[1], p2(A1, s2(n, bas[i]))) > sq) throw new SheetError("E-SM-SKSQUARE", "The edges the bend crosses must be square to the bend line.");
+    // makeBend runs towards (e.y, -e.x) = n from A0 → A1 along e.
+    const { bend, next } = makeBend(st, M, A0, A1, f.up, f.angle, f.r, `${fid}:b${i}`);
+    st.bends.push(bend);
+    ops.push({ kind: "bend", bend });
+    M = next;
+    const from = k + bas[i];
+    const last = i === folds.length - 1;
+    if (!last && gaps[i] <= tol) return;
+    let outer = clipOuter(outer0, n, from, 1, `j${i}`, tol);
+    if (!last) outer = clipOuter(outer, n, k0 + starts[i + 1], -1, `j${i}e`, tol);
+    const np: Panel = { id: `${fid}:p${i}`, outer: oriented(outer, true), holes: last ? movingHoles : [], M, n: 0 };
+    st.panels.push(np);
+    ops.push({ kind: "panel", panel: np });
+  });
+  panel.outer = oriented(clipOuter(outer0, n, kFix, -1, `x${panel.n++}`, tol), true);
+  panel.holes = fixedHoles;
+  return ops;
+}
+
+/** Sketched bend: the face the line is on folds along it. */
+export function sketchedBend(prev: SheetState, f: SmSketchBendFeature, line3: [V3, V3]): { state: SheetState; ops: SheetOp[] } {
+  const st = clone(prev);
+  const angle = f.angle.v;
+  if (!(angle > 1e-6 && angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The bend angle must be between 0° and 180°.");
+  const r = f.radius?.v ?? st.R;
+  if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  const { panel, a, b, top } = linePanel(st, line3[0], line3[1]);
+  const ops = foldPanel(st, panel, a, b, !!f.flip, f.position ?? "center", [{ up: top !== !!f.reverse, angle, r }], [], f.id);
+  return { state: st, ops };
+}
+
+/** Jog: a bend and the opposite bend, far enough apart to offset the rest of the face. */
+export function jog(prev: SheetState, f: SmJogFeature, line3: [V3, V3]): { state: SheetState; ops: SheetOp[] } {
+  const angle = f.angle.v;
+  if (!(angle > 1e-3 && angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The bend angle must be between 0° and 180°.");
+  const r = f.radius?.v ?? prev.R;
+  if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  const D = f.offset.v;
+  if (!(D > 0)) throw new SheetError("E-SM-JOG", "The jog offset must be more than 0.");
+  const T = prev.T;
+  const want = f.dim === "inside" ? D + T : f.dim === "face" ? D : D - T;
+  const at = (gap: number) => {
+    const st = clone(prev);
+    const { panel, a, b, top } = linePanel(st, line3[0], line3[1]);
+    const up = top !== !!f.reverse;
+    const M0 = panel.M;
+    const ops = foldPanel(st, panel, a, b, !!f.flip, f.position ?? "center", [{ up, angle, r }, { up: !up, angle, r }], [gap], f.id);
+    const h = Math.abs(dot(sub3(st.panels.at(-1)!.M.o, M0.o), M0.z));
+    return { st, ops, h };
+  };
+  // The offset grows linearly with the flat gap between the bends.
+  const g1 = at(1).h, g2 = at(2).h;
+  const slope = g2 - g1, h0 = g1 - slope;
+  if (!(slope > 1e-9)) throw new SheetError("E-SM-JOG", "The jog offset could not be reached.");
+  const gap = (want - h0) / slope;
+  if (gap < -1e-9) throw new SheetError("E-SM-JOGSMALL", "The jog offset is too small for the bend radius and angle.");
+  const { st, ops } = at(Math.max(0, gap));
   return { state: st, ops };
 }
 

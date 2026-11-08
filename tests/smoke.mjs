@@ -6950,6 +6950,20 @@ try {
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(Math.abs(folded - want) / want < 1e-6 && ru.title === "Базовая кромка" && !/[A-Za-z]{3}/.test(ru.text.replace(/Enter|Esc|MSG|mm/g, "")), `sheet metal: folds back; Base Flange panel in Russian (${JSON.stringify({ folded, ru })})`);
     await mp.click("#lang-btn");
+    // Sketched bend: drop the flange and flat pattern, sketch a line across the plate's bottom face (XY), fold it.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketched bend", d => {
+      d.features = d.features.filter(f => f.type !== "smflange" && f.type !== "smflat");
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q1", t: "point", x: 70, y: -5 }, { id: "q2", t: "point", x: 70, y: 55 }, { id: "q3", t: "line", a: "q1", b: "q2" }] });
+    }));
+    await settle();
+    await smMenu("Sketched Bend");
+    const sb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sbb = await mp.evaluate(() => { const d = window.__sv.model.last().data, P = d.positions; const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]; for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); } return { size: hi.map((h, i) => h - lo[i]), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }; });
+    const sba = (Math.PI / 2) * (R + 0.42 * T);
+    check(sb0.title === "Sketched Bend" && sb0.sketch === "s2" && !sbb.bad && /Sketched-Bend1$/.test(sbb.names) && Math.abs(sbb.size[0] - (70 - sba / 2 + R + T)) < 2e-3 && Math.abs(sbb.size[2] - (T + R + 30 - sba / 2)) < 2e-3,
+      `sheet metal: Sketched Bend folds the plate along a line sketched on its face (${JSON.stringify({ sb0, sbb, want: [70 - sba / 2 + R + T, T + R + 30 - sba / 2] })})`);
     await ctx.close();
   }
 

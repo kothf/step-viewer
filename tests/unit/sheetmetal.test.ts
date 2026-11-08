@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature } from "../../src/sheetmetal/types";
+import type { SmBaseFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { occ } from "./occ";
@@ -129,4 +129,48 @@ test("sheet metal: errors", async () => {
   assert.equal(r.statuses[3].code, "E-SM-USED");
   r = m.evaluate(doc([s, base(), { ...fl, edges: [{ faces: ["b:p0:sl1", "b:p0:sl2"] }] }]));
   assert.equal(r.statuses[2].code, "E-SM-EDGE");
+});
+
+test("sheet metal: sketched bend and jog keep the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  // The line is sketched on XY, the plate's bottom face: the bend goes down, the smaller side (x > 60) folds.
+  const ln = chain("k", [[60, -5], [60, 55]]);
+  const sb: SmSketchBendFeature = { id: "sb", type: "smbend", name: "Sketched-Bend1", sketch: "k", angle: { v: Math.PI / 2 } };
+  let r = run(doc([s, base(), ln, sb]));
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2);
+  close(r.props.volume, 100 * 50 * 2, 1e-5);
+  close(r.size[0], 60 - ba / 2 + 4, 1e-5);
+  close(r.size[2], 2 + 2 + 40 - ba / 2, 1e-5);
+  let fs = flatSize(r.sheet!);
+  close(fs.w, 100); close(fs.h, 50);
+  assert.equal(flatLoops(r.sheet!).outer[0].length, 4);
+  assert.ok(r.body!.names.includes("sb:p0:top") && r.body!.names.includes("sb:b0:in"));
+  // Flipped: the other side folds instead.
+  r = run(doc([s, base(), ln, { ...sb, flip: true }]));
+  close(r.size[0], 40 - ba / 2 + 4, 1e-5);
+  // Bend starts at the line, then 120°.
+  r = run(doc([s, base(), ln, { ...sb, position: "start", angle: { v: (2 * Math.PI) / 3 } }]));
+  close(r.props.volume, 100 * 50 * 2, 1e-5);
+  // Flatten gives the plate back.
+  r = run(doc([s, base(), ln, sb, flat]));
+  close(r.size[0], 100, 1e-6); close(r.size[1], 50, 1e-6);
+
+  // Jog: the far side ends 10 mm lower (face to same face), then 10 outside to outside.
+  const jl = chain("j", [[50, -5], [50, 55]]);
+  const jg: SmJogFeature = { id: "jg", type: "smjog", name: "Jog1", sketch: "j", offset: { v: 10 }, dim: "face", angle: { v: Math.PI / 2 } };
+  r = run(doc([s, base(), jl, jg]));
+  close(r.props.volume, 100 * 50 * 2, 1e-5);
+  close(r.size[2], 12, 1e-5);
+  fs = flatSize(r.sheet!);
+  close(fs.w, 100); close(fs.h, 50);
+  r = run(doc([s, base(), jl, { ...jg, dim: "outside" }]));
+  close(r.size[2], 10, 1e-5);
+  r = run(doc([s, base(), jl, { ...jg, angle: { v: Math.PI / 4 }, dim: "inside", offset: { v: 6 } }]));
+  close(r.size[2], 6 + 4, 1e-5);
+  close(r.props.volume, 100 * 50 * 2, 1e-5);
+  // Too small for two bends of radius 2.
+  const bad = m.evaluate(doc([s, base(), jl, { ...jg, offset: { v: 1 } }])).statuses.find(x => x.id === "jg");
+  assert.equal(bad?.ok, false);
 });

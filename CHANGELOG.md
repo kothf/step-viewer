@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Hem**: closed or open (with a gap), material inside or outside.
   - **Flatten** shows the flat pattern on the plane of the base flange, with up and down bend lines; click again to fold it back. The flat pattern is exact: every bend takes its bend allowance.
   - **Flat pattern DXF**: the outline and the bend lines (layers OUTLINE, BEND_UP, BEND_DOWN) as DXF R12 in millimetres.
+  - **Sketched Bend**: a line sketched on a flat face folds the face along it: angle, bend centerline / bend starts at the line / bend ends at it, which side folds, direction and a custom radius. The flat pattern keeps the face's size.
+  - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
 
 ## [1.114.0] - 2026-11-08
 
