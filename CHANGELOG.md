@@ -11,6 +11,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Weld symbols on drawings (ISO 2553 system A, FR-DRW-023, SolidWorks' Weld Symbol): Annotation → **Weld symbol** points an arrow at the joint you click (or stands alone) and draws the reference line. The panel sets the arrow-side and other-side welds (fillet, square butt, single V, single bevel, plug, spot) with their size and length, all around, field weld and a tail note; a weld on the other side alone adds the dashed identification line, and a symmetric weld sits across the line. The symbols are drawn from lines, so PDF, SVG and DXF show them the same, and the symbol follows the model like the other annotations.
 
+## [1.247.0] - 2026-11-08
+
+### Added
+
+- **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
 ## [1.245.0] - 2026-11-08
 
 ### Added
@@ -1607,7 +1612,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.248.0...HEAD
-[1.248.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.248.0
+[1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
+[1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
 [1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
 [1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
