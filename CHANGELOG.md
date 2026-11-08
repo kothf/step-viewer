@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+
 ## [1.184.0] - 2026-11-08
 
 ### Added
@@ -1430,7 +1431,6 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.188.0...HEAD
 [1.188.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.188.0
-[1.186.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.186.0
 [1.184.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.184.0
 [1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
 [1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
