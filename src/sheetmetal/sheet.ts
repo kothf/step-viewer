@@ -61,7 +61,16 @@ export interface SheetState {
   bends: Bend[];
   /** Panel faces (`<panel>:<edge>`) that already carry a flange. */
   used: string[];
+  /** Set by the Flat-Pattern feature when later features cut the sheet: the pattern's real outline. */
+  flatEdges?: FlatEdge[];
 }
+
+/** A piece of the flat pattern's outline (arcs counter-clockwise from a0 to a1, as DXF draws them). */
+export type FlatEdge =
+  | { kind: "line"; a: V2; b: V2 }
+  | { kind: "circle"; c: V2; r: number }
+  | { kind: "arc"; c: V2; r: number; a0: number; a1: number }
+  | { kind: "poly"; pts: V2[] };
 
 /** What a sheet metal feature does to the solid: cut prisms (panel frame, z across the sheet), then new panels and bends. */
 export type SheetOp =
