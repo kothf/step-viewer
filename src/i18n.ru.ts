@@ -2865,6 +2865,8 @@ export const RU: Record<string, string> = {
   "Path length {l} mm": "Длина траектории {l} мм",
   "Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)": "Сохранить траекторию в CSV (время, X, Y, Z, скорость, ускорение, угол)",
   "Acceleration": "Ускорение",
+  "Relative to": "Относительно",
+  "World": "Мир",
   "Component angle": "Угол компонента",
   "Angular speed": "Угловая скорость",
   "mm/s²": "мм/с²",
@@ -3521,4 +3523,6 @@ export const RU: Record<string, string> = {
   "Click the corners of the detail profile on a view.": "Щёлкните углы контура выносного элемента на виде.",
   "Click more corners; click the first corner or press Enter to close the profile.": "Щёлкните ещё углы; щёлкните первый угол или нажмите Enter, чтобы замкнуть контур.",
   "Click at least three corners that enclose an area.": "Щёлкните хотя бы три угла, ограничивающих область.",
+  "PDF (this sheet)": "PDF (этот лист)",
+  "DXF 2000 (this sheet)": "DXF 2000 (этот лист)",
 };
