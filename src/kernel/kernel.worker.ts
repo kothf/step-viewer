@@ -30,6 +30,7 @@ export type KernelRequest =
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
   | { id: number; type: "asm"; doc: AsmDoc; quality: number }
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
+  | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
   | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
   /** Modelling: STEP of the last evaluated body. */
@@ -173,6 +174,11 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         parts.push({ id: p.id, data, faces: p.body.names });
       }
       post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
+    } else if (r.type === "asmClearance") {
+      assembler ??= new Assembler(kernel.module);
+      const { placed } = assembler.evaluate(r.doc, 1);
+      const shown = placed.filter(p => !r.doc.components.find(c => c.id === p.id)?.hidden);
+      post({ id: r.id, ok: true, pairs: assembler.clearance(shown, r.min) });
     } else if (r.type === "asmInterfere") {
       assembler ??= new Assembler(kernel.module);
       const { placed } = assembler.evaluate(r.doc, 1);

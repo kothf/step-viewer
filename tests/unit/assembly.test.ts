@@ -108,3 +108,18 @@ test("FR-ASM-031: instances share one analysis of their part, moved rigidly", as
   shared.edges.forEach((e, i) => assert.ok(near(e.mid, direct.edges[i].mid) && Math.abs(e.length - direct.edges[i].length) < 1e-6, `edge ${i}`));
   assert.ok(Math.abs(shared.volume - direct.volume) < 1e-6 && near(shared.com, direct.com));
 });
+
+test("FR-ASM-021: clearance check lists pairs closer than the minimum with their nearest points", async () => {
+  const a = new Assembler(await occ());
+  const doc = asm();
+  const { placed } = a.evaluate(doc);
+  const all = a.clearance(placed, 1000);
+  assert.ok(all.length >= 1);
+  assert.ok(all.every((p, i) => i === 0 || p.distance >= all[i - 1].distance));
+  for (const p of all) assert.ok(Math.abs(Math.hypot(p.p1[0] - p.p2[0], p.p1[1] - p.p2[1], p.p1[2] - p.p2[2]) - p.distance) < 1e-6);
+  assert.equal(a.clearance(placed, 1e-9).filter(p => p.distance > 1e-6).length, 0);
+  // The two blocks stand 10 mm apart (x 0..10 and 20..30): in at 12 mm, out at 9 mm.
+  const gap = (min: number) => a.clearance(placed, min).find(p => p.a === "c2" && p.b === "c3");
+  assert.ok(Math.abs((gap(12)?.distance ?? -1) - 10) < 1e-6, JSON.stringify(gap(12)));
+  assert.equal(gap(9), undefined);
+});

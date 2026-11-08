@@ -42,6 +42,18 @@ export function mateTypes(a: Geo["k"], b: Geo["k"]): MateType[] {
   return ["tangent", "coincident", "parallel", "perpendicular", "distance", "lock"];
 }
 
+/** Angle (rad) by which the rotation part of `t` · `t0`⁻¹ turns about the unit direction d. */
+function turnAbout(t: Tf, t0: Tf, d: V3): number {
+  const u0: V3 = Math.abs(d[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const u = cross(d, u0), l = len(u);
+  const uu = scale(u, 1 / l);
+  // Back to the start pose, then forward to the current one.
+  const v = applyDir(t, applyDir(invert(t0), uu));
+  const w = sub(v, scale(d, dot(v, d)));
+  return Math.atan2(dot(cross(uu, w), d), dot(uu, w));
+}
+const wrap = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
 /** The mate's residuals (lengths in mm, directions scaled by `L`), for world geometry. */
 export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo): number[] {
   const da = dirOf(ga), db0 = dirOf(gb);
@@ -106,6 +118,36 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       else if (ga.k === "axis" && gb.k === "axis") { dirs(cross(ra, db0)); dirs(cross(sub(gb.p, pa), db0)); }
       break;
     }
+    case "hinge":
+      // Concentric on a/b, coincident on the faces c/d.
+      parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      if (gc?.k === "plane" && gd?.k === "plane") { dirs(sub(gc.n, scale(gd.n, -1))); out.push(dot(gc.n, sub(gd.p, gc.p))); }
+      break;
+    case "gear": {
+      if (!tfa || !tfb || !m.t0 || ga.k !== "axis" || gb.k !== "axis") break;
+      const r = m.ratio ?? 1, s2 = m.flip ? -1 : 1;
+      const ta = turnAbout(tfa, m.t0[0], ga.d), tb = turnAbout(tfb, m.t0[1], gb.d);
+      // External gears turn opposite ways: tb = −r·ta (flip: same way). a's turn count is taken from the branch that fits best.
+      let best = Infinity;
+      for (let k = -3; k <= 3; k++) { const e = wrap(tb + s2 * r * (ta + 2 * Math.PI * k)); if (Math.abs(e) < Math.abs(best)) best = e; }
+      out.push(best * L);
+      break;
+    }
+    case "screw": {
+      parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      if (!tfa || !tfb || !m.t0 || ga.k !== "axis") break;
+      const pitch = m.ratio ?? 1, s2 = m.flip ? -1 : 1;
+      if (Math.abs(pitch) < 1e-12) break;
+      // b's motion relative to a since the mate was made, in a's frame: turn and travel along a's axis.
+      const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(m.t0[0]), m.t0[1])));
+      const dA = applyDir(ia, ga.d), pA = applyPoint(ia, ga.p);
+      const turn = turnAbout(delta, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], dA);
+      const travel = dot(sub(applyPoint(delta, pA), pA), dA);
+      const k = Math.round(((2 * Math.PI * travel) / (s2 * pitch) - turn) / (2 * Math.PI));
+      out.push(travel - (s2 * pitch * (turn + 2 * Math.PI * k)) / (2 * Math.PI));
+      break;
+    }
+    case "slot":
     case "width": {
       // The tab (b and d, or the axis b) centred between the width faces a and c.
       if (!gc || ga.k !== "plane" || gc.k !== "plane") break;
@@ -156,12 +198,12 @@ export function solve(inp: SolveInput): SolveResult {
     if (!ca || !cb || !ga || !gb || (ca.id === cb.id && m.type !== "symmetric")) { missing.push(m.id); continue; }
     const l: Live = { m, ga, gb, ca: ca.id, cb: cb.id };
     // The third and fourth references (symmetry plane, width faces).
-    const need = m.type === "symmetric" || m.type === "width";
+    const need = m.type === "symmetric" || m.type === "width" || m.type === "slot" || m.type === "hinge";
     if (need) {
       const cc = m.c && byId.get(m.c.comp), gc = cc && inp.geo(cc.part, m.c!.face);
       if (!cc || !gc) { missing.push(m.id); continue; }
       l.gc = gc; l.cc = cc.id;
-      if (m.type === "width" && gb.k === "plane") {
+      if ((m.type === "width" && gb.k === "plane") || m.type === "hinge") {
         const cd = m.d && byId.get(m.d.comp), gd = cd && inp.geo(cd.part, m.d!.face);
         if (!cd || !gd) { missing.push(m.id); continue; }
         l.gd = gd; l.cd = cd.id;
@@ -345,6 +387,9 @@ export function mateDefaults(type: MateType, ga: Geo, gb: Geo): Partial<Mate> {
     else { const pl = (ga.k === "plane" ? ga : gb) as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; const d = dot(pl.n, sub(ax.p, pl.p)); out.value = Math.abs(d); out.flip = d < 0; }
   }
   if (type === "angle") { const a = Math.atan2(len(cross(da, db)), dot(da, db)); out.value = a; }
+  // Gear: the turns go inversely with the radii; screw: 1 mm per turn to start with.
+  if (type === "gear" && ga.k === "axis" && gb.k === "axis") out.ratio = gb.r > 1e-9 ? Math.round((ga.r / gb.r) * 1e6) / 1e6 : 1;
+  if (type === "screw") out.ratio = 1;
   return out;
 }
 

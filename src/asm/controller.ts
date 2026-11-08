@@ -41,12 +41,16 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const FOREIGN = /\.(step|stp|iges|igs|brep)$/i;
 const MATE_TYPES: MateType[] = ["coincident", "parallel", "perpendicular", "tangent", "concentric", "lock", "distance", "angle"];
 const ADV_TYPES: MateType[] = ["symmetric", "width", "limitdist", "limitangle"];
-const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle", symmetric: "Symmetric", width: "Width", limitdist: "Limit distance", limitangle: "Limit angle" };
-const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣" };
+const MECH_TYPES: MateType[] = ["hinge", "slot", "gear", "screw"];
+const MATE_LABEL: Record<MateType, string> = { coincident: "Coincident", parallel: "Parallel", perpendicular: "Perpendicular", tangent: "Tangent", concentric: "Concentric", lock: "Lock", distance: "Distance", angle: "Angle", symmetric: "Symmetric", width: "Width", limitdist: "Limit distance", limitangle: "Limit angle", hinge: "Hinge", slot: "Slot", gear: "Gear", screw: "Screw" };
+const MATE_ICON: Record<MateType, string> = { coincident: "⊼", parallel: "∥", perpendicular: "⊥", tangent: "◠", concentric: "◎", lock: "🔒", distance: "↔", angle: "∠", symmetric: "⧓", width: "⇹", limitdist: "⟷", limitangle: "⦣", hinge: "⌒", slot: "⊂", gear: "⚙", screw: "⫰" };
 /** The advanced mate types that fit two references (FR-MATE-004). */
+const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b === "axis" ? ["hinge", "gear", "screw"] : a === "plane" && b === "axis" ? ["slot"] : []);
+/** Mates that take a third (and fourth) reference after the first two. */
+const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; problem?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; problem?: string }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -81,7 +85,9 @@ export class AsmController {
   solved: SolveResult | null = null;
   mating: MateDraft | null = null;
   /** Interference detection results while its panel is open (FR-ASM-020). */
-  interfere: { touch: boolean; pairs: { a: string; b: string; volume: number; position: number[] }[] | null; sel: number } | null = null;
+  interfere: { touch: boolean; pairs: { a: string; b: string; volume: number; position: number[] }[] | null; sel: number;
+    /** Clearance check (FR-ASM-021): the minimum (mm) and the pairs closer than it. */
+    clear: number; near: { a: string; b: string; distance: number; p1: number[]; p2: number[] }[] | null } | null = null;
   private overlay = new THREE.Group();
   /** The pattern being made or edited (FR-ASM-022). */
   patterning: (Omit<CompPattern, "id" | "name"> & { edit?: string; focus: "seeds" | "dir" }) | null = null;
@@ -269,13 +275,20 @@ export class AsmController {
   async runInterference(touch = this.interfere?.touch ?? false) {
     if (!this.doc) return;
     if (!this.interfere) this.closeTools();
-    this.interfere = { touch, pairs: null, sel: -1 };
+    const clear = this.interfere?.clear ?? 1;
+    this.interfere = { touch, pairs: null, sel: -1, clear, near: null };
     this.renderAll();
     $("#asm-busy").hidden = false;
     try {
-      const pairs = await this.kernel.interference(this.expand(this.doc).doc, touch);
+      const doc = this.expand(this.doc).doc;
+      const pairs = await this.kernel.interference(doc, touch);
       if (!this.interfere) return;
       this.interfere.pairs = pairs;
+      // Clearance: pairs closer than the minimum that do not already interfere.
+      const near = clear > 0 ? await this.kernel.clearance(doc, clear) : [];
+      if (!this.interfere) return;
+      const hit = new Set(pairs.map(p => `${p.a}|${p.b}`));
+      this.interfere.near = near.filter(p => p.distance > 1e-6 && !hit.has(`${p.a}|${p.b}`));
       this.drawOverlay();
     } catch (err) { toast(t("Interference detection failed: {err}", { err: (err as Error).message }), true); }
     finally { $("#asm-busy").hidden = true; }
@@ -300,6 +313,16 @@ export class AsmController {
       mesh.renderOrder = 10;
       this.overlay.add(mesh);
     });
+    // Clearance: an orange line between the nearest points of each close pair.
+    const n0 = it?.pairs?.length ?? 0;
+    it?.near?.forEach((p, i) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute([...p.p1, ...p.p2], 3));
+      const on = it.sel === n0 + i || it.sel < 0;
+      const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xf08c00, transparent: true, opacity: on ? 1 : 0.3, depthTest: false }));
+      line.renderOrder = 11;
+      this.overlay.add(line);
+    });
     this.host.viewer.invalidate();
   }
 
@@ -318,14 +341,29 @@ export class AsmController {
     const vol = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 3 })} mm³`;
     const rows = it.pairs?.map((p, i) => `<button class="pm-box${it.sel === i ? " focus" : ""}" data-pair="${i}" translate="no">${esc(name(p.a))} ↔ ${esc(name(p.b))}: ${esc(p.volume > 0 ? vol(p.volume) : t("touching"))}</button>`).join("") ?? "";
     const total = it.pairs?.reduce((s, p) => s + p.volume, 0) ?? 0;
+    const n0 = it.pairs?.length ?? 0;
+    const mm = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 3 })} mm`;
+    const nearRows = it.near?.map((p, i) => `<button class="pm-box${it.sel === n0 + i ? " focus" : ""}" data-pair="${n0 + i}" translate="no">${esc(name(p.a))} ↔ ${esc(name(p.b))}: ${esc(mm(p.distance))}</button>`).join("") ?? "";
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Interference detection"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
       + `<fieldset class="pm-group"><legend>${esc(t("Results"))}</legend>`
       + (it.pairs === null ? `<p class="pm-help muted" role="status">${esc(t("Checking…"))}</p>`
         : it.pairs.length ? `<p class="pm-help" role="status" data-istatus>${esc(t("{n} interference|{n} interferences", { n: it.pairs.length }))} · ${esc(vol(total))}</p><div class="pm-items">${rows}</div>`
         : `<p class="pm-help" role="status" data-istatus>${esc(t("No interference."))}</p>`)
+      + `</fieldset><fieldset class="pm-group"><legend>${esc(t("Clearance check"))}</legend>`
+      + `<label class="pm-field"><span>${esc(t("Minimum clearance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-clear value="${esc(String(it.clear))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
+      + (it.near === null ? "" : it.near.length ? `<p class="pm-help" role="status" data-cstatus>${esc(t("{n} pair closer than the minimum|{n} pairs closer than the minimum", { n: it.near.length }))}</p><div class="pm-items">${nearRows}</div>`
+        : `<p class="pm-help" role="status" data-cstatus>${esc(t("No clearance below the minimum."))}</p>`)
       + `</fieldset><fieldset class="pm-group"><legend>${esc(t("Options"))}</legend><label class="pm-field pm-check"><input type="checkbox" data-a="touch"${it.touch ? " checked" : ""} /> ${esc(t("Treat coincidence as interference"))}</label><p class="pm-help muted">${esc(t("Hidden components are left out."))}</p><button class="btn small" data-a="again">${esc(t("Calculate"))}</button></fieldset>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeInterference());
     pm.querySelector("[data-a=again]")!.addEventListener("click", () => void this.runInterference());
+    const ci = pm.querySelector<HTMLInputElement>("[data-clear]")!;
+    ci.addEventListener("change", () => {
+      const v = Number(ci.value.replace(",", "."));
+      if (!Number.isFinite(v) || v < 0) { ci.setAttribute("aria-invalid", "true"); return; }
+      it.clear = v;
+      void this.runInterference();
+    });
+    ci.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ci.dispatchEvent(new Event("change")); } });
     pm.querySelector<HTMLInputElement>("[data-a=touch]")!.addEventListener("change", e => void this.runInterference((e.target as HTMLInputElement).checked));
     pm.querySelectorAll<HTMLElement>("[data-pair]").forEach(b => b.addEventListener("click", () => { it.sel = it.sel === Number(b.dataset.pair) ? -1 : Number(b.dataset.pair); this.drawOverlay(); this.renderPanel(); }));
   }
@@ -801,7 +839,7 @@ export class AsmController {
   startMate(edit?: Mate) {
     if (!this.doc) return;
     this.closeTools();
-    this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, ...(edit.c ? { c: { ...edit.c } } : {}), ...(edit.d ? { d: { ...edit.d } } : {}), type: edit.type, align: edit.align, value: edit.value, flip: edit.flip, min: edit.min, max: edit.max } : {};
+    this.mating = edit ? { edit: edit.id, a: { ...edit.a }, b: { ...edit.b }, ...(edit.c ? { c: { ...edit.c } } : {}), ...(edit.d ? { d: { ...edit.d } } : {}), type: edit.type, align: edit.align, value: edit.value, flip: edit.flip, min: edit.min, max: edit.max, ratio: edit.ratio } : {};
     this.renderAll();
     this.drawPicks();
     this.previewMate();
@@ -826,10 +864,18 @@ export class AsmController {
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
     if (m.type === "lock") { const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
     if (m.type === "limitdist" || m.type === "limitangle") { mate.min = m.min ?? 0; mate.max = Math.max(mate.min, m.max ?? mate.min); if (m.flip) mate.flip = true; }
-    if (m.type === "symmetric" || m.type === "width") {
-      if (!m.c || (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d)) return null;
+    if (m.type === "symmetric" || m.type === "width" || m.type === "slot" || m.type === "hinge") {
+      if (!m.c || (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d) || (m.type === "hinge" && !m.d)) return null;
       mate.c = m.c;
-      if (m.type === "width" && m.d) mate.d = m.d;
+      if ((m.type === "width" || m.type === "hinge") && m.d) mate.d = m.d;
+    }
+    if (m.type === "gear" || m.type === "screw") {
+      const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp);
+      mate.ratio = m.ratio ?? 1;
+      if (m.flip) mate.flip = true;
+      // Motion is measured from where the parts are when the mate is made (an edited mate keeps its start).
+      const keep = old?.type === m.type ? old.t0 : undefined;
+      if (keep) mate.t0 = keep; else if (a && b) mate.t0 = [a.tf.slice(), b.tf.slice()];
     }
     return mate;
   }
@@ -884,12 +930,12 @@ export class AsmController {
     if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
     const ref = { comp: id, face };
     // Symmetric and width take more references after the first two.
-    if (m.a && m.b && (m.type === "symmetric" || m.type === "width")) {
+    if (m.a && m.b && m.type && MORE_REFS.has(m.type)) {
       const g = this.worldGeo(ref)!;
       if (!m.c) {
         if (g.k !== "plane") { toast(t("Pick a flat face."), true); return; }
         m.c = ref;
-      } else if (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d) {
+      } else if (((m.type === "width" && this.worldGeo(m.b)?.k === "plane") || m.type === "hinge") && !m.d) {
         if (g.k !== "plane") { toast(t("Pick a flat face."), true); return; }
         m.d = ref;
       } else { m.c = ref; m.d = undefined; }
@@ -923,7 +969,8 @@ export class AsmController {
       if (type === "distance" || type === "angle") { m.value = d.value; m.flip = d.flip; } else { m.value = undefined; m.flip = undefined; }
       // Limits start from 0 up to where the references are now.
       if (type === "limitdist" || type === "limitangle") { const now = mateDefaults(type === "limitdist" ? "distance" : "angle", ga, gb); m.min = 0; m.max = now.value ?? 0; m.flip = now.flip; if (type === "limitdist") m.align = now.align; }
-      if (type !== "symmetric" && type !== "width") m.c = m.d = undefined;
+      if (!MORE_REFS.has(type)) m.c = m.d = undefined;
+      if (type === "gear" || type === "screw") { m.ratio = d.ratio; m.flip = undefined; } else m.ratio = undefined;
       if (type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.previewMate();
@@ -1690,7 +1737,7 @@ export class AsmController {
     pm.hidden = false;
     pm.dataset.id = "mate";
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
-    const fits = ga && gb ? new Set([...mateTypes(ga.k, gb.k), ...advFits(ga.k, gb.k)]) : new Set<MateType>();
+    const fits = ga && gb ? new Set([...mateTypes(ga.k, gb.k), ...advFits(ga.k, gb.k), ...mechFits(ga.k, gb.k)]) : new Set<MateType>();
     const lim = m.type === "limitdist" || m.type === "limitangle", deg = m.type === "limitangle";
     const limIn = (k: "min" | "max", label: string) => `<label class="pm-field"><span>${esc(t(label))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-lim="${k}" value="${esc(String(Math.round(((m[k] ?? 0) * (deg ? 180 / Math.PI : 1)) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">${deg ? "°" : "mm"}</span></span></label>`;
     const tabPlane = gb?.k === "plane";
@@ -1701,6 +1748,17 @@ export class AsmController {
           + (tabPlane ? `<div class="pm-field"><span>${esc(t("Tab face 2"))}</span><button class="pm-box${m.c && !m.d ? " focus" : ""}" data-a="sd" translate="no">${esc(this.refText(m.d))}</button></div>` : "")
           + `<p class="pm-help muted">${esc(t("Selection 1 and the second width face are the slot; selection 2 (and the second tab face) is the tab centred in it."))}</p>`
         : "";
+    const ratioIn = (label: string, unit: string) => `<label class="pm-field"><span>${esc(t(label))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-ratio value="${esc(String(Math.round((m.ratio ?? 1) * 1e6) / 1e6))}" spellcheck="false" />${unit ? `<span class="muted">${esc(unit)}</span>` : ""}</span></label>`
+      + `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${m.flip ? " checked" : ""} /> ${esc(t("Reverse"))}</label>`;
+    const mech = m.type === "hinge"
+      ? `<div class="pm-field"><span>${esc(t("Coincident face 1"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
+        + `<div class="pm-field"><span>${esc(t("Coincident face 2"))}</span><button class="pm-box${m.c && !m.d ? " focus" : ""}" data-a="sd" translate="no">${esc(this.refText(m.d))}</button></div>`
+        + `<p class="pm-help muted">${esc(t("The two cylinders share an axis and the two flat faces touch: one turn is left."))}</p>`
+      : m.type === "slot"
+        ? `<div class="pm-field"><span>${esc(t("Slot face 2"))}</span><button class="pm-box${m.a && m.b && !m.c ? " focus" : ""}" data-a="sc" translate="no">${esc(this.refText(m.c))}</button></div>`
+          + `<p class="pm-help muted">${esc(t("Selection 1 and slot face 2 are the sides of the slot; the pin (selection 2) stays centred between them and slides along."))}</p>`
+        : m.type === "gear" ? ratioIn("Ratio", "") + `<p class="pm-help muted">${esc(t("Turns of selection 2 per turn of selection 1 (the radius ratio to start with). External gears turn opposite ways; Reverse makes them turn the same way."))}</p>`
+          : m.type === "screw" ? ratioIn("Distance per revolution", "mm") + `<p class="pm-help muted">${esc(t("The two cylinders share an axis; turning one moves it along by this distance per turn."))}</p>` : "";
     const typeBtn = (k: MateType) => `<button class="btn small${m.type === k ? " on" : ""}" data-mt="${k}" aria-pressed="${m.type === k}"${fits.has(k) ? "" : " disabled"}><span aria-hidden="true">${MATE_ICON[k]}</span> ${esc(t(MATE_LABEL[k]))}</button>`;
     const val = m.type === "distance" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round((m.value ?? 0) * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">mm</span></span></label>`
       : m.type === "angle" ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-mv value="${esc(String(Math.round(((m.value ?? 0) * 180) / Math.PI * 1e6) / 1e6))}" spellcheck="false" /><span class="muted">°</span></span></label>` : "";
@@ -1717,8 +1775,9 @@ export class AsmController {
       + `<fieldset class="pm-group"><legend>${esc(t("Advanced mates"))}</legend><div class="pm-mates">${ADV_TYPES.map(typeBtn).join("")}</div>${extra}`
       + (lim ? limIn("min", "Minimum") + limIn("max", "Maximum") + `<label class="pm-field pm-check"><input type="checkbox" data-a="flip"${m.flip ? " checked" : ""} /> ${esc(t("Flip dimension"))}</label>` : "")
       + `</fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Mechanical mates"))}</legend><div class="pm-mates">${MECH_TYPES.map(typeBtn).join("")}</div>${mech}</fieldset>`
       + (canAlign && m.type ? `<fieldset class="pm-group"><legend>${esc(t("Mate alignment"))}</legend><div class="pm-mates"><button class="btn small${m.align === "aligned" ? " on" : ""}" data-al="aligned" aria-pressed="${m.align === "aligned"}">${esc(t("Aligned"))}</button><button class="btn small${m.align !== "aligned" ? " on" : ""}" data-al="anti" aria-pressed="${m.align !== "aligned"}">${esc(t("Anti-aligned"))}</button></div></fieldset>` : "")
-      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : t("✓ with nothing picked closes the panel.")))}</p>`;
+      + `<p class="${m.problem ? "pm-err" : "pm-help muted"}" role="status" data-mstatus>${esc(m.problem ?? (m.type === "symmetric" && !m.c ? t("Click the symmetry plane.") : m.type === "hinge" && (!m.c || !m.d) ? t("Click a flat face on each component to touch.") : m.type === "slot" && !m.c ? t("Click the other side face of the slot.") : m.type === "width" && (!m.c || (tabPlane && !m.d)) ? t("Click the second width face, then the second tab face.") : m.a && m.b && m.type ? t("Previewed in the view. ✓ adds the mate; the panel stays open for the next one.") : t("✓ with nothing picked closes the panel.")))}</p>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okMate());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.cancelMate());
     pm.querySelector("[data-a=clear]")?.addEventListener("click", () => { m.a = m.b = m.c = m.d = m.type = undefined; this.drawPicks(); this.previewMate(); });
@@ -1734,6 +1793,14 @@ export class AsmController {
     pm.querySelectorAll<HTMLButtonElement>("[data-mt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mt as MateType)));
     pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; this.previewMate(); }));
     pm.querySelector<HTMLInputElement>("[data-a=flip]")?.addEventListener("change", e => { m.flip = (e.target as HTMLInputElement).checked; this.previewMate(); });
+    const ri = pm.querySelector<HTMLInputElement>("[data-ratio]");
+    ri?.addEventListener("change", () => {
+      const v = Number(ri.value.replace(",", "."));
+      if (!Number.isFinite(v) || v <= 0) { ri.setAttribute("aria-invalid", "true"); return; }
+      m.ratio = v;
+      this.previewMate();
+    });
+    ri?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); ri.dispatchEvent(new Event("change")); this.okMate(); } });
     const vi = pm.querySelector<HTMLInputElement>("[data-mv]");
     vi?.addEventListener("change", () => {
       const v = Number(vi.value.replace(",", "."));

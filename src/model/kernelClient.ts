@@ -143,6 +143,12 @@ export class ModelKernel {
     return (await this.call<{ pairs: { a: string; b: string; volume: number; position: number[] }[] }>({ type: "asmInterfere", doc, touch })).pairs;
   }
 
+  /** Component pairs closer than `min` mm (touching and overlapping ones at 0), nearest first (FR-ASM-021). */
+  async clearance(doc: AsmDoc, min: number): Promise<{ a: string; b: string; distance: number; p1: number[]; p2: number[] }[]> {
+    await this.start();
+    return (await this.call<{ pairs: { a: string; b: string; distance: number; p1: number[]; p2: number[] }[] }>({ type: "asmClearance", doc, min })).pairs;
+  }
+
   /** STEP of the assembly: one product per shown component (AT-P4-6). */
   async assemblyStep(doc: AsmDoc): Promise<Uint8Array> {
     await this.start();
