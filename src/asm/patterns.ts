@@ -1,8 +1,8 @@
 // Component patterns (FR-ASM-022) and exploded views (FR-ASM-023): pure transforms, no kernel.
 // Pattern instances are derived from their seeds whenever the assembly is evaluated, so they follow
 // the seeds and the direction reference; they are driven (fixed) and are not mate targets.
-import { compose, rotation, translation } from "./math";
-import type { AsmDoc, CompPattern, Component, ExplodeView, Tf } from "./types";
+import { compose, invert, rotation, translation } from "./math";
+import type { AsmDoc, CompPattern, Component, ExplodeView, Mate, Tf } from "./types";
 import type { Geo } from "./solver";
 import type { V3 } from "../model/types";
 
@@ -106,8 +106,9 @@ export function flattenSubs(doc: AsmDoc, depth = 0): AsmDoc {
     const sub = flat.get(c.part);
     if (!sub) { comps.push(c); continue; }
     for (const sc of sub.components) {
+      const own = c.flexible ? c.subTfs?.[sc.id] : undefined;
       comps.push({
-        id: `${c.id}/${sc.id}`, name: sc.name, part: `${c.part}/${sc.part}`, tf: compose(c.tf, sc.tf), fixed: true,
+        id: `${c.id}/${sc.id}`, name: sc.name, part: `${c.part}/${sc.part}`, tf: compose(c.tf, own ?? sc.tf), fixed: true,
         ...(c.hidden || sc.hidden ? { hidden: true } : {}), ...(c.suppressed || sc.suppressed ? { suppressed: true } : {}),
         ...((c.color ?? sc.color) ? { color: c.color ?? sc.color } : {}),
         ...((c.opacity ?? sc.opacity) !== undefined ? { opacity: c.opacity ?? sc.opacity } : {}),
@@ -115,6 +116,48 @@ export function flattenSubs(doc: AsmDoc, depth = 0): AsmDoc {
     }
   }
   return { ...doc, parts, components: comps };
+}
+
+/**
+ * The document the mate solver sees (FR-ASM-006). A flexible sub-assembly stays as an anchor component
+ * (no geometry) and its own components join the solve as `<comp>/<child>`: the ones fixed inside it are
+ * locked to the anchor, the others float under the sub-assembly's mates and any mates the parent puts on them.
+ */
+export function solveView(doc: AsmDoc): AsmDoc {
+  const flex = doc.components.filter(c => c.flexible && doc.parts[c.part]?.asm && !c.suppressed);
+  if (!flex.length) return doc;
+  const comps: Component[] = [...doc.components];
+  const mates: Mate[] = [...(doc.mates ?? [])];
+  const parts = { ...doc.parts };
+  for (const c of flex) {
+    const sub = flattenSubs(doc.parts[c.part].asm!);
+    const top = new Set(doc.parts[c.part].asm!.components.map(x => x.id));
+    for (const [sk, sp] of Object.entries(sub.parts)) parts[`${c.part}/${sk}`] = sp;
+    for (const sc of sub.components) {
+      if (sc.suppressed) continue;
+      const rel = c.subTfs?.[sc.id] ?? sc.tf;
+      const id = `${c.id}/${sc.id}`;
+      comps.push({ id, name: sc.name, part: `${c.part}/${sc.part}`, tf: compose(c.tf, rel) });
+      // Fixed in the sub-assembly (or inside a rigid sub-sub-assembly): it moves with the anchor.
+      if (sc.fixed || !top.has(sc.id)) mates.push({ id: `${id}~anchor`, name: "", type: "lock", a: { comp: c.id, face: "" }, b: { comp: id, face: "" }, rel });
+    }
+    for (const m of sub.mates ?? []) {
+      const r = <T extends { comp: string } | undefined>(x: T): T => (x ? { ...x, comp: `${c.id}/${x.comp}` } : x);
+      mates.push({ ...m, id: `${c.id}/${m.id}`, a: r(m.a), b: r(m.b), c: r(m.c), d: r(m.d) });
+    }
+  }
+  return { ...doc, components: comps, mates, parts };
+}
+
+/** Writes solved transforms back: top components take theirs, flexible sub-assemblies store their children relative to themselves. */
+export function applySolved(doc: AsmDoc, tfs: Record<string, Tf>) {
+  for (const c of doc.components) {
+    if (tfs[c.id]) c.tf = tfs[c.id];
+    if (!c.flexible || !doc.parts[c.part]?.asm) continue;
+    const inv = invert(c.tf), sub: Record<string, Tf> = {};
+    for (const sc of doc.parts[c.part].asm!.components) { const t = tfs[`${c.id}/${sc.id}`]; if (t) sub[sc.id] = compose(inv, t); }
+    if (Object.keys(sub).length) c.subTfs = sub; else delete c.subTfs;
+  }
 }
 
 /** The top-level component a shown (flattened or pattern) id belongs to. */
