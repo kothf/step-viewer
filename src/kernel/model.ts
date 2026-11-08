@@ -18,6 +18,9 @@ import { splineBezierN } from "../sketch/spline";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
+import { evalSheet } from "../sheetmetal/kernel";
+import { SheetError, type SheetState } from "../sheetmetal/sheet";
+import { isSheet } from "../sheetmetal/types";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -30,7 +33,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -2660,7 +2663,7 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]> } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -2668,6 +2671,8 @@ export class Modeller {
     let body: Named | null = null;
     // Surface bodies (FRS 9.11): open sheets, kept apart from the solids.
     let sheets: Named | null = null;
+    // Sheet metal (FR-FT-120): the panels and bends made so far.
+    let sm: SheetState | null = null;
     let chain = "";
     const statuses: FeatureStatus[] = [];
     const frames: Record<string, Frame> = {};
@@ -2692,6 +2697,7 @@ export class Modeller {
         if (!hit.status.ok) failed.add(f.id);
         body = hit.body;
         sheets = hit.sheets;
+        sm = hit.sm ?? null;
         return;
       }
       let status: FeatureStatus = { id: f.id, ok: true };
@@ -2738,6 +2744,7 @@ export class Modeller {
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
+          else if (isSheet(f)) ({ body, sm } = evalSheet(this.sheetApi(), f, doc, body, sm, sk => this.frameOf(sk, body, frames)));
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
           else if (f.type === "combine") body = this.combine(f, body);
@@ -2757,17 +2764,23 @@ export class Modeller {
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;
-          status = { id: f.id, ok: false, code: e instanceof FeatureError ? e.code : "E-KRN", message: e instanceof FeatureError ? e.message : `Kernel error: ${e.message ?? e}` };
+          const coded = e instanceof FeatureError || e instanceof SheetError;
+          status = { id: f.id, ok: false, code: coded ? (e as FeatureError).code : "E-KRN", message: coded ? e.message : `Kernel error: ${e.message ?? e}` };
           failed.add(f.id);
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id) });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves };
+    return { body, sheets, statuses, frames, sketches, curves, sheet: sm };
+  }
+
+  /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
+  private sheetApi() {
+    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

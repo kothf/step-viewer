@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- Sheet metal, first slice of FRS P6 (FR-FT-120), in a new **Sheet metal ▾** menu of the part modeller:
+  - **Base Flange/Tab**: a closed sketch becomes a flat plate; an open chain of lines becomes a bent flange of a given depth, with bends at the corners.
+  - Sheet metal parameters on the base flange: thickness, bend radius, K-factor, bend allowance or bend deduction, rectangular bend relief and its ratio, and gauge tables (mild steel, stainless steel, aluminium) that fill in thickness, radius and K-factor.
+  - **Edge Flange** on straight edges picked in the view, with a live preview: angle, length to the outer or inner virtual sharp, material inside / material outside / bend outside, a custom bend radius, and offsets from the edge ends (bend reliefs are cut automatically).
+  - **Hem**: closed or open (with a gap), material inside or outside.
+  - **Flatten** shows the flat pattern on the plane of the base flange, with up and down bend lines; click again to fold it back. The flat pattern is exact: every bend takes its bend allowance.
+  - **Flat pattern DXF**: the outline and the bend lines (layers OUTLINE, BEND_UP, BEND_DOWN) as DXF R12 in millimetres.
+
 ## [1.85.0] - 2026-11-08
 
 ### Added

@@ -658,7 +658,9 @@ export interface ExtendSurfFeature {
   distance: Num;
 }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
+import type { SheetFeature } from "../sheetmetal/types";
+
+export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature

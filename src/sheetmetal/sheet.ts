@@ -1,0 +1,454 @@
+// Sheet metal model (FR-FT-120), pure geometry with no kernel.
+//
+// The sheet is a set of flat panels joined by bends. Every panel is a 2D outline in one shared
+// flat-pattern plane (the "flat" coordinates) plus a rigid transform M that carries the flat
+// coordinates to where the panel sits once folded; a panel occupies z ∈ [0, T] in its own frame.
+// A bend is a strip of the flat pattern, as wide as its bend allowance, rolled round an axis.
+// So folding is M, and unfolding is just dropping it: the flat pattern is the union of the
+// outlines, which is why it comes out exact, with bend lines and K-factor, without unrolling
+// any faces.
+//
+// Face names: a panel's faces are `<panel>:top`, `<panel>:bot` and `<panel>:<edge id>` for its
+// sides; a bend's `<bend>:in`, `:out`, `:s0`, `:s1`, `:start`, `:end`. Panel ids are
+// `<feature id>:p<n>` and bend ids `<feature id>:b<n>`, so a picked edge between `…:top` and
+// `…:<edge>` says which panel edge it is without looking at geometry.
+import type { Frame, SketchFeature, V2, V3 } from "../model/types";
+import { loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
+import type { BendCalc, SmBaseFeature, SmFlangeFeature, SmHemFeature } from "./types";
+
+export class SheetError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
+}
+
+/** A rigid transform: x, y, z are where the unit axes go, o where the origin goes. */
+export interface Mat { o: V3; x: V3; y: V3; z: V3 }
+
+export interface Panel {
+  id: string;
+  /** Counter-clockwise outer loop and clockwise holes, in flat coordinates; `ent` is the edge id. */
+  outer: Seg[];
+  holes: Seg[][];
+  M: Mat;
+  /** Edge ids handed out so far (new edges are `x<n>`). */
+  n: number;
+}
+
+export interface Bend {
+  id: string;
+  /** The bend's strip in the flat pattern starts on the line a0 → a1 and runs `ba` along o = (e.y, -e.x). */
+  a0: V2; a1: V2; ba: number;
+  /** Bends towards the panel's top (+z) face. */
+  up: boolean;
+  angle: number;
+  /** Inside radius. */
+  r: number;
+  /** The transform of the panel the bend starts from. */
+  M: Mat;
+}
+
+export interface SheetState {
+  T: number;
+  R: number;
+  calc: BendCalc;
+  k: number;
+  ba?: number;
+  bd?: number;
+  relief: "rect" | "obround" | "none";
+  reliefRatio: number;
+  /** Where the flat pattern lies: the first panel's transform. */
+  root: Mat;
+  panels: Panel[];
+  bends: Bend[];
+  /** Panel faces (`<panel>:<edge>`) that already carry a flange. */
+  used: string[];
+}
+
+/** What a sheet metal feature does to the solid: cut prisms (panel frame, z across the sheet), then new panels and bends. */
+export type SheetOp =
+  | { kind: "cut"; M: Mat; loop: V2[] }
+  | { kind: "panel"; panel: Panel }
+  | { kind: "bend"; bend: Bend };
+
+// ---------- small vector helpers ----------
+
+const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const mul = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+const p2 = (a: V2, b: V2): V2 => [a[0] + b[0], a[1] + b[1]];
+const s2 = (a: V2, k: number): V2 => [a[0] * k, a[1] * k];
+const d2 = (a: V2, b: V2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+/** M applied to a point. */
+export function apply(M: Mat, p: V3): V3 { return add(add(add(M.o, mul(M.x, p[0])), mul(M.y, p[1])), mul(M.z, p[2])); }
+/** M applied to a direction. */
+export function applyDir(M: Mat, d: V3): V3 { return add(add(mul(M.x, d[0]), mul(M.y, d[1])), mul(M.z, d[2])); }
+/** M ∘ N: first N, then M. */
+export function compose(M: Mat, N: Mat): Mat { return { o: apply(M, N.o), x: applyDir(M, N.x), y: applyDir(M, N.y), z: applyDir(M, N.z) }; }
+/** The frame a sketch plane gives: flat x, y in the plane and z along its normal. */
+export const matOf = (f: Frame, zShift = 0): Mat => ({ o: add(f.o, mul(f.n, zShift)), x: f.x, y: f.y, z: f.n });
+const rodrigues = (v: V3, u: V3, a: number): V3 => {
+  const c = Math.cos(a), s = Math.sin(a), k = dot(u, v) * (1 - c), w = cross(u, v);
+  return [v[0] * c + w[0] * s + u[0] * k, v[1] * c + w[1] * s + u[1] * k, v[2] * c + w[2] * s + u[2] * k];
+};
+/** Rotation by angle a about the axis through c along the unit direction u. */
+function rotation(c: V3, u: V3, a: number): Mat {
+  const r = (v: V3) => rodrigues(v, u, a);
+  return { o: add(c, r(mul(c, -1))), x: r([1, 0, 0]), y: r([0, 1, 0]), z: r([0, 0, 1]) };
+}
+const translation = (t: V3): Mat => ({ o: t, x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
+
+// ---------- bend arithmetic ----------
+
+/** Bend allowance: the flat length a bend of `angle` and inside radius `r` takes. */
+export function bendAllowance(s: Pick<SheetState, "T" | "calc" | "k" | "ba" | "bd">, angle: number, r: number): number {
+  if (s.calc === "ba") return s.ba ?? 0;
+  if (s.calc === "bd") return 2 * outerSetback(s.T, angle, r) - (s.bd ?? 0);
+  return angle * (r + s.k * s.T);
+}
+/** Outside setback: from the outer virtual sharp to the bend's start (past 90°, to the tangent). */
+export const outerSetback = (T: number, angle: number, r: number) => (angle <= Math.PI / 2 + 1e-12 ? Math.tan(angle / 2) : 1) * (r + T);
+const innerSetback = (angle: number, r: number) => (angle <= Math.PI / 2 + 1e-12 ? Math.tan(angle / 2) : 1) * r;
+
+/**
+ * A bend on the panel transform M, starting on the flat line a0 → a1 and running towards o = (e.y, -e.x):
+ * the bend, and the transform of what comes after it in the flat pattern (the next panel).
+ */
+function makeBend(st: SheetState, M: Mat, a0: V2, a1: V2, up: boolean, angle: number, r: number, id: string): { bend: Bend; next: Mat } {
+  const e = s2([a1[0] - a0[0], a1[1] - a0[1]], 1 / d2(a0, a1));
+  const o: V3 = [e[1], -e[0], 0];
+  const ba = bendAllowance(st, angle, r);
+  if (!(ba > 1e-9)) throw new SheetError("E-SM-BA", "The bend allowance must be more than 0.");
+  // Up: the axis is r above the top face and turning about -e lifts o towards +z; down: r below the bottom, about +e.
+  const c: V3 = [a0[0], a0[1], up ? st.T + r : -r];
+  const G = compose(rotation(c, up ? [-e[0], -e[1], 0] : [e[0], e[1], 0], angle), translation(mul(o, -ba)));
+  return { bend: { id, a0, a1, ba, up, angle, r, M }, next: compose(M, G) };
+}
+
+// ---------- outlines ----------
+
+const line = (ent: string, a: V2, b: V2): Seg => ({ ent, kind: "line", a, b });
+/** Line segments through the points in order, closing the loop, made counter-clockwise. */
+function polyLoop(pts: V2[], ids: string[]): Seg[] {
+  const segs = pts.map((p, i) => line(ids[i], p, pts[(i + 1) % pts.length]));
+  return polyArea(pts) >= 0 ? segs : reverseLoop(segs);
+}
+export function reverseLoop(loop: Seg[]): Seg[] {
+  return [...loop].reverse().map(s => s.kind === "line" ? { ...s, a: s.b, b: s.a } : s.kind === "arc" ? { ...s, a: s.b, b: s.a, ccw: !s.ccw } : s);
+}
+const oriented = (loop: Seg[], ccw: boolean) => (polyArea(loopPolygon(loop)) > 0) === ccw ? loop : reverseLoop(loop);
+
+/** The rectangle between the flat lines p0 → p1 and the same line moved by `w` along o, counter-clockwise. */
+function strip(p0: V2, p1: V2, o: V2, w: number, ids: [string, string, string, string]): Seg[] {
+  // p0, p0 + w·o, p1 + w·o, p1 runs counter-clockwise when o is to the right of p0 → p1.
+  const q0 = p2(p0, s2(o, w)), q1 = p2(p1, s2(o, w));
+  return polyLoop([p0, q0, q1, p1], ids);
+}
+
+// ---------- features ----------
+
+function startState(f: SmBaseFeature, root: Mat): SheetState {
+  const T = f.thickness.v, R = f.radius.v;
+  if (!(T > 1e-6)) throw new SheetError("E-SM-T", "The thickness must be more than 0.");
+  if (!(R >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  const k = f.k ?? 0.5;
+  if (!(k >= 0 && k <= 1)) throw new SheetError("E-SM-K", "The K-factor must be between 0 and 1.");
+  return { T, R, calc: f.calc ?? "k", k, ba: f.ba?.v, bd: f.bd?.v, relief: f.relief ?? "rect", reliefRatio: f.reliefRatio ?? 0.5, root, panels: [], bends: [], used: [] };
+}
+
+/** Base flange: a flat plate from a closed sketch, or a bent strip from an open chain of lines. */
+export function baseFlange(f: SmBaseFeature, sk: SketchFeature, frame: Frame): { state: SheetState; ops: SheetOp[] } {
+  const prof = sketchProfile(sk);
+  if (!prof.error) {
+    const st = startState(f, matOf(frame));
+    const M = matOf(frame, f.reverse ? -st.T : 0);
+    st.root = M;
+    const ops: SheetOp[] = [];
+    prof.faces.forEach((pf, i) => {
+      for (const s of [pf.outer, ...pf.holes].flat()) if (s.kind !== "line" && s.kind !== "arc" && s.kind !== "circle") throw new SheetError("E-SM-CURVE", "Sheet metal profiles use lines, arcs and circles.");
+      const panel: Panel = { id: `${f.id}:p${i}`, outer: oriented(pf.outer, true), holes: pf.holes.map(h => oriented(h, false)), M, n: 0 };
+      st.panels.push(panel);
+      ops.push({ kind: "panel", panel });
+    });
+    return { state: st, ops };
+  }
+  const path = sketchPath(sk);
+  if (path.error || path.closed) throw new SheetError("E-SM-PROFILE", "Use a closed sketch for a flat plate, or an open chain of lines for a bent flange.");
+  if (path.segs.some(s => s.kind !== "line")) throw new SheetError("E-SM-LINES", "An open base flange profile is made of lines; the bends are added at the corners.");
+  const st = startState(f, matOf(frame));
+  const D = f.depth.v;
+  if (!(D > 1e-6)) throw new SheetError("E-SM-DEPTH", "The depth must be more than 0.");
+  const segs = path.segs as Extract<Seg, { kind: "line" }>[];
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  const dirs = segs.map(s => { const l = d2(s.a, s.b); return [(s.b[0] - s.a[0]) / l, (s.b[1] - s.a[1]) / l] as V2; });
+  // Flat axes: u along the strip, v across it. y = -n puts the thickness on the left of the first line (z = d0 × y).
+  const y: V3 = f.reverse ? frame.n : mul(frame.n, -1);
+  const x = unit(sub3(w(dirs[0]), w([0, 0])));
+  let M: Mat = { o: w(segs[0].a), x, y, z: cross(x, y) };
+  st.root = M;
+  // Depth along the sketch normal from s0 to s1; v = -s when y = -n.
+  const [s0, s1] = f.mid ? [-D / 2, D / 2] : f.flip ? [-D, 0] : [0, D];
+  const [v0, v1] = f.reverse ? [s0, s1] : [-s1, -s0];
+  const turn = dirs.slice(1).map((d, i) => {
+    const p = dirs[i], c = p[0] * d[1] - p[1] * d[0], dt = p[0] * d[0] + p[1] * d[1];
+    return Math.atan2(c, dt);
+  });
+  const up = turn.map(a => (a > 0) !== !!f.reverse);
+  const sb = turn.map((a, i) => Math.tan(Math.abs(a) / 2) * (up[i] ? st.R + st.T : st.R));
+  if (turn.some(a => Math.abs(a) > Math.PI - 1e-3)) throw new SheetError("E-SM-FOLD", "Two lines of the profile fold back onto each other.");
+  const ops: SheetOp[] = [];
+  let u = 0;
+  segs.forEach((s, i) => {
+    const len = d2(s.a, s.b) - (i > 0 ? sb[i - 1] : 0) - (i < segs.length - 1 ? sb[i] : 0);
+    if (!(len > 1e-6)) throw new SheetError("E-SM-SHORT", "A line of the profile is too short for its bends.");
+    const panel: Panel = { id: `${f.id}:p${i}`, outer: polyLoop([[u, v0], [u + len, v0], [u + len, v1], [u, v1]], ["v0", "u1", "v1", "u0"]), holes: [], M, n: 0 };
+    st.panels.push(panel);
+    ops.push({ kind: "panel", panel });
+    u += len;
+    if (i < segs.length - 1) {
+      const { bend, next } = makeBend(st, M, [u, v0], [u, v1], up[i], Math.abs(turn[i]), st.R, `${f.id}:b${i}`);
+      st.bends.push(bend);
+      ops.push({ kind: "bend", bend });
+      u += bend.ba;
+      M = next;
+    }
+  });
+  return { state: st, ops };
+}
+const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+
+/** The panel edge a picked model edge stands for: from the two face names either side of it. */
+export function findEdge(st: SheetState, faces: [string, string]): { panel: Panel; index: number; up: boolean } {
+  const split = (n: string) => { const i = n.lastIndexOf(":"); return [n.slice(0, i), n.slice(i + 1)] as const; };
+  for (const [side, other] of [faces, [faces[1], faces[0]]] as const) {
+    const [pid, eid] = split(side);
+    const [oid, which] = split(other);
+    if (oid !== pid || (which !== "top" && which !== "bot")) continue;
+    const panel = st.panels.find(p => p.id === pid);
+    const index = panel ? panel.outer.findIndex(s => s.ent === eid) : -1;
+    if (panel && index >= 0) return { panel, index, up: which === "top" };
+  }
+  throw new SheetError("E-SM-EDGE", "Pick an outside edge of a flat sheet metal face.");
+}
+
+interface FlangeSpec { angle: number; r: number; /** flat length after the bend */ s: number; /** how far inside the edge the bend starts */ d: number; off0: number; off1: number; flip: boolean }
+
+/** Adds a bend and a flange panel on one picked edge (edge flange and hem). */
+function addFlange(st: SheetState, faces: [string, string], spec: FlangeSpec, pid: string, bid: string): SheetOp[] {
+  const { panel, index, up: upSide } = findEdge(st, faces);
+  const seg = panel.outer[index];
+  if (seg.kind !== "line") throw new SheetError("E-SM-STRAIGHT", "A flange goes on a straight edge.");
+  const key = `${panel.id}:${seg.ent}`;
+  if (st.used.includes(key)) throw new SheetError("E-SM-USED", "That edge already has a flange.");
+  const up = upSide !== spec.flip;
+  const a = seg.a, b = seg.b, l = d2(a, b);
+  const e = s2([b[0] - a[0], b[1] - a[1]], 1 / l), o: V2 = [e[1], -e[0]];
+  const t0 = spec.off0, t1 = l - spec.off1;
+  if (!(t1 - t0 > 1e-6)) throw new SheetError("E-SM-OFFSET", "The offsets leave nothing of the edge.");
+  if (!(spec.s > 1e-6)) throw new SheetError("E-SM-LENGTH", "The flange is too short for its bend.");
+  const P = (t: number, n: number): V2 => [a[0] + t * e[0] - n * o[0], a[1] + t * e[1] - n * o[1]];
+  const d = spec.d;
+  const ops: SheetOp[] = [];
+  const eps = 1e-7 * (1 + l);
+  if (d > eps) {
+    // The bend starts inside the panel: trim the edge back by d where the flange is, with reliefs at partial ends.
+    const n = panel.outer.length;
+    const prev = panel.outer[(index + n - 1) % n], next = panel.outer[(index + 1) % n];
+    const moveIn = (other: Seg): V2 => {
+      if (other.kind !== "line") throw new SheetError("E-SM-CORNER", "The edges next to a flange with material inside must be straight.");
+      // Where the edge moved in by d meets the neighbouring edge's line.
+      const p = P(0, d), q = other.a, r = [other.b[0] - other.a[0], other.b[1] - other.a[1]] as V2;
+      const den = e[0] * r[1] - e[1] * r[0];
+      if (Math.abs(den) < 1e-9) throw new SheetError("E-SM-CORNER", "The edges next to a flange with material inside must not be parallel to it.");
+      const tt = ((q[0] - p[0]) * r[1] - (q[1] - p[1]) * r[0]) / den;
+      return p2(p, s2(e, tt));
+    };
+    const rel = st.relief === "none" ? 0 : st.reliefRatio * st.T;
+    const dr = st.relief === "none" ? d : d + rel;
+    const pts: V2[] = [];
+    const startAt = t0 <= eps ? moveIn(prev) : a;
+    pts.push(startAt);
+    if (t0 > eps) { const w = Math.min(rel, t0); pts.push(P(t0 - w, 0), P(t0 - w, dr), P(t0, dr), P(t0, d)); } else pts.push(P(0, d));
+    if (t1 < l - eps) { const w = Math.min(rel, l - t1); pts.push(P(t1, d), P(t1, dr), P(t1 + w, dr), P(t1 + w, 0)); } else pts.push(P(l, d));
+    const endAt = t1 >= l - eps ? moveIn(next) : b;
+    pts.push(endAt);
+    const clean = cleanPath(pts);
+    // The removed material: the old edge, then back along the new path.
+    ops.push({ kind: "cut", M: panel.M, loop: cyclic([a, b, ...[...clean].reverse()]) });
+    // How far inside the old edge a point is.
+    const inward = (p: V2) => -((p[0] - a[0]) * o[0] + (p[1] - a[1]) * o[1]);
+    const newSegs: Seg[] = [];
+    for (let i = 0; i + 1 < clean.length; i++) {
+      const isAtt = Math.abs(inward(clean[i]) - d) < eps && Math.abs(inward(clean[i + 1]) - d) < eps;
+      newSegs.push(line(isAtt ? seg.ent : `x${panel.n++}`, clean[i], clean[i + 1]));
+    }
+    if (t0 <= eps) panel.outer[(index + n - 1) % n] = { ...prev, b: clean[0] } as Seg;
+    if (t1 >= l - eps) panel.outer[(index + 1) % n] = { ...next, a: clean.at(-1)! } as Seg;
+    panel.outer.splice(index, 1, ...newSegs);
+  }
+  st.used.push(key);
+  const A0 = P(t0, d), A1 = P(t1, d);
+  const { bend, next } = makeBend(st, panel.M, A0, A1, up, spec.angle, spec.r, bid);
+  st.bends.push(bend);
+  ops.push({ kind: "bend", bend });
+  const c0 = p2(A0, s2(o, bend.ba)), c1 = p2(A1, s2(o, bend.ba));
+  // c0, c0 + s·o, c1 + s·o, c1: counter-clockwise (o is to the right of A0 → A1).
+  const fl: Panel = { id: pid, outer: strip(c0, c1, o, spec.s, ["s0", "tip", "s1", "att"]), holes: [], M: next, n: 0 };
+  st.used.push(`${pid}:att`);
+  st.panels.push(fl);
+  ops.push({ kind: "panel", panel: fl });
+  return ops;
+}
+
+/** A closed loop's points without repeats (also last = first). */
+function cyclic(pts: V2[]): V2[] {
+  const out = cleanPath(pts);
+  while (out.length > 1 && d2(out[0], out.at(-1)!) < 1e-9) out.pop();
+  return out;
+}
+
+/** Points with repeats and straight-through points removed. */
+function cleanPath(pts: V2[]): V2[] {
+  const out: V2[] = [];
+  for (const p of pts) if (!out.length || d2(out.at(-1)!, p) > 1e-9) out.push(p);
+  for (let i = 1; i + 1 < out.length;) {
+    const a = out[i - 1], b = out[i], c = out[i + 1];
+    const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    const dt = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]);
+    if (Math.abs(cr) < 1e-12 * (1 + d2(a, c) ** 2) && dt > 0) out.splice(i, 1); else i++;
+  }
+  return out;
+}
+
+const clone = (st: SheetState): SheetState => structuredClone(st);
+
+/** Edge flange on each picked edge. */
+export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: SheetState; ops: SheetOp[] } {
+  if (!f.edges.length) throw new SheetError("E-SM-NOEDGE", "Pick the edges for the flange.");
+  const st = clone(prev);
+  const angle = f.angle.v;
+  if (!(angle > 1e-6 && angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The flange angle must be between 0° and 180°.");
+  const r = f.radius?.v ?? st.R;
+  const L = f.length.v;
+  const s = L - (f.lengthRef === "inner" ? innerSetback(angle, r) : outerSetback(st.T, angle, r));
+  const pos = f.position ?? "inside";
+  const d = pos === "inside" ? outerSetback(st.T, angle, r) : pos === "outside" ? innerSetback(angle, r) : 0;
+  const ops: SheetOp[] = [];
+  f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, { angle, r, s, d, off0: f.off0?.v ?? 0, off1: f.off1?.v ?? 0, flip: !!f.flip }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
+  return { state: st, ops };
+}
+
+/** Hem: a 180° fold, closed (radius next to nothing) or open (radius half the gap). */
+export function hem(prev: SheetState, f: SmHemFeature): { state: SheetState; ops: SheetOp[] } {
+  if (!f.edges.length) throw new SheetError("E-SM-NOEDGE", "Pick the edges for the hem.");
+  const st = clone(prev);
+  const r = f.kind === "open" ? (f.gap?.v ?? st.T) / 2 : Math.max(st.T * 1e-3, 1e-3);
+  if (!(r > 0)) throw new SheetError("E-SM-GAP", "The gap must be more than 0.");
+  const s = f.length.v - (r + st.T);
+  const d = (f.position ?? "inside") === "inside" ? r + st.T : 0;
+  const ops: SheetOp[] = [];
+  f.edges.forEach((ref, i) => ops.push(...addFlange(st, ref.faces, { angle: Math.PI, r, s, d, off0: 0, off1: 0, flip: !!f.flip }, `${f.id}:p${i}`, `${f.id}:b${i}`)));
+  return { state: st, ops };
+}
+
+// ---------- flat pattern ----------
+
+/** A bend's strip in the flat pattern, counter-clockwise. */
+export function bendStrip(b: Bend): Seg[] {
+  const l = d2(b.a0, b.a1), e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l];
+  return strip(b.a0, b.a1, [e[1], -e[0]], b.ba, ["s0", "end", "s1", "start"]);
+}
+
+/** A bend's centre line in the flat pattern. */
+export function bendLine(b: Bend): [V2, V2] {
+  const l = d2(b.a0, b.a1), o: V2 = [(b.a1[1] - b.a0[1]) / l, -(b.a1[0] - b.a0[0]) / l];
+  return [p2(b.a0, s2(o, b.ba / 2)), p2(b.a1, s2(o, b.ba / 2))];
+}
+
+/**
+ * The flat pattern's outline: the union of the panels and bend strips. They meet along shared
+ * edges (sometimes part of an edge), so the union is the edges left once each shared piece and
+ * its opposite are taken out, chained back into loops.
+ */
+export function flatLoops(st: SheetState): { outer: Seg[][]; holes: Seg[][] } {
+  const loops = [...st.panels.flatMap(p => [p.outer, ...p.holes]), ...st.bends.map(bendStrip)] as FlatSeg[][];
+  const size = Math.max(1, ...loops.flat().flatMap(s => s.kind === "circle" ? [Math.abs(s.c[0]) + s.r, Math.abs(s.c[1]) + s.r] : [Math.abs(s.a[0]), Math.abs(s.a[1]), Math.abs(s.b[0]), Math.abs(s.b[1])]));
+  const tol = size * 1e-7;
+  const verts: V2[] = loops.flat().flatMap(s => (s.kind === "circle" ? [] : [s.a, s.b]));
+  // Split lines where another loop's corner lies on them.
+  let segs: FlatSeg[] = [];
+  for (const s of loops.flat()) {
+    if (s.kind !== "line") { segs.push(s); continue; }
+    const l = d2(s.a, s.b), e: V2 = [(s.b[0] - s.a[0]) / l, (s.b[1] - s.a[1]) / l];
+    const cuts = verts.map(v => ({ v, t: (v[0] - s.a[0]) * e[0] + (v[1] - s.a[1]) * e[1] }))
+      .filter(({ v, t }) => t > tol && t < l - tol && Math.abs((v[0] - s.a[0]) * e[1] - (v[1] - s.a[1]) * e[0]) < tol)
+      .sort((x, y) => x.t - y.t);
+    let at = s.a;
+    for (const c of cuts) { if (d2(at, c.v) > tol) { segs.push({ ...s, a: at, b: c.v }); at = c.v; } }
+    segs.push({ ...s, a: at, b: s.b });
+  }
+  // Take out each line together with an opposite one.
+  const gone = new Set<number>();
+  segs.forEach((s, i) => {
+    if (gone.has(i) || s.kind !== "line") return;
+    const j = segs.findIndex((q, k) => k !== i && !gone.has(k) && q.kind === "line" && d2(q.a, s.b) < tol && d2(q.b, s.a) < tol);
+    if (j >= 0) { gone.add(i); gone.add(j); }
+  });
+  segs = segs.filter((_s, i) => !gone.has(i));
+  // Chain the rest back into loops.
+  const out: FlatSeg[][] = [];
+  const left = [...segs];
+  while (left.length) {
+    const first = left.shift()!;
+    if (first.kind === "circle") { out.push([first]); continue; }
+    const loop: FlatSeg[] = [first];
+    for (;;) {
+      const end = (loop.at(-1) as { b: V2 }).b;
+      if (d2(end, (loop[0] as { a: V2 }).a) < tol * 10) break;
+      const i = left.findIndex(q => q.kind !== "circle" && d2(q.a, end) < tol * 10);
+      if (i < 0) break;
+      loop.push(left.splice(i, 1)[0]);
+    }
+    out.push(mergeLines(loop, tol) as FlatSeg[]);
+  }
+  const area = (l: Seg[]) => polyArea(loopPolygon(l));
+  return { outer: out.filter(l => area(l) > 0), holes: out.filter(l => area(l) <= 0) };
+}
+
+/** The pieces a sheet metal outline is made of. */
+type FlatSeg = Extract<Seg, { kind: "line" | "arc" | "circle" }>;
+
+/** Joins consecutive straight pieces of one line. */
+function mergeLines(loop: Seg[], tol: number): Seg[] {
+  const out = [...loop];
+  const same = (s: Seg, q: Seg) => {
+    if (s.kind !== "line" || q.kind !== "line") return false;
+    const ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1], vx = q.b[0] - q.a[0], vy = q.b[1] - q.a[1];
+    return Math.abs(ux * vy - uy * vx) < tol * (Math.hypot(ux, uy) + Math.hypot(vx, vy)) && ux * vx + uy * vy > 0;
+  };
+  for (let i = 0; out.length > 1 && i < out.length;) {
+    const j = (i + 1) % out.length;
+    if (j !== i && same(out[i], out[j])) {
+      const s = out[i] as Extract<Seg, { kind: "line" }>, q = out[j] as Extract<Seg, { kind: "line" }>;
+      out[i] = { ...s, b: q.b };
+      out.splice(j, 1);
+      if (j < i) i--;
+    } else i++;
+  }
+  return out;
+}
+
+/** Flat-pattern size: the bounding box of the outline (mm). */
+export function flatSize(st: SheetState): { w: number; h: number; min: V2; max: V2 } {
+  const { outer } = flatLoops(st);
+  const pts = outer.flatMap(l => loopPolygon(l, 32));
+  const min: V2 = [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1]))];
+  const max: V2 = [Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+  return { w: max[0] - min[0], h: max[1] - min[1], min, max };
+}
+
+/** Bend lines on the flat pattern's top face, in world coordinates (drawn in the view when flattened). */
+export function flatBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[] {
+  return st.bends.map(b => { const [p, q] = bendLine(b); return { a: apply(st.root, [p[0], p[1], st.T]), b: apply(st.root, [q[0], q[1], st.T]), up: b.up }; });
+}

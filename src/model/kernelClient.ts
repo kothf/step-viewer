@@ -7,6 +7,7 @@ import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
+import type { SheetState } from "../sheetmetal/sheet";
 import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
@@ -16,6 +17,8 @@ export interface Rebuild {
   sketches?: Record<string, SketchFeature>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;
+  /** Sheet metal panels and bends (FR-FT-120), for the flat pattern and its DXF. */
+  sheet?: SheetState | null;
   data: PartData | null;
   faceNames: string[];
   /** How many of the last `faceNames` belong to surface bodies (FRS 9.11); they come after the solids. */

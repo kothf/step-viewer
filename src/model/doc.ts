@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", smbase: "Base-Flange", smflange: "Edge-Flange", smhem: "Hem", smflat: "Flat-Pattern" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -162,6 +162,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "curve") { if (f.sketch) features.push(f.sketch); for (const e of f.edges ?? []) faces.push(...e.faces); faces.push(...(f.faces ?? []).map(x => x.name)); }
   if (f.type === "loft") { features.push(...f.profiles); if (f.centerline) features.push(pathId(f.centerline)); }
   if (f.type === "rib") features.push(f.sketch);
+  if (f.type === "smbase") features.push(f.sketch);
+  if (f.type === "smflange" || f.type === "smhem") for (const e of f.edges) faces.push(...e.faces);
   if (f.type === "combine") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }
   if (f.type === "bsplit") { plane(f.plane); faces.push(...f.bodies.map(x => x.name)); }
   if (f.type === "scale") faces.push(...f.bodies.map(x => x.name));
