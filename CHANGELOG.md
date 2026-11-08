@@ -5,11 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.139.0] - 2026-11-08
+
+### Added
+
+- **Section at the sketch plane (FR-SK-006)**: the sketch bar's Section button cuts the model at the sketch plane while you sketch, hiding the material in front of it. It stays on for later sketches until turned off, and the cut goes away when you leave the sketch.
+- **Configuration table (FR-CFG-003)**: the Configurations panel exports every configuration as a CSV table, one row per configuration and one column per value: dimensions and feature values (mm, degrees or expressions), pattern counts, suppression (S/U), variables and material. Importing a table (comma or semicolon separated) updates the configurations it names and adds new ones, as one undo step.
+
 ## [1.138.0] - 2026-11-08
 
 ### Added
 
 - **Cuts in the sheet metal flat pattern (FR-FT-120)**: holes and cuts that ordinary features (extrude cuts, holes) make in the flat faces of a sheet metal part now show in the flat pattern. The material each feature took out of a face is moved onto the pattern with that face, so a hole in a flange lands where the flange lies when unfolded. The flat pattern DXF then takes its outline from the pattern itself, holes included (circles and arcs stay exact). Exported while folded, the DXF has the sheet outline only and says to flatten first. Cuts across a bend aren't unrolled yet.
+
 ## [1.137.0] - 2026-11-08
 
 ### Added
@@ -1193,7 +1201,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.138.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.139.0...HEAD
+[1.139.0]: https://github.com/kothf/step-viewer/compare/v1.138.0...v1.139.0
 [1.138.0]: https://github.com/kothf/step-viewer/compare/v1.137.0...v1.138.0
 [1.137.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.137.0
 [1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0

@@ -3311,4 +3311,12 @@ export const RU: Record<string, string> = {
   "Type the text and its height in the panel, then click where it starts": "Введите текст и его высоту на панели, затем щёлкните, где он начинается",
   "The height is that of a capital letter. Drag the text by its start point; dimension or relate that point like any other.": "Высота — это высота заглавной буквы. Перетаскивайте текст за начальную точку; задавайте для неё размеры и взаимосвязи, как для любой точки.",
   "Click in the sketch where the text starts (the left end of its baseline).": "Щёлкните в эскизе, где начинается текст (левый конец базовой линии).",
+  "Section view at the sketch plane: hides the material in front of it": "Разрез по плоскости эскиза: скрывает материал перед ней",
+  "Configuration table": "Таблица конфигураций",
+  "One row per configuration and one column per value, as CSV: lengths in mm, angles in degrees, S or U to suppress, expressions allowed. Rows with a new name add configurations.": "Одна строка на конфигурацию и один столбец на значение, в формате CSV: длины в мм, углы в градусах, S или U для погашения, допускаются выражения. Строки с новым именем добавляют конфигурации.",
+  "Export table": "Экспорт таблицы",
+  "Import table…": "Импорт таблицы…",
+  "Configuration table: {n} updated, {m} added.": "Таблица конфигураций: обновлено {n}, добавлено {m}.",
+  "Columns not found: {cols}": "Не найдены столбцы: {cols}",
+  "The table needs a header row and at least one configuration.": "В таблице должны быть строка заголовков и хотя бы одна конфигурация.",
 };

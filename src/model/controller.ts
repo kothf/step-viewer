@@ -13,7 +13,8 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
-import { activate, addConfig, nextConfigName, removeConfig, renameConfig } from "./configs";
+import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
+import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
 import { journalDrop, journalList, journalSave, packPart, unpackPart, PART_EXT, type JournalEntry } from "./file";
 import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snapshots";
@@ -89,6 +90,8 @@ export interface ModelHost {
   normalTo?(normal?: V3): void;
   /** Makes a coordinate system feature the active measurement and export frame (null: back to global); `src` is its feature id. */
   setCsys?(c: { name: string; src: string; o: V3; x: V3; z: V3 } | null, quiet?: boolean): void;
+  /** Section view at the sketch plane (FR-SK-006): cuts away what lies in front of the plane; null removes it. */
+  sketchSection?(plane: { o: V3; n: V3 } | null): void;
   /** Another document kind gives way (an open assembly closes). */
   leaveOthers?(): void;
   /** A part was opened or made (document tabs). */
@@ -3529,6 +3532,7 @@ export class ModelController {
       this.inBar = false;
     }
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
+    this.syncSketchSection();
     if (m.kind !== "sketch") {
       $("#mc-status").textContent = m.kind === "plane" ? t(m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
         : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
@@ -3563,7 +3567,7 @@ export class ModelController {
         if (g.length === 1) return btn(`sk:${id}`, l, ti, tool === id);
         return `<span class="mc-fly">${btn(`sk:${id}`, l, ti, tool === id)}<button class="mc-caret" data-fly="${g[0]}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
       }).join("")}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}${btn("sksec", t("Section"), t("Section view at the sketch plane: hides the material in front of it"), this.skSection)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
@@ -3802,6 +3806,7 @@ export class ModelController {
       case "cons": if (m.kind === "sketch") m.editor.toggleConstruction(); break;
       case "skmirror": if (m.kind === "sketch") { m.editor.mirrorSelection(); this.renderPanel(); } break;
       case "skdxf": if (m.kind === "sketch") this.importDxf(); break;
+      case "sksec": if (m.kind === "sketch") { this.skSection = !this.skSection; this.renderBar(); } break;
       case "sklpat": case "skcpat": case "skmove": case "skrot": case "skscale":
         if (m.kind === "sketch" && m.editor.startPattern(({ sklpat: "linear", skcpat: "circular", skmove: "move", skrot: "rotate", skscale: "scale" } as const)[c])) this.renderPanel();
         break;
@@ -5122,7 +5127,9 @@ export class ModelController {
       </div>`).join("");
     pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Configurations"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
       + `<p class="pm-help muted">${esc(t("Each configuration keeps its own dimension and parameter values, variables, suppressed features and material. Change values while a configuration is active to set them for it."))}</p>`
-      + `<fieldset class="pm-group"><legend>${esc(t("Configurations"))}</legend><div class="cfg-list">${rows}</div><button class="btn small" data-a="add">${esc(t("Add configuration"))}</button></fieldset>`;
+      + `<fieldset class="pm-group"><legend>${esc(t("Configurations"))}</legend><div class="cfg-list">${rows}</div><button class="btn small" data-a="add">${esc(t("Add configuration"))}</button></fieldset>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Configuration table"))}</legend><p class="pm-help muted">${esc(t("One row per configuration and one column per value, as CSV: lengths in mm, angles in degrees, S or U to suppress, expressions allowed. Rows with a new name add configurations."))}</p>`
+      + `<div class="cfg-tbl"><button class="btn small" data-a="cfgcsv">${esc(t("Export table"))}</button><button class="btn small" data-a="cfgin">${esc(t("Import table…"))}</button></div></fieldset>`;
     pm.querySelectorAll<HTMLElement>(".cfg-row").forEach(r => {
       const name = list[+r.dataset.i!];
       r.querySelector("[data-c=act]")!.addEventListener("click", () => this.setConfig(name));
@@ -5146,6 +5153,14 @@ export class ModelController {
       inp.addEventListener("change", commit);
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); commit(); } });
     });
+    pm.querySelector("[data-a=cfgcsv]")!.addEventListener("click", () => download(new Blob([configTable(this.doc)], { type: "text/csv" }), `${this.doc.name || "part"}-configurations.csv`));
+    pm.querySelector("[data-a=cfgin]")!.addEventListener("click", () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = ".csv,.txt,text/csv";
+      inp.onchange = async () => { const f = inp.files?.[0]; if (f) this.importConfigTable(await f.text()); };
+      inp.click();
+    });
     pm.querySelector("[data-a=add]")!.addEventListener("click", () => {
       const name = nextConfigName(d);
       this.store!.change(`Add configuration ${name}`, dd => addConfig(dd, name));
@@ -5153,6 +5168,31 @@ export class ModelController {
       pm.querySelector<HTMLInputElement>(".cfg-row.on [data-c=name]")?.select();
     });
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
+  }
+
+  /** Section at the sketch plane (FR-SK-006): on while sketching; it stays on for the next sketch until turned off. */
+  skSection = false;
+  private skSectionKey = "";
+  private syncSketchSection() {
+    const m = this.mode;
+    const f = m.kind === "sketch" && this.skSection ? m.editor.frame : null;
+    const key = f ? JSON.stringify([f.o, f.n]) : "";
+    if (key === this.skSectionKey) return;
+    this.skSectionKey = key;
+    this.host.sketchSection?.(f ? { o: [...f.o] as V3, n: [...f.n] as V3 } : null);
+  }
+
+  /** Configuration table (FR-CFG-003): one undo step; the active configuration's row rebuilds the part. */
+  importConfigTable(text: string) {
+    let res: ReturnType<typeof applyConfigTable> | null = null;
+    try { this.store!.change("Import configuration table", dd => { res = applyConfigTable(dd, text); }); }
+    catch (e) { toast(t((e as Error).message), true); return null; }
+    const r = res as ReturnType<typeof applyConfigTable> | null;
+    if (!r) return null;
+    toast(t("Configuration table: {n} updated, {m} added.", { n: r.changed.length, m: r.added.length }) + (r.unknown.length ? " " + t("Columns not found: {cols}", { cols: r.unknown.join(", ") }) : ""), !!r.unknown.length);
+    this.renderAll();
+    void this.rebuild();
+    return r;
   }
 
   /** Part properties, material and colour (FR-DOC-007, FR-MAT-001/003). */
@@ -6108,6 +6148,7 @@ const ICON_SVG: Record<string, string> = {
   skmove: S('<path d="M8 1.5v13M1.5 8h13"/><path d="M6 3.5 8 1.5l2 2M6 12.5l2 2 2-2M3.5 6 1.5 8l2 2M12.5 6l2 2-2 2"/>'),
   skrot: S('<path d="M13 8a5 5 0 1 1-1.5-3.5"/><path d="M12 1.8v2.9H9.1"/>'),
   skscale: S('<rect x="1.5" y="8.5" width="6" height="6"/><rect x="1.5" y="1.5" width="13" height="13" stroke-dasharray="1.6 1.4"/><path d="M8.5 7.5l4-4M9.5 3.5h3v3"/>'),
+  sksec: S('<path d="M2 12 8 9l6 3-6 3z"/><path d="M8 1.5v7.5M3 6.5l5-2.5 5 2.5"/>'),
   skdxf: S('<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9.5h5M5.5 12h5"/>'),
   cons: S('<path d="M2 14 14 2" stroke-dasharray="2.2 1.8"/>'),
   "sk:select": S('<path d="M3 2l9 5-4 1.2L6.5 13z"/>'),
