@@ -3,6 +3,7 @@
 // speed, acceleration and the component's angle and angular speed are plotted under the timeline and saved as CSV. Pure functions: the manager supplies the frames.
 import { applyPoint, compose, invert } from "../asm/math";
 import type { Tf } from "../asm/types";
+import { placeGeo, type Geo } from "../asm/solver";
 import type { V3 } from "../model/types";
 
 /** What a trace plots against time. */
@@ -13,6 +14,9 @@ export const TRACE_PLOTS: [TracePlot, string][] = [["dist", "Distance from start
 export function plotUnit(q: TracePlot): string {
   return q === "speed" ? "mm/s" : q === "accel" ? "mm/s²" : q === "angle" ? "°" : q === "aspeed" ? "°/s" : "mm";
 }
+/** What a mate value result plots: the distance or angle between the mate's references and their rates. */
+export const MATE_PLOTS: [TracePlot, string][] = [["dist", "Distance"], ["speed", "Rate of distance"], ["angle", "Angle"], ["aspeed", "Angular speed"]];
+
 /** Path colours, picked in turn for new traces. */
 export const TRACE_COLORS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f08c00"];
 
@@ -104,6 +108,50 @@ export function traceAngles(frames: Record<string, Tf>[], comp: string): number[
     last = a;
   }
   return out;
+}
+
+const vsub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const vdot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vcross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const vlen = (a: V3) => Math.hypot(a[0], a[1], a[2]);
+
+/**
+ * The distance (mm) and angle (degrees) between a mate's references `ga`/`gb` (in their parts' coordinates) in every
+ * frame. Distance: two planes = signed along a's normal, two axes = between the lines, a plane and an axis = the axis
+ * point's signed height over the plane. Angle: between the two directions, signed about the axis they turn most about
+ * and unwrapped, so a crank keeps counting past 180°. A frame without either component repeats the last values.
+ */
+export function mateMeasures(frames: Record<string, Tf>[], a: string, b: string, ga: Geo, gb: Geo): { dist: number[]; angle: number[] } {
+  const raw: { d: number; u: V3; v: V3 }[] = [];
+  for (const f of frames) {
+    const ta = f[a], tb = f[b];
+    if (!ta || !tb) { if (raw.length) raw.push(raw[raw.length - 1]); continue; }
+    const A = placeGeo(ga, ta), B = placeGeo(gb, tb);
+    const u = A.k === "plane" ? A.n : A.d, v = B.k === "plane" ? B.n : B.d;
+    let d: number;
+    if (A.k === "plane" && B.k === "plane") d = vdot(A.n, vsub(B.p, A.p));
+    else if (A.k === "axis" && B.k === "axis") {
+      const c = vcross(A.d, B.d), w = vsub(B.p, A.p);
+      d = vlen(c) < 1e-9 ? vlen(vcross(w, A.d)) : Math.abs(vdot(w, c)) / vlen(c);
+    } else { const pl = (A.k === "plane" ? A : B) as Geo & { k: "plane" }, ax = (A.k === "axis" ? A : B) as Geo & { k: "axis" }; d = vdot(pl.n, vsub(ax.p, pl.p)); }
+    raw.push({ d, u, v });
+  }
+  let axis: V3 = [0, 0, 1], best = 1e-9;
+  for (const r of raw) { const c = vcross(r.u, r.v), l = vlen(c); if (l > best) { best = l; axis = [c[0] / l, c[1] / l, c[2] / l]; } }
+  const angle: number[] = [];
+  let last = 0;
+  for (const r of raw) {
+    let x = Math.atan2(vdot(vcross(r.u, r.v), axis), vdot(r.u, r.v)) * 180 / Math.PI;
+    if (angle.length) x += 360 * Math.round((last - x) / 360);
+    angle.push(x);
+    last = x;
+  }
+  return { dist: raw.map(r => r.d), angle };
+}
+
+/** One row per frame of a mate value result: time, distance and angle (English headers, as every export). */
+export function mateCsv(dist: number[], angle: number[], fps: number): string {
+  return ["t (s),distance (mm),angle (deg)", ...dist.map((d, i) => [r4(i / fps), r4(d), r4(angle[i] ?? 0)].join(","))].join("\n") + "\n";
 }
 
 /** Rate of change (per second) of `v` at each sample: central differences inside, one-sided at the ends. */

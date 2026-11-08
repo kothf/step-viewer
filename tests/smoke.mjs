@@ -5598,7 +5598,18 @@ try {
       const relMoved = relPath.some((q, k) => Math.hypot(...q.map((v, j) => v - world1[k][j])) > 1);
       const relGroup = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr1.id && x.userData.rel === id));
       const relative = { stored: m.study.traces.at(-1).rel === id, noSelf: !relOpts.includes(c[0].id) && relOpts.includes(id) && relOpts[0] === "", relDist, relMoved, relGroup };
-      const trace = { relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Mate value: Add track… → Mate value: Distance1 plots the gap between pin 1's top and pin 2's bottom; the faces
+      // face each other, so the angle stays at 180°; the plot switches to the angle and the row deletes with ✕.
+      const madd = document.querySelector('#motion select[data-mo="add"]'), mopt = [...madd.options].some(o => o.value === "mplot:md");
+      madd.value = "mplot:md"; madd.dispatchEvent(new Event("change"));
+      const mt = m.study.traces.at(-1), mv = m.mateValues(mt.id);
+      const mrow = !!document.querySelector(`#motion .mo-name[data-trace="${mt.id}"]`), msvg = !!document.querySelector("#motion .mo-trace-plot svg polyline");
+      const mAngle = plotAs("angle");
+      const mateVal = { mopt, mate: mt.mate, plot0: mt.plot ?? "dist", n: mv.dist.length === path.length, finite: mv.dist.every(Number.isFinite), d0: mv.dist[0],
+        a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
+      document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
+      mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
+      const trace = { mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5714,8 +5725,10 @@ try {
       && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
       && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
       && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
-      && Object.values(tc.relative).every(v => v === true),
-      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && Object.values(tc.relative).every(v => v === true)
+      && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
+      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,

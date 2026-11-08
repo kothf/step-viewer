@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, mateCsv, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -271,6 +271,25 @@ test("trace paths: points through the frames, speed, series, length, CSV and plo
   const gap = relativeFrames([...ride, { pin: ride[3].pin }], "base");
   assert.ok(Math.hypot(...tracePoints(gap, "pin", [0, 0, 0])[4].map((v, k) => v - [2, 3, 4][k])) < 1e-9);
   assert.equal(relativeFrames([{ pin: ride[0].pin }], "base")[0].pin, ride[0].pin);
+  // Mate values: a plane sliding 5 mm per frame along its normal from a fixed plane, signed; a crank plane turning
+  // 60° per frame about Z against a fixed plane keeps counting past 180°; two crossing axes give the gap between the lines.
+  const P = { k: "plane" as const, p: [0, 0, 0] as [number, number, number], n: [1, 0, 0] as [number, number, number] };
+  const slide = [0, 1, 2, 3].map(k => ({ g: IDENTITY, s: translation([10 - 5 * k, 0, 0]) }));
+  const sv = mateMeasures(slide, "g", "s", P, P);
+  assert.deepEqual(sv.dist, [10, 5, 0, -5]);
+  assert.deepEqual(sv.angle, [0, 0, 0, 0]);
+  const crank = [0, 1, 2, 3, 4, 5, 6].map(k => ({ g: IDENTITY, c: turn(k * Math.PI / 3) }));
+  const cv = mateMeasures(crank, "g", "c", P, P);
+  cv.angle.forEach((v, k) => assert.ok(Math.abs(Math.abs(v) - 60 * k) < 1e-6, `crank ${k}: ${v}`));
+  const ax = (p: [number, number, number], d: [number, number, number]) => ({ k: "axis" as const, p, d, r: 1 });
+  const xv = mateMeasures([{ g: IDENTITY, s: IDENTITY }], "g", "s", ax([0, 0, 0], [1, 0, 0]), ax([0, 3, 7], [0, 0, 1]));
+  assert.ok(Math.abs(xv.dist[0] - 3) < 1e-9 && Math.abs(Math.abs(xv.angle[0]) - 90) < 1e-9);
+  const pv = mateMeasures([{ g: IDENTITY, s: IDENTITY }, {}], "g", "s", ax([0, 4, 0], [0, 1, 0]), ax([0, 0, 2], [0, 1, 0]));
+  assert.deepEqual(pv.dist, [4, 4].map(() => pv.dist[0]));
+  assert.ok(Math.abs(pv.dist[0] - 2) < 1e-9);
+  const mc = mateCsv([10, 5], [0, 45], 10).trim().split("\n");
+  assert.equal(mc[0], "t (s),distance (mm),angle (deg)");
+  assert.equal(mc[2], "0.1,5,45");
   const svg = plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance");
   assert.match(svg, /<polyline points="[^"]+"/);
   assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
