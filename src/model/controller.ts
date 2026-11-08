@@ -57,8 +57,8 @@ import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet } from "../sheetmetal/types";
-import { flatBendLines } from "../sheetmetal/sheet";
+import { isSheet, type SmFlangeFeature } from "../sheetmetal/types";
+import { apply as smApply, applyDir as smApplyDir, flatBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -3074,10 +3074,12 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature | null {
     const m = this.mode;
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
-      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2);
+    // Sheet metal flanges show their arrow while folded only (the flat pattern hides where the flange stands).
+    const folded = () => !this.doc.features.some(x => x.type === "smflat" && !x.suppressed);
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     if (m.kind !== "none" || !this.selected) return null;
     const f = this.store?.feature(this.selected);
@@ -3101,6 +3103,7 @@ export class ModelController {
     if (!f) return;
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
     if (f.type === "gusset") { this.drawGussetArrows(f); return; }
+    if (f.type === "smflange") { this.drawFlangeArrow(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -3134,6 +3137,22 @@ export class ModelController {
     const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(f.inward ? -1 : 1);
     this.placeArrow(base, dir, f.thickness.v, false, "thickness");
     this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
+  }
+
+  /** The length arrow of an edge flange (FR-FT-120): at the tip of its first flange, pointing away from the bend. */
+  private drawFlangeArrow(f: SmFlangeFeature) {
+    const st = this.last?.sheet;
+    const p = st?.panels.find(x => x.id === `${f.id}:p0`);
+    const tip = p?.outer.find(s => s.ent === "tip"), att = p?.outer.find(s => s.ent === "att");
+    if (!st || !p || tip?.kind !== "line" || att?.kind !== "line") return;
+    const mid = (s: { a: [number, number]; b: [number, number] }): [number, number] => [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2];
+    const m1 = mid(tip), m0 = mid(att), l = Math.hypot(m1[0] - m0[0], m1[1] - m0[1]);
+    if (!(l > 1e-9)) return;
+    const end = new THREE.Vector3(...smApply(p.M, [m1[0], m1[1], st.T / 2]));
+    const dir = new THREE.Vector3(...smApplyDir(p.M, [(m1[0] - m0[0]) / l, (m1[1] - m0[1]) / l, 0])).normalize();
+    // The arrow's tip sits on the flange's tip at the current length; dragging moves the tip with the pointer.
+    this.placeArrow(end.clone().addScaledVector(dir, -f.length.v), dir, f.length.v, false, "length");
+    this.handleLabel(f.id, "length", t("Drag the arrow to change the flange length; click to type it"));
   }
 
   /** The leg arrows of a gusset (FR-FT-121): from the inner corner along each supporting face. */
@@ -3327,7 +3346,7 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset") || !d || !a) return;
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset" && m.draft.type !== "smflange") || !d || !a) return;
     const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;

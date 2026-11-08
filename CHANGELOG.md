@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.178.0] - 2026-11-08
+
+### Added
+
+- **Edge flange length arrow (FR-FT-120)**: an edge flange shows a drag arrow on the tip of its flange, like the SolidWorks handle. Dragging it changes the flange length with a live preview, and clicking its label lets you type the length. It also works on a flange selected in the Features tree, which applies the change on release. While the flat pattern shows, the arrow is hidden.
+
 ## [1.176.0] - 2026-11-08
 
 ### Added
@@ -1387,7 +1393,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.176.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.178.0...HEAD
+[1.178.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.178.0
 [1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
 [1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
 [1.174.0]: https://github.com/kothf/step-viewer/compare/v1.173.0...v1.174.0
