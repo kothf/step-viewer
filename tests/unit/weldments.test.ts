@@ -213,6 +213,11 @@ test("curved members: arcs of the path sketch are revolved, tangent joints stay 
   near(r.volume, A * (600 + 50 * Math.PI), 1e-4);
   assert.deepEqual(r.cut.map(c => [c.qty, c.length]).sort((x, y) => x[1] - y[1]), [[1, 157.1], [2, 300]]);
   assert.ok(r.body!.names.some(n => n.startsWith("m:a1:side:")) && r.body!.names.includes("m:a1:start") && r.body!.names.includes("m:a1:end"));
+  // Merge arc segment bodies: the three tangent segments become one bent member, one cut list item of the whole length.
+  const rm = run(m, doc([sk, { ...mem, id: "mm", mergeArcs: true }]));
+  assert.equal(rm.info.length, 1);
+  near(rm.volume, A * (600 + 50 * Math.PI), 1e-4);
+  assert.deepEqual(rm.cut.map(c => [c.qty, c.length, c.angle1, c.angle2]), [[1, 757.1, 0, 0]]);
   // A half circle leaving the line at a right angle: the corner is mitred.
   const sk2: SketchFeature = { id: "t", type: "sketch", name: "Path2", plane: { std: "XY" }, rels: [], dims: [], ents: [
     P("q0", 0, 0), P("q1", 300, 0), P("qc", 400, 0), P("q2", 500, 0),
