@@ -361,6 +361,9 @@ export class ModelController {
     if (this.store.dirty) journalSave(this.doc, this.fileName);
     if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
+    // Hide the part bar, or it shows through under the assembly bar after New assembly.
+    $("#mc-bar").hidden = true;
+    $("#mc-confirm").hidden = true;
     this.vault = null;
     this.renderVaultBar();
     this.returnTo = null;

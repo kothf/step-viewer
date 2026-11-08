@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.101.0] - 2026-11-08
+## [1.102.0] - 2026-11-08
 
 ### Added
 
@@ -29,6 +29,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Camera moves take 300 ms, down from 450 ms. They apply at once when the system asks for reduced motion.
+
+### Fixed
+
+- New assembly (or opening one) while a part was open left the part modelling bar showing under the assembly bar.
 
 ## [1.98.0] - 2026-11-08
 
@@ -975,8 +979,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.101.0...HEAD
-[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.101.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.102.0...HEAD
+[1.102.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.102.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
 [1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
