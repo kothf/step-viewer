@@ -32,7 +32,7 @@ CI runs the smoke test as 4 parallel jobs (`SMOKE_SHARD=i/4 npm test` runs one; 
 
 ## Code map
 
-- `src/worker/import.worker.ts`: occt loading and import, mesh quality presets.
+- `src/worker/import.worker.ts`: occt loading and import, mesh quality presets. `src/names.ts` (`fixResultNames`/`nameFixer`) repairs names OCCT read as Latin-1: raw Windows-1251 bytes (decided once per file by `looksCp1251`), UTF-8 via `\X\`, UTF-16 as bytes; `stepMeta.ts` uses it too and reads bytes as true Latin-1 (TextDecoder "latin1" is Windows-1252).
 - `src/topology.ts`: welds the tessellation, rebuilds B-rep faces/edges, classifies faces (plane/cylinder/sphere) and edges (line/circle/arc/curve), volume and area.
 - `src/viewer/`: `Viewer.ts` (scene, cameras, display modes, explode), `Section.ts` (up to 3 planes, stencil caps, hatching, gizmo), `SectionProfile.ts` (cut curves and area), `NavCube.ts`.
 - `src/tools/`: `Snapper.ts` (snapping), `measure.ts` (all measurements, including `smartMeasure`), `Annotations.ts` (labels on the model), `analysis.ts` (materials, mass properties), `exporters.ts`, `units.ts`, `csys.ts` (active user coordinate system: positions, directions and axis deltas are re-expressed only when formatted; stored values stay world mm).

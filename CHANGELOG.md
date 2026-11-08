@@ -13,6 +13,11 @@ More from modelling the Leuenberger steam engine through the UI:
 
 - Faces the mesh fit misread (a short boss taken for a sphere, a hole cut by a cross hole taken as "other") take the exact cylinder from the B-rep, so they can be measured as cylinders and picked for Concentric mates.
 - View keys (arrows, Ctrl+arrows, Z) pressed while a standard view is still turning the camera start from where that move ends, not from the half-way camera.
+## [1.169.0] - 2026-11-08
+
+### Fixed
+
+- **Russian part names in STEP files** show as Cyrillic in the Model tree and the file info, not as "ÏË31à-ï_÷åðí". Many Russian CAD exports write names as raw Windows-1251 bytes, and OpenCASCADE read them as Latin-1. Names are now decoded again: Windows-1251 when the file's names look Cyrillic (decided once per file, so real Latin-1 names such as "Müller" stay as they are), UTF-8 written through \X\ escapes, and UTF-16 code units written as bytes. The STEP header reader also understands \X4\ and \S\ escapes. Cyrillic text falls back to Noto Sans / DejaVu Sans / Liberation Sans on systems without Segoe UI or Roboto (Linux), for Cyrillic letters only, so Latin text keeps its look.
 
 ## [1.168.0] - 2026-11-08
 
@@ -1360,7 +1365,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.174.0...HEAD
-[1.174.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.174.0
+[1.174.0]: https://github.com/kothf/step-viewer/compare/v1.169.0...v1.174.0
+[1.169.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.169.0
 [1.168.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.168.0
 [1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0
 [1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
