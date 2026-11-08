@@ -2946,6 +2946,7 @@ export const RU: Record<string, string> = {
   "Corner treatment": "Обработка углов",
   "Corner type": "Тип угла",
   "Cut List…": "Список вырезов…",
+  "Cut list ({n})": "Список вырезов ({n})",
   "Cut list: members with lengths and end angles, plates and welds, with quantities and mass": "Список вырезов: элементы с длинами и углами торцов, пластины и швы, с количеством и массой",
   "Draw a sketch or a 3D sketch with lines first: the members run along them.": "Сначала нарисуйте эскиз или 3D-эскиз с отрезками: элементы идут вдоль них.",
   "Each segment becomes its own body; where two segments meet end to end the corner is treated.": "Каждый сегмент становится отдельным телом; где два сегмента сходятся концами, угол обрабатывается.",
