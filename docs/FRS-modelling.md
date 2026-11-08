@@ -1653,6 +1653,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
 | FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
+| FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.136.0 (sans/serif/mono, bold, italic, angle); text along a curve not yet | Partly |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
