@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: stretch and copy key points by dragging, as in SolidWorks. Alt+drag a key to stretch the timing: several selected keys stretch about the key at the other end of the selection, and a single key stretches the whole study (keys and motors) from 0 so that key lands where you drop it. Keys stop at the study's ends and never pass keys that are not stretched. With several keys selected, the panel's **Time scale** (%) does the same from the keyboard. Ctrl+drag a key, or one of several selected keys, to copy it (them) to the drop point; dashed copies follow the pointer while you drag (FR-FT-122).
 
+## [1.153.0] - 2026-11-08
+
+### Added
+
+- **Trim/Extend End miter and End butt (FR-FT-121).** Trim/Extend has an End miter type, as in SolidWorks: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message. **End butt 1** and **End butt 2** join the same two members square: one stops at the other's side and the other runs on to its far side.
+
 ## [1.152.0] - 2026-11-08
 
 ### Added
@@ -1280,7 +1286,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.156.0...HEAD
-[1.156.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.156.0
+[1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
+[1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
 [1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
 [1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0

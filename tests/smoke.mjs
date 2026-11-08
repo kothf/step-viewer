@@ -7741,6 +7741,41 @@ try {
     await settle();
     const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
     check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
+    // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xsa", type: "sketch", name: "SketchA", plane: { std: "XY" }, rels: [], dims: [], ents: [P("u1", 2100, 2000), P("u2", 2400, 2000), L("ua", "u1", "u2")] },
+          { id: "xsb", type: "sketch", name: "SketchB", plane: { std: "XY" }, rels: [], dims: [], ents: [P("v1", 2000, 2100), P("v2", 2000, 2400), L("vb", "v1", "v2")] },
+          { id: "xma", type: "member", name: "Beam A", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsa", ent: "ua" }], corner: "none" },
+          { id: "xmb", type: "member", name: "Beam B", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsb", ent: "vb" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "mitre");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; m.draft.boundary = { name: "xmb:vb:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const mh = await mp.evaluate(() => document.querySelector("#mc-pm")?.textContent?.includes("Member"));
+    await mp.click("#mc-ok");
+    await settle();
+    const mit = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 420) < 0.01).map(c => [c.qty, c.angle1 + c.angle2]) }; });
+    check(mh && !mit.bad && JSON.stringify(mit.rows) === "[[2,45]]", `weldments: Trim/Extend End miter joins two separate members (${JSON.stringify({ mh, mit })})`);
+    // The same corner as End butt 1 (picked in the panel's type list): one beam stops at the other's side.
+    const trId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), trId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "butt1");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; m.draft.boundary = { name: "xmb:vb:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
+    check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
