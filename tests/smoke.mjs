@@ -5821,6 +5821,24 @@ try {
     const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
     check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
       `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
+    // 1.90.0 user sheet format (FR-DRW-004): edit the title block from the ISO one, add a logo, save and use it; back to ISO.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.click('.drw-props [data-a="tbedit"]');
+    await ap.waitForSelector("#drw-tb-dlg[open]");
+    await ap.fill('#drw-tb-dlg [data-tb-f="name"]', "Smoke block");
+    await ap.fill('#drw-tb-dlg [data-c="0.label"]', "Firma");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await ap.setInputFiles('#drw-tb-dlg [data-tb="logo"]', { name: "logo.png", mimeType: "image/png", buffer: png });
+    await ap.waitForSelector('#drw-tb-dlg [data-tb-l="w"]');
+    const pvImg = await ap.evaluate(() => !!document.querySelector("#drw-tb-dlg .drw-tb-pv image"));
+    await ap.click('#drw-tb-dlg button[value="ok"]');
+    await ap.waitForFunction(() => !!window.__sv.drw.doc().sheets[0].tb, null, { timeout: 10000 });
+    const fmt = await ap.evaluate(() => { const tb = window.__sv.drw.doc().sheets[0].tb; return { name: tb.name, label: tb.cells[0].label, logo: !!tb.logo, img: /<image /.test(window.__sv.drw.svg()), lib: JSON.parse(localStorage.getItem("mc:sheetFormats") ?? "[]").length, opt: [...document.querySelectorAll('.drw-props [data-s="format"] option')].map(o => o.value).filter(v => v.startsWith("user:")).length }; });
+    await ap.selectOption('.drw-props [data-s="format"]', "iso");
+    const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
+    check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
+      `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
     await ctx.close();
   }
 
