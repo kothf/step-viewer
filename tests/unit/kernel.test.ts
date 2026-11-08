@@ -1086,3 +1086,17 @@ test("3D curves through XYZ points, composite and projected, as sweep paths; swe
   close(props.props(r.sheets!).area, 300, 1e-6);
   assert.ok(r.sheets!.names.every(n => n === "s1:side:sl"), r.sheets!.names.join());
 });
+
+test("3D sketch as a sweep path (FR-SK-080)", async () => {
+  const m = new Modeller(await occ());
+  // An L: 30 along X then 20 up Z; a Ø4 circular sweep along it.
+  const k: Feature = { id: "k", type: "sketch3d", name: "3DSketch1", pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "B", p: [30, 0, 0] }, { id: "C", p: [30, 0, 20] }],
+    segs: [{ id: "l2", t: "line", pts: ["C", "B"] }, { id: "l1", t: "line", pts: ["A", "B"] }], rels: [], dims: [] };
+  const sw: Feature = { id: "w", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 4 }, path: { curve: "k" } };
+  const r = run(m, doc([k, sw]));
+  // Two cylinders meeting at a mitred corner: 4π·50 exactly (the mitre adds and removes the same).
+  close(r.props!.volume, Math.PI * 4 * 50, 1e-3);
+  // A branched sketch is not a path.
+  const br = m.evaluate(doc([{ ...k, pts: [...(k as { pts: unknown[] }).pts, { id: "D", p: [30, 10, 0] }], segs: [...(k as { segs: unknown[] }).segs, { id: "l3", t: "line", pts: ["B", "D"] }] } as Feature, sw]));
+  assert.equal(br.statuses.find(s => s.id === "w")?.code, "E-SWP-PATH");
+});
