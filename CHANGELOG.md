@@ -5,9 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.201.0...HEAD
-[1.201.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.201.0
-[1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
+## [1.201.0] - 2026-11-08
+
+### Changed
+
+- **✓ and ✕ are always in reach.** The title row of every PropertyManager panel (features, sheet metal, weldments, surfaces, assembly commands) stays pinned at the top while the panel scrolls, so accepting no longer needs a scroll back up. The sketch panel, sketch pattern/move/rotate/scale, Sketch plane and Part properties moved their OK/Cancel (and Exit sketch) from the bottom into that row.
+- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in SolidWorks, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
+
+## [1.200.0] - 2026-11-08
+
+### Added
+
+- Drawing model views of a part with configurations can show another configuration (FR-DRW-010): pick it under **Configuration** in the view panel. Projected, section and detail views made from that view follow it, and dimensions on them measure that configuration.
 
 ## [1.199.0] - 2026-11-08
 
