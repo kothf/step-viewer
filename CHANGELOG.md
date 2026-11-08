@@ -12,6 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Motion studies: appearance tracks fade a component in or out, or hide and show it, over the study (opacity keys 0–100 %, **Hidden** / **Shown** set a key), as SolidWorks' component visibility and transparency keys (FR-FT-122).
 - Motion timeline: Alt+←/→ moves the selected key one frame (Shift: ten), without passing its neighbours.
 
+## [1.96.0] - 2026-11-08
+
+### Added
+
+- **Broken-out section** (FR-DRW-015): select a model, projected or auxiliary view and click Broken-out section in its panel, then click the corners of an area on the view. Enter, or a click on the first corner, cuts the material inside away down to the middle of the model and hatches the cut.
+  - Depth from the front (mm) sets how deep it goes; hatch spacing and angle are set as for sections. Redraw the outline and Remove broken-out section are in the same group.
+  - Detail views of the view show the cut too, and it is kept in the drawing file and in every export.
+
 ## [1.94.0] - 2026-11-08
 
 ### Added
@@ -935,7 +943,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.98.0...HEAD
-[1.98.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.98.0
+[1.98.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.98.0
+[1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
 [1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0
 [1.92.0]: https://github.com/kothf/step-viewer/compare/v1.90.0...v1.92.0
 [1.90.0]: https://github.com/kothf/step-viewer/compare/v1.89.0...v1.90.0

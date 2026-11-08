@@ -104,6 +104,28 @@ test("section through the hole: the cut faces are the block's middle slice minus
   assert.equal(s.hid.length, 0);
 });
 
+test("broken-out section: only the outline is cut away, down to the plane, and its floor is hatched (FR-DRW-015)", async () => {
+  const { section, viewAxes } = await import("../../src/kernel/drawing");
+  const { viewReq } = await import("../../src/drawing/views");
+  const { oc, shape } = await block();
+  const view = { dir: [0, 0, 1] as V3, up: [0, 1, 0] as V3 };
+  const { n } = viewAxes(view);
+  const poly = [-40, -10, -20, -10, -20, 10, -40, 10];
+  const s = section(oc, shape, view, [n[0] * 10, n[1] * 10, n[2] * 10], 0.02, poly);
+  const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
+  assert.equal(s.cut!.length, 1);
+  assert.ok(Math.abs(Math.abs(area(s.cut![0])) - 400) < 1e-6, `cut area ${area(s.cut![0])}`);
+  // The rest of the top view is as before: the hole circle and the outline are still there.
+  const b = bounds(s.vis);
+  assert.ok(Math.abs(b[2] - b[0] - 100) < 1e-6 && Math.abs(b[3] - b[1] - 60) < 1e-6);
+  // The request carries the outline and caches separately from the plain view.
+  const sheet = { id: "s", name: "S", size: "A3", scale: [1, 1], projection: "first", views: [], annots: [] } as never;
+  const v = { id: "v", name: "Top", orient: "top", at: [0, 0], broken: { poly, d: 10 } } as never;
+  const req = viewReq(sheet, v);
+  assert.deepEqual(req.poly, poly);
+  assert.match(req.key, /\|bo\|10\.000000\|/);
+});
+
 test("section/aux directions: a view from the right of a line is the third-angle right view; flipping looks the other way", async () => {
   const { projectedDir, sideView, lookDir, viewDir, viewReq, ORIENTS } = await import("../../src/drawing/views");
   const r = (v: number[]) => v.map(x => Math.round(x * 1e6) / 1e6 + 0);

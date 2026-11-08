@@ -55,6 +55,9 @@ export interface DrawingView {
   sketches?: boolean;
   /** Alignment with the parent broken (FR-DRW-017): the view moves on its own and stays put when the parent moves. */
   free?: boolean;
+  /** Broken-out section (FR-DRW-015): material inside `poly` (u, v pairs in view axes, model mm) is cut away
+   * from the viewer down to the plane at `d` along the view direction (n · p, model mm), and the cut is hatched. */
+  broken?: { poly: number[]; d: number };
 }
 
 export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
