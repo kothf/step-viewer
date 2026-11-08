@@ -4520,6 +4520,92 @@ try {
     await ctx.close();
   }
 
+  // --- 1.79: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.goto(`${origin}/index.html?debug`);
+    await fp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await fp.goto(`${origin}/index.html?debug`);
+    await fp.waitForFunction(() => window.__sv);
+    const partOf = async features => {
+      await fp.click("#new-part");
+      await fp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await fp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), features);
+      await fp.waitForTimeout(150);
+      await fp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+      return [...await fp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    // A 40 × 20 × 5 plate with two Ø6.4 holes at x = 10 and 30; a Ø6 × 20 pin.
+    const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+    const plate = await partOf([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 40, 0), pt("c", 40, 20), pt("d", 0, 20), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"),
+      pt("h1", 10, 10), { id: "k1", t: "circle", c: "h1", r: 3.2 }, pt("h2", 30, 10), { id: "k2", t: "circle", c: "h2", r: 3.2 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }]);
+    const pin = await partOf([{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("o", 0, 0), { id: "c", t: "circle", c: "o", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }]);
+    const shown = n => fp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await fp.click("#new-more");
+    await fp.click("#new-asm");
+    await fp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    await fp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    // Fastener panel: ISO 4762 M6 x 12 on hole 1 from the top, then an ISO 4032 nut on its bottom end.
+    await fp.click('#asm-tools [data-ac="fastener"]');
+    const panel = await fp.evaluate(() => {
+      window.__sv.asm.setFastener({ kind: "iso4762", size: "M6", length: 12 });
+      return { kinds: document.querySelectorAll('#asm-pm select[data-f="kind"] option').length, sizes: document.querySelectorAll('#asm-pm select[data-f="size"] option').length, len: document.querySelector('#asm-pm select[data-f="length"]')?.value };
+    });
+    const hole = (x, z) => fp.evaluate(([x, z]) => {
+      const a = window.__sv.asm, d = window.__sv.viewer.parts[0].data;
+      const j = d.faces.findIndex(f => f.type === "cylinder" && Math.abs(f.center[0] - x) < 0.01 && Math.abs(f.center[1] - 10) < 0.01);
+      a.fastenHole(0, j, [x + 3.2, 10, z]);
+    }, [x, z]);
+    await hole(10, 4.5);
+    await shown(2);
+    await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await fp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso4032" }));
+    await hole(10, 0.5);
+    await shown(3);
+    await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await shown(3);
+    const fast = await fp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components, r = v => Math.round(v * 1e3) / 1e3;
+      const at = k => { const t = c[k].tf; return [t[3], t[7], t[11], t[10]].map(r); };
+      return { names: c.map(x => x.name), mates: a.doc.mates.map(m => m.type), screw: at(1), nut: at(2), dof: [a.solved?.dof[c[1].id], a.solved?.dof[c[2].id]], status: document.querySelector("#asm-pm [data-fstatus]")?.textContent, configs: a.doc.parts[c[1].part].doc.configs?.length };
+    });
+    await fp.evaluate(() => window.__sv.asm.closeTools());
+    // Mate references: the plate names hole 2 + its top face "Pin", a pin names its side + bottom "Pin";
+    // a second pin inserted with the plate selected mates itself onto hole 2.
+    await fp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(4);
+    const refs = await fp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components, gp = [...a.geo.get(c[0].part).entries()], gn = [...a.geo.get(c[3].part).entries()];
+      a.startMateRef(c[0].id);
+      const title = document.querySelector("#asm-pm h3")?.textContent;
+      Object.assign(a.refing, { name: "Pin", faces: [gp.find(([, g]) => g.k === "axis" && Math.abs(g.p[0] - 30) < 0.01)[0], gp.find(([, g]) => g.k === "plane" && g.n[2] > 0.99)[0]] });
+      a.okMateRef();
+      a.startMateRef(c[3].id);
+      Object.assign(a.refing, { name: "Pin", faces: [gn.find(([, g]) => g.k === "axis")[0], gn.find(([, g]) => g.k === "plane" && g.n[2] < -0.99)[0]] });
+      a.okMateRef();
+      return { title, plate: a.doc.parts[c[0].part].doc.mateRefs?.[0]?.faces.length, pin: a.doc.parts[c[3].part].doc.mateRefs?.[0]?.faces.length };
+    });
+    await shown(4);
+    await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components; a.selected = c[0].id; a.insertPart(structuredClone(a.doc.parts[c[3].part].doc), "pin.mcadprt"); });
+    await shown(5);
+    await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await shown(5);
+    const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
+    check(panel.kinds === 6 && panel.sizes === 11 && panel.len === "12"
+      && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 fasteners placed/.test(fast.status ?? "") && fast.configs === 11
+      && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
+      && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
+      `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
+    await ctx.close();
+  }
+
   // --- 1.76: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

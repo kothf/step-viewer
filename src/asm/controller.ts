@@ -13,6 +13,7 @@ import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, tr
 import { activateState, addState, deleteState } from "./states";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
+import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
@@ -101,6 +102,12 @@ export class AsmController {
   /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
   private volumes = new Map<string, number>();
   private mateDown: { x: number; y: number } | null = null;
+  /** Fastener panel (FR-ASM-028): the fastener a click on a hole inserts. */
+  fastening: { kind: FastenerKind; size: string; length: number; placed: number } | null = null;
+  /** Mate reference panel (FR-MATE-011): the component, the reference's name and its faces (up to three). */
+  refing: { comp: string; name: string; faces: string[] } | null = null;
+  /** Mates to add once a just inserted component's faces are known (after its first build). */
+  private autoMates: ({ comp: string; hole: { axis: MateRef; seat: MateRef } } | { comp: string; target: string; name: string })[] = [];
   /** Resolves when the rebuild in flight and any queued one are done (tests wait on it). */
   idle: Promise<void> = Promise.resolve();
 
@@ -114,7 +121,7 @@ export class AsmController {
 
   get active() { return !!this.doc; }
   /** Clicks in the view pick mate faces (Smart measure leaves them alone). */
-  get picking() { return !!this.mating || !!this.patterning || !!this.exploding; }
+  get picking() { return !!this.mating || !!this.patterning || !!this.exploding || !!this.fastening || !!this.refing; }
 
   /** The document with pattern instances added (what the kernel builds and the BOM counts). */
   private expand(doc: AsmDoc): Expanded {
@@ -252,6 +259,8 @@ export class AsmController {
       } while (this.again);
       $("#asm-busy").hidden = true;
       this.building = false;
+      // Fasteners and parts with mate references get their mates once their faces are known.
+      if (this.autoMates.length && this.addAutoMates()) return;
       // A part's geometry may have changed under its mates (AT-P4-2): solve again, as part of the same state.
       if (this.doc && needsSolve(this.doc)) {
         const r = this.solveDoc(this.doc);
@@ -474,12 +483,253 @@ export class AsmController {
 
   // ---------- component patterns and exploded views (FR-ASM-022/023) ----------
 
+  // ---------- fastener library and mate references (FR-ASM-028, FR-MATE-011) ----------
+
+  startFasteners() {
+    if (!this.doc) return;
+    this.closeTools();
+    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0 };
+    this.renderAll();
+  }
+
+  /** A fastener of the panel's kind, size and length; the same one again shares its part (and BOM row). */
+  private fastenerDoc(): PartDoc {
+    const f = this.fastening!;
+    const pd = fastenerPart(f.kind, f.size, fastenerInfo(f.kind).screw ? f.length : undefined);
+    pd.id = `fastener:${f.kind}:${f.size}${fastenerInfo(f.kind).screw ? `x${f.length}` : ""}`;
+    return pd;
+  }
+
+  /** Inserts the panel's fastener: at `tf`, mated to a hole when one is given. */
+  insertFastener(tf?: Tf, hole?: { axis: MateRef; seat: MateRef }) {
+    const f = this.fastening;
+    if (!this.doc || !f) return;
+    const pd = this.fastenerDoc(), base = fastenerName(f.kind, f.size, f.length);
+    const key = this.sourceKey(pd), id = uid("c_"), firstOne = !this.doc.components.length;
+    let at = tf;
+    if (!at) {
+      const box = this.host.viewer.parts.length ? this.host.viewer.computeBounds() : null;
+      at = firstOne || !box ? IDENTITY : translation([box.max.x + Math.max(10, (box.max.x - box.min.x) * 0.2), 0, 0]);
+    }
+    this.change(d => {
+      d.parts[key] ??= { name: base, file: `${base}.mcadprt`, doc: pd };
+      const n = d.components.filter(c => c.part === key).length + 1;
+      d.components.push({ id, name: `${base}<${n}>`, part: key, tf: at!, ...(firstOne ? { fixed: true } : {}) });
+    });
+    if (hole) this.autoMates.push({ comp: id, hole });
+    f.placed++;
+    this.selected = id;
+    this.renderAll();
+  }
+
+  /**
+   * A click on a hole: its cylinder gives the axis, the end nearer the click the flat face the fastener
+   * seats on (the one facing out of the hole there). The fastener goes in along the axis from that face.
+   */
+  private pickHole(x: number, y: number) {
+    const hit = this.host.partAt(x, y);
+    if (hit) this.fastenHole(hit.idx, hit.face, hit.point);
+  }
+
+  /** Inserts the panel's fastener on the hole whose cylinder is face `face` of shown part `idx`; `point` picks the end. */
+  fastenHole(idx: number, faceIdx: number, point: V3) {
+    const hit = { idx, face: faceIdx, point };
+    if (!this.fastening) return;
+    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face], c = this.comp(id);
+    if (!c || !face) { toast(t("Click the cylindrical face of a hole."), true); return; }
+    const g = this.worldGeo({ comp: id, face });
+    if (g?.k !== "axis") { toast(t("Click the cylindrical face of a hole."), true); return; }
+    // How far the cylinder runs along its axis, from its triangles.
+    const data = this.host.viewer.parts[hit.idx]?.data, fi = data?.faces[hit.face];
+    if (!data || !fi) return;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = fi.triStart * 3; i < (fi.triStart + fi.triCount) * 3; i++) {
+      const v = data.index[i] * 3;
+      const s = (data.positions[v] - g.p[0]) * g.d[0] + (data.positions[v + 1] - g.p[1]) * g.d[1] + (data.positions[v + 2] - g.p[2]) * g.d[2];
+      if (s < lo) lo = s;
+      if (s > hi) hi = s;
+    }
+    const tc = (hit.point[0] - g.p[0]) * g.d[0] + (hit.point[1] - g.p[1]) * g.d[1] + (hit.point[2] - g.p[2]) * g.d[2];
+    const ends = Math.abs(tc - hi) <= Math.abs(tc - lo) ? [hi, lo] : [lo, hi];
+    const tol = Math.max(1e-3, this.size() * 1e-5);
+    for (const end of ends) {
+      const out: V3 = end === hi ? g.d : [-g.d[0], -g.d[1], -g.d[2]];
+      const at: V3 = [g.p[0] + g.d[0] * end, g.p[1] + g.d[1] * end, g.p[2] + g.d[2] * end];
+      // The flat face of the same component at that end, facing out.
+      let seat: string | null = null;
+      for (const [name, pg] of this.geo.get(c.part) ?? []) {
+        if (pg.k !== "plane") continue;
+        const w = placeGeo(pg, c.tf) as Geo & { k: "plane" };
+        if (w.n[0] * out[0] + w.n[1] * out[1] + w.n[2] * out[2] < 0.999) continue;
+        if (Math.abs((w.p[0] - at[0]) * out[0] + (w.p[1] - at[1]) * out[1] + (w.p[2] - at[2]) * out[2]) > tol) continue;
+        seat = name;
+        break;
+      }
+      if (!seat) continue;
+      // Z of the fastener along `out`, its origin on the axis at the seat.
+      const u: V3 = Math.abs(out[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      const xa = (() => { const k = u[0] * out[0] + u[1] * out[1] + u[2] * out[2]; const v: V3 = [u[0] - k * out[0], u[1] - k * out[1], u[2] - k * out[2]]; const l = Math.hypot(...v); return v.map(q => q / l) as V3; })();
+      const ya: V3 = [out[1] * xa[2] - out[2] * xa[1], out[2] * xa[0] - out[0] * xa[2], out[0] * xa[1] - out[1] * xa[0]];
+      const tf: Tf = [xa[0], ya[0], out[0], at[0], xa[1], ya[1], out[1], at[1], xa[2], ya[2], out[2], at[2]];
+      this.insertFastener(tf, { axis: { comp: id, face }, seat: { comp: id, face: seat } });
+      return;
+    }
+    toast(t("No flat face around the end of that hole to seat the fastener on."), true);
+  }
+
+  private renderFastenerPanel() {
+    const pm = $("#asm-pm"), f = this.fastening!;
+    pm.hidden = false;
+    pm.dataset.id = "fastener";
+    const info = fastenerInfo(f.kind);
+    const opt = (v: string, label: string, on: boolean) => `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Fasteners"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Fastener"))}</legend>`
+      + `<label class="pm-field"><span>${esc(t("Standard"))}</span><select data-f="kind">${FASTENERS.map(x => opt(x.kind, t(x.label), x.kind === f.kind)).join("")}</select></label>`
+      + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-f="size" translate="no">${fastenerSizes(f.kind).map(x => opt(x, x, x === f.size)).join("")}</select></label>`
+      + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), `${x} mm`, x === f.length)).join("")}</select></label>` : "")
+      + `<p class="pm-help muted" translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</p></fieldset>`
+      + `<p class="pm-help" role="status" data-fstatus>${esc(f.placed ? t("{n} fastener placed. Click more holes, or ✓ to finish.|{n} fasteners placed. Click more holes, or ✓ to finish.", { n: f.placed }) : t("Click the cylindrical face of a hole near the end the fastener goes in."))}</p>`
+      + `<button class="btn small" data-a="insert">${esc(t("Insert without a hole"))}</button>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeTools());
+    pm.querySelector("[data-a=insert]")!.addEventListener("click", () => this.insertFastener());
+    pm.querySelectorAll<HTMLSelectElement>("select[data-f]").forEach(sel => sel.addEventListener("change", () => this.setFastener({ [sel.dataset.f!]: sel.dataset.f === "length" ? Number(sel.value) : sel.value })));
+  }
+
+  /** Changes the panel's fastener; a size or standard without the length picks the nearest preferred one. */
+  setFastener(v: { kind?: string; size?: string; length?: number }) {
+    const f = this.fastening;
+    if (!f) return;
+    if (v.kind) { f.kind = v.kind as FastenerKind; if (!fastenerSizes(f.kind).includes(f.size)) f.size = fastenerSizes(f.kind).includes("M6") ? "M6" : fastenerSizes(f.kind)[0]; }
+    if (v.size) f.size = v.size;
+    if (v.length) f.length = v.length;
+    const ls = fastenerLengths(f.kind, f.size);
+    if (!ls.includes(f.length)) f.length = ls.length ? ls.reduce((b, l) => (Math.abs(l - f.length) < Math.abs(b - f.length) ? l : b), ls[0]) : defaultLength(f.kind, f.size);
+    this.renderPanel();
+  }
+
+  /** Mate references of a component's part: edit the first one (or a new "Default"). */
+  startMateRef(compId: string) {
+    const c = this.comp(compId), pd = c && this.doc?.parts[c.part]?.doc;
+    if (!c || !pd) return;
+    this.closeTools();
+    const r = pd.mateRefs?.[0];
+    this.refing = { comp: compId, name: r?.name ?? "Default", faces: r ? [...r.faces] : [] };
+    this.renderAll();
+    this.drawPicks();
+  }
+
+  private pickRefFace(x: number, y: number) {
+    const r = this.refing, hit = this.host.partAt(x, y);
+    if (!r || !hit) return;
+    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face];
+    if (id !== r.comp) { toast(t("Pick faces of the component the reference belongs to."), true); return; }
+    const c = this.comp(id);
+    if (!c || !face || !this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
+    const i = r.faces.indexOf(face);
+    if (i >= 0) r.faces.splice(i, 1);
+    else if (r.faces.length < 3) r.faces.push(face);
+    else r.faces[2] = face;
+    this.drawPicks();
+    this.renderPanel();
+  }
+
+  /** Saves the reference into the component's part (replacing one of the same name). */
+  okMateRef() {
+    const r = this.refing, c = r && this.comp(r.comp);
+    if (!r || !c) return;
+    const name = r.name.trim() || "Default";
+    this.change(d => {
+      const pd = d.parts[c.part]?.doc;
+      if (!pd) return;
+      const rest = (pd.mateRefs ?? []).filter(x => x.name !== name);
+      pd.mateRefs = r.faces.length ? [...rest, { name, faces: [...r.faces] }] : rest;
+      if (!pd.mateRefs.length) delete pd.mateRefs;
+    });
+    this.refing = null;
+    this.clearPicks();
+    this.renderAll();
+  }
+
+  private renderRefPanel() {
+    const pm = $("#asm-pm"), r = this.refing!, c = this.comp(r.comp);
+    pm.hidden = false;
+    pm.dataset.id = "mateRef";
+    const kinds = ["Primary", "Secondary", "Tertiary"];
+    const others = (c && this.doc?.parts[c.part]?.doc.mateRefs?.filter(x => x.name !== r.name).map(x => x.name)) ?? [];
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Mate reference"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-a="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Reference"))}</legend><label class="pm-field"><span>${esc(t("Name"))}</span><input type="text" data-rn value="${esc(r.name)}" spellcheck="false" translate="no" /></label>`
+      + kinds.map((k, i) => `<div class="pm-field"><span>${esc(t(k))}</span><button class="pm-box${i === r.faces.length ? " focus" : ""}" data-rf="${i}" translate="no">${esc(r.faces[i] ? this.refText({ comp: r.comp, face: r.faces[i] }) : "")}</button></div>`).join("")
+      + `<p class="pm-help muted">${esc(t("Click up to three faces of this component. Inserting a part with a reference of the same name mates it to this one: flat faces coincident, cylinders concentric."))}</p>`
+      + (others.length ? `<p class="pm-help muted" translate="no">${esc(t("Other references: {names}", { names: others.join(", ") }))}</p>` : "")
+      + `</fieldset>`;
+    pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.okMateRef());
+    pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => this.closeTools());
+    const ni = pm.querySelector<HTMLInputElement>("[data-rn]")!;
+    ni.addEventListener("input", () => { r.name = ni.value; });
+    ni.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); this.okMateRef(); } });
+    pm.querySelectorAll<HTMLElement>("[data-rf]").forEach(b => b.addEventListener("click", () => { const i = Number(b.dataset.rf); if (r.faces[i]) { r.faces.splice(i, 1); this.drawPicks(); this.renderPanel(); } }));
+  }
+
+  /** Queues mates for a just inserted part whose mate references match another component's (selected first, else the latest). */
+  private queueRefMates(id: string, pd: PartDoc) {
+    if (!pd.mateRefs?.length || !this.doc) return;
+    const sel = this.comp(this.selected);
+    for (const r of pd.mateRefs) {
+      const has = (c: Component) => c.id !== id && !c.suppressed && !!this.doc!.parts[c.part]?.doc.mateRefs?.some(x => x.name === r.name);
+      const target = sel && has(sel) ? sel : [...this.doc.components].reverse().find(has);
+      if (target) { this.autoMates.push({ comp: id, target: target.id, name: r.name }); return; }
+    }
+  }
+
+  /** Adds the queued mates whose faces are known now; true when the document changed (it rebuilds). */
+  private addAutoMates(): boolean {
+    if (!this.doc) return false;
+    const mates: Mate[] = [], left: typeof this.autoMates = [];
+    const count: Record<string, number> = {};
+    const named = (type: MateType) => { count[type] = (count[type] ?? (this.doc!.mates ?? []).filter(m => m.type === type).length) + 1; return `${MATE_LABEL[type]}${count[type]}`; };
+    const pair = (a: MateRef, b: MateRef, ga: Geo, gb: Geo) => {
+      const type: MateType = ga.k === "axis" && gb.k === "axis" ? "concentric" : "coincident";
+      mates.push({ id: uid("m_"), name: named(type), type, a, b, ...(type === "coincident" && ga.k === "plane" && gb.k === "plane" ? { align: "anti" as const } : {}) });
+    };
+    for (const q of this.autoMates) {
+      const c = this.comp(q.comp), geo = c && this.geo.get(c.part);
+      if (!c) continue;
+      if (!geo) { left.push(q); continue; }
+      if ("hole" in q) {
+        // The fastener's axis (its smallest cylinder on Z) and its seat (the flat face on z = 0 facing -Z).
+        let axis: string | null = null, r = Infinity, seat: string | null = null;
+        for (const [name, g] of geo) {
+          if (g.k === "axis" && Math.abs(g.d[2]) > 0.999 && Math.hypot(g.p[0], g.p[1]) < 1e-6 && g.r < r) { axis = name; r = g.r; }
+          if (g.k === "plane" && g.n[2] < -0.999 && Math.abs(g.p[2]) < 1e-6) seat = name;
+        }
+        const ga = this.worldGeo(q.hole.axis), gs = this.worldGeo(q.hole.seat);
+        if (axis && ga) pair(q.hole.axis, { comp: c.id, face: axis }, ga, geo.get(axis)!);
+        if (seat && gs) pair(q.hole.seat, { comp: c.id, face: seat }, gs, geo.get(seat)!);
+        continue;
+      }
+      const tc = this.comp(q.target), tgeo = tc && this.geo.get(tc.part);
+      const ra = tc && this.doc.parts[tc.part]?.doc.mateRefs?.find(x => x.name === q.name), rb = this.doc.parts[c.part]?.doc.mateRefs?.find(x => x.name === q.name);
+      if (!tc || !tgeo || !ra || !rb) continue;
+      for (let i = 0; i < Math.min(ra.faces.length, rb.faces.length); i++) {
+        const ga = tgeo.get(ra.faces[i]), gb = geo.get(rb.faces[i]);
+        if (ga && gb) pair({ comp: tc.id, face: ra.faces[i] }, { comp: c.id, face: rb.faces[i] }, ga, gb);
+      }
+    }
+    this.autoMates = left;
+    if (!mates.length) return false;
+    this.change(d => { d.mates = [...(d.mates ?? []), ...mates]; });
+    return true;
+  }
+
   /** Closes whichever tool panel is open (mate, pattern, explode, interference, move). */
   closeTools() {
     if (this.mating) this.cancelMate();
     if (this.patterning) { this.patterning = null; this.clearOverlay(); this.clearPicks(); }
     if (this.exploding) { this.exploding = null; this.clearPicks(); this.applyExplode(); }
     if (this.interfere) { this.interfere = null; this.clearOverlay(); }
+    if (this.refing) { this.refing = null; this.clearPicks(); }
+    this.fastening = null;
     this.moving = null;
     this.renderAll();
   }
@@ -993,7 +1243,8 @@ export class AsmController {
       mesh.userData.matePick = true;
       part.group.add(mesh);
     }
-    const m = this.mating ?? (this.patterning?.dir ? { a: undefined, b: this.patterning.dir } : null);
+    const rf = this.refing, refAt = (i: number) => (rf?.faces[i] ? { comp: rf.comp, face: rf.faces[i] } : undefined);
+    const m = this.mating ?? (this.patterning?.dir ? { a: undefined, b: this.patterning.dir } : rf ? { a: refAt(0), b: refAt(1), c: refAt(2), d: undefined } : null);
     if (!m) { this.host.viewer.invalidate(); return; }
     const more = "c" in m ? [[m.c, 0x2fb344], [m.d, 0xf08c00]] : [];
     ([[m.a, 0x1f78ff], [m.b, 0xa23cff], ...more] as [MateRef | undefined, number][]).forEach(([ref, color]) => {
@@ -1038,8 +1289,21 @@ export class AsmController {
     if (!this.doc) return;
     const run = async (f: File) => {
       const src = await this.readSource(f);
-      if (!src || !this.doc) return;
-      const { pd, asm } = src;
+      if (src) this.insertPart(src.pd, f.name, src.asm);
+    };
+    if (file) { void run(file); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+    inp.click();
+  }
+
+  /** Adds a component of this part (or sub-assembly) document, named after its file. */
+  insertPart(pd: PartDoc, fileName: string, asm?: AsmDoc) {
+    if (!this.doc) return;
+    {
+      const f = { name: fileName };
       // Components are named after their file, as in SolidWorks.
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
@@ -1054,15 +1318,11 @@ export class AsmController {
         d.parts[key] ??= { name: base, file: f.name, doc: pd, ...(asm ? { asm } : {}) };
         d.components.push({ id, name: `${base}<${n}>`, part: key, tf: firstOne ? IDENTITY : translation(at), ...(firstOne ? { fixed: true } : {}) });
       });
+      // Mate references (FR-MATE-011): a reference of the same name on another component mates it at once.
+      this.queueRefMates(id, pd);
       this.selected = id;
       this.renderTree();
-    };
-    if (file) { void run(file); return; }
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
-    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
-    inp.click();
+    }
   }
 
   /** A file as a component source: a part, an assembly (sub-assembly) or a foreign model as an imported part. */
@@ -1373,7 +1633,7 @@ export class AsmController {
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
-        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else this.okExplode(); return; }
+        if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
       }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -1471,6 +1731,8 @@ export class AsmController {
         if (this.mating) this.pickMateFace(e.clientX, e.clientY);
         else if (this.patterning) this.pickPattern(e.clientX, e.clientY);
         else if (this.exploding) this.pickExplode(e.clientX, e.clientY);
+        else if (this.fastening) this.pickHole(e.clientX, e.clientY);
+        else if (this.refing) this.pickRefFace(e.clientX, e.clientY);
         return;
       }
       const d = this.drag;
@@ -1502,6 +1764,7 @@ export class AsmController {
     const sel = this.comp(this.selected);
     const b = (c: string, label: string, title: string, dis = false) => `<button class="mc-b" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}><span class="mc-l">${esc(label)}</span></button>`;
     $("#asm-tools").innerHTML = b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
+      + b("fastener", t("Fasteners"), t("Fastener library: ISO screws, nuts and washers, placed on a hole"))
       + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
       + b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !this.doc.components.length)
       + b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !this.doc.components.length)
@@ -1528,6 +1791,7 @@ export class AsmController {
   command(c: string) {
     const sel = this.comp(this.selected);
     if (c === "insert") this.insertComponent();
+    else if (c === "fastener") { if (this.fastening) this.closeTools(); else this.startFasteners(); }
     else if (c === "mate") { if (this.mating) this.cancelMate(); else this.startMate(); }
     else if (c === "pattern") { if (this.patterning) this.closeTools(); else this.startPattern(); }
     else if (c === "explode") { if (this.exploding) this.closeTools(); else this.startExplode(); }
@@ -1648,6 +1912,7 @@ export class AsmController {
   private menu(c: Component, x: number, y: number) {
     this.popup([
       ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
+      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Mate references…"), () => this.startMateRef(c.id)] as [string, () => void]]),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
@@ -1682,6 +1947,8 @@ export class AsmController {
     if (this.patterning) { this.renderPatternPanel(); return; }
     if (this.exploding) { this.renderExplodePanel(); return; }
     if (this.interfere) { this.renderInterference(); return; }
+    if (this.fastening) { this.renderFastenerPanel(); return; }
+    if (this.refing) { this.renderRefPanel(); return; }
     const pm = $("#asm-pm");
     if (pm.dataset.id === "mate") delete pm.dataset.id;
     const c = this.comp(this.moving);

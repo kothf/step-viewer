@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.79.0] - 2026-11-08
+
+### Added
+
+- **Fastener library** (FR-ASM-028): the new **Fasteners** command in the assembly bar. It covers:
+  - ISO 4762 socket head, ISO 4017 / 4014 hex head and ISO 7380 button head screws;
+  - ISO 4032 hex nuts and ISO 7089 plain washers;
+  - sizes M2 to M20, with preferred lengths.
+
+  Pick the standard, size and length, then click the cylindrical face of a hole near the end the fastener goes in. It is inserted on the face there with a concentric and a coincident mate, and the panel stays open for more holes. Each fastener is a parametric part, with every size as a configuration. The same fastener again shares its part, so the BOM counts it.
+- **Mate references** (FR-MATE-011): component menu → **Mate references…** names up to three faces of a part, and the reference is stored in the part. Inserting a part that has a reference of the same name mates it to the component that has one, the selected one first: flat faces coincident, cylinders concentric.
+
 ## [1.78.0] - 2026-11-08
 
 ### Added
@@ -765,7 +777,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.78.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.79.0...HEAD
+[1.79.0]: https://github.com/kothf/step-viewer/compare/v1.78.0...v1.79.0
 [1.78.0]: https://github.com/kothf/step-viewer/compare/v1.77.0...v1.78.0
 [1.77.0]: https://github.com/kothf/step-viewer/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/kothf/step-viewer/compare/v1.75.0...v1.76.0

@@ -660,6 +660,8 @@ export interface PartDoc {
   stdHidden?: ("XY" | "XZ" | "YZ")[];
   /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
   bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
+  /** Mate references (FR-MATE-011): named faces (persistent names; primary, secondary, tertiary) an assembly mates to a same-named reference on insert. */
+  mateRefs?: { name: string; faces: string[] }[];
 }
 
 // ---------- kernel results ----------
