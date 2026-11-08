@@ -5309,9 +5309,49 @@ try {
       const keyLeft = document.querySelector("#motion .mo-key").getBoundingClientRect().left;
       document.querySelector('#motion [data-mo="zfit"]').click();
       const zoomed = { z: m.zoom, ratio, scrolled, fit: tl().offsetWidth / tlw().clientWidth, keyLeft: Number.isFinite(keyLeft) };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end, menu, zoomed };
+      // Several keys: Ctrl+click adds the first key to the pasted one, Alt+→ moves both a frame (the last key stays);
+      // Ctrl+A selects all three, the key menu sets Ease in on all of them, Ctrl+C copies three, Esc clears.
+      const fps = m.study.fps, ptrack = () => m.study.tracks.find(k => k.kind === "pose"), nSel = () => document.querySelectorAll("#motion .mo-key.sel").length;
+      const fields = document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length;
+      document.querySelector(`#motion .mo-lane[data-lane="${ptrack().id}"] .mo-key`).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+      const two = nSel(), note = document.querySelector("#motion .mo-multi")?.textContent ?? "";
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true }));
+      const moved = ptrack().keys.map(k => Math.round(k.t * fps));
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+      const all = nSel() === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
+      document.querySelector("#motion .mo-key.sel").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+      document.querySelectorAll('#mo-menu [role="menuitemradio"]')[2].click();
+      const interps = ptrack().keys.map(k => k.interp ?? "");
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true }));
+      const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
     }).catch(e => ({ err: String(e) }));
+    // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
+    let boxed = { err: "no track" };
+    if (pose.multi) {
+      const laneEl = mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"]`);
+      await laneEl.scrollIntoViewIfNeeded();
+      const lane = await laneEl.boundingBox();
+      await mp.mouse.move(lane.x + 1, lane.y + 1);
+      await mp.mouse.down();
+      await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.up();
+      boxed = await mp.evaluate(() => {
+        const n = document.querySelectorAll("#motion .mo-key.sel").length, boxGone = !document.querySelector(".mo-box");
+        document.querySelector("#motion .mo-key.sel")?.focus();
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+        return { n, boxGone, left: window.__sv.motion.study.tracks.find(k => k.kind === "pose").keys.length };
+      });
+    }
     await mp.click('#motion [data-mo="close"]');
+    const mu = pose.multi;
+    check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
+      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 3 && boxed.boxGone && boxed.left === 0,
+      `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
