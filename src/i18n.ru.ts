@@ -2459,5 +2459,5 @@ export const RU: Record<string, string> = {
   // 1.78.0: drawing view palette (FR-UI-072).
   "View palette": "Палитра видов",
   "Drag a view onto the sheet, or click it and then click the sheet.": "Перетащите вид на лист или щёлкните его, а затем лист.",
-  "{orient} view: drag it onto the sheet": "Вид «{orient}»: перетащите его на лист",
+  "Drag this view onto the sheet": "Перетащите этот вид на лист",
 };

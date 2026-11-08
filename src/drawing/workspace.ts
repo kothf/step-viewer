@@ -335,7 +335,7 @@ export class DrawingWorkspace {
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
           <details class="drw-pal" open><summary>${esc(t("View palette"))}</summary>
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
-            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("{orient} view: drag it onto the sheet", { orient: t(ORIENT_NAMES[o]) }))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
+            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
           </details>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
