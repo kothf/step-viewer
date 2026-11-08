@@ -5618,6 +5618,81 @@ try {
     await ctx.close();
   }
 
+  // --- 1.89: sketch snaps to model geometry (relations to the model) and middle-drag orbit while sketching ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 20 × 20 block, then a sketch on its top face.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false));
+    await mp.waitForTimeout(300);
+    // Line tool: start on the block's top corner (20, 10, 20), end at the middle of the top.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    const [cx, cy] = await scr([20, 10, 20]);
+    await mp.mouse.move(cx + 3, cy + 2); await mp.mouse.move(cx + 1, cy + 1);
+    await mp.mouse.click(cx + 1, cy + 1);
+    const [mx, my] = await scr([0, 0, 20]);
+    await mp.mouse.move(mx, my); await mp.mouse.click(mx, my);
+    await mp.keyboard.press("Escape");
+    await settle();
+    const sk = await mp.evaluate(() => { const ed = window.__sv.model.editor(); const s = ed.sk; const line = s.ents.find(e => e.t === "line" && !e.cons); const a = line && s.ents.find(e => e.id === line.a); return { cons: s.ents.filter(e => e.cons).length, ext: s.rels.filter(r => r.ext).length, a: a ? [a.x, a.y] : null }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    // The block grows to 60 wide: the line's start follows the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Wider", d => { const s = d.features.find(f => f.id === "b"); s.ents.find(e => e.id === "b2").x = 30; s.ents.find(e => e.id === "b3").x = 30; }));
+    await settle();
+    const moved = await mp.evaluate(() => { const s = window.__sv.model.store.doc.features.find(f => f.id === "k"); const line = s.ents.find(e => e.t === "line" && !e.cons); const a = s.ents.find(e => e.id === line.a); return { a: [a.x, a.y], bad: window.__sv.model.last().statuses.filter(x => !x.ok).length }; });
+    check(sk.cons === 1 && sk.ext === 1 && sk.a && Math.hypot(sk.a[0] - 20, sk.a[1] - 10) < 1e-6 && Math.hypot(moved.a[0] - 30, moved.a[1] - 10) < 1e-6 && !moved.bad,
+      `model 1.89: a sketch point snapped to a model vertex follows it when the model changes (${JSON.stringify({ sk, moved })})`);
+    // Smart Dimension from the line to a model edge (the top's front edge, at its midpoint): a new reference and a dimension.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => { window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false); window.__sv.model.editor().setTool("dim"); });
+    await mp.waitForTimeout(300);
+    const [lx, ly] = await scr([15, 5, 20]);
+    await mp.mouse.move(lx, ly); await mp.mouse.click(lx, ly);
+    const [ex2, ey2] = await scr([5, -10, 20]);
+    await mp.mouse.move(ex2, ey2); await mp.mouse.click(ex2, ey2);
+    const [px, py] = await scr([0, -20, 20]);
+    await mp.mouse.move(px, py); await mp.mouse.click(px, py);
+    await mp.waitForTimeout(200);
+    await mp.evaluate(() => window.__sv.model.editor().closeInput(false));
+    const dm = await mp.evaluate(() => { const s = window.__sv.model.editor().sk; return { dims: s.dims.length, ext: s.rels.filter(r => r.ext).length, cons: s.ents.filter(e => e.cons).length }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    check(dm.dims === 1 && dm.ext === 2 && dm.cons === 2, `model 1.89: Smart Dimension takes a model edge (${JSON.stringify(dm)})`);
+    // Middle-drag orbits while sketching (it pans elsewhere). Last, as the orbit coasts on after the drag.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    const cam = () => mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+    const c0 = await cam();
+    await mp.mouse.move(700, 600); await mp.mouse.down({ button: "middle" }); await mp.mouse.move(760, 560, { steps: 6 }); await mp.mouse.up({ button: "middle" });
+    const c1 = await cam();
+    const turned = Math.hypot(c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]) > 1;
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(turned, `model 1.89: middle-drag orbits the view while sketching (${JSON.stringify({ c0, c1 })})`);
+    await ctx.close();
+  }
+
   // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
