@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.88.0] - 2026-11-08
+## [1.90.0] - 2026-11-08
 
 ### Added
 
@@ -16,6 +16,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Play once, loop or back and forth at 0.25× to 4×; scrub the ruler; Space, ←/→, Home and End in the pane.
   - Record a WebM video of the view in real time, or save an animated GIF.
   - Several named studies per assembly, saved in the `.mcadasm` file, with undo.
+
+## [1.88.0] - 2026-11-08
+
+### Added
+
+- **Intersect** (FR-BODY-007) in Sweep ▾: picked solids and surfaces (or all of them) cut each other into closed regions.
+  - The panel lists the regions by volume. Untick the ones to leave out.
+  - The kept regions replace the picked solids, merged into one body unless **Merge result** is off.
+  - **Consume surfaces** removes the surfaces used. Faces keep the names of the faces they came from, so later features stay attached.
+- **Untrim Surface** (FR-FT-100) in Surface ▾: a one-face surface goes back to the bounds of its underlying surface, or only its holes are filled.
 
 ## [1.87.0] - 2026-11-08
 
@@ -882,7 +892,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.88.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
+[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.90.0
 [1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
