@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.108.0] - 2026-11-08
+
+### Added
+
+- **Indent (FR-BODY-007).** Pick a target body and the tool bodies pressed into it. The tools are cut out of the target, grown by the clearance, and a wall of the given thickness follows their shape on the side they press into, like SolidWorks' Indent on a stamped plate. **Cut** leaves only the pocket. The tool bodies stay. Find it in Sweep ▾ next to Combine.
+- **Sweep start tangency (FR-FT-080).** Start and End Tangency → **Path tangent** turns a profile that is not square to the path so that it starts square to it.
+
 ## [1.106.0] - 2026-11-08
 
 ### Added
@@ -1002,7 +1009,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.106.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.108.0...HEAD
+[1.108.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.108.0
 [1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
 [1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
 [1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
