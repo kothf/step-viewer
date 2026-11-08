@@ -5,12 +5,145 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.170.0] - 2026-11-08
+## [1.207.0] - 2026-11-08
 
 ### Added
 
 - **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
 - **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
+
+## [1.205.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
+
+## [1.202.0] - 2026-11-08
+
+### Added
+
+- Revision clouds on drawing sheets (Annotation → **Revision cloud**): click the corners of the changed area, then the first corner again or Enter. The cloud takes the last revision letter from the revision table (shown in a triangle), its arc size and letter can be changed in the panel, and it is picked on its outline only, so views inside it stay draggable. It goes into every export like the rest of the sheet.
+
+## [1.200.0] - 2026-11-08
+
+### Added
+
+- Drawing model views of a part with configurations can show another configuration (FR-DRW-010): pick it under **Configuration** in the view panel. Projected, section and detail views made from that view follow it, and dimensions on them measure that configuration.
+
+## [1.199.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Mate value** results (Add track… → Mate value), as SolidWorks' Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
+
+## [1.197.0] - 2026-11-08
+
+### Added
+
+- Drawing notes can link to sheet properties (FR-DRW-023): `$PRP:"Material"` (also `$PRPSHEET:`) shows the title block's value, so the note follows the model and the sheet. The Note panel's **Link to property** list inserts one. Unknown names stay as typed.
+
+## [1.196.0] - 2026-11-08
+
+### Fixed
+
+- **↑ and ↓ did nothing in the Top and Bottom views.** Tilting the view from Top or Bottom (to look down a hole, say) silently did nothing, because the tilt axis was taken from the world's up direction, which has no sideways part when looking straight down. They now tilt about the screen's horizontal axis. Turning up from Front also went over the top and back; it now stops at the top, as intended.
+
+## [1.194.0] - 2026-11-08
+
+### Added
+
+- **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+
+## [1.191.0] - 2026-11-08
+
+### Added
+
+- Motion studies: a trace path can be traced **Relative to** another component, as in SolidWorks' Trace Path. The path is then the one seen from that component (the shape a cam or slot would need), drawn moving with it, and its plots and CSV are in that component's coordinates (FR-FT-122).
+
+## [1.190.0] - 2026-11-08
+
+### Added
+
+- **DXF 2000 and single-sheet PDF (FR-DRW-030).** Export ▾ DXF 2000 (this sheet) writes an AutoCAD 2000 (AC1015) file in millimetres with the same layers and line types as the R12 export, polylines as LWPOLYLINE and Cyrillic text as Unicode escapes, for programs that no longer read R12. Export ▾ PDF (this sheet) writes only the sheet you are on.
+
+## [1.189.0] - 2026-11-08
+
+### Fixed
+
+- **Move component lost the turn about X at ±90° about Y.** Typing About X, then About Y = 90 or -90, then About Z rebuilt the placement without the X turn: after each box the panel read the angles back from the placement, and at ±90° about Y that reading folds the X turn into Z and shows X as 0. The panel now keeps the angles you typed while they still give the component's rotation.
+
+## [1.187.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace path results plot more, as SolidWorks' Results → Plot. Besides the distance, speed and X/Y/Z of the picked point, the plot shows its **Acceleration** and the component's **angle** (how far it has turned since the start, counted on past a full turn, about the axis it turns most about) and **angular speed**. The CSV gains acceleration and angle columns (FR-FT-122).
+
+## [1.184.0] - 2026-11-08
+
+### Added
+
+- **Gusset offset and thickness side (FR-FT-121).** Gusset's location gets an **Offset** (in from the start or end, or from the middle towards the end) and, at a start or end location, the thickness goes on the **Inner side**, **Both sides** or the **Outer side**, as in SolidWorks.
+
+## [1.183.0] - 2026-11-08
+
+### Added
+
+- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as SolidWorks' profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
+
+## [1.181.0] - 2026-11-08
+
+### Added
+
+- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as SolidWorks does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
+
+## [1.180.0] - 2026-11-08
+
+### Added
+
+- **Edge flange length arrow (FR-FT-120)**: an edge flange shows a drag arrow on the tip of its flange, like the SolidWorks handle. Dragging it changes the flange length with a live preview, and clicking its label lets you type the length. It also works on a flange selected in the Features tree, which applies the change on release. While the flat pattern shows, the arrow is hidden.
+
+## [1.178.0] - 2026-11-08
+
+### Added
+
+- **Aligned section (FR-DRW-012).** Section ▾ Aligned section takes the end of the first leg, the centre and the end of the second leg on a view. The material on the second leg's side is turned about the centre into the first leg's plane before the cut, so spokes and holes on a bolt circle show at their true distance from the centre, as in SolidWorks. The cutting line shows both legs with arrows at each end, and each component keeps its own hatching.
+
+## [1.177.0] - 2026-11-08
+
+### Added
+
+- **End cap thickness direction (FR-FT-121).** End Cap chooses **Outward** (the plate past the end), **Inward** (the overall length stays: the member is cut back by the plate's thickness, its new end face keeps its name) or **Internal** (the plate fits inside a tube's inner outline with a clearance, flush with the end), as in SolidWorks. The thickness arrow follows the plate.
+
+## [1.176.0] - 2026-11-08
+
+### Added
+
+- **End cap corner fillets (FR-FT-121).** End Cap's corner treatment can round the plate's corners (Fillet, with a radius) as well as chamfer them, as in SolidWorks.
+
+### Fixed
+
+- End cap corner treatment only touches sharp corners: on a tube with a rounded outline it no longer chamfers the seams where the flat sides meet the round corners.
+
+## [1.175.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace paths, as SolidWorks' Results → Trace Path. **Add track… → Trace path…** asks for a click on a moving component; the path of that point over the study is drawn in the view with a marker that follows the playhead. Its row (show/hide, delete) opens a panel that plots the distance from the start, the speed or X/Y/Z against time with the playhead on the plot, shows the position and speed at the playhead and the path length, and saves the points as CSV (time, X, Y, Z, speed) (FR-FT-122).
+
+## [1.174.0] - 2026-11-08
+
+### Fixed
+
+More from modelling the Leuenberger steam engine through the UI:
+
+- Faces the mesh fit misread (a short boss taken for a sphere, a hole cut by a cross hole taken as "other") take the exact cylinder from the B-rep, so they can be measured as cylinders and picked for Concentric mates.
+- View keys (arrows, Ctrl+arrows, Z) pressed while a standard view is still turning the camera start from where that move ends, not from the half-way camera.
+
+## [1.173.0] - 2026-11-08
+
+### Added
+
+- **Merge arc segment bodies (FR-FT-121).** Structural Member adds **Merge arc segment bodies**, as in SolidWorks: an arc of the path and the segments that run on tangent from it become one bent body, listed once in the cut list with its whole length along the centreline.
 
 ## [1.169.0] - 2026-11-08
 
@@ -1363,8 +1496,29 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.170.0...HEAD
-[1.170.0]: https://github.com/kothf/step-viewer/compare/v1.169.0...v1.170.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.207.0...HEAD
+[1.207.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.207.0
+[1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
+[1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
+[1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
+[1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
+[1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
+[1.196.0]: https://github.com/kothf/step-viewer/compare/v1.194.0...v1.196.0
+[1.194.0]: https://github.com/kothf/step-viewer/compare/v1.191.0...v1.194.0
+[1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0
+[1.190.0]: https://github.com/kothf/step-viewer/compare/v1.189.0...v1.190.0
+[1.189.0]: https://github.com/kothf/step-viewer/compare/v1.187.0...v1.189.0
+[1.187.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.187.0
+[1.184.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.184.0
+[1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
+[1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
+[1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
+[1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0
+[1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0
+[1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
+[1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
+[1.174.0]: https://github.com/kothf/step-viewer/compare/v1.173.0...v1.174.0
+[1.173.0]: https://github.com/kothf/step-viewer/compare/v1.169.0...v1.173.0
 [1.169.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.169.0
 [1.168.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.168.0
 [1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0

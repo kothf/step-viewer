@@ -9,7 +9,7 @@ import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
-import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
+import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
@@ -83,6 +83,8 @@ export class AsmController {
   private selected: string | null = null;
   /** The move panel's component, when open. */
   private moving: string | null = null;
+  /** The rotation angles last typed in the Move panel, per component (kept while they still give its rotation). */
+  private typedAngles = new Map<string, V3>();
   private building = false;
   private again = false;
   private gen = 0;
@@ -2347,7 +2349,7 @@ export class AsmController {
     const c = this.comp(this.moving);
     pm.hidden = !c;
     if (!c) { pm.innerHTML = ""; delete pm.dataset.id; return; }
-    const p: V3 = [c.tf[3], c.tf[7], c.tf[11]], r = eulerXYZ(c.tf);
+    const p: V3 = [c.tf[3], c.tf[7], c.tf[11]], r = poseAngles(c.tf, this.typedAngles.get(c.id));
     const now: Record<string, number> = { x: p[0], y: p[1], z: p[2], rx: r[0], ry: r[1], rz: r[2] };
     const fmt = (v: number) => String(Math.round(v * 1e6) / 1e6);
     // The same component: refresh the values in place, so typing on into the next box is not lost.
@@ -2381,6 +2383,7 @@ export class AsmController {
           vals[i.dataset.pose!] = v;
         }
         const tf = fromPose([vals.x, vals.y, vals.z], [vals.rx, vals.ry, vals.rz]);
+        this.typedAngles.set(c.id, [vals.rx, vals.ry, vals.rz]);
         this.change(d => { const x = d.components.find(k => k.id === c.id); if (x) x.tf = tf; });
       };
       inp.addEventListener("change", apply);
@@ -2479,6 +2482,12 @@ export class AsmController {
   /** The motion manager: opened from the bar, told when the document is rebuilt, replaced or closed. */
   motion: { open(): void; rebuilt(): void; close(): void } | null = null;
 
+  /** The shown component under a screen point (client coordinates), its top-level component and the world point hit (motion trace paths). */
+  shownAt(x: number, y: number): { id: string; top: string; point: V3 } | null {
+    const hit = this.host.partAt(x, y), id = hit ? this.shownIds[hit.idx] : undefined;
+    return hit && id ? { id, top: topOf(id), point: hit.point } : null;
+  }
+
   /** A mate reference's face geometry in its component's own coordinates. */
   localGeo(ref: MateRef): Geo | null { const c = this.anyComp(ref.comp); return (c && this.geo.get(c.part)?.get(ref.face)) ?? null; }
 
@@ -2528,6 +2537,16 @@ export class AsmController {
       all[id] = o ? compose(translation(o), base) : base;
     }
     this.previewTfs(all);
+  }
+
+  /** Top-level components whose shown meshes enter one another where they are shown now (motion interference check). */
+  motionClashes(): [string, string][] {
+    const out = new Map<string, [string, string]>();
+    for (const k of this.clashes()) {
+      const [i, j] = k.split(":").map(Number), a = topOf(this.shownIds[i]), b = topOf(this.shownIds[j]);
+      if (a && b && a !== b) out.set(a < b ? `${a}|${b}` : `${b}|${a}`, a < b ? [a, b] : [b, a]);
+    }
+    return [...out.values()];
   }
 
   /** Parts whose look a motion study changed: viewer part index → what it had. */

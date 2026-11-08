@@ -40,6 +40,8 @@ export interface MemberFeature {
    * Segments in no group are group 1 and use the feature's `anchor`/`angle`/`mirror`.
    */
   groups?: MemberGroup[];
+  /** Merge arc segment bodies: an arc and the segments that run on tangent from it become one body (one cut list item, bent length). */
+  mergeArcs?: boolean;
 }
 
 /** A group of a Structural Member's segments placed with its own profile settings. */
@@ -71,10 +73,22 @@ export interface EndCapFeature {
   faces: FaceRef[];
   thickness: Num;
   inset: Num;
-  /** Corner chamfer of the plate. */
+  /** Corner treatment of the plate: chamfer distance, or the fillet radius when `fillet`. */
   chamfer?: Num;
+  /** Round the plate's corners with radius `chamfer` instead of chamfering them. */
+  fillet?: boolean;
+  /** Old files: true = `dir` "in". */
   inward?: boolean;
+  /**
+   * Thickness direction (SolidWorks): "out" adds the plate past the end; "in" keeps the overall length
+   * (the member is cut back by the thickness); "internal" fits the plate inside a hollow profile's
+   * inner outline, flush with the end, `inset` = clearance.
+   */
+  dir?: "out" | "in" | "internal";
 }
+
+/** An end cap's thickness direction (old files use `inward`). */
+export const capDir = (f: EndCapFeature): "out" | "in" | "internal" => f.dir ?? (f.inward ? "in" : "out");
 
 /**
  * Gusset: a triangular (or polygonal) plate in the corner between two flat faces that meet at an
@@ -94,6 +108,10 @@ export interface GussetFeature {
   /** Inner corner chamfer (clears the weld between the members). */
   chamfer?: Num;
   loc: "mid" | "start" | "end";
+  /** Moves the plate from its location along the corner line (from the start or end inwards; from the middle towards the end). */
+  offset?: Num;
+  /** Where the thickness goes from the location at a start/end location: "in" (default, towards the other end), "both" (centred) or "out". */
+  side?: "in" | "both" | "out";
 }
 
 /** Fillet weld bead: a triangular bead of leg `size` where faces of set 1 meet faces of set 2 (flat and cylindrical faces); pieces that meet become one bead. */

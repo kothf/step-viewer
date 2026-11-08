@@ -5,7 +5,7 @@ import { occ } from "./occ";
 import { Assembler } from "../../src/kernel/assembly";
 import { packAsm, unpackAsm } from "../../src/asm/file";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "../../src/asm/configs";
-import { IDENTITY, applyPoint, compose, eulerXYZ, fromPose, invert, rotation, translation } from "../../src/asm/math";
+import { IDENTITY, applyPoint, compose, eulerXYZ, fromPose, invert, poseAngles, rotation, translation } from "../../src/asm/math";
 import type { AsmDoc } from "../../src/asm/types";
 import type { Feature, PartDoc } from "../../src/model/types";
 
@@ -38,6 +38,19 @@ test("transforms: compose, invert, pose round trip", () => {
   const pose = fromPose([5, 6, 7], [10, 20, 30]);
   const e = eulerXYZ(pose);
   assert.ok(Math.abs(e[0] - 10) < 1e-9 && Math.abs(e[1] - 20) < 1e-9 && Math.abs(e[2] - 30) < 1e-9, String(e));
+});
+
+test("Move panel angles: typed X turn kept at ±90° about Y (bug: it was read back as 0)", () => {
+  const typed: [number, number, number] = [60, -90, 90];
+  const tf = fromPose([1, 2, 3], typed);
+  assert.equal(eulerXYZ(tf)[0], 0); // what the panel used to show
+  assert.deepEqual(poseAngles(tf, typed), typed);
+  // a changed rotation (a drag or a mate) drops the typed angles
+  const other = fromPose([1, 2, 3], [0, 30, 0]);
+  assert.ok(Math.abs(poseAngles(other, typed)[1] - 30) < 1e-9);
+  // typing Z after that keeps the X turn: the rotation still matches [60, -90, 90 + 15]
+  const next = fromPose([1, 2, 3], [60, -90, 105]);
+  assert.notDeepEqual(next.slice(0, 11), tf.slice(0, 11));
 });
 
 test("assembly: components place their parts; one source per part; mass properties add up", async () => {

@@ -164,6 +164,115 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
   return o.join("\n") + "\n";
 }
 
+/** Text for DXF: one line, characters outside ASCII as \U+XXXX (AutoCAD reads them in any code page). */
+const dxfText = (s: string) => s.replace(/[\r\n]+/g, " ").replace(/[^\x20-\x7e]/gu, ch => { const c = ch.codePointAt(0)!; return c > 0xffff ? "?" : `\\U+${c.toString(16).toUpperCase().padStart(4, "0")}`; });
+
+/**
+ * DXF 2000 (AC1015) in millimetres, one layer per line type (FR-DRW-030): handles and owners, the symbol tables
+ * AutoCAD expects, model and paper space block records, the root dictionary; polylines as LWPOLYLINE.
+ */
+export function sheetDxf2000(prims: Prim[], W: number, H: number): string {
+  const o: (string | number)[] = [];
+  const g = (code: number, v: string | number) => o.push(code, typeof v === "number" ? f(v) : v);
+  const n = (code: number, v: number) => o.push(code, v);
+  let next = 0x20;
+  const hnd = () => (next++).toString(16).toUpperCase();
+  // Fixed handles for everything others point at.
+  const H_ = { vport: hnd(), ltype: hnd(), layer: hnd(), style: hnd(), view: hnd(), ucs: hnd(), appid: hnd(), dimstyle: hnd(), brec: hnd(),
+    msRec: hnd(), psRec: hnd(), msBlk: hnd(), msEnd: hnd(), psBlk: hnd(), psEnd: hnd(), root: hnd(), groups: hnd(), styleStd: hnd() };
+  const body: (string | number)[] = [];
+  const table = (name: string, h: string, entries: number, fill: () => void, sub = "AcDbSymbolTable") => {
+    g(0, "TABLE"); g(2, name); g(5, h); g(330, "0"); g(100, sub); n(70, entries);
+    if (name === "DIMSTYLE") g(100, "AcDbDimStyleTable");
+    fill();
+    g(0, "ENDTAB");
+  };
+  const rec = (type: string, owner: string, sub: string, name: string, h = hnd()) => { g(0, type); g(type === "DIMSTYLE" ? 105 : 5, h); g(330, owner); g(100, "AcDbSymbolTableRecord"); g(100, sub); g(2, name); n(70, 0); return h; };
+  // Header after the rest, so $HANDSEED is right: build the sections first.
+  const head = o.splice(0);
+  g(0, "SECTION"); g(2, "CLASSES"); g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "TABLES");
+  table("VPORT", H_.vport, 1, () => {
+    rec("VPORT", H_.vport, "AcDbViewportTableRecord", "*Active");
+    g(10, 0); g(20, 0); g(11, 1); g(21, 1); g(12, W / 2); g(22, H / 2); g(13, 0); g(23, 0); g(14, 10); g(24, 10); g(15, 10); g(25, 10);
+    g(16, 0); g(26, 0); g(36, 1); g(17, 0); g(27, 0); g(37, 0); g(40, H * 1.1); g(41, W / H); g(42, 50); g(43, 0); g(44, 0); g(50, 0); g(51, 0);
+    n(71, 0); n(72, 100); n(73, 1); n(74, 3); n(75, 0); n(76, 0); n(77, 0); n(78, 0);
+  });
+  const ltypes: [string, string, number[]][] = [["ByBlock", "", []], ["ByLayer", "", []], ["Continuous", "Solid line", []], ...Object.entries(LTYPES).filter(([k]) => k !== "CONTINUOUS").map(([k, v]): [string, string, number[]] => [k, v.desc, v.pat])];
+  table("LTYPE", H_.ltype, ltypes.length, () => {
+    for (const [name, desc, pat] of ltypes) {
+      rec("LTYPE", H_.ltype, "AcDbLinetypeTableRecord", name);
+      g(3, desc); n(72, 65); n(73, pat.length); g(40, pat.reduce((t, v) => t + Math.abs(v), 0));
+      for (const v of pat) { g(49, v); n(74, 0); }
+    }
+  });
+  const layers = [["0", 7, "Continuous"] as const, ...Object.entries(LAYERS).map(([k, l]) => [k, l.color, l.lt === "CONTINUOUS" ? "Continuous" : l.lt] as const)];
+  table("LAYER", H_.layer, layers.length, () => {
+    for (const [name, color, lt] of layers) { rec("LAYER", H_.layer, "AcDbLayerTableRecord", name); n(62, color); g(6, lt); n(370, -3); g(390, "0"); }
+  });
+  table("STYLE", H_.style, 1, () => {
+    rec("STYLE", H_.style, "AcDbTextStyleTableRecord", "Standard", H_.styleStd);
+    g(40, 0); g(41, 1); g(50, 0); n(71, 0); g(42, 2.5); g(3, "txt"); g(4, "");
+  });
+  table("VIEW", H_.view, 0, () => {});
+  table("UCS", H_.ucs, 0, () => {});
+  table("APPID", H_.appid, 1, () => { rec("APPID", H_.appid, "AcDbRegAppTableRecord", "ACAD"); });
+  table("DIMSTYLE", H_.dimstyle, 1, () => { rec("DIMSTYLE", H_.dimstyle, "AcDbDimStyleTableRecord", "Standard"); });
+  table("BLOCK_RECORD", H_.brec, 2, () => {
+    rec("BLOCK_RECORD", H_.brec, "AcDbBlockTableRecord", "*Model_Space", H_.msRec); g(340, "0");
+    rec("BLOCK_RECORD", H_.brec, "AcDbBlockTableRecord", "*Paper_Space", H_.psRec); g(340, "0");
+  });
+  g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "BLOCKS");
+  for (const [name, rh, bh, eh] of [["*Model_Space", H_.msRec, H_.msBlk, H_.msEnd], ["*Paper_Space", H_.psRec, H_.psBlk, H_.psEnd]]) {
+    g(0, "BLOCK"); g(5, bh); g(330, rh); g(100, "AcDbEntity"); g(8, "0"); g(100, "AcDbBlockBegin"); g(2, name); n(70, 0); g(10, 0); g(20, 0); g(30, 0); g(3, name); g(1, "");
+    g(0, "ENDBLK"); g(5, eh); g(330, rh); g(100, "AcDbEntity"); g(8, "0"); g(100, "AcDbBlockEnd");
+  }
+  g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "ENTITIES");
+  const ent = (type: string, layer: string, sub: string) => { g(0, type); g(5, hnd()); g(330, H_.msRec); g(100, "AcDbEntity"); g(8, layer); g(100, sub); };
+  for (const p of prims) {
+    if (p.t === "l") { ent("LINE", p.layer, "AcDbLine"); g(10, p.p[0]); g(20, p.p[1]); g(30, 0); g(11, p.p[2]); g(21, p.p[3]); g(31, 0); }
+    else if (p.t === "a") {
+      if (p.a1 - p.a0 >= 2 * Math.PI - 1e-9) { ent("CIRCLE", p.layer, "AcDbCircle"); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); }
+      else { ent("ARC", p.layer, "AcDbCircle"); g(10, p.o[0]); g(20, p.o[1]); g(30, 0); g(40, p.r); g(100, "AcDbArc"); g(50, p.a0 * 180 / Math.PI); g(51, p.a1 * 180 / Math.PI); }
+    } else if (p.t === "p" && p.gray !== undefined) continue;
+    else if (p.t === "p" && p.fill && p.p.length >= 6 && p.p.length <= 8) {
+      const q = p.p, k = q.length / 2, c = (i: number) => [q[2 * Math.min(i, k - 1)], q[2 * Math.min(i, k - 1) + 1]];
+      ent("SOLID", p.layer, "AcDbTrace");
+      [c(0), c(1), c(3), c(2)].forEach((pt, i) => { g(10 + i, pt[0]); g(20 + i, pt[1]); g(30 + i, 0); });
+    } else if (p.t === "p") {
+      ent("LWPOLYLINE", p.layer, "AcDbPolyline"); n(90, p.p.length / 2); n(70, p.closed ? 1 : 0);
+      for (let i = 0; i < p.p.length; i += 2) { g(10, p.p[i]); g(20, p.p[i + 1]); }
+    } else if (p.t === "i") continue;
+    else {
+      ent("TEXT", p.layer, "AcDbText"); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, dxfText(p.s)); if (p.rot) g(50, p.rot); g(7, "Standard");
+      if (p.al !== "l") { n(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
+      g(100, "AcDbText");
+    }
+  }
+  g(0, "ENDSEC");
+  g(0, "SECTION"); g(2, "OBJECTS");
+  g(0, "DICTIONARY"); g(5, H_.root); g(330, "0"); g(100, "AcDbDictionary"); n(281, 1); g(3, "ACAD_GROUP"); g(350, H_.groups);
+  g(0, "DICTIONARY"); g(5, H_.groups); g(330, H_.root); g(100, "AcDbDictionary"); n(281, 1);
+  g(0, "ENDSEC"); g(0, "EOF");
+  body.push(...o.splice(0));
+  o.push(...head);
+  g(0, "SECTION"); g(2, "HEADER");
+  g(9, "$ACADVER"); g(1, "AC1015");
+  g(9, "$DWGCODEPAGE"); g(3, "ANSI_1252");
+  g(9, "$HANDSEED"); g(5, next.toString(16).toUpperCase());
+  g(9, "$INSUNITS"); n(70, 4);
+  g(9, "$MEASUREMENT"); n(70, 1);
+  g(9, "$EXTMIN"); g(10, 0); g(20, 0); g(30, 0);
+  g(9, "$EXTMAX"); g(10, W); g(20, H); g(30, 0);
+  g(9, "$LIMMIN"); g(10, 0); g(20, 0);
+  g(9, "$LIMMAX"); g(10, W); g(20, H);
+  g(9, "$LTSCALE"); g(40, 1);
+  g(0, "ENDSEC");
+  return [...o, ...body].join("\n") + "\n";
+}
+
 // ---------- PDF ----------
 
 /** Vector PDF of the sheets at their real size, with an embedded font (Cyrillic and drawing symbols work). */

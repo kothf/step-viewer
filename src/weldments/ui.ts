@@ -9,7 +9,7 @@ import { units, UNITS } from "../tools/units";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { cornerKey, cutKey } from "./types";
+import { capDir, cornerKey, cutKey } from "./types";
 import { segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -174,6 +174,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + help(t("Each segment becomes its own body; where two segments meet end to end the corner is treated.")))
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
           + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
+          + (sk?.type === "sketch" && f.segs.some(r => sk.ents.find(e => e.id === r.ent)?.t === "arc") ? chk("wMergeArcs", !!f.mergeArcs, t("Merge arc segment bodies")) : "")
           + (groups.length ? `<p class="pm-count">${esc(t("Group {n}", { n: 1 }))}</p>` : "")
           + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
@@ -207,10 +208,12 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
       body: group(t("Parameters"), box("wfaces", t("Faces"), faces(f.faces.length))
         + (f.faces.length ? `<button class="btn small" data-k="wclear" data-wlist="faces">${esc(t("Clear faces"))}</button>` : "")
         + numField("thickness", t("Thickness"), f.thickness, "length")
-        + chk("inward", f.inward, t("Thickness inward"))
+        + sel("wCapDir", t("Thickness direction"), [["out", t("Outward")], ["in", t("Inward")], ["internal", t("Internal")]], capDir(f))
         + help(t("Click the flat end faces of members. Drag the arrow to change the thickness.")))
-        + group(t("Offset"), chk("wInset", f.inset.v > 0, t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", t("Inset"), f.inset, "length") : ""))
-        + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Chamfer corners")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : "")),
+        + group(t("Offset"), chk("wInset", f.inset.v > 0, capDir(f) === "internal" ? t("Clearance to the tube") : t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", capDir(f) === "internal" ? t("Clearance") : t("Inset"), f.inset, "length") : ""))
+        + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Treat the corners"))
+          + (f.chamfer ? sel("wCapCorner", t("Type"), [["chamfer", t("Chamfer")], ["fillet", t("Fillet")]], f.fillet ? "fillet" : "chamfer")
+            + numField("chamfer", f.fillet ? t("Radius") : t("Distance"), f.chamfer, "length") : "")),
     };
   }
   if (f.type === "gusset") {
@@ -223,7 +226,10 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length") : "")
           + numField("thickness", t("Thickness"), f.thickness, "length")
           + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : ""))
-        + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)),
+        + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)
+          + (f.loc !== "mid" ? sel("wgside", t("Thickness"), [["in", t("Inner side")], ["both", t("Both sides")], ["out", t("Outer side")]], f.side ?? "in") : "")
+          + chk("wgOffset", !!f.offset, t("Offset")) + (f.offset ? numField("offset", t("Offset"), f.offset, "length") : "")
+          + help(f.loc === "mid" ? t("The offset moves the plate from the middle of the corner towards its end.") : t("The offset moves the plate in from the end; the thickness goes inwards, both ways or outwards from there."))),
     };
   }
   return {
@@ -271,6 +277,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
       if (Object.keys(c).length) f.corners = c; else delete f.corners;
     };
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
+    if (k === "wMergeArcs") return () => { if (val) f.mergeArcs = true; else delete f.mergeArcs; };
     if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
     if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
     if (k.startsWith("wgroup:")) return () => {
@@ -288,11 +295,15 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
   }
   if (f.type === "endcap") {
     if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; };
-    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else delete f.chamfer; };
+    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else { delete f.chamfer; delete f.fillet; } };
+    if (k === "wCapDir") return () => { delete f.inward; if (val === "out") delete f.dir; else f.dir = val as "in" | "internal"; };
+    if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
     if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
-    if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; };
+    if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; if (f.loc === "mid") delete f.side; };
+    if (k === "wgside") return () => { if (val === "in") delete f.side; else f.side = val as "both" | "out"; };
+    if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };

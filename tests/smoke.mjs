@@ -3100,7 +3100,7 @@ try {
     // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
     check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
       `model 1.167: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
-    // 1.170: a spline leaving a line's end takes Tangent and Equal curvature (FR-SK-050/051); Tangent turns its end along the line.
+    // 1.207: a spline leaving a line's end takes Tangent and Equal curvature (FR-SK-050/051); Tangent turns its end along the line.
     await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
     for (const q of [[14, -6], [20, -6], [20, -6]]) await click(q);
     await mp.keyboard.press("Escape");
@@ -3116,11 +3116,11 @@ try {
     await mp.waitForTimeout(150);
     const st = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); const d = [l[1][0] - l[0][0], l[1][1] - l[0][1]]; return { tan: ed.sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, slope: Math.round(Math.abs(d[1] / d[0]) * 1000) / 1000, dir: Math.sign(d[0]), ok: ed.info.status }; });
     check(/tangent/.test(relBtns) && /curvature/.test(relBtns) && st.tan === 1 && st.slope < 0.01 && st.dir === 1 && st.ok === "ok",
-      `model 1.170: spline tangent to the line it leaves; Equal curvature offered (${relBtns}, ${JSON.stringify(st)})`);
+      `model 1.207: spline tangent to the line it leaves; Equal curvature offered (${relBtns}, ${JSON.stringify(st)})`);
     await ctx.close();
   }
 
-  // --- Part modelling 1.170.0: sketch orientation, X axis along a model edge (FR-SK-002) ---
+  // --- Part modelling 1.207.0: sketch orientation, X axis along a model edge (FR-SK-002) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3154,7 +3154,7 @@ try {
     await idle();
     const after = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "t"); return { edge: f.xAxis?.edge?.faces?.slice().sort().join("+") ?? null, x: window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(",") }; });
     check(x0 === "1,0,0" && /straight edge/.test(status) && box === "Edge" && after.edge === "x:end+x:side:l2" && after.x === "0,1,0",
-      `model 1.170: sketch X axis along a picked model edge (${x0} → ${after.x}, ${after.edge}, ${box}, ${status})`);
+      `model 1.207: sketch X axis along a picked model edge (${x0} → ${after.x}, ${after.edge}, ${box}, ${status})`);
     await ctx.close();
   }
 
@@ -3625,7 +3625,7 @@ try {
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
-    await dp.click('#drw [data-a="detail"]');
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 25, 0);
@@ -3670,6 +3670,33 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
+    // Aligned section (FR-DRW-012): first leg along −x on the top view, centre at the origin, second leg up +y; it turns into the first leg's plane.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="aligned"]');
+    for (const [u, w] of [[-45, 0], [0, 0], [0, 25]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(top.x, top.y - 75);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const alv = vs.find(v => v.kind === "section" && v.aligned);
+    const alProj = alv && await dp.evaluate(i => window.__sv.drw.proj(i), alv.id);
+    const alArea = (alProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
+      `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
+    // Detail profile (FR-DRW-013): four corners round the hole on the top view, closed by clicking the first again.
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="profile"]');
+    for (const [u, w] of [[0, -12], [22, -12], [22, 12], [5, 12], [0, -12]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(330, 170);
+    await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const pdet = vs.find(v => v.kind === "detail" && v.outline);
+    const pprims = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && p.t === "p" && p.closed && p.p.length === 8).length);
+    const ptexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t").map(p => p.s));
+    check(pdet && pdet.outline.length === 8 && pdet.letter === "F" && pprims >= 2 && ptexts.includes("DETAIL F"),
+      `drawing: detail F framed by a clicked profile, outlined on its parent and on the view (${JSON.stringify(pdet?.outline)}, ${pprims} outlines)`);
     // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
     [x, y] = await at(top.id, -45, -25);
     await dp.mouse.click(x, y);
@@ -3683,6 +3710,12 @@ try {
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
     const dxfT = (await readFile(await dl.path())).toString();
+    // DXF 2000 (FR-DRW-030): AC1015 with handles, LWPOLYLINE and the same layers; Cyrillic kept as \U+ escapes.
+    await dp.click('#drw [data-a="export"]');
+    const [dl2] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf2000"]')]);
+    const dxf2 = (await readFile(await dl2.path())).toString();
+    check(/\nAC1015\n/.test(dxf2) && /\nLWPOLYLINE\n/.test(dxf2) && /\nHATCH\n/.test(dxf2) && /\*Model_Space/.test(dxf2) && !/[^\x00-\x7f]/.test(dxf2),
+      `drawing: DXF 2000 export (AC1015, LWPOLYLINE, HATCH layer, ASCII only; ${dxf2.length} bytes)`);
     await dp.evaluate(() => document.querySelector("#lang-btn").click());
     await dp.waitForTimeout(200);
     const ru = await dp.evaluate(() => ({ t: window.__sv.drw.prims().filter(x => x.t === "t").map(x => x.s), tb: document.querySelector('#drw [data-a="section"]').textContent }));
@@ -3762,6 +3795,16 @@ try {
     if (selA) await dp.click('#drw [data-tolt="sym"]');
     tx = await texts();
     check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
+    const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
+    [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
+    await dp.mouse.click(x, y);
+    const fitOk = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-tolt="fit"]'));
+    if (fitOk) { await dp.click('#drw [data-tolt="fit"]'); await dp.selectOption('#drw .drw-props [data-d="fshow"]', "both"); }
+    tx = await texts();
+    const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
+    check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
+      `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);
@@ -3777,6 +3820,15 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
+    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.waitForTimeout(150);
+    tx = await texts();
+    const scaleNote = tx.find(s => s.startsWith("SCALE "));
+    check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
@@ -4721,6 +4773,25 @@ try {
     await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
     await shown(3);
     const mv = await mp.evaluate(() => { const c = window.__sv.asm.doc.components[1], d = window.__sv.viewer.parts[1].data; return { tf: c.tf.map(v => Math.round(v * 1e6) / 1e6), min: d.bboxMin.map(v => Math.round(v * 1e3) / 1e3), max: d.bboxMax.map(v => Math.round(v * 1e3) / 1e3), pm: document.querySelector("#asm-pm").hidden }; });
+    // Typing About X, then About Y = -90, then About Z keeps the X turn (the panel used to read X back as 0 there).
+    await mp.click("#asm-tree .ft-comp >> nth=2");
+    await mp.click('#asm-tools [data-ac="move"]');
+    for (const [k, v] of [["rx", "60"], ["ry", "-90"], ["rz", "30"]]) {
+      await mp.fill(`#asm-pm input[data-pose="${k}"]`, v);
+      await mp.press(`#asm-pm input[data-pose="${k}"]`, "Tab");
+      await shown(3);
+    }
+    const gim = await mp.evaluate(() => ({ rx: document.querySelector('#asm-pm input[data-pose="rx"]').value, tf: window.__sv.asm.doc.components[2].tf }));
+    const rad = d => d * Math.PI / 180, [ax, ay, az] = [60, -90, 30].map(rad);
+    // R = Rz·Ry·Rx, row-major
+    const gimWant = [
+      Math.cos(az) * Math.cos(ay), Math.cos(az) * Math.sin(ay) * Math.sin(ax) - Math.sin(az) * Math.cos(ax), Math.cos(az) * Math.sin(ay) * Math.cos(ax) + Math.sin(az) * Math.sin(ax),
+      Math.sin(az) * Math.cos(ay), Math.sin(az) * Math.sin(ay) * Math.sin(ax) + Math.cos(az) * Math.cos(ax), Math.sin(az) * Math.sin(ay) * Math.cos(ax) - Math.cos(az) * Math.sin(ax),
+      -Math.sin(ay), Math.cos(ay) * Math.sin(ax), Math.cos(ay) * Math.cos(ax)];
+    const gimOk = gim.rx === "60" && [0, 1, 2, 4, 5, 6, 8, 9, 10].every((i, k) => Math.abs(gim.tf[i] - gimWant[k]) < 1e-6);
+    await mp.keyboard.press("Escape");
+    for (let i = 0; i < 3; i++) { await mp.keyboard.press("ControlOrMeta+z"); await shown(3); }
+    check(gimOk, `asm 1.189: Move component keeps the typed X turn at -90° about Y (${JSON.stringify(gim)})`);
     // Hide the cube from its row (it still counts in the mass properties), then undo.
     await mp.hover("#asm-tree .ft-comp >> nth=2");
     await mp.click('#asm-tree .ft-comp >> nth=2 >> [data-a="hide"]');
@@ -5532,6 +5603,73 @@ try {
       const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
       m.seek(2);
       const end = { z: g().position.z };
+      // Trace path: Add track… → Trace path… then a click on the pin picks a point on it; the pin's own origin traced
+      // through the study rises 20 mm in a straight line (the turn is about it), one point per frame, plotted and saved as CSV.
+      m.seek(0);
+      window.__sv.viewer.fit(false);
+      window.__sv.viewer.camera.updateMatrixWorld(true);
+      const canvas = window.__sv.viewer.renderer.domElement, rc = canvas.getBoundingClientRect(), d = window.__sv.viewer.parts[a.shownIds.indexOf(id)].data;
+      const ctr = g().position.clone().set((d.bboxMin[0] + d.bboxMax[0]) / 2, (d.bboxMin[1] + d.bboxMax[1]) / 2, (d.bboxMin[2] + d.bboxMax[2]) / 2).project(window.__sv.viewer.camera);
+      const addSel = document.querySelector('#motion select[data-mo="add"]');
+      addSel.value = "trace:"; addSel.dispatchEvent(new Event("change"));
+      const picking = m.tracing;
+      // The pin's centre on screen, else the first point of a grid that hits a component (the motion pane covers the lower view).
+      let at = [rc.left + (ctr.x + 1) / 2 * rc.width, rc.top + (1 - ctr.y) / 2 * rc.height];
+      // Else the first triangle middle of the pin's mesh that a click there hits.
+      if (a.shownAt(at[0], at[1])?.top !== id) {
+        const mesh = window.__sv.viewer.parts[a.shownIds.indexOf(id)].mesh, pos = mesh.geometry.attributes.position, ix = mesh.geometry.index;
+        mesh.updateMatrixWorld(true);
+        for (let k = 0; k + 2 < (ix ? ix.count : pos.count); k += 3) {
+          const v = g().position.clone().set(0, 0, 0);
+          for (let j = 0; j < 3; j++) { const vi = ix ? ix.getX(k + j) : k + j; v.x += pos.getX(vi) / 3; v.y += pos.getY(vi) / 3; v.z += pos.getZ(vi) / 3; }
+          v.applyMatrix4(mesh.matrixWorld).project(window.__sv.viewer.camera);
+          const q = [rc.left + (v.x + 1) / 2 * rc.width, rc.top + (1 - v.y) / 2 * rc.height];
+          if (a.shownAt(q[0], q[1])?.top === id) { at = q; break; }
+        }
+      }
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: at[0], clientY: at[1] }));
+      if (m.tracing) document.querySelector("#motion").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      const pickedTrace = { picking, after: m.tracing, n: (m.study.traces ?? []).length, at };
+      m.addTrace(id, [0, 0, 0]);
+      const tr0 = m.study.traces.at(-1), path = m.tracePath(tr0.id), o = [c[2].tf[3], c[2].tf[7], c[2].tf[11]];
+      const plot = !!document.querySelector("#motion .mo-trace-plot svg polyline"), row = !!document.querySelector(`#motion .mo-name[data-trace="${tr0.id}"]`);
+      const psel = document.querySelector('#motion select[data-tr="plot"]'); if (psel) { psel.value = "speed"; psel.dispatchEvent(new Event("change")); }
+      const speedPlot = m.study.traces.at(-1).plot;
+      // Results → Plot: acceleration and the component's angle (the pose key turns the pin 90° about Z by the end).
+      const plotAs = q => { const el = document.querySelector('#motion select[data-tr="plot"]'); if (el) { el.value = q; el.dispatchEvent(new Event("change")); } return { plot: m.study.traces.at(-1).plot, svg: !!document.querySelector("#motion .mo-trace-plot svg polyline"), read: document.querySelector("#motion .mo-tread")?.textContent ?? "" }; };
+      const accelPlot = plotAs("accel"), anglePlot = plotAs("angle"), angles = m.traceAngle(tr0.id);
+      const angleOk = angles.length === path.length && Math.abs(angles[0]) < 1e-9 && angles.every(Number.isFinite);
+      const angleEnd = angles.at(-1);
+      const lines = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr0.id));
+      const len = path.reduce((s2, q, k) => k ? s2 + Math.hypot(q[0] - path[k - 1][0], q[1] - path[k - 1][1], q[2] - path[k - 1][2]) : 0, 0);
+      // Relative to: the first pin's origin seen from the moving third pin. Its distance from the third pin's origin is
+      // the world distance in every frame; the path differs from the world one and is drawn in a group that moves with the pin.
+      m.addTrace(c[0].id, [0, 0, 0]);
+      const tr1 = m.study.traces.at(-1), world1 = m.tracePath(tr1.id).map(q => [...q]);
+      const relOpts = [...document.querySelectorAll('#motion select[data-tr="rel"] option')].map(o => o.value);
+      const rsel = document.querySelector('#motion select[data-tr="rel"]'); if (rsel) { rsel.value = id; rsel.dispatchEvent(new Event("change")); }
+      const relPath = m.tracePath(tr1.id);
+      const relDist = relPath.length === path.length && relPath.every((q, k) => Math.abs(Math.hypot(...q) - Math.hypot(...world1[k].map((v, j) => v - path[k][j]))) < 1e-6);
+      const relMoved = relPath.some((q, k) => Math.hypot(...q.map((v, j) => v - world1[k][j])) > 1);
+      const relGroup = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr1.id && x.userData.rel === id));
+      const relative = { stored: m.study.traces.at(-1).rel === id, noSelf: !relOpts.includes(c[0].id) && relOpts.includes(id) && relOpts[0] === "", relDist, relMoved, relGroup };
+      // Mate value: Add track… → Mate value: Distance1 plots the gap between pin 1's top and pin 2's bottom; the faces
+      // face each other, so the angle stays at 180°; the plot switches to the angle and the row deletes with ✕.
+      const madd = document.querySelector('#motion select[data-mo="add"]'), mopt = [...madd.options].some(o => o.value === "mplot:md");
+      madd.value = "mplot:md"; madd.dispatchEvent(new Event("change"));
+      const mt = m.study.traces.at(-1), mv = m.mateValues(mt.id);
+      const mrow = !!document.querySelector(`#motion .mo-name[data-trace="${mt.id}"]`), msvg = !!document.querySelector("#motion .mo-trace-plot svg polyline");
+      const mAngle = plotAs("angle");
+      const mateVal = { mopt, mate: mt.mate, plot0: mt.plot ?? "dist", n: mv.dist.length === path.length, finite: mv.dist.every(Number.isFinite), d0: mv.dist[0],
+        a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
+      document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
+      mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
+      const trace = { mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      for (const x of [...m.study.traces]) m.deleteTrace(x.id);
+      trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      m.seek(2);
       // Key point menu: right-click the end key, pick Snap (jump): the pin stays put until the key, then jumps.
       // Ctrl+C / Ctrl+V copy the key to the playhead (1.5 s).
       const kb = document.querySelector("#motion .mo-key.sel");
@@ -5576,7 +5714,32 @@ try {
       const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
       document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
+      // Interference over the study (Results → Interference): in a new study a placement key carries pin 3 onto pin 2 by the
+      // end, so that pair interferes from some time to the end; a time button seeks there; the list closes.
+      const prevStudy = m.studyId, prevTime = m.time;
+      m.newStudy();
+      m.edit(st => { st.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const ct = m.study.tracks.find(k => k.kind === "pose");
+      const to = [c[1].tf[3] - c[2].tf[3], c[1].tf[7] - c[2].tf[7], c[1].tf[11] - c[2].tf[11]];
+      m.edit(st => { st.tracks.find(k => k.id === ct.id).keys[1].d = to; });
+      document.querySelector('#motion [data-mo="clash"]').click();
+      const ci = m.clash?.items ?? [], pair = ci.find(x => [x.a, x.b].sort().join() === [c[1].id, id].sort().join());
+      const sp = pair?.spans ?? [];
+      const listed = document.querySelectorAll("#motion .mo-clashes .mo-clash").length, bands = document.querySelectorAll("#motion .mo-ruler .mo-cspan").length;
+      document.querySelector("#motion [data-clt]")?.click();
+      const sought = m.time;
+      const all0 = ci.length;
+      const box = document.querySelector('#motion input[data-mo="clashall"]'); box.checked = true; box.dispatchEvent(new Event("change"));
+      const withTouching = m.clash.items.length + 0, ignoredAfter = m.clash.ignored;
+      const box2 = document.querySelector('#motion input[data-mo="clashall"]'); box2.checked = false; box2.dispatchEvent(new Event("change"));
+      document.querySelector('#motion [data-mo="clashclose"]')?.click();
+      const closed = !document.querySelector("#motion .mo-clashes");
+      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      m.deleteStudy();
+      m.studyId = prevStudy; m.render(); m.seek(prevTime);
+      trace.interfere = interfere;
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
     let boxed = { err: "no track" }, stretched = { err: "no track" };
@@ -5636,6 +5799,18 @@ try {
     check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
       && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 4 && boxed.boxGone && boxed.left === 0,
       `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
+    const tc = pose.trace;
+    check(tc?.pickedTrace.picking === true && tc.pickedTrace.after === false && tc.pickedTrace.n === 1 && tc.n === tc.want
+      && tc.start.every(v => Math.abs(v) < 0.01) && Math.abs(tc.end[0]) < 0.01 && Math.abs(tc.end[1]) < 0.01 && Math.abs(tc.end[2] - 20) < 0.01
+      && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
+      && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
+      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
+      && Object.values(tc.relative).every(v => v === true)
+      && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
+      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
+      && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
@@ -7404,7 +7579,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 16 && mode === "note", `drawing: annotation tab shows the 16 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 17 && mode === "note", `drawing: annotation tab shows the 17 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -7584,6 +7759,28 @@ try {
     check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
     await np.keyboard.press("ArrowRight"); await settleCam();
     await np.evaluate(() => document.activeElement?.blur());
+    // An arrow pressed while Ctrl+1 is still turning the camera turns from where Ctrl+1 ends (exam bug 31).
+    await np.keyboard.press("Control+1"); await settleCam();
+    const cq0 = await cam();
+    await np.keyboard.press("Control+5");
+    await np.keyboard.press("Control+1");
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    const cq1 = await cam();
+    check(Math.abs(ang(cq0, cq1) - 15) < 0.5, `navigation: an arrow pressed mid-move turns from where the move ends (${ang(cq0, cq1).toFixed(2)}°)`);
+    // From Top and Bottom, ↑/↓ tilt the view (they did nothing there), and turning up from Front stops at the pole (exam bug 33).
+    const polar = c => { const u = c.p.map((x, i) => x - c.t[i]); return Math.acos(Math.max(-1, Math.min(1, u[2] / Math.hypot(...u)))) * 180 / Math.PI; };
+    await np.keyboard.press("Control+5"); await settleCam();
+    await np.keyboard.press("ArrowUp"); await settleCam();
+    const pt = polar(await cam());
+    await np.keyboard.press("Control+6"); await settleCam();
+    await np.keyboard.press("ArrowDown"); await settleCam();
+    const pb = polar(await cam());
+    await np.keyboard.press("Control+1"); await settleCam();
+    const ys = [];
+    for (let i = 0; i < 8; i++) { await np.keyboard.press("ArrowDown"); await settleCam(); const c = await cam(); ys.push(c.p[1] - c.t[1]); }
+    const pf = polar(await cam());
+    check(Math.abs(pt - 15) < 0.5 && Math.abs(pb - 165) < 0.5 && pf < 0.5 && ys.every(y => y <= 1e-6),
+      `navigation: ↑ from Top and ↓ from Bottom tilt 15°, ↓ from Front stops at the top without going over (${pt.toFixed(2)}°, ${pb.toFixed(2)}°, ${pf.toFixed(2)}°, ${JSON.stringify(ys.map(y => +y.toFixed(1)))})`);
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();
@@ -7882,8 +8079,33 @@ try {
     await settle();
     const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
     check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
-    // The end cap's thickness arrow: dragging it outwards thickens the plate.
+    // Corner treatment: Fillet swaps the Distance field for Radius and stores `fillet`.
     const capId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wCapCorner"]', "fillet");
+    await settle();
+    const capR = await mp.evaluate(() => ({ label: document.querySelector('#mc-pm [data-num="chamfer"]')?.closest("label")?.textContent?.trim(), fillet: window.__sv.model.mode().draft?.fillet }));
+    await mp.click("#mc-cancel");
+    await settle();
+    check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
+    const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
+    const len0 = await memLen();
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wCapDir"]', "in");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const capIn = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { dir: f.dir, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    const len1 = await memLen();
+    check(capIn.dir === "in" && !capIn.bad && JSON.stringify(capIn.plate) === "[40,40,5]" && Math.abs(len0 - len1 - 5) < 0.05, `weldments: inward end cap keeps the overall length (${JSON.stringify({ ...capIn, len0, len1 })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
     // Look at the cap from close by, so the arrow is on screen.
@@ -7995,6 +8217,22 @@ try {
     await settle();
     const moved = gs.key === "d1" ? gd.d1 : gd.d2, kept = gs.key === "d1" ? gd.d2 : gd.d1, was = gs.key === "d1" ? 50 : 70;
     check(gs.n === 2 && JSON.stringify(gs.keys) === '["d1","d2"]' && JSON.stringify(gs.labels) === '["50 mm","70 mm"]' && moved > was + 5 && moved < was + 40 && kept === 120 - was, `weldments: gusset leg arrows (${JSON.stringify({ gs, gd })})`);
+    // Gusset location: at the start, centred on it and moved in by an offset.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wloc"]', "start");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgside"]', "both");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wgOffset"]');
+    await settle();
+    const gLoc = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { loc: d?.loc, side: d?.side, off: d?.offset?.v, field: !!document.querySelector('#mc-pm [data-num="offset"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const glBad = await mp.evaluate(() => window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"));
+    check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();
@@ -8005,8 +8243,19 @@ try {
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
-    // Groups: the last line of that member in a new group, turned 90° on its own.
+    // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wMergeArcs"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const merged = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.kind === "member" && c.length > 700).map(c => [c.qty, c.length]) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(!merged.bad && JSON.stringify(merged.rows) === "[[1,757.1]]", `weldments: merged arc segment bodies (${JSON.stringify(merged)})`);
+    // Groups: the last line of that member in a new group, turned 90° on its own.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
     await settle();
     await mp.selectOption('#mc-pm select[data-k="wgroup:j3"]', "new");
@@ -8115,6 +8364,29 @@ try {
     const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
       `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
+    // The flange's length arrow (SolidWorks handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smflange").id));
+    await settle();
+    const fa = await mp.evaluate(() => {
+      const as = window.__sv.modeller.arrows ?? [], v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const a = as[0];
+      if (!a) return { n: 0 };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { n: as.length, key: a.key, dir: a.dir.toArray().map(x => Math.round(x * 1000) / 1000), tipZ: a.obj.position.z, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (fa.from) {
+      await mp.mouse.move(fa.from[0], fa.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(fa.from[0] + ((fa.to[0] - fa.from[0]) * i) / 6, fa.from[1] + ((fa.to[1] - fa.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const fd = await mp.evaluate(() => ({ len: window.__sv.model.mode().draft?.length?.v, v: window.__sv.model.last().props?.volume ?? 0 }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(fa.n === 1 && fa.key === "length" && fa.dir[2] === 1 && Math.abs(fa.tipZ - 25) < 1 && fa.label === "25 mm" && fd.len > 31 && fd.len < 39 && Math.abs(fd.v - (f1.v + T * 100 * (fd.len - 25))) < 1e-2,
+      `sheet metal: the Edge Flange length arrow sits on the flange tip and dragging it lengthens the flange (${JSON.stringify({ fa, fd })})`);
     // Flatten: a flat plate of the developed length, then the DXF with the outline and the bend line.
     await smMenu("Flatten");
     const ba = (Math.PI / 2) * (R + 0.42 * T);
@@ -8179,6 +8451,23 @@ try {
     const hdxf = (await import("node:fs")).readFileSync(await hdl.path(), "utf8");
     check(!hv.bad && hv.circles.length === 1 && Math.abs(hv.circles[0] - 4) < 1e-6 && Math.abs(hv0 - hv.v - Math.PI * 16 * T) < 1e-3 && (hdxf.match(/\nCIRCLE\n/g) ?? []).length === 1,
       `sheet metal: a hole cut after the sheet metal features shows in the flat pattern and its DXF (${JSON.stringify({ hv0, hv, circles: (hdxf.match(/\nCIRCLE\n/g) ?? []).length })})`);
+    // Edge flanges on the plate's front and right edges (they meet at a corner): mitred, with the corner gap in the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Mitre", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "fm", type: "smflange", name: "Edge-Flange9", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }, { faces: [`${b.id}:p0:top`, `${b.id}:p0:l2`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("fm"));
+    await settle();
+    const mt = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), mitres: (l.sheet?.panels ?? []).filter(p => p.outer.some(x => x.ent === "miter")).length, gap: document.querySelector('#mc-pm input[data-num="gap"]')?.value };
+    });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(!mt.bad && mt.mitres === 2 && mt.size[0] === 100 && mt.size[1] === 50 && mt.size[2] === 20 && mt.gap === "0.1",
+      `sheet metal: edge flanges on two edges meeting at a corner are mitred, corner gap in the panel (${JSON.stringify(mt)})`);
     await ctx.close();
   }
 
@@ -8348,6 +8637,91 @@ try {
     await pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     const names = await pg.$$eval("#tree .row-n", els => els.map(e => e.textContent.trim()));
     check(names.some(n => n.includes(want)) && !names.some(n => /[ÏËà÷åðí]/.test(n)), `STEP names in Windows-1251 read as Cyrillic in the model tree (${names.join(" | ")})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const st = (depth, w) => ({ nums: { "s1/dim/d1": { v: w }, "s1/dim/d2": { v: 60 }, "f1/depth": { v: depth } }, ints: {}, suppressed: [], vars: {}, material: null, ids: ["s1", "f1"] });
+    const part = { schema: 1, kind: "part", id: "d_drwcfg", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [{ id: "r1", t: "horizontal", e: ["l1"] }, { id: "r2", t: "horizontal", e: ["l3"] }, { id: "r3", t: "vertical", e: ["l2"] }, { id: "r4", t: "vertical", e: ["l4"] }], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }],
+        dims: [{ id: "d1", name: "D1", t: "hdistance", e: ["p1", "p2"], val: { v: 100 } }, { id: "d2", name: "D2", t: "vdistance", e: ["p2", "p3"], val: { v: 60 } }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ], configs: [{ name: "Default", state: st(20, 100) }, { name: "Tall", state: st(50, 80) }], config: "Default" };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const boxes = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => { const p = window.__sv.drw.placement(v.id); return { id: v.id, root: !v.parent, w: (p.box[2] - p.box[0]) / p.s, h: (p.box[3] - p.box[1]) / p.s, x: v.x, y: v.y, cfg: v.config ?? null }; }));
+    const b0 = await boxes(), front = b0.find(v => v.root);
+    const [fx, fy] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [front.x, front.y]);
+    await dp.mouse.click(fx, fy);
+    await dp.waitForSelector('#drw .drw-props [data-v="cfg"]');
+    const opts = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')].map(o => o.textContent));
+    await dp.selectOption('#drw .drw-props [data-v="cfg"]', "Tall");
+    await dp.waitForTimeout(200);
+    await ready();
+    const b1 = await boxes(), f1 = b1.find(v => v.root), kids = b1.filter(v => !v.root);
+    check(opts.join("|") === "Active (Default)|Default|Tall" && Math.abs(front.h - 20) < 0.6 && Math.abs(f1.h - 50) < 0.6 && Math.abs(f1.w - 80) < 0.6 && f1.cfg === "Tall"
+      && kids.some(k => Math.abs(k.w - 80) < 0.6) && kids.some(k => Math.abs(k.h - 50) < 0.6),
+      `drawing: a model view shows another configuration and its projected views follow (${JSON.stringify({ opts, before: b0, after: b1 })})`);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(300);
+    const ru = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')][0]?.textContent);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ru === "Активная (Default)", `drawing: configuration list in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: revision cloud ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwcloud", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cloud"]');
+    for (const [x, y] of [[30, 30], [90, 30], [90, 70], [30, 70], [30, 30]]) await clickSheet(x, y);
+    await dp.waitForTimeout(150);
+    const cl = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "cloud"); return { a: a && JSON.parse(JSON.stringify(a)), arcs: window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length, mode: window.__sv.drw.mode(), panel: !!document.querySelector('#drw .drw-props [data-d="carc"]') }; });
+    check(cl.a && cl.a.pts.length === 8 && cl.arcs === 10 + 7 + 10 + 7 && cl.mode === "none" && cl.panel, `drawing: revision cloud from four clicked corners, scallops of at most 6 mm (${JSON.stringify(cl)})`);
+    await dp.fill('#drw .drw-props [data-d="carc"]', "20");
+    await dp.press('#drw .drw-props [data-d="carc"]', "Enter");
+    await dp.waitForTimeout(150);
+    const arcs2 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length);
+    await clickSheet(60, 50);
+    await dp.waitForTimeout(100);
+    const inside = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="carc"]'));
+    await clickSheet(60, 30);
+    await dp.waitForTimeout(100);
+    const edge = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="carc"]'));
+    check(arcs2 === 3 + 2 + 3 + 2 && !inside && edge, `drawing: revision cloud arc size, picked on its outline only (${arcs2}, inside ${inside}, edge ${edge})`);
     await ctx.close();
   }
 

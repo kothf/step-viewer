@@ -111,12 +111,45 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const plate = rc.cut.find(c => c.kind === "plate")!;
   assert.deepEqual(plate.plate, [36, 36, 5]);
 
+  // Corner treatment: on the rounded SHS outline nothing is sharp, so the plate is unchanged.
+  const rcc = run(m, doc([k, mem, tr, { ...cap, chamfer: { v: 3 } } as Feature]));
+  near(rcc.volume, rc.volume, 1e-9);
+  // A flat bar's cap has four sharp corners: chamfered 3 mm, or rounded r 3.
+  const fb: Feature[] = [k, { ...mem, profile: "flat", size: "50x10", segs: [{ sketch: "k", ent: "beam" }] } as Feature];
+  const capF: Feature = { ...cap, inset: { v: 0 } } as Feature;
+  const v0 = run(m, doc([...fb, capF])).volume;
+  near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 } } as Feature])).volume, 4 * 4.5 * 5, 1e-6);
+  near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 }, fillet: true } as Feature])).volume, 4 * (9 - Math.PI * 9 / 4) * 5, 1e-6);
+
+  // Thickness direction. Inward keeps the overall length: the beam is cut back by 5 under a full-size plate.
+  const capIn = run(m, doc([k, mem, tr, { ...cap, inset: { v: 0 }, dir: "in" } as Feature]));
+  assert.deepEqual(capIn.cut.filter(c => c.kind === "member").map(c => c.length), [500, 375]);
+  assert.deepEqual(capIn.cut.find(c => c.kind === "plate")!.plate, [40, 40, 5]);
+  assert.equal(capIn.body!.names.filter(n => n === "m:beam:end").length, 1, "the new end face keeps the name");
+  // Internal: the plate fits the tube's inner outline (34 × 34), 1 mm clearance all round, flush with the end.
+  const capInt = run(m, doc([k, mem, tr, { ...cap, inset: { v: 1 }, dir: "internal" } as Feature]));
+  assert.deepEqual(capInt.cut.filter(c => c.kind === "member").map(c => c.length), [500, 380]);
+  assert.deepEqual(capInt.cut.find(c => c.kind === "plate")!.plate, [32, 32, 5]);
+  // A flat bar has no inside.
+  const bad = m.evaluate(doc([...fb, { ...capF, dir: "internal" } as Feature])).statuses.find(s => !s.ok);
+  assert.match(String(bad?.message ?? JSON.stringify(bad)), /hollow profile/);
+
   // Gusset under the beam against the post: 60 × 60 × 5 triangle.
   const beamBottom = rc.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rc.body!.faces[i])[2] - 280) < 1e-6)!;
   const g: Feature = { id: "g", type: "gusset", name: "Gusset1", face1: { name: beamBottom.n, hint: centroid(m, rc.body!.faces[beamBottom.i]) }, face2: pf, d1: { v: 60 }, d2: { v: 60 }, thickness: { v: 5 }, shape: "tri", loc: "mid" };
   const rg = run(m, doc([k, mem, tr, cap, g]));
   assert.equal(rg.info.length, 4);
   near(rg.volume - rc.volume, 0.5 * 60 * 60 * 5, 1e-6);
+  // Location along the corner: the plate's centre (its face on face 1) moves with offset and thickness side.
+  const yOf = (gf: Partial<Feature>) => { const r = run(m, doc([k, mem, tr, cap, { ...g, ...gf } as Feature])); const i = r.body!.names.indexOf("g:on1"); return centroid(m, r.body!.faces[i])[1]; };
+  const ym = yOf({}), ys = yOf({ loc: "start" } as Partial<Feature>), ye = yOf({ loc: "end" } as Partial<Feature>);
+  const dirIn = Math.sign(ym - ys);
+  near(Math.abs(ye - ym), Math.abs(ym - ys), 1e-9);
+  near(yOf({ loc: "start", side: "both" } as Partial<Feature>), ys - dirIn * 2.5, 1e-9);
+  near(yOf({ loc: "start", side: "out" } as Partial<Feature>), ys - dirIn * 5, 1e-9);
+  near(yOf({ loc: "start", offset: { v: 10 } } as Partial<Feature>), ys + dirIn * 10, 1e-9);
+  near(yOf({ loc: "end", offset: { v: 10 }, side: "out" } as Partial<Feature>), ye - dirIn * 10 + dirIn * 5, 1e-9);
+  near(yOf({ offset: { v: 4 } } as Partial<Feature>), ym + dirIn * 4, 1e-9);
 
   // Fillet bead where the beam's top face meets the post: 4 mm legs along the flat part of the top (40 - 2 × 6 corner radius).
   const beamTop = rg.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rg.body!.faces[i])[2] - 320) < 1e-6)!;
@@ -213,6 +246,11 @@ test("curved members: arcs of the path sketch are revolved, tangent joints stay 
   near(r.volume, A * (600 + 50 * Math.PI), 1e-4);
   assert.deepEqual(r.cut.map(c => [c.qty, c.length]).sort((x, y) => x[1] - y[1]), [[1, 157.1], [2, 300]]);
   assert.ok(r.body!.names.some(n => n.startsWith("m:a1:side:")) && r.body!.names.includes("m:a1:start") && r.body!.names.includes("m:a1:end"));
+  // Merge arc segment bodies: the three tangent segments become one bent member, one cut list item of the whole length.
+  const rm = run(m, doc([sk, { ...mem, id: "mm", mergeArcs: true }]));
+  assert.equal(rm.info.length, 1);
+  near(rm.volume, A * (600 + 50 * Math.PI), 1e-4);
+  assert.deepEqual(rm.cut.map(c => [c.qty, c.length, c.angle1, c.angle2]), [[1, 757.1, 0, 0]]);
   // A half circle leaving the line at a right angle: the corner is mitred.
   const sk2: SketchFeature = { id: "t", type: "sketch", name: "Path2", plane: { std: "XY" }, rels: [], dims: [], ents: [
     P("q0", 0, 0), P("q1", 300, 0), P("qc", 400, 0), P("q2", 500, 0),

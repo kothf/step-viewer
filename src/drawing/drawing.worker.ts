@@ -2,19 +2,22 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
-import type { Stair } from "./views";
-import { geometryDiff, project, readShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import type { Align, Stair } from "./views";
+import { geometryDiff, project, readShape, alignedShape, section, shadeTris, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
 import type { EdgeRef, PartDoc } from "../model/types";
 import { modelItems } from "./items";
+import { activate } from "../model/configs";
 
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
-  | { id: number; type: "project"; view: ViewDir; shade?: boolean }
-  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; exclude?: string[] }
+  | { id: number; type: "project"; view: ViewDir; shade?: boolean; cfg?: string }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; cfg?: string }
+  /** Another configuration of the loaded part (FR-DRW-010): built once, its facts returned like a load's. */
+  | { id: number; type: "config"; name: string }
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
@@ -50,6 +53,37 @@ function solidOwners(list: { id: string; shape: any; mat: string | null }[]): { 
   }
   return out;
 }
+/** The loaded part's document, for its other configurations, and those built so far by name. */
+let partDoc: PartDoc | null = null;
+const variants = new Map<string, { shape: any; mat: string | null }>();
+
+/** A part's solid with its topology and model items (dimensions, holes, threads, sketches). */
+function buildPart(doc: PartDoc): { shape: any; mat: string | null; extra: Record<string, unknown> } {
+  const md = new Modeller(oc), res = md.evaluate(doc);
+  if (!res.body) throw new Error("The part has no body yet.");
+  const body = res.body, shape = body.shape;
+  // A cosmetic thread's round edge, found by its persistent name.
+  const edgeCircle = (ref: EdgeRef) => {
+    try {
+      const ad = new oc.BRepAdaptor_Curve_2(md.resolveEdge(body, ref));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) return null;
+      const ci = ad.Circle(), l = ci.Location(), d = ci.Axis().Direction();
+      return { c: [l.X(), l.Y(), l.Z()] as V3, ax: [d.X(), d.Y(), d.Z()] as V3, r: ci.Radius() };
+    } catch { return null; }
+  };
+  let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
+  try { mi = modelItems(doc, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
+  return { shape, mat: doc.material?.name ?? null, extra: { topo: topology(oc, shape, body.names), ...mi } };
+}
+
+/** The shape (and material) a request draws: the loaded model, or one of the part's configurations. */
+function shapeOf(cfg?: string): { shape: any; mat: string | null } {
+  if (!cfg || !partDoc || cfg === partDoc.config) return { shape, mat: modelMat };
+  const v = variants.get(cfg);
+  if (!v) throw new Error(`Configuration "${cfg}" is not loaded`);
+  return v;
+}
+
 const post = (msg: unknown) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
@@ -67,24 +101,12 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       modelMat = null;
       if (!oc) throw new Error("Kernel not started");
       let extra = {};
+      partDoc = null;
+      variants.clear();
       if (r.part) {
-        const md = new Modeller(oc), res = md.evaluate(r.part);
-        if (!res.body) throw new Error("The part has no body yet.");
-        shape = res.body.shape;
-        modelMat = r.part.material?.name ?? null;
-        const body = res.body;
-        // A cosmetic thread's round edge, found by its persistent name.
-        const edgeCircle = (ref: EdgeRef) => {
-          try {
-            const ad = new oc.BRepAdaptor_Curve_2(md.resolveEdge(body, ref));
-            if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) return null;
-            const ci = ad.Circle(), l = ci.Location(), d = ci.Axis().Direction();
-            return { c: [l.X(), l.Y(), l.Z()] as V3, ax: [d.X(), d.Y(), d.Z()] as V3, r: ci.Radius() };
-          } catch { return null; }
-        };
-        let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
-        try { mi = modelItems(r.part, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
-        extra = { topo: topology(oc, shape, res.body.names), ...mi };
+        const b = buildPart(r.part);
+        shape = b.shape; modelMat = b.mat; extra = b.extra;
+        partDoc = r.part;
       } else if (r.asm) {
         // An assembly (FR-DRW-030): the shown components placed into one compound; face names get
         // the component id in front (`<comp>@<face>`) so an edge says which component it is on.
@@ -100,13 +122,22 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = { topo: topology(oc, shape), items: [], holes: [] }; }
       else throw new Error("Nothing to load");
       post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra });
+    } else if (r.type === "config") {
+      if (!partDoc) throw new Error("Only a part has configurations");
+      if (!partDoc.configs?.some(c => c.name === r.name)) throw new Error(`The part has no configuration "${r.name}"`);
+      const d: PartDoc = structuredClone(partDoc);
+      activate(d, r.name);
+      const b = buildPart(d);
+      variants.set(r.name, { shape: b.shape, mat: b.mat });
+      post({ id: r.id, ok: true, ...shapeInfo(oc, b.shape), ...b.extra });
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
-      const proj = project(oc, shape, r.view);
+      const sh = shapeOf(r.cfg).shape;
+      const proj = project(oc, sh, r.view);
       if (r.shade) {
         // Mesh chord error: 1/400 of the model's size, so the shading stays light even for big models.
-        const [lo, hi] = shapeInfo(oc, shape).box;
-        proj.shade = shadeTris(oc, shape, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 400));
+        const [lo, hi] = shapeInfo(oc, sh).box;
+        proj.shade = shadeTris(oc, sh, r.view, Math.max(0.01, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 400));
       }
       post({ id: r.id, ok: true, proj });
     } else if (r.type === "diff") {
@@ -126,8 +157,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true, proj: n ? project(oc, comp, r.view) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
+      const own0 = shapeOf(r.cfg), modelMat = own0.mat;
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
-      let cutShape = shape, keep: any, cutList = placedShapes.length ? placedShapes : [{ id: "", shape, mat: modelMat }];
+      let cutShape = own0.shape, keep: any, cutList = placedShapes.length ? placedShapes : [{ id: "", shape: own0.shape, mat: modelMat }];
       if (r.exclude?.length && placedShapes.length) {
         const out = (id: string) => r.exclude!.some(x => id === x || id.startsWith(`${x}/`));
         const b = new oc.BRep_Builder(), a = new oc.TopoDS_Compound(), k = new oc.TopoDS_Compound();
@@ -138,6 +170,15 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
           if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
           cutShape = a; keep = k; cutList = placedShapes.filter(pc => !out(pc.id));
         }
+      }
+      if (r.align) {
+        // Aligned section (FR-DRW-012): each component's half beyond the second leg is turned into the first leg's plane,
+        // component by component so the hatching still knows whose cut face is whose.
+        const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
+        b.MakeCompound(c);
+        cutList = cutList.map(pc => { const s = alignedShape(oc, pc.shape, r.align!); b.Add(c, s); return { ...pc, shape: s }; });
+        cutShape = c;
+        if (keep) keep = alignedShape(oc, keep, r.align);
       }
       const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep });
       const own = solidOwners(cutList);

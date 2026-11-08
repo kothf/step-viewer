@@ -54,6 +54,17 @@ export function eulerXYZ(t: Tf): V3 {
   return [x, y, z].map(a => (a * 180) / Math.PI) as V3;
 }
 
+/** The angles to show for `t`: the ones typed before (`typed`) while they still give this rotation, else
+ *  `eulerXYZ`. At ±90° about Y the X and Z turns share one axis, and reading the angles back from the
+ *  transform would show the X turn as 0 and fold it into Z, so the next typed box would lose it. */
+export function poseAngles(t: Tf, typed?: V3 | null): V3 {
+  if (typed) {
+    const r = fromPose([t[3], t[7], t[11]], typed);
+    if ([0, 1, 2, 4, 5, 6, 8, 9, 10].every(i => Math.abs(r[i] - t[i]) < 1e-9)) return [...typed] as V3;
+  }
+  return eulerXYZ(t);
+}
+
 /** The transform with this position and X-then-Y-then-Z rotation angles (degrees). */
 export function fromPose(p: V3, deg: V3): Tf {
   const [ax, ay, az] = deg.map(d => (d * Math.PI) / 180);

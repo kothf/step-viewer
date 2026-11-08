@@ -5,24 +5,25 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, dimGeo, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
-import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
+import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
-import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { fitLimits, splitFit } from "./iso286";
+import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -58,6 +59,9 @@ export interface DrawingHost {
   opened?(label: string): void;
 }
 
+/** Title block fields a note can link to with $PRP:"key" (FR-DRW-023). */
+const NOTE_PROP_KEYS: [string, string][] = [["title", "Title"], ["number", "Part number"], ["revision", "Revision"], ["material", "Material"], ["mass", "Mass"], ["company", "Company"], ["author", "Author"], ["checked", "Checked"], ["approved", "Approved"], ["date", "Date"], ["scale", "Scale"], ["sheet", "Sheet"], ["size", "Size"]];
+
 type Mode =
   | { kind: "none" }
   /** A model view follows the cursor. */
@@ -65,9 +69,9 @@ type Mode =
   /** Projected views come off `parent`. */
   | { kind: "projected"; parent: string | null; at: [number, number] | null }
   /** Section view (FR-DRW-012): pick the cutting line on a view (horizontal, vertical or through two points), then place the view. */
-  | { kind: "section"; how: "h" | "v" | "2p" | "off" | "half"; parent: string | null; p1: Pt | null; line: Line4 | null; at: Pt | null; pts?: Pt[]; path?: number[] }
+  | { kind: "section"; how: "h" | "v" | "2p" | "off" | "half" | "aligned"; parent: string | null; p1: Pt | null; line: Line4 | null; at: Pt | null; pts?: Pt[]; path?: number[] }
   /** Detail view (FR-DRW-013): click the centre, then the radius, then place. */
-  | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null }
+  | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null; prof?: boolean; pts?: Pt[]; outline?: number[] }
   /** Auxiliary view (FR-DRW-014): click a straight edge, then place the view square to it. */
   | { kind: "aux"; parent: string | null; line: Line4 | null; at: Pt | null }
   /** Crop view (FR-DRW-015): two corners of the rectangle on the selected view (model view axes). */
@@ -93,6 +97,8 @@ type AnnotMode =
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
   | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
+  /** Revision cloud: corners clicked on the sheet; the first corner again or Enter closes it. */
+  | { kind: "cloud"; view: null; pts: Pt[]; at: Pt | null }
   /** Geometric tolerance (FR-DRW-023): optionally click an edge for the leader, then place the frame. */
   | { kind: "gtol"; view: string | null; leader: GeoRef | null; circle?: boolean; at: Pt | null }
   /** Datum feature: click an edge, then place the letter. */
@@ -101,7 +107,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -112,7 +118,7 @@ const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-h
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
   ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
-  ["surf", "Surface finish"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+  ["surf", "Surface finish"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
 const ICON = {
@@ -156,7 +162,7 @@ export class DrawingWorkspace {
   private vb = { x: 0, y: 0, w: 420, h: 297 };
   private placements = new Map<string, Placement>();
   /** Text boxes of the drawn annotations (sheet mm), for picking. */
-  private annotHits: { id: string; box: [number, number, number, number]; view?: string }[] = [];
+  private annotHits: { id: string; box: [number, number, number, number]; view?: string; ring?: number[]; band?: number }[] = [];
   private dangling = new Set<string>();
   /** The selected annotation (views and annotations select one at a time). */
   private selA: string | null = null;
@@ -360,8 +366,13 @@ export class DrawingWorkspace {
               <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
               <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
               <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
+              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
             </div></div>
-          <button class="btn small" data-a="detail" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span></button>
+          <div class="drw-dd"><button class="btn small" data-a="detail" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span> ▾</button>
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
+              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
+            </div></div>
           <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
@@ -377,6 +388,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
+              <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
               <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
               <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
               <button role="menuitem" data-an="balloon">${esc(t("Balloon"))}</button>
@@ -392,8 +404,10 @@ export class DrawingWorkspace {
           <div class="drw-dd"><button class="btn small" data-a="export" aria-haspopup="menu" aria-expanded="false" title="${esc(t("PDF, SVG, DXF, PNG or print"))}">${ICON.exp}<span>${esc(t("Export"))}</span> ▾</button>
             <div class="drw-menu right" role="menu" hidden>
               <button role="menuitem" data-x="pdf">${esc(t("PDF (all sheets)"))}</button>
+              <button role="menuitem" data-x="pdf1">${esc(t("PDF (this sheet)"))}</button>
               <button role="menuitem" data-x="svg">${esc(t("SVG (this sheet)"))}</button>
               <button role="menuitem" data-x="dxf">${esc(t("DXF (this sheet)"))}</button>
+              <button role="menuitem" data-x="dxf2000">${esc(t("DXF 2000 (this sheet)"))}</button>
               <button role="menuitem" data-x="png">${esc(t("PNG 300 dpi (this sheet)"))}</button>
               <button role="menuitem" data-x="print">${esc(t("Print… (Ctrl+P)"))}</button>
             </div></div>
@@ -469,8 +483,10 @@ export class DrawingWorkspace {
     if (this.loading) s = t("Loading the model into the drawing kernel…");
     else if (m.kind === "model") s = t("Click on the sheet to place the {orient} view. Esc cancels.", { orient: t(ORIENT_NAMES[m.orient]).toLowerCase() });
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
+    else if (m.kind === "section" && !m.line && m.how === "aligned") s = t(!m.pts?.length ? "Click the end of the first leg on a view." : m.pts.length === 1 ? "Click the centre: the second leg turns about it into the first leg's plane." : "Click the end of the second leg.");
     else if (m.kind === "section" && !m.line && (m.how === "off" || m.how === "half")) s = !m.pts?.length ? t("Click the first point of the cutting line on a view.") : m.how === "half" ? (m.pts.length === 1 ? t("Click the centre: the cut stops there.") : t("Click where the step ends, square to the cut.")) : m.pts.length === 1 ? t("Click the end of the first cut.") : t("Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.");
     else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
+    else if (m.kind === "detail" && m.prof && !m.r) s = (m.pts?.length ?? 0) < 3 ? t("Click the corners of the detail profile on a view.") : t("Click more corners; click the first corner or press Enter to close the profile.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
     else if (m.kind === "altpos") s = m.comp ? t("Click where that point of the component goes in its other position.") : t("Click an edge of the component to show in another position.");
@@ -480,6 +496,7 @@ export class DrawingWorkspace {
     else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
+    else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
@@ -593,11 +610,11 @@ export class DrawingWorkspace {
   /** The view the current command would place at the cursor. */
   private previewView(): { view: DrawingView; parent?: string } | null {
     const m = this.mode;
-    if (m.kind === "section" && m.parent && m.line && m.at) return { view: this.sideViewAt("section", m.parent, m.line, m.at, m.path), parent: m.parent };
+    if (m.kind === "section" && m.parent && m.line && m.at) return { view: this.sideViewAt("section", m.parent, m.line, m.at, m.path, m.how === "aligned"), parent: m.parent };
     if (m.kind === "aux" && m.parent && m.line && m.at) return { view: this.sideViewAt("aux", m.parent, m.line, m.at), parent: m.parent };
     if (m.kind === "detail" && m.parent && m.c && m.r && m.at) {
       const par = findView(this.sheet, m.parent);
-      return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
+      return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, ...(m.outline ? { outline: m.outline } : {}), x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
     }
     if (m.kind === "model" && m.at) return { view: { id: "_pv", name: "", orient: m.orient, dir: m.dir, x: m.at[0], y: m.at[1], style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv" } };
     if (m.kind === "projected" && m.parent && m.at) {
@@ -964,8 +981,14 @@ export class DrawingWorkspace {
 
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
-    if (this.store) useStyle(this.doc.style);
-    return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh) };
+    if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
+    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = c && this.kernel.configs.get(c); return g ? factsCtx(g) : null; } };
+  }
+
+  /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
+  private factsOf(view: string, sh = this.sheet): ModelFacts | null {
+    const v = findView(sh, view), c = v && viewConfig(sh, v);
+    return (c && this.kernel.configs.get(c)) || this.facts;
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -973,6 +996,7 @@ export class DrawingWorkspace {
   private annotAt(p: Pt): string | null {
     for (let i = this.annotHits.length - 1; i >= 0; i--) {
       const h = this.annotHits[i], m = 0.8;
+      if (h.ring) { if (ringDist(h.ring, p[0], p[1]) <= (h.band ?? 6) * 0.6 + m) return h.id; continue; }
       if (p[0] >= h.box[0] - m && p[0] <= h.box[2] + m && p[1] >= h.box[1] - m && p[1] <= h.box[3] + m) return h.id;
     }
     return null;
@@ -998,11 +1022,12 @@ export class DrawingWorkspace {
   }
 
   private startAnnot(kind: AnnotMode["kind"], how: "chain" | "base" | "ord" = "chain") {
-    const free = kind === "note" || kind === "gtol" || kind === "surf";
+    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
-    if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
+    if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
+    else if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
@@ -1014,12 +1039,12 @@ export class DrawingWorkspace {
 
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
   private pickAt(viewId: string, p: Pt, only?: "circle"): Pick | null {
-    const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.facts?.topo;
+    const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
     const tol = this.snapTol();
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
-    const inDetail = (q: Pt) => v.kind !== "detail" || !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r;
+    const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
     const endOn = (e: MEdge) => e.t === "c" && !!e.ax && Math.abs(Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) - 1) < 1e-6;
     let best: Pick | null = null, bd = tol;
     if (!only) for (const e of topo.edges) {
@@ -1069,7 +1094,7 @@ export class DrawingWorkspace {
     const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
     if (p1 && (p0.kind === "line" || p1.kind === "line")) return { ...base, k: "al", refs: [p0.kind === "line" ? p0.ref : asPoint(p0), p1.kind === "line" ? p1.ref : asPoint(p1)] };
     const refs = picks.length === 1 ? [p0.ref] : [asPoint(p0), asPoint(p1)];
-    const g = dimGeo({ ...base, k: "al", refs }, P, this.facts?.topo ?? null);
+    const g = dimGeo({ ...base, k: "al", refs }, P, this.factsOf(viewId)?.topo ?? null);
     if (!g) return null;
     const [a, b] = g.pts, x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
     const flatY = y1 - y0 < 1e-6, flatX = x1 - x0 < 1e-6;
@@ -1087,8 +1112,8 @@ export class DrawingWorkspace {
     const v = findView(this.sheet, viewId);
     if (!v) return [];
     const { P, n } = projector(viewDir(this.sheet, v));
-    const inDetail = (q: Pt) => v.kind !== "detail" || !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r;
-    return holeEdges(this.facts?.topo ?? null, P, n, inDetail).map(e => edgeRef(e, "e"));
+    const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
+    return holeEdges(this.factsOf(viewId)?.topo ?? null, P, n, inDetail).map(e => edgeRef(e, "e"));
   }
 
   /** A point for chain, baseline and ordinate dimensions: a corner or a circle's centre (a line is no point). */
@@ -1100,7 +1125,7 @@ export class DrawingWorkspace {
   /** The dimensions one more point adds to a chain, baseline or ordinate set (FR-DRW-021), placed clear of the view:
    *  horizontal ones above it, vertical ones to its right, baseline ones stacked 7 mm apart. The axis comes from the first step. */
   private dimSetNext(m: Extract<AnnotMode, { kind: "dimset" }>, ref: GeoRef): { dims: DimAnnot[]; axis: "h" | "v" } | null {
-    const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = this.facts?.topo ?? null;
+    const vid = m.view, v = vid ? findView(this.sheet, vid) : undefined, pl = vid ? this.placements.get(vid) : undefined, topo = (vid ? this.factsOf(vid) : this.facts)?.topo ?? null;
     if (!vid || !v || !pl || !m.picks.length) return null;
     const { P } = projector(viewDir(this.sheet, v));
     const pt = (r: GeoRef) => { const q = refPoint(r, topo); return q ? P(q) : null; };
@@ -1122,6 +1147,7 @@ export class DrawingWorkspace {
   }
 
   private annotClick(m: AnnotMode, p: Pt) {
+    if (m.kind === "cloud") { this.cloudClick(m, p); return; }
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
@@ -1225,6 +1251,23 @@ export class DrawingWorkspace {
     this.renderOverlay();
   }
 
+  /** A corner of a revision cloud; clicking the first corner again (3+ corners) closes it. */
+  private cloudClick(m: Extract<AnnotMode, { kind: "cloud" }>, p: Pt) {
+    const f = m.pts[0];
+    if (f && m.pts.length >= 3 && Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishCloud(m); return; }
+    m.pts.push([round(p[0]), round(p[1])]);
+    this.renderStatus(); this.renderOverlay();
+  }
+
+  private finishCloud(m: Extract<AnnotMode, { kind: "cloud" }>) {
+    if (m.pts.length < 3) { toast(t("Click at least three corners that enclose an area.")); return; }
+    const [x0, y0] = m.pts[0], rev = (this.sheet.annots ?? []).find(a => a.t === "table" && a.kind === "rev") as TableAnnot | undefined;
+    const last = rev?.rows.length ? rev.rows[rev.rows.length - 1][0] : "";
+    this.addAnnot({ id: uid("a_"), t: "cloud", pos: [x0, y0], pts: m.pts.flatMap(([x, y]) => [round(x - x0), round(y - y0)]), ...(last ? { rev: last } : {}) }, "Revision cloud");
+    this.mode = { kind: "none" };
+    this.renderStatus(); this.renderOverlay();
+  }
+
   private addAnnot(a: Annot, label: string) {
     this.store!.change(label, d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(a); });
     if (a.t !== "dim") { this.selA = a.id; this.renderProps(); }
@@ -1240,7 +1283,7 @@ export class DrawingWorkspace {
   private footAt(viewId: string, ref: GeoRef, p: Pt) {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId);
     if (!v || !pl) return null;
-    return edgeFoot(ref, this.facts?.topo ?? null, projector(viewDir(this.sheet, v)).P, pl, p);
+    return edgeFoot(ref, this.factsOf(viewId)?.topo ?? null, projector(viewDir(this.sheet, v)).P, pl, p);
   }
 
   /** A revision table at the frame's top-right corner, or a general table at its top-left (FR-DRW-024). */
@@ -1279,6 +1322,14 @@ export class DrawingWorkspace {
   private annotPreview(H: number): string {
     const m = this.mode;
     if (!isAnnotMode(m)) return "";
+    if (m.kind === "cloud") {
+      const pts = m.at ? [...m.pts, m.at] : m.pts;
+      if (!pts.length) return "";
+      const d = pts.map((q, i) => `${i ? "L" : "M"}${q[0]} ${H - q[1]}`).join("");
+      const f = m.pts[0];
+      return `<path class="drw-edge on" d="${d}" fill="none"/>${f ? `<circle class="drw-snap" cx="${f[0]}" cy="${H - f[1]}" r="${this.snapTol() / 2.5}"/>` : ""}`
+        + (pts.length >= 3 ? `<g class="drw-preview">${svgBody(cloudPrims({ id: "_pc", t: "cloud", pos: [0, 0], pts: pts.flat() }).prims, H, "currentColor")}</g>` : "");
+    }
     const at = m.at;
     const vid = m.view ?? (at ? this.viewAt(at) : null);
     const pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
@@ -1296,17 +1347,17 @@ export class DrawingWorkspace {
       const hov = this.pickAt(vid, at);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
-        const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.facts?.topo ?? null);
+        const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
         if (d && g) s += `<g class="drw-preview">${svgBody(dimPrims(d, g, pl, this.ctx().dec).prims, H, "currentColor")}</g>`;
       }
     } else if (m.kind === "htable") {
-      if (!m.origin) { const ref = this.pointAt(vid, at), q = ref && refPoint(ref, this.facts?.topo ?? null); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
+      if (!m.origin) { const ref = this.pointAt(vid, at), q = ref && refPoint(ref, this.factsOf(vid)?.topo ?? null); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
       else {
         const pa: Annot = { id: "_pt", t: "htable", view: vid, origin: m.origin, holes: m.holes, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dimset") {
-      const topo = this.facts?.topo ?? null;
+      const topo = this.factsOf(vid)?.topo ?? null;
       for (const r of m.picks) { const q = refPoint(r, topo); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
       const ref = this.pointAt(vid, at), q = ref && refPoint(ref, topo);
       if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; }
@@ -1317,20 +1368,20 @@ export class DrawingWorkspace {
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
-        s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: this.facts?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: this.factsOf(vid)?.topo.cyls ?? [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "balloon") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
       else {
         const pos = fromSheet(pl, at[0], at[1]);
         const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
-        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
     return s;
@@ -1380,6 +1431,21 @@ export class DrawingWorkspace {
     this.store!.change(label, d => { const a = (d.sheets[this.sheetIdx].annots ?? []).find(x => x.id === id); if (a) fn(a); });
   }
 
+  /** Fit display choice and the ISO 286 limits the code gives at this size (FR-DRW-021). */
+  private fitFields(a: DimAnnot, size: number | undefined): string {
+    const code = a.tol?.fit ?? "", pair = code.includes("/");
+    const show = a.tol?.show ?? "code";
+    const sel = `<label class="drw-f">${esc(t("Show"))}<select data-d="fshow"${pair ? " disabled" : ""}>${([["code", "Code"], ["limits", "Deviations"], ["both", "Code and deviations"]] as const).map(([k, l]) => `<option value="${k}"${show === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
+    const sg = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(3).replace(/^0\.000$/, "0");
+    const row = (c: string) => { const l = size != null ? fitLimits(c, size) : null; return l ? `${c}: ${sg(l.up)} / ${sg(l.lo)}` : null; };
+    const parts = splitFit(code), codes = [parts.hole, parts.shaft].filter((c): c is string => !!c);
+    const rows = codes.map(row);
+    const note = !codes.length || rows.some(r => !r)
+      ? `<p class="drw-note drw-fitlim">${esc(t("ISO 286 has no limits for this code and size (letters D to S, grades 3 to 14, up to 500 mm)."))}</p>`
+      : `<p class="drw-note drw-fitlim" translate="no">${rows.map(r => esc(r!)).join("<br>")}</p>`;
+    return sel + note;
+  }
+
   private setTol(tt: Tol["t"] | "") {
     this.setAnnot("Tolerance", a => {
       if (a.t !== "dim") return;
@@ -1392,12 +1458,12 @@ export class DrawingWorkspace {
   private annotProps(a: Annot): string {
     const sh = this.sheet;
     if (a.t === "dim") {
-      const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.facts?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.facts?.topo ?? null) : null;
+      const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
       const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: undefined, txt: undefined }, g, this.ctx().dec).main) : "?";
       const tol = a.tol?.t ?? "";
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
       // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
-      const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.facts?.topo ?? null) : null;
+      const e0 = a.refs[0] && !("pt" in a.refs[0]) ? refEdge(a.refs[0], this.factsOf(a.view)?.topo ?? null) : null;
       const kinds: [DimAnnot["k"], string][] | null = (a.k === "rad" || a.k === "dia" || a.k === "arc") && e0?.t === "c"
         ? [["rad", "Radius"], ["dia", "Diameter"], ...((e0.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3 ? [["arc", "Arc length"] as [DimAnnot["k"], string]] : [])]
         : a.k === "ang" || a.k === "chamfer" ? [["ang", "Angle"], ["chamfer", "Chamfer"]] : null;
@@ -1415,12 +1481,18 @@ export class DrawingWorkspace {
         <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([["", "None"], ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as const).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
         ${tol && tol !== "fit" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
         ${tol === "dev" || tol === "limit" ? `<label class="drw-f">${esc(t("Lower"))}<input data-d="lo" inputmode="decimal" value="${a.tol?.lo ?? ""}"></label>` : ""}
-        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>` : ""}
+        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>${this.fitFields(a, g?.value)}` : ""}
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    if (a.t === "cloud") {
+      return `<fieldset class="pm-group"><legend>${esc(t("Revision cloud"))}</legend>
+        <label class="drw-f">${esc(t("Arc size (mm)"))}<input data-d="carc" inputmode="decimal" value="${a.arc ?? 6}"></label>
+        <label class="drw-f">${esc(t("Revision"))}<input data-d="crev" value="${esc(a.rev ?? "")}" maxlength="3" translate="no"></label>
+      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    }
     if (a.t === "hole") {
-      const e = refEdge(a.ref, this.facts?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
+      const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
         <label class="drw-f">${esc(t("Text"))}<textarea data-d="htxt" rows="3" translate="no" placeholder="${esc(auto)}">${esc(a.txt ?? "")}</textarea></label>
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
@@ -1488,6 +1560,7 @@ export class DrawingWorkspace {
     if (a.t !== "note") return del;
     return `<fieldset class="pm-group"><legend>${esc(t("Note"))}</legend>
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
+      <label class="drw-f">${esc(t("Link to property"))}<select data-d="nprop"><option value="">—</option>${NOTE_PROP_KEYS.map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label>
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
     </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
   }
@@ -1503,7 +1576,10 @@ export class DrawingWorkspace {
         else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
+        else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
+      else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "gtol" && k.startsWith("g:")) {
@@ -1533,13 +1609,13 @@ export class DrawingWorkspace {
 
   // ---------- section, detail and auxiliary views ----------
 
-  private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" = "h") {
+  private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" | "aligned" = "h", prof = false) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     // The first click picks the view (as in SolidWorks), unless there is only one.
     const parent = this.sheet.views.length === 1 ? this.sheet.views[0].id : null;
     if (kind === "section") this.mode = { kind, how, parent, p1: null, line: null, at: null, pts: [] };
-    else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null };
+    else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null, ...(prof ? { prof: true, pts: [] } : {}) };
     else this.mode = { kind, parent, line: null, at: null };
     this.renderStatus();
     this.renderOverlay();
@@ -1602,13 +1678,14 @@ export class DrawingWorkspace {
   }
 
   /** A section or auxiliary view of `parent` from `line`, on the cursor's side and lined up square to the line. */
-  private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[]): DrawingView {
+  private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[], aligned?: boolean): DrawingView {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
     const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
     const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
     const look: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
     const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: at[0], y: at[1], letter: nextLetter(this.doc.sheets), style: kind === "section" ? "hlr" : par?.style, tangent: par?.tangent };
     if (path) v.path = path;
+    if (aligned) v.aligned = true;
     const [x, y] = this.alignedAt(v, at);
     v.x = x; v.y = y;
     return v;
@@ -1630,10 +1707,11 @@ export class DrawingWorkspace {
   }
 
   /** Projects both sides of a section/aux line ahead, so the preview has its lines when the cursor gets there. */
-  private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[]) {
+  private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[], aligned?: boolean) {
     for (const look of [1, -1] as const) {
       const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: 0, y: 0 };
       if (path) v.path = path;
+      if (aligned) v.aligned = true;
       const sh = this.sheetWith(v);
       void this.kernel.request(viewReq(sh, v)).then(() => this.renderOverlay(), () => {});
     }
@@ -1642,9 +1720,9 @@ export class DrawingWorkspace {
   private kindClick(m: Extract<Mode, { kind: "section" | "detail" | "aux" }>, p: Pt) {
     const id = this.kindParent(m, p);
     if (m.kind === "section") {
-      if (m.line && m.parent) { this.placeKind(this.sideViewAt("section", m.parent, m.line, p, m.path)); return; }
+      if (m.line && m.parent) { this.placeKind(this.sideViewAt("section", m.parent, m.line, p, m.path, m.how === "aligned")); return; }
       if (!id || !this.placements.get(id)) return;
-      if (m.how === "off" || m.how === "half") { this.pathClick(m, id, p); return; }
+      if (m.how === "off" || m.how === "half" || m.how === "aligned") { this.pathClick(m, id, p); return; }
       const sp = this.snapIn(id, p).m;
       if (m.how !== "2p") m.line = this.cutLine(id, m.how, sp);
       else if (!m.p1) { m.parent = id; m.p1 = sp; this.sel = id; this.renderStatus(); this.renderOverlay(); return; }
@@ -1657,6 +1735,7 @@ export class DrawingWorkspace {
       this.warmSides("section", id, m.line);
     } else if (m.kind === "detail") {
       if (m.r && m.c && m.parent) { const pv = this.previewView(); if (pv) this.placeKind(pv.view); return; }
+      if (m.prof) { this.profileClick(m, id, p); return; }
       if (!id || !this.placements.get(id)) return;
       if (!m.c) { m.parent = id; m.c = this.snapIn(id, p).m; this.sel = id; }
       else {
@@ -1683,7 +1762,7 @@ export class DrawingWorkspace {
    */
   private pathPoint(m: Extract<Mode, { kind: "section" }>, id: string, p: Pt): Pt {
     const sp = this.snapIn(id, p).m, pts = m.pts ?? [];
-    if (pts.length < 2) return sp;
+    if (pts.length < 2 || m.how === "aligned") return sp;
     const [a, b] = pts, last = pts[pts.length - 1];
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, e: Pt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], n: Pt = [-e[1], e[0]];
     const dx = sp[0] - last[0], dy = sp[1] - last[1], te = dx * e[0] + dy * e[1], tn = dx * n[0] + dy * n[1];
@@ -1699,10 +1778,10 @@ export class DrawingWorkspace {
     if (id !== m.parent) return;
     const q = this.pathPoint(m, id, p), last = pts[pts.length - 1];
     const pl = this.placements.get(id)!, [lx, ly] = toSheet(pl, last[0], last[1]);
-    if (Math.hypot(p[0] - lx, p[1] - ly) < this.snapTol() && pts.length >= 3) { this.finishPath(m); return; }
+    if (Math.hypot(p[0] - lx, p[1] - ly) < this.snapTol() && pts.length >= 3 && m.how !== "aligned") { this.finishPath(m); return; }
     if (Math.hypot(q[0] - last[0], q[1] - last[1]) < 1e-6) return;
     pts.push(q);
-    if (m.how === "half" && pts.length === 3) { this.finishPath(m); return; }
+    if ((m.how === "half" || m.how === "aligned") && pts.length === 3) { this.finishPath(m); return; }
     this.renderStatus(); this.renderOverlay();
   }
 
@@ -1710,8 +1789,17 @@ export class DrawingWorkspace {
   private finishPath(m: Extract<Mode, { kind: "section" }>) {
     const pts = m.pts ?? [];
     if (pts.length < 2 || !m.parent) return;
-    m.line = [pts[0][0], pts[0][1], pts[1][0], pts[1][1]];
     const path = pts.flatMap(q => [Math.round(q[0] * 1e4) / 1e4, Math.round(q[1] * 1e4) / 1e4]);
+    if (m.how === "aligned") {
+      // Aligned section: end 1, centre, end 2; the first leg is the line the view looks square to.
+      if (pts.length !== 3 || !alignedLegs(path)) { toast(t("The two legs of an aligned section must meet at an angle.")); m.pts = pts.slice(0, 2); this.renderStatus(); this.renderOverlay(); return; }
+      m.line = [path[0], path[1], path[2], path[3]];
+      m.path = path;
+      this.warmSides("section", m.parent, m.line, m.path, true);
+      this.renderStatus(); this.renderOverlay();
+      return;
+    }
+    m.line = [pts[0][0], pts[0][1], pts[1][0], pts[1][1]];
     m.path = pts.length >= 3 && cutLegs(path) ? path : undefined;
     if (pts.length >= 3 && !m.path) { toast(t("Every leg of the cutting path must run along or square to the first.")); m.line = null; return; }
     this.warmSides("section", m.parent, m.line, m.path);
@@ -1792,6 +1880,36 @@ export class DrawingWorkspace {
       if (Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishBroken(m); return; }
     }
     m.pts.push(fromSheet(pl, p[0], p[1]));
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  /** Detail profile (FR-DRW-013): corners on one view; a click on the first corner (or Enter) closes it. */
+  private profileClick(m: Extract<Mode, { kind: "detail" }>, id: string | null, p: Pt) {
+    const pts = m.pts ?? (m.pts = []);
+    if (!pts.length) { if (!id || !this.placements.get(id)) return; m.parent = id; this.sel = id; }
+    const pl = this.placements.get(m.parent!);
+    if (!pl) return;
+    if (pts.length >= 3) {
+      const f = toSheet(pl, pts[0][0], pts[0][1]);
+      if (Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishProfile(m); return; }
+    }
+    pts.push(fromSheet(pl, p[0], p[1]));
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private finishProfile(m: Extract<Mode, { kind: "detail" }>) {
+    const pts = m.pts ?? [];
+    const outline = pts.flat();
+    // A profile with no area (all corners on one line) can't frame anything.
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    if (pts.length < 3 || Math.abs(a) < 1e-6) { toast(t("Click at least three corners that enclose an area."), true); return; }
+    const b = polyBox(outline), c: Pt = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    let r = 0;
+    for (const p of pts) r = Math.max(r, Math.hypot(p[0] - c[0], p[1] - c[1]));
+    m.c = c; m.r = Math.round(r * 100) / 100 || 0.01; m.outline = outline;
     this.renderStatus();
     this.renderOverlay();
   }
@@ -1923,7 +2041,7 @@ export class DrawingWorkspace {
       const poly = (q: Pt[]) => q.length < 2 ? "" : `<polyline class="drw-cut" fill="none" points="${q.map(r => { const [x, y] = toSheet(pl, r[0], r[1]); return `${x},${H - y}`; }).join(" ")}"/>`;
       if (m.line && m.path) { const q: Pt[] = []; for (let i = 0; i + 1 < m.path.length; i += 2) q.push([m.path[i], m.path[i + 1]]); return poly(q); }
       if (m.line) return L(m.line, "drw-cut");
-      if (m.how === "off" || m.how === "half") {
+      if (m.how === "off" || m.how === "half" || m.how === "aligned") {
         const pts = m.pts ?? [];
         if (!pts.length) { if (at) { const sp = this.snapIn(id, at); if (sp.snap) s += dot(sp.m); } return s; }
         return poly(at ? [...pts, this.pathPoint(m, id, at)] : pts) + pts.map(dot).join("");
@@ -1933,6 +2051,11 @@ export class DrawingWorkspace {
       if (m.how === "2p") { if (m.p1) s += L([m.p1[0], m.p1[1], sp.m[0], sp.m[1]], "drw-cut") + dot(m.p1); }
       else s += L(this.cutLine(id, m.how, sp.m), "drw-cut");
       if (sp.snap) s += dot(sp.m);
+    } else if (m.kind === "detail" && m.prof) {
+      const pts = m.outline ? Array.from({ length: m.outline.length / 2 }, (_, i): Pt => [m.outline![2 * i], m.outline![2 * i + 1]]) : m.pts ?? [];
+      const q = m.outline ? [...pts, pts[0]] : at && pts.length ? [...pts, fromSheet(pl, at[0], at[1])] : pts;
+      if (q.length >= 2) s += `<polyline class="drw-cut" fill="none" points="${q.map(r => { const [x, y] = toSheet(pl, r[0], r[1]); return `${x},${H - y}`; }).join(" ")}"/>`;
+      if (!m.outline) s += pts.map(dot).join("");
     } else if (m.kind === "detail") {
       if (!m.c) { if (at) { const sp = this.snapIn(id, at); if (sp.snap) s += dot(sp.m); } return s; }
       const [cx, cy] = toSheet(pl, m.c[0], m.c[1]);
@@ -2021,6 +2144,7 @@ export class DrawingWorkspace {
           <label class="drw-f">${esc(t("Name"))}<input data-v="name" value="${esc(v.name)}" translate="no"></label>
           ${v.kind ? this.kindProps(v) : v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
           <label class="drw-f">${esc(t("Orientation"))}<select data-v="orient">${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<option value="${o}"${o === (v.orient ?? "front") ? " selected" : ""}>${esc(t(ORIENT_NAMES[o]))}</option>`).join("")}</select></label>`}
+          ${this.configField(v)}
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Scale"))}</legend>
           <label class="drw-f">${esc(t("Scale"))}<select data-v="scale"><option value="">${esc(v.parent ? t("Parent's scale") : t("Sheet scale ({s})", { s: scaleText(sh.scale) }))}</option>${SCALES.map(s => `<option value="${scaleText(s)}"${own === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${own && !SCALES.some(s => scaleText(s) === own) ? `<option value="${own}" selected>${own}</option>` : ""}<option value="custom">${esc(t("Custom…"))}</option></select></label>
@@ -2096,6 +2220,7 @@ export class DrawingWorkspace {
     }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
+    if (b.dataset.det) { this.closeMenus(); this.startKind("detail", "h", b.dataset.det === "profile"); return; }
     if (b.dataset.an) {
       this.closeMenus();
       const an = b.dataset.an;
@@ -2133,7 +2258,7 @@ export class DrawingWorkspace {
     switch (a) {
       case "back": this.hide(); break;
       case "std3": this.cancelMode(); this.standard3(); break;
-      case "model": case "export": case "section": case "annot": {
+      case "model": case "export": case "section": case "annot": case "detail": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
         this.closeMenus();
         menu.hidden = !open;
@@ -2142,7 +2267,6 @@ export class DrawingWorkspace {
         break;
       }
       case "proj": this.startProjected(); break;
-      case "detail": this.startKind("detail"); break;
       case "aux": this.startKind("aux"); break;
       case "flip": this.flipSel(); break;
       case "crop": this.startTrim("crop"); break;
@@ -2207,11 +2331,20 @@ export class DrawingWorkspace {
   }
 
   /** Extra properties of section, detail and auxiliary views. */
+  /** A part's configuration for a model view (FR-DRW-010); views made from it follow theirs. */
+  private configField(v: DrawingView): string {
+    const src = this.doc.source;
+    if (src.kind !== "part" || !src.doc.configs?.length || v.kind || v.parent) return "";
+    const act = src.doc.config ?? src.doc.configs[0].name;
+    return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${src.doc.configs.map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+  }
+
   private kindProps(v: DrawingView): string {
     const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
     let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
       <label class="drw-f">${esc(t("Letter"))}<input data-v="letter" value="${esc(v.letter ?? "")}" maxlength="3" translate="no"></label>`;
-    if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
+    if (v.kind === "detail" && v.outline) s += "";
+    else if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
     else s += `<div class="row"><button class="btn small" data-a="flip" title="${esc(t("Look at the other side of the line"))}">${esc(t("Flip direction"))}</button></div>`;
     if (v.kind === "section") {
       s += this.hatchFields(v);
@@ -2320,6 +2453,7 @@ export class DrawingWorkspace {
     if (el.dataset.d) { this.onAnnotInput(el); return; }
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
+    else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; });
     else if (vk === "orient") {
       const o = val as Orient;
       const c = o === "current" ? this.host.currentView() : null;
@@ -2405,6 +2539,8 @@ export class DrawingWorkspace {
     else if (typing || mod || e.altKey) used = false;
     else if (k === "escape") { if (this.mode.kind !== "none") this.cancelMode(); else if (this.el.querySelector(".drw-menu:not([hidden])")) this.closeMenus(); else if (this.sel || this.selA) { this.sel = null; this.selA = null; this.renderAll(); } else used = false; }
     else if (k === "enter" && this.mode.kind === "brokenout" && (tgt as Element) === this.svg) this.finishBroken(this.mode);
+    else if (k === "enter" && this.mode.kind === "cloud" && (tgt as Element) === this.svg) this.finishCloud(this.mode);
+    else if (k === "enter" && this.mode.kind === "detail" && this.mode.prof && !this.mode.r && (this.mode.pts?.length ?? 0) >= 3 && (tgt as Element) === this.svg) this.finishProfile(this.mode);
     else if (k === "enter" && this.mode.kind === "section" && !this.mode.line && (this.mode.pts?.length ?? 0) >= 2 && (tgt as Element) === this.svg) this.finishPath(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
     else if ((k === "delete" || k === "backspace") && this.selA && (tgt as Element) === this.svg) this.deleteAnnot();
@@ -2439,7 +2575,7 @@ export class DrawingWorkspace {
     return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p), this.ctx(sh));
   }
 
-  async exportAs(kind: "pdf" | "svg" | "dxf" | "png" | "print") {
+  async exportAs(kind: "pdf" | "pdf1" | "svg" | "dxf" | "dxf2000" | "png" | "print") {
     if (!this.store) return;
     const sheets = kind === "pdf" || kind === "print" ? this.doc.sheets : [this.sheet];
     try {
@@ -2450,15 +2586,16 @@ export class DrawingWorkspace {
     const out = sheets.map(sh => { const [W, H] = sheetSize(sh); return { prims: this.composed(sh).prims, W, H }; });
     try {
       if (kind === "svg") this.host.download(new Blob([sheetSvg(out[0].prims, out[0].W, out[0].H)], { type: "image/svg+xml" }), `${base}-${this.sheet.name}.svg`);
+      else if (kind === "dxf2000") this.host.download(new Blob([sheetDxf2000(out[0].prims, out[0].W, out[0].H)], { type: "application/dxf" }), `${base}-${this.sheet.name}.dxf`);
       else if (kind === "dxf") this.host.download(new Blob([sheetDxf(out[0].prims, out[0].W, out[0].H)], { type: "application/dxf" }), `${base}-${this.sheet.name}.dxf`);
       else if (kind === "png") {
         const font = await (await fetch(fontUrl)).arrayBuffer();
         const r = await sheetPng(out[0].prims, out[0].W, out[0].H, font, 300);
         this.host.download(r.blob, `${base}-${this.sheet.name}.png`);
         if (r.dpi < 300) toast(t("The sheet is large: PNG saved at {dpi} dpi.", { dpi: r.dpi }));
-      } else if (kind === "pdf") {
+      } else if (kind === "pdf" || kind === "pdf1") {
         const font = await (await fetch(fontUrl)).arrayBuffer();
-        this.host.download(await sheetsPdf(out, font, this.fields().title), `${base}.pdf`);
+        this.host.download(await sheetsPdf(out, font, this.fields().title), kind === "pdf1" ? `${base}-${this.sheet.name}.pdf` : `${base}.pdf`);
       } else { printSheets(out, base); return; }
       toast(t("Exported {kind}", { kind: kind.toUpperCase() }), "success");
     } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }

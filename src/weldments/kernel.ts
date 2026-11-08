@@ -6,8 +6,8 @@ import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../mode
 import { FeatureError, type Named } from "../kernel/model";
 import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
-import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldFeature } from "./types";
-import { cornerKey } from "./types";
+import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
+import { capDir, cornerKey } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
 export interface WeldHost {
@@ -344,7 +344,31 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
     const piece = pieceNear(h, body, segMid(s));
     return s.arc ? unify(h, piece) : piece;
   });
-  return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...items]);
+  return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...(f.mergeArcs ? mergeTangent(h, f, segs, items, tol) : items)]);
+}
+
+/** Merge arc segment bodies: segments that meet end to end and run on tangent, one of them an arc, are fused into one body. */
+function mergeTangent(h: WeldHost, f: MemberFeature, segs: PathSeg[], items: Named[], tol: number): Named[] {
+  const root = segs.map((_s, i) => i);
+  const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
+  const ends = (i: number) => [{ p: segs[i].a, out: mul(segs[i].wa, -1) }, { p: segs[i].b, out: segs[i].wb }];
+  segs.forEach((s, i) => segs.forEach((t, j) => {
+    if (j <= i || (!s.arc && !t.arc)) return;
+    for (const ei of ends(i)) for (const ej of ends(j)) {
+      if (d3(ei.p, ej.p) >= tol || dot(ei.out, ej.out) > -1 + 1e-6) continue;
+      // Only where the two meet alone: a third member at the point keeps them apart.
+      if (segs.some((_u, k) => k !== i && k !== j && ends(k).some(e => d3(e.p, ei.p) < tol))) continue;
+      root[find(j)] = find(i);
+    }
+  }));
+  const groups = new Map<number, number[]>();
+  segs.forEach((_s, i) => { const r = find(i); groups.set(r, [...(groups.get(r) ?? []), i]); });
+  return [...groups.values()].map(g => {
+    if (g.length === 1) return items[g[0]];
+    let body = items[g[0]];
+    for (const k of g.slice(1)) body = bool(h, "fuse", body, items[k], f.id);
+    return unify(h, pieceNear(h, body, segMid(segs[g[0]])));
+  });
 }
 
 /** The member feature and segment a member body's face belongs to. */
@@ -518,13 +542,46 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.faces.length) throw new FeatureError("E-WLD-CAP", "Pick the end faces of members to cap.");
   const t = f.thickness.v;
+  const how = capDir(f);
+  // "in": each capped member is cut back by the thickness (a prism of its whole end face), so the overall length stays.
+  const trims: { face: any; tool: Named }[] = [];
   const caps = f.faces.map((ref, k): Named => {
     const face = h.resolveFace(prev, ref);
     const ad = new oc.BRepAdaptor_Surface_2(face, true);
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-WLD-CAP", "An end cap goes on a flat end face.");
     const fr = h.planeFrame({ face: ref }, prev, frames);
-    let wire = oc.BRepTools.OuterWire(face);
     const area = (w: any) => { const ff = new oc.BRepBuilderAPI_MakeFace_15(w, true).Face(); const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(ff, p, false, false); return Math.abs(p.Mass()); };
+    let wire = oc.BRepTools.OuterWire(face);
+    if (how === "internal") {
+      // The hollow profile's inner outline: the largest wire of the end face other than the outer one.
+      const map = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, map);
+      let best: any = null, ba = 0;
+      for (let i = 1; i <= map.Extent(); i++) {
+        const w = oc.TopoDS.Wire_1(map.FindKey(i));
+        if (w.IsSame(wire)) continue;
+        const a = area(w);
+        if (a > ba) { ba = a; best = w; }
+      }
+      if (!best) throw new FeatureError("E-WLD-CAPIN", "An internal end cap needs a hollow profile (a tube or pipe).");
+      wire = best;
+    }
+    if (how === "in") {
+      const whole = new oc.BRepBuilderAPI_MakeFace_15(oc.BRepTools.OuterWire(face), true).Face();
+      const v = mul(fr.n, -t);
+      const shape = new oc.BRepPrimAPI_MakePrism_1(whole, new oc.gp_Vec_4(v[0], v[1], v[2]), false, true).Shape();
+      const faces = h.sub(shape, "FACE");
+      // The far cap becomes the member's new end face, so it keeps the end face's name.
+      const names = faces.map((x, i) => {
+        const fa = new oc.BRepAdaptor_Surface_2(x, true);
+        if (fa.GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
+          const p = fa.Plane().Location();
+          if (Math.abs(Math.abs(dot(sub([p.X(), p.Y(), p.Z()], fr.o), fr.n)) - t) < 1e-6 * (1 + t) && Math.abs(dot([fa.Plane().Axis().Direction().X(), fa.Plane().Axis().Direction().Y(), fa.Plane().Axis().Direction().Z()], fr.n)) > 0.999) return ref.name;
+        }
+        return `${f.id}:c${k}:trim:${i}`;
+      });
+      trims.push({ face, tool: { shape, faces, names } });
+    }
     if (f.inset.v > 1e-9) {
       const off = (d: number) => {
         const mk = new oc.BRepOffsetAPI_MakeOffset_3(wire, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
@@ -539,23 +596,30 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
       wire = w;
     }
     const base = new oc.BRepBuilderAPI_MakeFace_15(wire, true).Face();
-    const dir = mul(fr.n, f.inward ? -t : t);
+    const dir = mul(fr.n, how === "out" ? t : -t);
     const mk = new oc.BRepPrimAPI_MakePrism_1(base, new oc.gp_Vec_4(dir[0], dir[1], dir[2]), false, true);
     let shape = mk.Shape();
     if (f.chamfer && f.chamfer.v > 1e-9) {
       // Straight edges along the thickness are the plate's corners.
-      const ch = new oc.BRepFilletAPI_MakeChamfer(shape);
+      const ch = f.fillet ? new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational) : new oc.BRepFilletAPI_MakeChamfer(shape);
+      const what = f.fillet ? "The plate corners could not be rounded." : "The plate corners could not be chamfered.";
       let any = false;
+      const plates = h.sub(shape, "FACE");
+      const planeOf = (x: any): V3 | null => { const fa = new oc.BRepAdaptor_Surface_2(x, true); if (fa.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null; const d = fa.Plane().Axis().Direction(); return [d.X(), d.Y(), d.Z()]; };
       for (const e of h.sub(shape, "EDGE")) {
         const ca = new oc.BRepAdaptor_Curve_2(e);
         if (ca.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) continue;
         const p0 = ca.Value(ca.FirstParameter()), p1 = ca.Value(ca.LastParameter());
         const d = unit([p1.X() - p0.X(), p1.Y() - p0.Y(), p1.Z() - p0.Z()]);
-        if (Math.abs(dot(d, fr.n)) > 0.999) { ch.Add_2(f.chamfer.v, e); any = true; }
+        if (Math.abs(dot(d, fr.n)) <= 0.999) continue;
+        // Only sharp corners: two flat sides at an angle (a rounded outline's tangent seams are left alone).
+        const ns = plates.filter(x => h.sub(x, "EDGE").some(y => y.IsSame(e))).map(planeOf);
+        if (ns.length !== 2 || !ns[0] || !ns[1] || Math.abs(dot(ns[0], ns[1])) > 0.999) continue;
+        ch.Add_2(f.chamfer.v, e); any = true;
       }
       if (any) {
-        try { ch.Build(new oc.Message_ProgressRange_1()); if (ch.IsDone()) shape = ch.Shape(); else h.warning = "The plate corners could not be chamfered."; }
-        catch { h.warning = "The plate corners could not be chamfered."; }
+        try { ch.Build(new oc.Message_ProgressRange_1()); if (ch.IsDone()) shape = ch.Shape(); else h.warning = what; }
+        catch { h.warning = what; }
       }
     }
     if (h.volume(shape) < 0) shape = shape.Reversed();
@@ -570,7 +634,11 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
     });
     return { shape, faces, names };
   });
-  return h.compoundOf([...h.bodyList(prev), ...caps]);
+  const bodies = h.bodyList(prev).map(b => {
+    for (const tr of trims) if (b.faces.some(x => x.IsSame(tr.face))) b = bool(h, "cut", b, tr.tool, f.id);
+    return b;
+  });
+  return h.compoundOf([...bodies, ...caps]);
 }
 
 /** Gusset: a plate in the corner between two flat faces that meet, centred on (or flush with an end of) their common line. */
@@ -590,7 +658,11 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   let t0 = Math.max(a0, b0), t1 = Math.min(a1, b1);
   if (t1 < t0) { t0 = Math.min(a0, b0); t1 = Math.max(a1, b1); }
   const th = f.thickness.v;
-  const tc = f.loc === "start" ? t0 + th / 2 : f.loc === "end" ? t1 - th / 2 : (t0 + t1) / 2;
+  // The location point (moved by the offset), then the plate's centre from the thickness side.
+  const off = f.offset?.v ?? 0, side = f.loc === "mid" ? "both" : f.side ?? "in";
+  const R = f.loc === "start" ? t0 + off : f.loc === "end" ? t1 - off : (t0 + t1) / 2 + off;
+  const inward = f.loc === "end" ? -1 : 1;
+  const tc = side === "both" ? R : R + inward * (side === "in" ? 1 : -1) * th / 2;
   const P = add(o, mul(L, tc));
   // Legs: along each face, away from the other (into the space the other face looks at).
   const leg = (n: V3, other: V3) => { let d = unit(cross(L, n)); if (dot(d, other) < 0) d = mul(d, -1); return d; };
@@ -791,6 +863,16 @@ export function evalWeld(h: WeldHost, f: WeldFeature, doc: PartDoc, body: Named 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
 /** A curved member's length on its path: the arc between the end faces, measured by the angle about the axis of the points of each end face nearest the start and end, and straight runs beyond. */
+/** The faces of a body whose names start with `prefix`, as a compound. */
+function facesOf(h: WeldHost, part: Named, prefix: string, skip?: (face: any) => boolean): Named {
+  const oc = h.oc;
+  const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
+  b.MakeCompound(c);
+  const faces: any[] = [], names: string[] = [];
+  part.faces.forEach((x, i) => { if (part.names[i].startsWith(prefix) && !skip?.(x)) { b.Add(c, x); faces.push(x); names.push(part.names[i]); } });
+  return { shape: c, faces, names };
+}
+
 function arcLength(h: WeldHost, part: Named, s: PathSeg): number {
   const { c, n, r, ang } = s.arc!;
   const x = unit(sub(s.a, c)), y = cross(n, x);
@@ -826,19 +908,32 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
     if (!owner) continue;
     try {
       if (owner.type === "member") {
-        const ent = part.names.find(n => n.startsWith(`${owner.id}:`))!.split(":")[1];
-        const ref = owner.segs.find(s => s.ent === ent);
-        if (!ref) continue;
-        const s = segOf(ref, doc, frames);
-        // Straight: the extent along the segment; curved: the length along the arc's centreline (plus straight runs past its ends).
-        const ts = edgePoints(h, part.shape).map(p => dot(sub(p, s.a), s.w));
-        const length = s.arc ? arcLength(h, part, s) : Math.max(...ts) - Math.min(...ts);
-        const ang = (end: string) => {
-          const i = part.names.findIndex(n => n === `${owner.id}:${ent}:${end}`);
-          const n = i >= 0 ? planeN(part.faces[i]) : null;
-          return n ? (Math.acos(Math.min(1, Math.abs(dot(n, end === "start" ? s.wa : s.wb)))) * 180) / Math.PI : 0;
-        };
-        const a1 = r1(ang("start")), a2 = r1(ang("end"));
+        // A merged body (Merge arc segment bodies) holds several segments: each one's faces give its part of the length.
+        const ents = [...new Set(part.names.filter(n => n.startsWith(`${owner.id}:`)).map(n => n.split(":")[1]))];
+        const refs = ents.map(e => owner.segs.find(s => s.ent === e)).filter((r): r is WeldSegRef => !!r);
+        if (!refs.length) continue;
+        const one = refs.length === 1;
+        let length = 0;
+        const angs: number[] = [];
+        const segsIn = refs.map(r => segOf(r, doc, frames));
+        // Flat faces square to an arc's axis run on across the merged segments (UnifySameDomain joins them): left out of each segment's own faces.
+        const axes = segsIn.flatMap(s => (s.arc ? [s.arc.n] : []));
+        const across = (x: any) => { const n = planeN(x); return !!n && axes.some(a => Math.abs(dot(n, a)) > 1 - 1e-6); };
+        for (const [k, ref] of refs.entries()) {
+          const s = segsIn[k];
+          const own = one ? part : facesOf(h, part, `${owner.id}:${ref.ent}:`, across);
+          // Straight: the extent along the segment; curved: the length along the arc's centreline (plus straight runs past its ends).
+          const ts = edgePoints(h, own.shape).map(p => dot(sub(p, s.a), s.w));
+          length += s.arc ? arcLength(h, own, s) : Math.max(...ts) - Math.min(...ts);
+          for (const end of ["start", "end"]) {
+            const i = part.names.findIndex(n => n === `${owner.id}:${ref.ent}:${end}`);
+            const n = i >= 0 ? planeN(part.faces[i]) : null;
+            if (n) angs.push((Math.acos(Math.min(1, Math.abs(dot(n, end === "start" ? s.wa : s.wb)))) * 180) / Math.PI);
+            else if (one) angs.push(0);
+          }
+        }
+        while (angs.length < 2) angs.push(0);
+        const a1 = r1(angs[0]), a2 = r1(angs[angs.length - 1]);
         const [lo, hi] = a1 <= a2 ? [a1, a2] : [a2, a1];
         const desc = memberDesc(owner, doc);
         put(`m|${desc}|${r1(length)}|${lo}|${hi}`, { kind: "member", desc, length: r1(length), angle1: lo, angle2: hi, volume }, key);
