@@ -5752,6 +5752,21 @@ try {
     await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
     const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
     check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
+    // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
+    const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
+    await clickAt(pv0.x, pv0.y);
+    const boxes = await ap.evaluate(() => ({ th: !!document.querySelector('.drw-props [data-v="threads"]:checked'), sk: !!document.querySelector('.drw-props [data-v="sketches"]') }));
+    await ap.check('.drw-props [data-v="sketches"]');
+    await ap.click('.drw-props [data-a="unalign"]');
+    const q0 = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [pv0.x, pv0.y]);
+    await ap.mouse.move(q0[0], q0[1]); await ap.mouse.down();
+    await ap.mouse.move(q0[0] + 40, q0[1] + 30, { steps: 5 }); await ap.mouse.up();
+    const pv1 = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { free: v.free, sketches: v.sketches, x: v.x, y: v.y }; }, pv0.id);
+    await ap.click('.drw-props [data-a="align"]');
+    const pv2 = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { free: v.free ?? null, x: v.x, y: v.y }; }, pv0.id);
+    const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
+    check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
+      `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
     await ctx.close();
   }
 

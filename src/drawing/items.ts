@@ -3,7 +3,8 @@
 // Hole feature data for hole callouts (FR-DRW-022). Runs in the drawing worker after a rebuild,
 // so the points always follow the part.
 import type { V3 } from "../kernel/drawing";
-import type { Frame, HoleFeature, PartDoc, SketchFeature, SkEnt } from "../model/types";
+import type { EdgeRef, Frame, HoleFeature, PartDoc, SketchFeature, SkEnt } from "../model/types";
+import { loopPolygon, sketchCurves, type Seg } from "../sketch/profile";
 
 /** A model dimension in 3D: linear between two points (along `dir`, or aligned), or radial on a circle. */
 export interface ModelItem {
@@ -25,17 +26,42 @@ export interface ModelItem {
 /** A hole feature's centres in 3D and its drilling direction. */
 export interface HoleInfo { id: string; pts: V3[]; n: V3; f: HoleFeature }
 
+/**
+ * A cosmetic thread (FR-DRW-017): the round edge it starts at (centre, axis, radius), the diameter of its
+ * thin line (internal: major, external: minor) and its length (null: up to the end of the cylinder).
+ */
+export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean }
+
+/** A sketch shown in the model, as 3D polylines for views that show sketches (FR-DRW-017). */
+export interface SketchInfo { id: string; name: string; lines: V3[][] }
+
+/** The round edge a thread starts at, from the kernel. */
+export type EdgeCircle = (ref: EdgeRef) => { c: V3; ax: V3; r: number } | null;
+
+/** Points along one sketch curve, ends included. */
+export function segPoints(s: Seg): [number, number][] {
+  const p = loopPolygon([s], 24);
+  if (s.kind === "line" || s.kind === "arc" || s.kind === "earc") p.push(s.b);
+  else if (s.kind === "spline") p.push(s.bz[s.bz.length - 1]);
+  else if (p.length) p.push(p[0]);
+  return p;
+}
+
 const at = (fr: Frame, x: number, y: number): V3 => [fr.o[0] + fr.x[0] * x + fr.y[0] * y, fr.o[1] + fr.x[1] * x + fr.y[1] * y, fr.o[2] + fr.x[2] * x + fr.y[2] * y];
 const add = (a: V3, b: V3, s = 1): V3 => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
 
-export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches: Record<string, SketchFeature> = {}): { items: ModelItem[]; holes: HoleInfo[] } {
-  const items: ModelItem[] = [], holes: HoleInfo[] = [];
+export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches: Record<string, SketchFeature> = {}, edgeCircle?: EdgeCircle): { items: ModelItem[]; holes: HoleInfo[]; threads: ThreadInfo[]; sketches: SketchInfo[] } {
+  const items: ModelItem[] = [], holes: HoleInfo[] = [], threads: ThreadInfo[] = [], shown: SketchInfo[] = [];
   const feats = doc.rollback != null ? doc.features.slice(0, doc.rollback + 1) : doc.features;
   for (const f0 of feats) {
     if (f0.suppressed) continue;
     const fr = frames[f0.id];
     if (f0.type === "sketch" && fr) {
       const sk = sketches[f0.id] ?? f0;
+      // Shown as in the model: hidden once a feature uses it, unless shown on purpose.
+      if (!(f0.hidden ?? feats.some(g => g.id !== f0.id && g.type !== "sketch" && JSON.stringify(g).includes(`"${f0.id}"`)))) {
+        try { shown.push({ id: f0.id, name: f0.name, lines: sketchCurves(sk).map(c => segPoints(c).map(([x, y]) => at(fr, x, y))) }); } catch { /* a broken sketch shows nothing */ }
+      }
       const E = new Map<string, SkEnt>(sk.ents.map(e => [e.id, e]));
       const pt = (id: string): [number, number] | null => { const e = E.get(id); return e?.t === "point" ? [e.x, e.y] : null; };
       // A point of an entity for a distance: a point itself, or a circle's / arc's centre.
@@ -84,7 +110,10 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       items.push({ src: `${f0.id}:depth`, name: `${f0.name} depth`, k: "lin", p: [a, add(a, sfr.n, s * depth)], dir: sfr.n, n: sfr.n, side: true, value: depth });
     } else if (f0.type === "hole" && fr) {
       holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: fr.n, f: f0 });
+    } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
+      const e = edgeCircle(f0.edge);
+      if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal });
     }
   }
-  return { items, holes };
+  return { items, holes, threads, sketches: shown };
 }

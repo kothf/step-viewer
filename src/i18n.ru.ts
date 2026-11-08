@@ -2690,4 +2690,13 @@ export const RU: Record<string, string> = {
   "Play once": "Один раз",
   "Loop": "По кругу",
   "Reciprocate": "Туда и обратно",
+  // 1.87.0: view properties (FR-DRW-017).
+  "Cosmetic threads": "Условные резьбы",
+  "Sketches": "Эскизы",
+  "Show sketches": "Показать эскизы",
+  "Alignment": "Выравнивание",
+  "Moves on its own.": "Перемещается самостоятельно.",
+  "Lined up with {name}.": "Выровнен по виду {name}.",
+  "Default alignment": "Выравнивание по умолчанию",
+  "Break alignment": "Разорвать выравнивание",
 };
