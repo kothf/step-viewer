@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.101.0] - 2026-11-08
+
+### Added
+
+- **Relations to model edges in sketches (FR-SK-064).** In the sketcher, click a model edge in the view (not a sketch item) and it is referenced into the sketch as a construction copy that follows the edge. It joins the selection, so Parallel, Coincident, Equal, Tangent, Concentric and the other relations work straight against model geometry, like picking an edge in SolidWorks' Add Relations.
+
 ## [1.100.0] - 2026-11-08
 
 ### Added
@@ -980,7 +986,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.100.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.101.0...HEAD
+[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
