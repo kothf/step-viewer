@@ -14,6 +14,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Chamfer.** Select an angle dimension between a chamfer and the edge next to it and set its Type to Chamfer: a leader to the chamfer and "2 × 45°" (the run along the other edge and the angle). Either line can be picked first; the shorter one is the chamfer.
   - **Chain, baseline and ordinate dimensions** (Annotate ▾ and the Annotation tab): click a base point (a corner or a circle centre), then one point after another. Each click adds its dimension at once, above the view for horizontal ones and to its right for vertical ones (the first step decides which). Baseline dimensions stack 7 mm apart; ordinate dimensions start with a 0 at the base and stand their values at the end of each extension line. Enter or Esc ends; every dimension can be dragged and follows the model like any other.
 
+## [1.101.0] - 2026-11-08
+
+### Added
+
+- **Relations to model edges in sketches (FR-SK-064).** In the sketcher, click a model edge in the view (not a sketch item) and it is referenced into the sketch as a construction copy that follows the edge. It joins the selection, so Parallel, Coincident, Equal, Tangent, Concentric and the other relations work straight against model geometry, like picking an edge in SolidWorks' Add Relations.
+
 ## [1.100.0] - 2026-11-08
 
 ### Added
@@ -990,7 +996,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.104.0...HEAD
-[1.104.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.104.0
+[1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
+[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0

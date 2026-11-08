@@ -4682,7 +4682,7 @@ export class ModelController {
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
-        : `<p class="muted">${esc(t("Select sketch items to add relations (Ctrl+click for more)."))}</p>`)
+        : `<p class="muted">${esc(t("Select sketch items or model edges to add relations (Ctrl+click for more)."))}</p>`)
       + `</div>`
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")

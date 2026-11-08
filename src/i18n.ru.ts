@@ -2981,7 +2981,10 @@ export const RU: Record<string, string> = {
   "Click the edges of the parting line.": "Щёлкните рёбра линии разъёма.",
   "Draft works on ribs normal to the sketch.": "Уклон работает для рёбер жёсткости, перпендикулярных эскизу.",
   "The draft angle must be between 0° and 45°.": "Угол уклона должен быть от 0° до 45°.",
-  // 1.101.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
+  // Next: sketch relations to model edges picked in the view (FR-SK-064).
+  "Select sketch items or model edges to add relations (Ctrl+click for more).": "Выберите элементы эскиза или рёбра модели, чтобы добавить взаимосвязи (Ctrl+щелчок добавляет).",
+  "Reference model edge": "Ссылка на ребро модели",
+  // 1.104.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
   "Chain dimension": "Цепной размер",
   "Baseline dimension": "Размеры от базы",
   "Ordinate dimension": "Координатный размер",

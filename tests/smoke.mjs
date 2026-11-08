@@ -5777,6 +5777,67 @@ try {
     await ctx.close();
   }
 
+  // --- 1.101: a sketch line made parallel to a model edge picked in the view (FR-SK-064) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 20 × 20 block, and a sketch on its top with one slanted line.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 1), false));
+    await mp.waitForTimeout(300);
+    // Draw the slanted line from (−10, 2) to (8, 6) on the top, away from the edges.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const w of [[-10, 2, 20], [8, 6, 20]]) { const [x, y] = await scr(w); await mp.mouse.move(x, y); await mp.mouse.click(x, y); }
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("select"));
+    await settle();
+    // Select the line, then Ctrl+click the block's front top edge (y = −10) in the view.
+    const [lx, ly] = await scr([-1, 4, 20]);
+    await mp.mouse.move(lx, ly); await mp.mouse.click(lx, ly);
+    const [fx, fy] = await scr([-5, -10, 20]);
+    await mp.mouse.move(fx, fy);
+    await mp.keyboard.down("Control"); await mp.mouse.click(fx, fy); await mp.keyboard.up("Control");
+    await mp.waitForTimeout(200);
+    const sel = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { n: ed.selection.size, kinds: [...ed.selection].map(id => ed.sk.ents.find(e => e.id === id)?.t), rels: ed.validRelations(), ext: ed.sk.rels.filter(r => r.ext).length }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-rel]")].map(b => b.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    await mp.click('#mc-pm [data-rel="parallel"]');
+    await settle();
+    const par = await mp.evaluate(() => {
+      const s = window.__sv.model.editor().sk, P = id => s.ents.find(e => e.id === id), d = l => { const a = P(l.a), b = P(l.b); return [b.x - a.x, b.y - a.y]; };
+      const line = s.ents.find(e => e.t === "line" && !e.cons), ref = s.ents.find(e => e.t === "line" && e.cons);
+      const u = d(line), v = d(ref);
+      return { cross: Math.abs(u[0] * v[1] - u[1] * v[0]) / Math.hypot(...u) / Math.hypot(...v), rel: s.rels.some(r => r.t === "parallel") };
+    });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await settle();
+    check(sel.n === 2 && sel.kinds.join() === "line,line" && sel.rels.includes("parallel") && sel.ext === 1 && par.rel && par.cross < 1e-6,
+      `model 1.101: a sketch line made parallel to a model edge clicked in the view (FR-SK-064) (${JSON.stringify({ sel, par })})`);
+    check(/Параллельность|Параллельн/.test(ru) && !/Parallel/.test(ru), `model 1.101: relation buttons in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- 1.98: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
