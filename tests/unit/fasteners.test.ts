@@ -5,7 +5,7 @@ import { occ } from "./occ";
 import { Modeller } from "../../src/kernel/model";
 import { activate } from "../../src/model/configs";
 import { refreshExprs } from "../../src/model/params";
-import { FASTENERS, fastenerLengths, fastenerName, fastenerPart, fastenerSizes } from "../../src/asm/fasteners";
+import { FASTENERS, defaultLength, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole } from "../../src/asm/fasteners";
 
 const close = (a: number, b: number, tol = 1e-3) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${a} vs ${b}`);
 
@@ -14,7 +14,25 @@ test("FR-ASM-028: sizes, lengths and names", () => {
   assert.ok(fastenerLengths("iso4762", "M6").includes(20) && !fastenerLengths("iso4762", "M6").includes(100));
   assert.equal(fastenerName("iso4762", "M6", 20), "ISO 4762 M6 x 20");
   assert.equal(fastenerName("iso4032", "M8"), "ISO 4032 M8");
-  assert.equal(FASTENERS.length, 6);
+  assert.equal(FASTENERS.length, 17);
+  assert.equal(fastenerName("din6885", "8x7", 32), "DIN 6885 B 8x7 x 32");
+  assert.equal(fastenerName("bearing", "6201"), "Ball bearing 6201");
+  assert.deepEqual(fastenerLengths("din6885", "6x6"), [14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 70]);
+  assert.deepEqual(fastenerLengths("iso4032", "M6"), []);
+});
+
+test("FR-ASM-028: the size follows the clicked hole", () => {
+  assert.equal(sizeForHole("iso4762", 6.4), "M6");
+  assert.equal(sizeForHole("iso4762", 9), "M8");
+  assert.equal(sizeForHole("iso4032", 10.5), "M10");
+  assert.equal(sizeForHole("iso4762", 40), null);
+  assert.equal(sizeForHole("iso2338", 6), "6");
+  assert.equal(sizeForHole("iso2338", 7), null);
+  assert.equal(sizeForHole("bearing", 32), "6002");
+  assert.equal(sizeForHole("bearing", 32, "6201"), "6201");
+  assert.equal(sizeForHole("bearing", 35, "6200"), "6202");
+  assert.equal(sizeForHole("bearing", 22), "608");
+  assert.equal(sizeForHole("din6885", 8), null);
 });
 
 test("FR-ASM-028: every fastener builds; volumes match the ISO sizes; sizes switch as configurations", async () => {
@@ -42,4 +60,39 @@ test("FR-ASM-028: every fastener builds; volumes match the ISO sizes; sizes swit
   activate(cap, "M10");
   refreshExprs(cap);
   close(vol(cap), Math.PI * 25 * 30 + Math.PI * 64 * 10 - hex(8) * 5);
+});
+
+test("FR-ASM-028: the toolbox parts build with the sizes of their standards", async () => {
+  const m = new Modeller(await occ());
+  const vol = (pd: ReturnType<typeof fastenerPart>) => {
+    const r = m.evaluate(pd);
+    assert.ok(r.statuses.every(s => s.ok), `${pd.name}: ${JSON.stringify(r.statuses)}`);
+    return m.props(r.body!).volume;
+  };
+  const hex = (s: number) => (Math.sqrt(3) / 2) * s * s, cyl = (d: number, h: number) => (Math.PI * d * d / 4) * h;
+  const cone = (d1: number, d2: number, h: number) => (Math.PI * h / 12) * (d1 * d1 + d1 * d2 + d2 * d2);
+  // ISO 10642 M6 x 20: 90° cone Ø13.44 → Ø6 over 3.72, shank Ø6 below it to 20, hex 4 socket 2.2 deep.
+  close(vol(fastenerPart("iso10642", "M6", 20)), cone(13.44, 6, 3.72) + cyl(6, 20 - 3.72) - hex(4) * 2.2);
+  // ISO 4026 M8 x 10: Ø8 × 10 less a hex 4 socket 3 deep.
+  close(vol(fastenerPart("iso4026", "M8", 10)), cyl(8, 10) - hex(4) * 3);
+  close(vol(fastenerPart("iso4035", "M10")), (hex(16) - Math.PI * 25) * 5);
+  // ISO 7040 M8: hex 13 × 5.5 and a Ø12 × 2.5 collar, Ø8 bore through both.
+  close(vol(fastenerPart("iso7040", "M8")), hex(13) * 5.5 + cyl(12, 2.5) - cyl(8, 8));
+  // ISO 4161 M6: Ø14.2 × 1.1 flange under a hex 10 × 6.
+  close(vol(fastenerPart("iso4161", "M6")), cyl(14.2, 1.1) + hex(10) * (6 - 1.1) - cyl(6, 6));
+  close(vol(fastenerPart("iso7092", "M6")), cyl(11, 1.6) - cyl(6.4, 1.6));
+  close(vol(fastenerPart("iso7093", "M8")), cyl(24, 2) - cyl(8.4, 2));
+  close(vol(fastenerPart("iso2338", "6", 20)), cyl(6, 20));
+  close(vol(fastenerPart("iso8752", "8", 30)), cyl(8, 30) - cyl(5, 30));
+  close(vol(fastenerPart("din6885", "8x7", 32)), 8 * 7 * 32);
+  const brg = fastenerPart("bearing", "6201");
+  close(vol(brg), cyl(32, 10) - cyl(12, 10));
+  // Sizes switch as configurations: the key to 12x8 at its default length, the bearing to 6305.
+  const key = fastenerPart("din6885", "8x7", 32);
+  activate(key, "12x8");
+  refreshExprs(key);
+  close(vol(key), 12 * 8 * defaultLength("din6885", "12x8"));
+  activate(brg, "6305");
+  refreshExprs(brg);
+  close(vol(brg), cyl(62, 17) - cyl(25, 17));
 });
