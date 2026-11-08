@@ -127,7 +127,7 @@ export class DrawingKernel {
   project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
 
   /** A projection, or a section when `p` is set (cached by `key`). */
-  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; key: string }): Promise<Projection> {
+  request(req: { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string }): Promise<Projection> {
     const { view, key } = req;
     const have = this.cache.get(key);
     if (have) return Promise.resolve(have);
@@ -136,7 +136,7 @@ export class DrawingKernel {
       if (!this.loaded) return Promise.reject(new Error("No model loaded"));
       const gen = this.gen;
       const cfg = req.cfg;
-      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg } : { type: "project", view, shade: req.shade, cfg })).then(r => {
+      p = (cfg ? this.config(cfg) : this.loaded).then(() => this.call<{ proj: Projection }>(req.p ? { type: "section", view, p: req.p, poly: req.poly, stair: req.stair, align: req.align, exclude: req.exclude, cfg, only: req.only } : { type: "project", view, shade: req.shade, cfg, only: req.only })).then(r => {
         if (gen === this.gen) this.cache.set(key, r.proj);
         this.inflight.delete(key);
         return r.proj;
