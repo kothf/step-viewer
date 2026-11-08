@@ -5015,7 +5015,17 @@ try {
       const pasted = m.study.tracks.find(k => k.kind === "pose").keys.map(k => [k.t, k.d[2], k.interp ?? ""]);
       const snapKey = document.querySelectorAll("#motion .mo-key.i-snap").length;
       const menu = { items, menuGone, snapMid, pasted, z15: g().position.z, snapKey };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end, menu };
+      // Timeline zoom: ⊕ twice shows a quarter of the study; the playhead at the end scrolls into view; ⤢ fits again.
+      document.querySelector('#motion [data-mo="zin"]').click();
+      document.querySelector('#motion [data-mo="zin"]').click();
+      const tlw = () => document.querySelector("#motion .mo-tlw"), tl = () => document.querySelector("#motion .mo-tl");
+      const ratio = tl().offsetWidth / tlw().clientWidth;
+      m.seek(2);
+      const scrolled = tlw().scrollLeft;
+      const keyLeft = document.querySelector("#motion .mo-key").getBoundingClientRect().left;
+      document.querySelector('#motion [data-mo="zfit"]').click();
+      const zoomed = { z: m.zoom, ratio, scrolled, fit: tl().offsetWidth / tlw().clientWidth, keyLeft: Number.isFinite(keyLeft) };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end, menu, zoomed };
     }).catch(e => ({ err: String(e) }));
     await mp.click('#motion [data-mo="close"]');
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
@@ -5023,6 +5033,8 @@ try {
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
       && JSON.stringify(pose.menu.pasted) === '[[0,0,""],[1.5,20,"snap"],[2,20,"snap"]]' && Math.abs(pose.menu.z15 - 20) < 0.01 && pose.menu.snapKey === 2,
       `motion study: key point menu sets Snap interpolation; Ctrl+C / Ctrl+V copy a key to the playhead (FR-FT-122) (${JSON.stringify(pose.menu)})`);
+    check(pose.zoomed?.z === 1 && pose.zoomed.ratio > 3.5 && pose.zoomed.scrolled > 0 && pose.zoomed.fit < 1.05,
+      `motion study: the timeline zooms in, follows the playhead and fits again (FR-FT-122) (${JSON.stringify(pose.zoomed)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && Math.abs(exploded.x - 50) < 0.01

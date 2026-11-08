@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Check-Heal feature (FR-FT-131)** in Features → Bodies ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
 
+## [1.125.0] - 2026-11-08
+
+### Added
+
+- Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as SolidWorks' timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
+
 ## [1.122.0] - 2026-11-08
 
 ### Added
@@ -1128,7 +1134,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.126.0...HEAD
-[1.126.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.126.0
+[1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0
+[1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
 [1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
 [1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
