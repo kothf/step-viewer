@@ -7080,6 +7080,20 @@ try {
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
+    // Groups: the last line of that member in a new group, turned 90° on its own.
+    const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgroup:j3"]', "new");
+    await settle();
+    const gl = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).filter(x => /^Group/.test(x)));
+    await mp.fill('#mc-pm input[data-num="groups.0.angle"]', "90");
+    await mp.press('#mc-pm input[data-num="groups.0.angle"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
+    check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

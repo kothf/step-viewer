@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.127.0] - 2026-11-08
+
+### Added
+
+- **Structural member groups (FR-FT-121).** Each segment in the Structural Member panel has a group list. Segments moved to a new group get their own profile position, rotation angle and mirror, so a frame's rails and posts can face different ways within one feature. Group 1 keeps the settings above.
+
 ## [1.122.0] - 2026-11-08
 
 ### Added
@@ -1120,7 +1126,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.122.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.127.0...HEAD
+[1.127.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.127.0
 [1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
 [1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0

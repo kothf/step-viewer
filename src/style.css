@@ -1007,3 +1007,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .right .rp-tabs button { min-width: 30px; }
 .right .rp-tabs { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .cm-note { align-self: center; margin: 0 0 0 10px; font-size: 12px; white-space: nowrap; }
+.wseg-row { display: flex; align-items: center; gap: 6px; }
+.wseg-row .pm-chk { flex: 1; }
+.wseg-row select { width: auto; font-size: 12px; }
