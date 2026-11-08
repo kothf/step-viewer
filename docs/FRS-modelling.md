@@ -1671,7 +1671,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-062 | Rib draft | Rib without draft | Partly |
 | FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
-| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Tool solids are always copied | Not built |
+| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
 | FR-FT-080 | Sweep start/end tangency (P5) | Twist and guide curve are built; tangency is missing | Partly |
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
 | FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |

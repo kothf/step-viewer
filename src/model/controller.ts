@@ -4674,7 +4674,9 @@ export class ModelController {
       const whatSel = isCopy(f) ? `<label class="pm-field"><span>${esc(t("Copy"))}</span><select data-k="copyKind">${([["features", t("Features")], ["faces", t("Faces")], ["bodies", t("Bodies")]] as const).map(([v, l]) => `<option value="${v}"${what === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : "";
       const picked = isCopy(f) ? (what === "faces" ? f.faces ?? [] : f.bodies ?? []) : [];
       const seedGroup = !isCopy(f) ? "" : what === "features" ? group(f.type === "mirror" ? t("Features to mirror") : t("Features to pattern"), whatSel + box("seeds", t("Features"), seeds)
-        + `<p class="pm-help muted">${esc(f.type === "mirror" ? t("Click faces of the features (or rows in the tree); none mirrors the whole body.") : t("Click faces of the features, or rows in the tree."))}</p>`)
+        + `<p class="pm-help muted">${esc(f.type === "mirror" ? t("Click faces of the features (or rows in the tree); none mirrors the whole body.") : t("Click faces of the features, or rows in the tree."))}</p>`
+        + chk("geometry", !f.vary, t("Geometry pattern"))
+        + `<p class="pm-help muted">${esc(t("Off: each instance is built again where it lands, so end conditions such as up to face hold there."))}</p>`)
         : group(what === "faces" ? t("Faces to copy") : t("Bodies to copy"), whatSel + `<p class="pm-count">${esc(what === "faces" ? t("{n} face|{n} faces", { n: picked.length }) : t("{n} body|{n} bodies", { n: picked.length }))}</p>`
           + (picked.length ? `<button class="btn small" data-k="clearCopy">${esc(what === "faces" ? t("Clear faces") : t("Clear bodies"))}</button>` : "")
           + (f.type === "mirror" && what === "bodies" ? chk("merge", f.merge, t("Merge solids")) : "")
@@ -4870,6 +4872,7 @@ export class ModelController {
           upd(() => { if (val === "features") delete f.copy; else f.copy = val as "faces" | "bodies"; delete f.faces; delete f.bodies; delete (f as MirrorFeature).merge; f.features = []; m.focus = "seeds"; }, true);
           return;
         }
+        if (k === "geometry" && isCopy(f)) { upd(() => { if (val) delete f.vary; else f.vary = true; }, true); return; }
         if (k === "merge" && f.type === "mirror") { upd(() => { if (val) f.merge = true; else delete f.merge; }, true); return; }
         if (f.type === "spattern" && (k === "refPt" || k === "csys")) { upd(() => { if (val) f[k] = String(val); else delete f[k]; }, true); return; }
         if (f.type === "spattern" && k === "tableText") {
