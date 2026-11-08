@@ -762,6 +762,8 @@ export interface ExtendSurfFeature {
   distance: Num;
 }
 
+import type { SheetFeature } from "../sheetmetal/types";
+
 /** Untrim surface (FR-FT-100): a one-face surface back to its natural bounds (`all`, the face's parameter box) or with its holes filled (`holes`). */
 export interface UntrimSurfFeature {
   id: string; type: "untrimsurf"; name: string; suppressed?: boolean;
@@ -785,7 +787,7 @@ export interface IntersectFeature {
 /** A region an intersect found: a point inside it, its volume and whether it is left out. */
 export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
 
-export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
+export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature

@@ -119,7 +119,7 @@ async function runCmd(pg, label) {
       const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
       return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
     };
-    for (const tab of ["features", "surfaces", "weldments", "sketch"]) {
+    for (const tab of ["features", "surfaces", "sheetmetal", "weldments", "sketch"]) {
       if (!(await pg.$(`#cm-t-${tab}`))) continue;
       await pg.click(`#cm-t-${tab}`);
       const i = await pick("#mc-tools [data-c]");
@@ -7181,6 +7181,108 @@ try {
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- Sheet metal (FR-FT-120): base flange from a gauge table, edge flange picked in the view, flatten, flat pattern DXF ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // A 100 × 50 rectangle on Top.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      window.__sv.model.store.change("Add Sketch1", d => d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [],
+        ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 50), P("p4", 0, 50), { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] }));
+    });
+    await settle();
+    const smMenu = async label => { await runCmd(mp, label); await settle(); };
+    await smMenu("Base Flange/Tab");
+    const b0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch }));
+    await mp.selectOption('#mc-pm select[data-sm="gauge"]', "steel:16");
+    await settle();
+    const b1 = await mp.evaluate(() => ({ t: window.__sv.model.mode().draft.thickness.v, r: window.__sv.model.mode().draft.radius.v, k: window.__sv.model.mode().draft.k, v: window.__sv.model.last().props?.volume ?? 0, shown: document.querySelector('#mc-pm input[data-num="thickness"]').value }));
+    await mp.click("#mc-ok");
+    await settle();
+    check(b0.title === "Base Flange" && b0.sketch === "s1" && b1.t === 1.519 && b1.r === 1.5 && b1.k === 0.42 && b1.shown === "1.519" && Math.abs(b1.v - 100 * 50 * 1.519) < 1e-3,
+      `sheet metal: Base Flange from a closed sketch, thickness, radius and K-factor from the gauge table (FR-FT-120) (${JSON.stringify({ b0, b1 })})`);
+    // Edge flange: click the front top edge (y = 0, z = T) in the view; the preview shows it at once.
+    const scr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const V = v.camera.position.constructor; const q = new V(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, p);
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(0.3, -1, 0.6)));
+    await mp.waitForTimeout(300);
+    await smMenu("Edge Flange");
+    const [ex, ey] = await scr([60, 0, 1.519]);
+    await mp.mouse.click(ex, ey);
+    await settle();
+    const f0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, edges: window.__sv.model.mode().draft.edges.map(e => e.faces.slice().sort().join("|")), v: window.__sv.model.last().props?.volume ?? 0, bends: window.__sv.model.last().sheet?.bends.length }));
+    await mp.fill('#mc-pm input[data-num="length"]', "25");
+    await mp.press('#mc-pm input[data-num="length"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    // Folded volume: two panels plus a quarter ring (T 1.519, R 1.5, flange 25 to the outer virtual sharp, material inside).
+    const T = 1.519, R = 1.5;
+    const want = T * 100 * (50 - (R + T)) + T * 100 * (25 - (R + T)) + (Math.PI / 4) * ((R + T) ** 2 - R ** 2) * 100;
+    const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
+      `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
+    // Flatten: a flat plate of the developed length, then the DXF with the outline and the bend line.
+    await smMenu("Flatten");
+    const ba = (Math.PI / 2) * (R + 0.42 * T);
+    const flat = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, names: window.__sv.model.store.doc.features.map(f => `${f.name}${f.suppressed ? "-" : ""}`).join(","), bb: (() => { const d = window.__sv.model.last().data; let z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (let i = 2; i < d.positions.length; i += 3) { z0 = Math.min(z0, d.positions[i]); z1 = Math.max(z1, d.positions[i]); y0 = Math.min(y0, d.positions[i - 1]); y1 = Math.max(y1, d.positions[i - 1]); } return [z1 - z0, y1 - y0]; })() }));
+    const flatLen = 50 - (R + T) + ba + 25 - (R + T);
+    const [dl] = await Promise.all([mp.waitForEvent("download"), smMenu("Flat pattern DXF")]);
+    const dxf = await (async () => { const p = await dl.path(); return (await import("node:fs")).readFileSync(p, "utf8"); })();
+    check(/Flat-Pattern1$/.test(flat.names) && Math.abs(flat.bb[0] - T) < 1e-3 && Math.abs(flat.bb[1] - flatLen) < 1e-3 && Math.abs(flat.v - T * 100 * flatLen) / (T * 100 * flatLen) < 1e-6
+      && dl.suggestedFilename().endsWith("-flat.dxf") && /AC1009/.test(dxf) && (dxf.match(/\nLINE\n/g) ?? []).length === 5 && /BEND_UP/.test(dxf),
+      `sheet metal: Flatten shows the flat pattern (K-factor bend allowance) and exports it as DXF with the bend line (${JSON.stringify({ flat, flatLen, file: dl.suggestedFilename(), lines: (dxf.match(/\nLINE\n/g) ?? []).length })})`);
+    // Fold back, and the Base Flange panel in Russian.
+    await smMenu("Flatten");
+    const folded = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smbase").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label > span:first-child, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(Math.abs(folded - want) / want < 1e-6 && ru.title === "Базовая кромка" && !/[A-Za-z]{3}/.test(ru.text.replace(/Enter|Esc|MSG|mm/g, "")), `sheet metal: folds back; Base Flange panel in Russian (${JSON.stringify({ folded, ru })})`);
+    await mp.click("#lang-btn");
+    // Sketched bend: drop the flange and flat pattern, sketch a line across the plate's bottom face (XY), fold it.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketched bend", d => {
+      d.features = d.features.filter(f => f.type !== "smflange" && f.type !== "smflat");
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q1", t: "point", x: 70, y: -5 }, { id: "q2", t: "point", x: 70, y: 55 }, { id: "q3", t: "line", a: "q1", b: "q2" }] });
+    }));
+    await settle();
+    await smMenu("Sketched Bend");
+    const sb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sbb = await mp.evaluate(() => { const d = window.__sv.model.last().data, P = d.positions; const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]; for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); } return { size: hi.map((h, i) => h - lo[i]), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }; });
+    const sba = (Math.PI / 2) * (R + 0.42 * T);
+    check(sb0.title === "Sketched Bend" && sb0.sketch === "s2" && !sbb.bad && /Sketched-Bend1$/.test(sbb.names) && Math.abs(sbb.size[0] - (70 - sba / 2 + R + T)) < 2e-3 && Math.abs(sbb.size[2] - (T + R + 30 - sba / 2)) < 2e-3,
+      `sheet metal: Sketched Bend folds the plate along a line sketched on its face (${JSON.stringify({ sb0, sbb, want: [70 - sba / 2 + R + T, T + R + 30 - sba / 2] })})`);
+    // Tab: a closed sketch beside the plate's back edge, on its bottom face; Base Flange/Tab makes a tab now.
+    const tv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.evaluate(() => window.__sv.model.store.change("Tab sketch", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [P("r1", 10, 50), P("r2", 40, 50), P("r3", 40, 65), P("r4", 10, 65), { id: "m1", t: "line", a: "r1", b: "r2" }, { id: "m2", t: "line", a: "r2", b: "r3" }, { id: "m3", t: "line", a: "r3", b: "r4" }, { id: "m4", t: "line", a: "r4", b: "r1" }] });
+    }));
+    await settle();
+    await smMenu("Base Flange/Tab");
+    const tb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, type: window.__sv.model.mode().draft?.type, sketch: window.__sv.model.mode().draft?.sketch }));
+    await mp.click("#mc-ok");
+    await settle();
+    const tb1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(tb0.title === "Tab" && tb0.type === "smtab" && tb0.sketch === "s3" && !tb1.bad && Math.abs(tb1.v - tv0 - 30 * 15 * T) < 1e-3,
+      `sheet metal: Base Flange/Tab on a part with a base flange adds a tab beside a face (${JSON.stringify({ tb0, tb1, tv0 })})`);
     await ctx.close();
   }
 
