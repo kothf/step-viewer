@@ -6,6 +6,11 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
+import { DocTabs, type DocTab } from "./docTabs";
+import { journalDrop } from "./model/file";
+import type { PartTab } from "./model/controller";
+import type { AsmTab } from "./asm/controller";
+import type { DrawingTab } from "./drawing/workspace";
 import { bindNavigation } from "./viewer/navigation";
 import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
@@ -61,6 +66,8 @@ const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
 applyThemeToViewer();
 // Part modelling: command bar, Features tab, sketcher; its parts show through showPartModel.
+/** Document tabs at the bottom (FR-DOC-003); set up once the controllers exist. */
+let docs: DocTabs | undefined;
 const modeller = new ModelController({
   viewer,
   vp: vpEl,
@@ -99,7 +106,8 @@ const modeller = new ModelController({
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
-  leaveOthers: () => asm.close(),
+  leaveOthers: () => { docs?.before3d(); asm.close(); },
+  opened: label => docs?.opened("part", label),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 // Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
@@ -114,8 +122,11 @@ const asm = new AsmController({
   },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
-  leaveOthers: () => { ++loadToken; modeller.close(); },
-  editPart: (doc, file, label, back) => modeller.editIn(doc, file, { label, back }),
+  leaveOthers: () => { docs?.before3d(); ++loadToken; modeller.close(); },
+  opened: label => docs?.opened("asm", label),
+  openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
+  // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
+  editPart: (doc, file, label, back) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) })) : modeller.editIn(doc, file, { label, back })),
   openPart: () => modeller.openPart(),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
@@ -348,14 +359,79 @@ const drawing = new DrawingWorkspace({
     return { dir: d.toArray() as [number, number, number], up: cam.up.toArray() as [number, number, number] };
   },
   download: (blob, name) => download(blob, name),
+  beforeOpen: () => docs?.beforeDrawing(),
+  opened: label => docs?.opened("drawing", label),
+  onToggle: open => { if (!open) docs?.drawingHidden(); },
 });
 $("#new-drawing").addEventListener("click", () => {
   $("#new-menu").hidden = true;
   $("#new-more").setAttribute("aria-expanded", "false");
   const key = modeller.active ? `part:${modeller.store?.doc.id}` : asm.active ? `asm:${asm.doc?.id}` : state.fileKey || state.fileName;
-  if (drawing.hasDrawing && drawing.modelKey === key) drawing.show();
-  else { drawing.modelKey = key; void drawing.newFromModel(); }
+  if (drawing.hasDrawing && drawing.modelKey === key) { drawing.show(); return; }
+  // The model's drawing parked in a tab comes back instead of a second one.
+  const parked = docs?.tabs.find(x => x.kind === "drawing" && (x.state as DrawingTab | null)?.modelKey === key);
+  if (parked) { void docs!.activate(parked.id); return; }
+  drawing.modelKey = key;
+  void drawing.newFromModel();
 });
+
+// ---------- document tabs (FR-DOC-003, FR-UI-120) ----------
+/** The model file shown now (STEP/IGES/BREP/mesh), so its tab can open it again. */
+let modelSrc: { name: string; data: ArrayBuffer } | null = null;
+let pendingSrc: { name: string; data: ArrayBuffer } | null = null;
+/** No 3D document: the start card again. */
+function clearModelView() {
+  resetForNewModel();
+  viewer.clear();
+  state.fileName = "";
+  state.fileKey = "";
+  modelSrc = null;
+  document.title = "MöbiusCAD";
+  setDoc("", "idle");
+  buildTree();
+  renderProps();
+  $("#empty").hidden = false;
+}
+docs = new DocTabs({
+  park(kind) {
+    if (kind === "part") return modeller.park();
+    if (kind === "asm") return asm.park();
+    if (kind === "drawing") return drawing.park();
+    const src = modelSrc;
+    modelSrc = null;
+    return src;
+  },
+  async resume(tab: DocTab) {
+    if (tab.kind === "part") modeller.resume(tab.state as PartTab);
+    else if (tab.kind === "asm") asm.resume(tab.state as AsmTab);
+    else if (tab.kind === "drawing") await drawing.resume(tab.state as DrawingTab);
+    else {
+      const src = tab.state as { name: string; data: ArrayBuffer };
+      modeller.close();
+      asm.close();
+      await openBuffer(src.data.slice(0), src.name);
+    }
+  },
+  close(kind) {
+    if (kind === "drawing") { drawing.park(); return; }
+    // Closed for good: the recovery journal drops the part too.
+    if (kind === "part") { const id = modeller.store?.doc.id; modeller.close(); if (id) journalDrop(id); }
+    else if (kind === "asm") asm.close();
+    clearModelView();
+  },
+  label: kind => (kind === "drawing" ? drawing.title || null : docState[0] || null),
+  dirty(tab) {
+    const st = tab.state;
+    if (tab.kind === "part") return st ? (st as PartTab).store.dirty : modeller.dirty;
+    if (tab.kind === "asm") return st ? JSON.stringify((st as AsmTab).doc) !== (st as AsmTab).savedAt : asm.dirty;
+    if (tab.kind === "drawing") return st ? (st as DrawingTab).store.dirty : drawing.dirty;
+    return false;
+  },
+  forget(tab) {
+    // Closed without saving: no "recover unsaved part" card for it later.
+    if (tab.kind === "part" && tab.state) journalDrop((tab.state as PartTab).store.doc.id);
+  },
+}, $("#doc-tabs"));
 
 /** File name and status (idle / loading / ready / error) in the header. */
 let docState: [string, "idle" | "loading" | "ready" | "error"] = ["", "idle"];
@@ -367,6 +443,7 @@ function setDoc(name: string, st: "idle" | "loading" | "ready" | "error") {
   $("#doc").dataset.state = st;
   $("#doc-status").dataset.state = st;
   $("#doc-status").setAttribute("aria-label", t("Status: {s}", { s: label }));
+  docs?.render();
 }
 function setPcbMode(on: boolean) {
   $("#app").classList.toggle("gerber", on);
@@ -397,6 +474,7 @@ $("#back-pcb").addEventListener("click", () => {
 async function openPcb(files: File[] | { name: string; data: ArrayBuffer }[], append = false) {
   const list = await Promise.all(files.map(async f => (f instanceof File ? { name: f.name, data: await f.arrayBuffer() } : f)));
   ++loadToken;
+  docs?.before3d();
   modeller.close();
   asm.close();
   if (!append) kernel.clear();
@@ -549,6 +627,7 @@ function runImport(name: string, msg: unknown, transfer: Transferable[]) {
 
 /** STL, OBJ or 3MF: triangles only, grouped into faces so the measuring tools work. No B-rep, so no exact values or STEP. */
 async function openMesh(buffer: ArrayBuffer, name: string) {
+  pendingSrc = { name, data: buffer.slice(0) };
   const token = ++loadToken;
   kernel.clear();
   setDoc(name, "loading");
@@ -570,6 +649,7 @@ async function openMesh(buffer: ArrayBuffer, name: string) {
 async function openBuffer(buffer: ArrayBuffer, name: string) {
   if (isMeshName(name)) return openMesh(buffer, name);
   if (!is3dName(name) && sniff(new Uint8Array(buffer, 0, Math.min(8192, buffer.byteLength)))) return openPcb([{ name, data: buffer }]);
+  pendingSrc = { name, data: buffer.slice(0) };
   const token = ++loadToken;
   setDoc(name, "loading");
   setLoading(true, t("Reading {name}…", { name }), 2);
@@ -672,6 +752,8 @@ async function exportBoardStep() {
 /** Shows parsed parts in the 3D model view (a STEP file, or a PCB's board body). */
 function showModel(parts: PartData[], tree: TreeNode, name: string, key: string, t0: number) {
   const result = { parts, tree };
+  const pcbBody = key.startsWith("sv:pcb:");
+  docs?.before3d();
   modeller.close();
   asm.close();
   resetForNewModel();
@@ -693,6 +775,10 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   modelStats = { parts: result.parts.length, faces, tris, s: (performance.now() - t0) / 1000 };
   showModelStats();
   viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+  // A model file gets a tab (a PCB's board body belongs to the PCB view and gets none).
+  modelSrc = pcbBody ? null : pendingSrc;
+  pendingSrc = null;
+  if (modelSrc) docs?.opened("model", name);
   hint("model");
 }
 

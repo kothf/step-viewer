@@ -84,6 +84,8 @@ export interface ModelHost {
   setCsys?(c: { name: string; src: string; o: V3; x: V3; z: V3 } | null, quiet?: boolean): void;
   /** Another document kind gives way (an open assembly closes). */
   leaveOthers?(): void;
+  /** A part was opened or made (document tabs). */
+  opened?(label: string): void;
   appVersion: string;
 }
 
@@ -176,6 +178,9 @@ function statusText(s: FeatureStatus) {
   if (s.code === "E-KRN-CRASH") return t("The geometry kernel stopped; it was restarted.");
   return t(s.message ?? "Error");
 }
+
+/** A part kept in a document tab while another document is shown. */
+export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"] }
 
 export class ModelController {
   store: DocStore | null = null;
@@ -330,7 +335,30 @@ export class ModelController {
     this.load(doc, file.name, handle);
   }
 
-  private load(doc: PartDoc, fileName: string, handle: FileSystemFileHandle | null) {
+  /** Document tabs (FR-DOC-003): the open part with its undo history, kept while another document is shown. */
+  park(): PartTab | null {
+    if (!this.store) return null;
+    if (this.mode.kind === "sketch") this.ok();
+    else if (this.mode.kind !== "none") this.exitMode(false);
+    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo };
+    this.close();
+    return tab;
+  }
+
+  /** Shows a parked part again, history and all. */
+  resume(tab: PartTab) {
+    this.load(tab.store.doc, tab.fileName, tab.handle, tab.store);
+    this.vault = tab.vault;
+    this.renderVaultBar();
+    this.returnTo = tab.returnTo;
+    this.renderReturnBar();
+    this.host.setDoc(this.docLabel());
+  }
+
+  /** Whether the part has unsaved changes. */
+  get dirty() { return !!this.store?.dirty; }
+
+  private load(doc: PartDoc, fileName: string, handle: FileSystemFileHandle | null, keep?: DocStore) {
     this.host.leaveOthers?.();
     this.exitMode(false);
     this.vault = null;
@@ -342,7 +370,8 @@ export class ModelController {
     this.selected = null;
     this.shownOnce = false;
     this.last = null;
-    if (this.store) this.store.reset(doc);
+    // A parked part keeps its own store (its undo history); a new document gets a fresh one, so a parked store is never reused.
+    if (keep) this.store = keep;
     else {
       this.store = new DocStore(doc);
       this.store.onChange(why => this.changed(why));
@@ -363,6 +392,7 @@ export class ModelController {
     this.host.selectLeftTab("features");
     this.host.setMaterial?.(doc.material);
     this.renderAll();
+    this.host.opened?.(this.docLabel());
     if (!doc.features.length) {
       // A new part needs no kernel to show: the origin and the three planes go up at once (the kernel
       // still loads in the background for the first feature).
