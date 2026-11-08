@@ -2629,4 +2629,12 @@ export const RU: Record<string, string> = {
   "Filled": "Залитые",
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
+  // View navigation (FR-UI-101..104)
+  "Zoom to fit": "Показать всё",
+  "Zoom to selection": "Показать выбранное",
+  "Zoom to area": "Увеличить область",
+  "Previous view": "Предыдущий вид",
+  "No previous view.": "Предыдущего вида нет.",
+  "Select a face, an edge or a part first.": "Сначала выберите грань, ребро или деталь.",
+  "Zoom to area: drag a box over the part of the view to fill the screen (Esc cancels).": "Увеличить область: обведите рамкой часть вида, которая должна заполнить экран (Esc — отмена).",
 };

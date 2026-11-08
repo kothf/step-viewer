@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.87.0] - 2026-11-08
+
+### Added
+
+- View navigation as in mechanical CAD (FRS 13.13, FR-UI-101 to FR-UI-104):
+  - **Arrow keys** turn the view 15°, **Shift+arrows** 90°, **Ctrl+arrows** pan.
+  - **Z** zooms out and **Shift+Z** zooms in.
+  - **Alt+Z** goes back to the previous view, through the last 20 view changes. Orbiting, standard views, Normal to and fits all count.
+  - A **double middle click** fits the model.
+  - **Space** opens the orientation picker at the cursor: the six views laid out as an unfolded cube, plus Isometric, Normal to, Zoom to fit, Zoom to selection, Zoom to area and Previous view.
+  - **Zoom to area** frames a box you drag.
+  - **Zoom to selection** frames the picked face, edge or parts.
+
+### Changed
+
+- Camera moves take 300 ms, down from 450 ms. They apply at once when the system asks for reduced motion.
+
 ## [1.86.0] - 2026-11-08
 
 ### Added
@@ -861,7 +878,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.86.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.87.0...HEAD
+[1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
 [1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0

@@ -5712,6 +5712,98 @@ try {
     await ctx.close();
   }
 
+  // --- View navigation (FRS 13.13: FR-UI-101..104): arrow keys, Z, previous view, zoom to area/selection, Space picker ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const np = await ctx.newPage();
+    np.on("pageerror", e => errors.push(e.message));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await np.goto(`${origin}/index.html?debug&nokernel`);
+    await np.waitForFunction(() => window.__sv);
+    await np.setInputFiles("#file-input", join(fixtures, "cube-10x10mm/Cube 10x10.stp"));
+    await np.waitForFunction(() => window.__sv.viewer.parts.length > 0);
+    const cam = () => np.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray(), h: v.viewHeight() }; });
+    const settleCam = async () => { await np.waitForTimeout(60); await np.waitForFunction(() => !window.__sv.viewer.animating); };
+    const dist = (a, b) => Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1], a.p[2] - b.p[2]);
+    const ang = (a, b) => { const u = a.p.map((x, i) => x - a.t[i]), w = b.p.map((x, i) => x - b.t[i]); const c = u.reduce((s, x, i) => s + x * w[i], 0) / Math.hypot(...u) / Math.hypot(...w); return Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI; };
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.keyboard.press("Control+1"); await settleCam();
+    const c0 = await cam();
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    const c1 = await cam();
+    await np.keyboard.press("Shift+ArrowRight"); await settleCam();
+    const c2 = await cam();
+    check(Math.abs(ang(c0, c1) - 15) < 0.5 && Math.abs(ang(c1, c2) - 90) < 0.5, `navigation: → turns the view 15°, Shift+→ 90° (${ang(c0, c1).toFixed(2)}°, ${ang(c1, c2).toFixed(2)}°)`);
+    await np.keyboard.press("z"); await settleCam();
+    const c3 = await cam();
+    await np.keyboard.press("Shift+Z"); await settleCam();
+    const c4 = await cam();
+    check(c3.h > c2.h * 1.2 && Math.abs(c4.h / c2.h - 1) < 0.01, `navigation: Z zooms out and Shift+Z back in (${c2.h.toFixed(2)} → ${c3.h.toFixed(2)} → ${c4.h.toFixed(2)})`);
+    await np.keyboard.press("Control+ArrowRight"); await settleCam();
+    const c5 = await cam();
+    const moved = Math.hypot(...c5.t.map((x, i) => x - c4.t[i]));
+    check(Math.abs(moved / c4.h - 0.1) < 0.01 && Math.abs(ang(c4, c5)) < 0.1, `navigation: Ctrl+→ pans a tenth of the view without turning it (${(moved / c4.h).toFixed(3)})`);
+    // Previous view walks back: pan, zoom in, zoom out, turn 90, turn 15 → the camera before Ctrl+1's result.
+    for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
+    const back = await cam();
+    check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // Double middle click fits: the same camera as F.
+    await np.keyboard.press("f"); await settleCam();
+    const cf = await cam();
+    await np.keyboard.press("z"); await settleCam();
+    const box = await np.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; });
+    const mx = box.x + box.width / 2, my = box.y + box.height / 2;
+    await np.mouse.move(mx, my);
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await np.mouse.down({ button: "middle" }); await np.mouse.up({ button: "middle" });
+    await settleCam();
+    const cd = await cam();
+    check(Math.abs(cd.h / cf.h - 1) < 0.01, `navigation: a double middle click fits like F (${cd.h.toFixed(2)} vs ${cf.h.toFixed(2)})`);
+    // Space: the orientation picker at the cursor; its Top gives the same view as Ctrl+5, Esc closes it untouched.
+    await np.mouse.move(mx + 50, my + 20);
+    await np.keyboard.press("Space");
+    const pick = await np.evaluate(() => { const el = document.querySelector(".nav-pick"); if (!el) return null; const r = el.getBoundingClientRect(); return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, n: el.querySelectorAll("button").length }; });
+    await np.click('.nav-pick [data-nv="top"]'); await settleCam();
+    const ct = await cam();
+    await np.keyboard.press("Control+5"); await settleCam();
+    const c5b = await cam();
+    await np.keyboard.press("Space");
+    const before = await cam();
+    await np.keyboard.press("Escape");
+    const after = await cam();
+    const open = await np.evaluate(() => !!document.querySelector(".nav-pick"));
+    check(!!pick && pick.n >= 12 && Math.abs(pick.cx - (mx + 50)) < 2 && ang(ct, c5b) < 0.01 && dist(before, after) < 1e-9 && !open,
+      `navigation: Space opens the orientation picker at the cursor (${pick?.n} buttons), Top = Ctrl+5, Esc closes it without moving the view`);
+    // Zoom to area: a box over a quarter of the view makes the view half as tall.
+    const h0 = (await cam()).h;
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="area"]');
+    await np.mouse.move(mx - box.width / 8, my - box.height / 8);
+    await np.mouse.down();
+    await np.mouse.move(mx + box.width / 8, my + box.height / 8, { steps: 4 });
+    await np.mouse.up();
+    await settleCam();
+    const ca = await cam();
+    check(Math.abs(ca.h / h0 - 0.25) < 0.01 && (await np.evaluate(() => !document.querySelector(".nav-area") && window.__sv.viewer.controls.enabled)), `navigation: Zoom to area frames the box (${(ca.h / h0).toFixed(3)} of the height)`);
+    // Zoom to selection on one face of the 10 mm cube: the face fills the view.
+    await np.evaluate(() => { const v = window.__sv.viewer, p = v.parts[0]; const f = p.data.faces[0]; window.__sv.state.selection = { kind: "face", point: new (v.camera.position.constructor)(...f.centroid), part: p, face: f }; });
+    await np.keyboard.press("Space");
+    await np.click('.nav-pick [data-nv="sel"]'); await settleCam();
+    const cs = await cam();
+    check(cs.h > 8 && cs.h < 25, `navigation: Zoom to selection frames the picked 10 mm face (view height ${cs.h.toFixed(2)} mm)`);
+    // Russian: the picker's labels are translated.
+    await np.click("#lang-btn");
+    await np.evaluate(() => document.activeElement?.blur());
+    await np.mouse.move(mx, my);
+    await np.keyboard.press("Space");
+    const ru = await np.evaluate(() => document.querySelector(".nav-pick")?.textContent ?? "");
+    await np.keyboard.press("Escape");
+    await np.click("#lang-btn");
+    check(ru.includes("Сверху") && ru.includes("Предыдущий вид") && !/[A-Za-z]{3}/.test(ru), `navigation: the orientation picker is translated in Russian (${ru.slice(0, 60)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);
