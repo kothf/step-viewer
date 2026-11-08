@@ -37,6 +37,7 @@ import { ModelController } from "./model/controller";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
+import { flattenSubs } from "./asm/patterns";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -321,6 +322,8 @@ const drawing = new DrawingWorkspace({
       const m = live.material;
       return { name: modeller.partName.replace(/\s*•$/, "") || live.name, part: JSON.parse(JSON.stringify(live)), info: { title: live.props.title || live.name, number: live.props.partNumber, revision: live.props.revision, author: live.props.author, material: m?.name, density: m?.density } };
     }
+    // An open assembly (FR-DRW-030): its document and the expanded one the kernel builds.
+    if (asm.active && asm.doc) return { name: asm.doc.name, asm: { doc: JSON.parse(JSON.stringify(asm.doc)), flat: JSON.parse(JSON.stringify(asm.expanded?.doc ?? flattenSubs(asm.doc))) }, info: { title: asm.doc.name } };
     if (!viewer.parts.length || isPcbMode()) return null;
     if (kernelOff) { toast(t("Drawings need the geometry kernel, which is turned off (?nokernel)."), true); return null; }
     if (kernelJob && kernel.status === "loading") { toast(t("Loading the geometry kernel…")); await kernelJob; }
@@ -330,6 +333,7 @@ const drawing = new DrawingWorkspace({
     return { name, file: { name, bytes }, info: { title: baseName() } };
   },
   livePart: id => (modeller.store?.doc.id === id ? modeller.store.doc : null),
+  liveAsm: id => (asm.active && asm.doc?.id === id ? { doc: asm.doc, flat: asm.expanded?.doc ?? flattenSubs(asm.doc) } : null),
   onPartChange: fn => { partListeners.push(fn); },
   currentView() {
     if (!viewer.parts.length && !modeller.active) return null;
@@ -341,7 +345,7 @@ const drawing = new DrawingWorkspace({
 $("#new-drawing").addEventListener("click", () => {
   $("#new-menu").hidden = true;
   $("#new-more").setAttribute("aria-expanded", "false");
-  const key = modeller.active ? `part:${modeller.store?.doc.id}` : state.fileKey || state.fileName;
+  const key = modeller.active ? `part:${modeller.store?.doc.id}` : asm.active ? `asm:${asm.doc?.id}` : state.fileKey || state.fileName;
   if (drawing.hasDrawing && drawing.modelKey === key) drawing.show();
   else { drawing.modelKey = key; void drawing.newFromModel(); }
 });

@@ -7,6 +7,7 @@ import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kerne
 import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem } from "./items";
 import type { Prim } from "./prims";
+import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { viewDir } from "./views";
@@ -15,7 +16,7 @@ type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
-export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label }
+export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
 
 export const TEXT_H = 3.5;
 const ARROW = 3;
@@ -359,6 +360,11 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const f = edgeFoot(a.ref, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1]));
       r = datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], toSheet(pl, a.pos[0], a.pos[1]));
       if (!f) out.dangling.push(a.id);
+    } else if (a.t === "balloon") {
+      // The tip stays on the edge's middle; the number is the component's item in the BOM.
+      const e = refEdge(a.ref, ctx.topo), c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && ctx.bom ? ctx.bom.itemOf(c) : null;
+      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"));
+      if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "surf") {
       const T = toSheet(pl, a.pos[0], a.pos[1]);
       const f = a.ref ? edgeFoot(a.ref, ctx.topo, P, pl, T) : null;
@@ -397,12 +403,12 @@ function surfOn(a: SurfAnnot, T: P2, f: { at: P2; d: P2 } | null, dec: string): 
 }
 
 /** Notes, free tolerance frames, surface symbols and tables on the sheet itself (not on a view). */
-export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = "."): AnnotOut {
+export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?: Bom | null): AnnotOut {
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   for (const a of sheet.annots ?? []) {
     if (a.view) continue;
     const r = a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
-      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a, label) : null;
+      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label) : null;
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }
   return out;

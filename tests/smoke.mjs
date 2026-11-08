@@ -3396,6 +3396,83 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: assembly drawing, BOM, balloons and auto balloon (FR-DRW-030) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const box = (id, w, h, d) => ({ schema: 1, kind: "part", id, name: id, units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } }] });
+    const pin = { schema: 1, kind: "part", id: "pin", name: "Pin", units: { length: "mm", decimals: 2 }, props: { partNumber: "PN-7", description: "Dowel pin" }, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: 4 }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 15 } }] };
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_drw", name: "Fixture", units: { length: "mm", decimals: 2 }, parts: {
+      plate: { name: "Plate", file: "Plate.mcadprt", doc: box("plate", 100, 60, 20) }, pin: { name: "Pin", file: "Pin.mcadprt", doc: pin } },
+      components: [{ id: "c1", name: "Plate<1>", part: "plate", tf: T(0, 0, 0), fixed: true }, { id: "c2", name: "Pin<1>", part: "pin", tf: T(30, 0, 20) }, { id: "c3", name: "Pin<2>", part: "pin", tf: T(-30, 0, 20) }] };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
+    await dp.evaluate(b => window.__sv.asm.openFile({ name: "Fixture.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length === 3, null, { timeout: 90000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const front = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views[0].id);
+    const top = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views[1].id);
+    const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
+    const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const src = await dp.evaluate(() => window.__sv.drw.doc().source.kind);
+    // BOM on the title block: Plate ×1, PN-7 (the pin's part number) ×2.
+    await tool("bom");
+    await dp.waitForTimeout(150);
+    let tx = await texts();
+    const bomOk = ["Item", "Part number", "Description", "Qty", "Plate", "PN-7", "Dowel pin"].every(s => tx.includes(s)) && tx.includes("2");
+    // Auto balloon on the front view: one balloon per item, numbered 1 and 2.
+    await dp.keyboard.press("Escape");
+    const [fx, fy] = await at(front, 0, 10);
+    await dp.mouse.click(fx, fy);
+    await tool("auto");
+    await dp.waitForTimeout(300);
+    let an = await annots();
+    const auto = an.filter(a => a.t === "balloon");
+    const autoNums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
+    check(src === "asm" && bomOk && auto.length === 2 && auto.every(a => a.view === front) && autoNums === "1,2", `drawing: assembly drawing with a BOM (Plate ×1, PN-7 ×2) and auto balloons 1 and 2 (${src}; ${auto.length} balloons ${autoNums}; ${tx.join(" ")})`);
+    // A balloon by hand on a pin's circle in the top view reads 2.
+    await tool("balloon");
+    let [x, y] = await at(top, 34, 0);
+    await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top, 55, 35);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.keyboard.press("Escape");
+    an = await annots();
+    const hand = an.filter(a => a.t === "balloon" && a.view === top);
+    const nums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
+    check(hand.length === 1 && hand[0].ref.e.startsWith("c2@") && nums === "1,2,2", `drawing: a balloon on a pin reads its item number 2 (${JSON.stringify(hand.map(a => a.ref.e))}; ${nums})`);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
+    // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
+    await dp.click('#drw [data-a="back"]');
+    await dp.evaluate(() => window.__sv.asm.setSuppressed("c3", true));
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length === 2, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForTimeout(400);
+    await ready();
+    tx = await texts();
+    const qty = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 2.5).map(p => p.s));
+    const dangle = await dp.evaluate(() => document.querySelectorAll("#drw .drw-dangle").length);
+    check(qty[qty.indexOf("PN-7") + 2] === "1" && dangle === 0, `drawing: the BOM follows the assembly (one pin left: ${qty.join(" ")}; ${dangle} warnings)`);
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
