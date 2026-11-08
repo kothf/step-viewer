@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.144.0] - 2026-11-08
+
+### Added
+
+- **Slot tools (FR-SK-017)**: the Slot ▾ menu now has Centerpoint straight slot (centre, one end, width), Centerpoint arc slot (arc centre, start, end, width) and 3-point arc slot (start, end, a point on the arc, width) next to the straight slot, all with a live preview. Every slot gets its width and its length (straight) or centre-line radius (arc) as dimensions, and the Modify box opens on them in turn; Add dimensions in the panel turns that off.
+
+### Fixed
+
+- **Sketch solver**: two arcs joined end to end and tangent there were counted as unconstrained, so such sketches showed too many degrees of freedom; the rank test is also less sensitive to rounding, so redundant relations no longer read as fully defining.
+
 ## [1.143.0] - 2026-11-08
 
 ### Added
@@ -1232,7 +1242,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.143.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.144.0...HEAD
+[1.144.0]: https://github.com/kothf/step-viewer/compare/v1.143.0...v1.144.0
 [1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0
 [1.142.0]: https://github.com/kothf/step-viewer/compare/v1.141.0...v1.142.0
 [1.141.0]: https://github.com/kothf/step-viewer/compare/v1.140.0...v1.141.0
