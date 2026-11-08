@@ -19,7 +19,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect", member: "Structural Member", trimext: "Trim/Extend", endcap: "End cap", gusset: "Gusset", weldbead: "Fillet Bead" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect", member: "Structural Member", trimext: "Trim/Extend", endcap: "End cap", gusset: "Gusset", weldbead: "Fillet Bead", spattern: "SketchPattern" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -135,6 +135,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "extrude") {
     const vtx = (v: VertexRef | undefined) => { if (v) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); } };
     if (f.end === "vertex") vtx(f.upToVertex);
+    if (f.end === "body" && f.upToBody) faces.push(f.upToBody.name);
     if (f.start === "surface") plane(f.startRef);
     if (f.start === "vertex") vtx(f.startVertex);
   }
@@ -145,6 +146,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
   if (f.type === "csys" && f.origin) { if ("point" in f.origin) features.push(f.origin.point); else faces.push(...f.origin.edge.faces); }
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "chamfer") for (const v of f.vertices ?? []) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); }
+  if (f.type === "shell") faces.push(...(f.multi ?? []).map(x => x.name));
   if (f.type === "fillet") for (const x of [...(f.faces1 ?? []), ...(f.faces2 ?? []), ...(f.center ?? [])]) faces.push(x.name);
   const line = (l: LineRef | undefined) => {
     if (!l) return;
@@ -154,9 +157,11 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "csys") { line(f.x); line(f.z); }
   if (f.type === "moveface") line(f.axis);
-  if (f.type === "hole") plane(f.plane);
+  if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
-  if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
+  if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); for (const e of f.parting ?? []) faces.push(...e.faces); }
+  if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
+  if (f.type === "spattern") { features.push(...f.features); if (f.sketch) features.push(f.sketch); if (f.csys) features.push(f.csys); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }

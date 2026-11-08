@@ -34,6 +34,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - New assembly (or opening one) while a part was open left the part modelling bar showing under the assembly bar.
 
+## [1.100.0] - 2026-11-08
+
+### Added
+
+- Chamfer and shell options from FRS Appendix G (FR-FT-041, FR-FT-060):
+  - **Offset face chamfer.** Both faces move in by the distance, and the chamfer runs where they meet, so it stays even where the faces are not square.
+  - **Vertex chamfer.** Click an edge next to a corner of three straight edges, and the corner is cut off at three distances along its edges.
+  - **Multi-thickness shell.** Flat faces picked under Multi-thickness settings get walls of their own thickness, thicker or thinner than the shell.
+- Draft and loft options from FRS Appendix G (FR-FT-061, FR-FT-062, FR-FT-082):
+  - **Parting line draft.** Pick the direction of pull and the edges of the parting line, and the face on one side of each edge tapers from it.
+  - **Rib draft.** A rib normal to its sketch can taper away from the sketch plane, inward or outward.
+  - **Loft start and end constraints.** Normal to profile makes the loft leave the first profile and reach the last one square to them, with a tangent length.
+- Holes and end conditions from FRS Appendix G (FR-FT-050, FR-FT-012):
+  - **New hole types.** Clearance, Counterdrill (a larger drill to a depth with a 118° cone at its bottom) and Slot (length and angle in the face, rounded ends).
+  - **Hole end conditions.** Up to next goes through the first wall the hole meets. Up to face or plane stops at a picked plane or flat face.
+  - **Extrude Up to body.** Pick any face of another body, and the extrude stops where it meets that body.
+- Pattern options from FRS Appendix G (FR-FT-070, FR-FT-071, FR-FT-072, FR-FT-073):
+  - **Copy faces or bodies.** Linear pattern, Circular pattern and Mirror can copy faces instead of features. Click all the faces of a boss or a cut, and each copy adds or removes the same shape. They can also copy bodies, and each copy becomes a new body. Mirror's **Merge solids** joins each mirrored body to its original.
+  - **Sketch driven pattern** (pattern ▾): a copy at each free point of a sketch, moved from the seed's centroid or a picked reference point.
+  - **Table driven pattern** (pattern ▾): copies moved by X, Y offsets typed one row per copy, along the part's axes or a coordinate system.
+
+## [1.99.0] - 2026-11-08
+
+### Added
+
+- **Alternate position views** (FR-DRW-015), in assembly drawings: select a model, projected or auxiliary view and click Add component… under Alternate position in its panel. Click an edge of a component, then where that point goes: the component (with its sub-assembly's parts) is drawn again there in thin phantom lines (ISO 128 long dash, double dot).
+  - Move across, Move up and Turn (about the picked point, as seen in the view) can be typed; Remove takes one off. Detail views of the view show it too.
+  - The phantom lines are in PDF, SVG, PNG and print, and on their own PHANTOM layer and linetype in DXF.
+
 ## [1.98.0] - 2026-11-08
 
 ### Added
@@ -980,7 +1009,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.102.0...HEAD
-[1.102.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.102.0
+[1.102.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.102.0
+[1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
+[1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
 [1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
