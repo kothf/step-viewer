@@ -11,9 +11,9 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, Track } from "./types";
+import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -118,6 +118,14 @@ export class MotionManager {
     return { value: mates.filter(m => VALUE_MATES.has(m.type)), axis: mates.filter(m => AXIS_MATES.has(m.type)) };
   }
 
+  /** Components a placement track can move: top-level ones that no mate holds (the mates would fight it). */
+  private movable() {
+    const d = this.asm.doc;
+    if (!d) return [];
+    const held = new Set((d.mates ?? []).filter(m => !m.suppressed).flatMap(m => [m.a.comp, m.b.comp, m.c?.comp, m.d?.comp].filter(Boolean)));
+    return d.components.filter(c => !c.suppressed && !held.has(c.id));
+  }
+
   /** A component's own opacity (what an appearance track starts from). */
   private compOpacity(id: string) { return this.asm.doc?.components.find(c => c.id === id)?.opacity ?? 1; }
 
@@ -128,6 +136,7 @@ export class MotionManager {
       kind === "mate" && mate ? { id: uid("mt_"), kind: "mate", mate: ref, keys: [{ t: 0, v: mate.value ?? 0 }, { t: s.duration, v: mate.value ?? 0 }] }
       : kind === "motor" && mate ? { id: uid("mt_"), kind: "motor", mate: ref, motion: mate.type === "distance" ? "linear" : "rotary", profile: "constant", speed: 10, amp: mate.type === "distance" ? 10 : 30 * DEG, freq: 0.5, start: 0, end: s.duration }
       : kind === "explode" && ref ? { id: uid("mt_"), kind: "explode", view: ref, keys: explodeKeys(s.duration) }
+      : kind === "pose" && this.movable().some(c => c.id === ref) ? { id: uid("mt_"), kind: "pose", comp: ref, keys: [{ t: 0, d: [0, 0, 0], r: [0, 0, 0] }, { t: s.duration, d: [0, 0, 0], r: [0, 0, 0] }] }
       : kind === "look" && this.asm.doc?.components.some(c => c.id === ref) ? { id: uid("mt_"), kind: "look", comp: ref, keys: fadeKeys(0, s.duration, false, this.compOpacity(ref)) }
       : kind === "camera" ? { id: uid("mt_"), kind: "camera", keys: [this.camKey(0)] }
       : null;
@@ -151,6 +160,11 @@ export class MotionManager {
     this.edit(s => {
       const k = s.tracks.find(x => x.id === trackId)!;
       if (k.kind === "camera") { k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9); k.keys.push(this.camKey(tq)); k.keys = sortKeys(k.keys); idx = k.keys.findIndex(x => x.t === tq); }
+      else if (k.kind === "pose") {
+        const p = poseAt(k.keys, tq) ?? { d: [0, 0, 0], r: [0, 0, 0] };
+        k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, d: p.d, r: p.r }]);
+        idx = k.keys.findIndex(x => x.t === tq);
+      }
       else if (k.kind === "mate" || k.kind === "explode" || k.kind === "look") {
         const v = valueAt(k.keys, tq) ?? (k.kind === "mate" ? (this.asm.doc?.mates ?? []).find(m => m.id === k.mate)?.value ?? 0 : k.kind === "look" ? this.compOpacity(k.comp) : 0);
         k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9);
@@ -176,7 +190,7 @@ export class MotionManager {
   /** The camera now, as a key at `t`. */
   private camKey(tq: number): CamKey {
     const c = this.viewer.camera, g = this.viewer.controls.target;
-    return { t: tq, pos: c.position.toArray() as V3, target: g.toArray() as V3, up: c.up.toArray() as V3 };
+    return { t: tq, pos: c.position.toArray() as V3, target: g.toArray() as V3, up: c.up.toArray() as V3, ...("isOrthographicCamera" in c && c.isOrthographicCamera ? { zoom: c.zoom } : {}) };
   }
 
   /** Animation wizard (SolidWorks): explode or collapse an exploded view, or rotate the model, over the study. */
@@ -234,7 +248,13 @@ export class MotionManager {
     const s = this.study, i = Math.min(frameCount(s) - 1, Math.max(0, Math.round(tq * s.fps)));
     this.ensure(i);
     const f = frameAt(s, tq, new Map((this.asm.doc.mates ?? []).map(m => [m.id, m])));
-    this.asm.motionShow(this.frames[i] ?? this.asm.restTfs(), f.explode);
+    let tfs = this.frames[i] ?? this.asm.restTfs();
+    if (Object.keys(f.pose).length) {
+      const rest = this.asm.restTfs();
+      tfs = { ...tfs };
+      for (const [id, p] of Object.entries(f.pose)) if (rest[id]) tfs[id] = posed(rest[id], p);
+    }
+    this.asm.motionShow(tfs, f.explode);
     this.asm.motionLook(f.look);
     if (f.camera) this.setCamera(f.camera);
     this.viewer.invalidate();
@@ -247,6 +267,7 @@ export class MotionManager {
     this.viewer.controls.target.set(k.target[0], k.target[1], k.target[2]);
     c.position.set(k.pos[0], k.pos[1], k.pos[2]);
     c.lookAt(this.viewer.controls.target);
+    if ("isOrthographicCamera" in c && c.isOrthographicCamera && k.zoom && Math.abs(c.zoom - k.zoom) > 1e-9) { c.zoom = k.zoom; c.updateProjectionMatrix(); }
   }
 
   // ---------- playback ----------
@@ -411,6 +432,7 @@ export class MotionManager {
     if (k.kind === "mate") return { icon: "◆", kind: t("Mate keys"), name: mate?.name ?? "?" };
     if (k.kind === "motor") return { icon: k.motion === "rotary" ? "⟳" : "⇄", kind: k.motion === "rotary" ? t("Rotary motor") : t("Linear motor"), name: mate?.name ?? "?" };
     if (k.kind === "explode") return { icon: "✸", kind: t("Explode"), name: this.asm.doc?.explodes?.find(v => v.id === k.view)?.name ?? "?" };
+    if (k.kind === "pose") return { icon: "✥", kind: t("Placement"), name: this.asm.doc?.components.find(c => c.id === k.comp)?.name ?? "?" };
     if (k.kind === "look") return { icon: "◐", kind: t("Appearance"), name: this.asm.doc?.components.find(c => c.id === k.comp)?.name ?? "?" };
     return { icon: "◉", kind: t("Camera"), name: "" };
   }
@@ -425,6 +447,7 @@ export class MotionManager {
       ...dr.value.map(m => `<option value="mate:${esc(m.id)}" translate="no">${esc(t("Mate keys"))}: ${esc(m.name)}</option>`),
       ...[...dr.value, ...dr.axis].map(m => `<option value="motor:${esc(m.id)}" translate="no">${esc(t("Motor"))}: ${esc(m.name)}</option>`),
       ...(doc.explodes ?? []).map(v => `<option value="explode:${esc(v.id)}" translate="no">${esc(t("Explode"))}: ${esc(v.name)}</option>`),
+      ...this.movable().filter(c => !s.tracks.some(k => k.kind === "pose" && k.comp === c.id)).map(c => `<option value="pose:${esc(c.id)}" translate="no">${esc(t("Placement"))}: ${esc(c.name)}</option>`),
       ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
       ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`])].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
@@ -497,6 +520,13 @@ export class MotionManager {
     const keys = sortKeys(tr.keys as Key[]), key = keys[sel.key ?? -1];
     if (!key) return "";
     if (tr.kind === "camera") return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp) + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
+    if (tr.kind === "pose") {
+      const pk = key as unknown as PoseKey;
+      return field(t("Time"), "t", fmt(pk.t), t("s"))
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Move {axis}", { axis: a.toUpperCase() }), `d${a}`, fmt(pk.d[j]), "mm")).join("")
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Rotate {axis}", { axis: a.toUpperCase() }), `r${a}`, fmt(pk.r[j]), "°")).join("")
+        + interpSel(pk.interp);
+    }
     const k = key as Key;
     if (tr.kind === "explode") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Exploded"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp);
     if (tr.kind === "look") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Opacity"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
@@ -646,12 +676,13 @@ export class MotionManager {
         if (!tr.flip) delete tr.flip;
         return;
       }
-      const keys = sortKeys(tr.keys as (Key | CamKey)[]), k = keys[sel.key ?? -1];
+      const keys = sortKeys(tr.keys as (Key | CamKey | PoseKey)[]), k = keys[sel.key ?? -1];
       if (!k) return;
       if (p === "t") k.t = this.snap(v);
       else if (p === "interp") { if (raw === "ease") k.interp = "ease"; else delete k.interp; }
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
+      else if (/^[dr][xyz]$/.test(p) && tr.kind === "pose") { const pk = k as unknown as PoseKey; (p[0] === "d" ? pk.d : pk.r)["xyz".indexOf(p[1])] = v; }
       else if ((p === "hide" || p === "show") && tr.kind === "look") (k as Key).v = p === "hide" ? 0 : 1;
       else if (p === "v" && tr.kind === "mate") { const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate); (k as Key).v = mate?.type === "angle" ? v * DEG : v; }
       const sorted = sortKeys(keys.filter(x => x === k || Math.abs(x.t - k.t) > 1e-9));

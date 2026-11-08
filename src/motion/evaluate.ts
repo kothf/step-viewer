@@ -1,10 +1,10 @@
 // Motion study evaluation (FR-FT-122): what every track asks for at a time. Pure, no DOM or kernel:
 // the motion manager hands the result to the assembly's mate solver frame by frame.
-import { compose, rotation, translation } from "../asm/math";
+import { compose, fromPose, rotation, translation } from "../asm/math";
 import type { Geo } from "../asm/solver";
 import type { Mate, MateType, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, Track } from "./types";
+import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, Track } from "./types";
 
 /** Mates whose value a key track or a motor changes. */
 export const VALUE_MATES: ReadonlySet<MateType> = new Set(["distance", "angle"]);
@@ -77,7 +77,27 @@ export function cameraAt(keys: CamKey[], t: number): CamKey | null {
       dir = [hr[0] * Math.cos(e) + z[0] * Math.sin(e), hr[1] * Math.cos(e) + z[1] * Math.sin(e), hr[2] * Math.cos(e) + z[2] * Math.sin(e)];
     }
   }
-  return { t, target, pos: [target[0] + dir[0] * l, target[1] + dir[1] * l, target[2] + dir[2] * l], ...(up ? { up } : {}) };
+  // Orthographic zoom changes by the same factor each second (geometric), as a dolly in perspective feels.
+  const za = a.zoom ?? b.zoom, zb = b.zoom ?? a.zoom;
+  const zoom = za && zb ? za * (zb / za) ** u : undefined;
+  return { t, target, pos: [target[0] + dir[0] * l, target[1] + dir[1] * l, target[2] + dir[2] * l], ...(up ? { up } : {}), ...(zoom ? { zoom } : {}) };
+}
+
+/** A pose track's offset at `t`: moves and angles interpolated like key values. */
+export function poseAt(keys: PoseKey[], t: number): { d: V3; r: V3 } | null {
+  if (!keys.length) return null;
+  const s = sortKeys(keys), { i, u } = segment(s, t);
+  if (u >= 1 || i === 0) return { d: [...s[i].d] as V3, r: [...s[i].r] as V3 };
+  return { d: lerp3(s[i - 1].d, s[i].d, u), r: lerp3(s[i - 1].r, s[i].r, u) };
+}
+
+/** Where a pose puts a component that rests at `rest`: turned about its own origin, then moved. */
+export function posed(rest: Tf, p: { d: V3; r: V3 }): Tf {
+  const o: V3 = [rest[3], rest[7], rest[11]];
+  const turn = fromPose([0, 0, 0], p.r);
+  const out = compose(turn, rest);
+  out[3] = o[0] + p.d[0]; out[7] = o[1] + p.d[1]; out[11] = o[2] + p.d[2];
+  return out;
 }
 
 /** How far a motor has driven at `t`: radians (rotary) or mm (linear). */
@@ -98,17 +118,20 @@ export interface Frame {
   explode: { id: string; k: number }[];
   /** Component id → opacity (0 hidden … 1 opaque) for components with appearance keys. */
   look: Record<string, number>;
+  /** Component id → offset for components with placement keys. */
+  pose: Record<string, { d: V3; r: V3 }>;
   camera: CamKey | null;
 }
 
 /** Evaluates every track that is on at `t`; `mates` are the assembly's, by id (for base values and types). */
 export function frameAt(study: MotionStudy, t: number, mates: Map<string, Mate>): Frame {
-  const f: Frame = { values: {}, axis: [], explode: [], look: {}, camera: null };
+  const f: Frame = { values: {}, axis: [], explode: [], look: {}, pose: {}, camera: null };
   const on = study.tracks.filter(k => !k.off);
   for (const k of on) {
     if (k.kind === "mate") { const v = valueAt(k.keys, t); if (v != null && mates.has(k.mate)) f.values[k.mate] = v; }
     else if (k.kind === "explode") { const v = valueAt(k.keys, t); if (v != null) f.explode.push({ id: k.view, k: clamp(v, 0, 1) }); }
     else if (k.kind === "look") { const v = valueAt(k.keys, t); if (v != null) f.look[k.comp] = clamp(v, 0, 1); }
+    else if (k.kind === "pose") { const p = poseAt(k.keys, t); if (p) f.pose[k.comp] = p; }
     else if (k.kind === "camera") f.camera = cameraAt(k.keys, t);
   }
   for (const k of on) {

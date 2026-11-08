@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
@@ -141,6 +141,24 @@ test("appearance keys: opacity per component, clamped to 0..1, fades ease out an
   close(frameAt(study, 0.5, mates).look.q, 1 - 0.125);
   assert.equal(frameAt(study, 2, mates).look.q, 0);
   assert.deepEqual(fadeKeys(1, 2, true, 0.5).map(k => k.v), [0, 0.5]);
+});
+
+test("placement keys: offsets interpolate, the component turns about its own origin, then moves", () => {
+  const keys = [{ t: 0, d: [0, 0, 0] as [number, number, number], r: [0, 0, 0] as [number, number, number] }, { t: 2, d: [0, 0, 20] as [number, number, number], r: [0, 0, 90] as [number, number, number] }];
+  const p = poseAt(keys, 1)!;
+  assert.deepEqual(p, { d: [0, 0, 10], r: [0, 0, 45] });
+  const rest = translation([30, 0, 5]), tf = posed(rest, poseAt(keys, 2)!);
+  const o = applyPoint(tf, [0, 0, 0]), x = applyDir(tf, [1, 0, 0]);
+  close(o[0], 30); close(o[1], 0); close(o[2], 25);
+  close(x[0], 0); close(x[1], 1);
+  const study: MotionStudy = { id: "s", name: "S", duration: 2, fps: 10, tracks: [{ id: "p", kind: "pose", comp: "q", keys }] };
+  assert.deepEqual(frameAt(study, 1, new Map()).pose.q, { d: [0, 0, 10], r: [0, 0, 45] });
+});
+
+test("camera keys: orthographic zoom changes geometrically", () => {
+  const k = (t: number, zoom: number) => ({ t, pos: [0, -100, 0] as [number, number, number], target: [0, 0, 0] as [number, number, number], up: [0, 0, 1] as [number, number, number], zoom });
+  close(cameraAt([k(0, 1), k(2, 4)], 1)!.zoom!, 2);
+  assert.equal(cameraAt([k(0, 1), k(2, 4)], 3)!.zoom, 4);
 });
 
 test("playback: once stops at the end, loop wraps, reciprocate comes back", () => {

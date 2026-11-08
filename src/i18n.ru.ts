@@ -2631,6 +2631,8 @@ export const RU: Record<string, string> = {
   "Oblique stroke": "Засечка",
   // Motion studies (FR-FT-122)
   "Appearance": "Внешний вид",
+  "Move {axis}": "Сдвиг по {axis}",
+  "Rotate {axis}": "Поворот вокруг {axis}",
   "Hidden": "Скрыт",
   "Shown": "Показан",
   "Make an exploded view first (Explode).": "Сначала создайте вид с разнесением (Разнести).",
