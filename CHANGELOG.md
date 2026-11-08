@@ -10,6 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+## [1.241.0] - 2026-11-08
+
+### Fixed
+
+- **Offline start picks up new versions behind a CDN.** The page registers its service worker as `sw.js?v=<version>` and asks the browser to skip its HTTP cache for it. aerocat.tech's Cloudflare kept `sw.js` for a day, so visitors got the worker of an older release (1.169.0 while 1.219.0 was deployed), which precached that release's files. Every release now has its own worker URL.
+
+## [1.240.0] - 2026-11-08
+
+### Added
+
+- **Linked sketch offsets (FR-SK-034)**: Offset entities now works as in SolidWorks. By default the copy keeps offset relations to its source and gets one distance dimension, so editing that dimension or moving the source moves the copy with it (turn off **Follow the source** for a static copy, as before). **Both sides** offsets to both sides at once, and for an open chain **Cap ends** closes the two copies with arcs about the source ends or with straight lines. Offsets of arcs and circles are dimensioned as the gap between the concentric curves. The relation glyph is ⇉.
+
 ## [1.239.0] - 2026-11-08
 
 ### Added
@@ -1588,7 +1600,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.244.0...HEAD
-[1.244.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.244.0
+[1.244.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.244.0
+[1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
+[1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
 [1.236.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.236.0

@@ -164,7 +164,9 @@ $("#app-version").textContent = `v${__APP_VERSION__}`;
   if (!import.meta.env.DEV && "serviceWorker" in navigator && location.protocol.startsWith("http") && (!navigator.webdriver || qs.has("sw")) && !qs.has("nosw")) {
     addEventListener("load", () => {
       const first = !navigator.serviceWorker.controller;
-      navigator.serviceWorker.register("./sw.js").then(reg => {
+      // The version in the URL gives every release its own worker URL: a CDN that keeps sw.js for a day
+      // (aerocat.tech's Cloudflare did) would otherwise hand out an old worker that precaches old files.
+      navigator.serviceWorker.register(`./sw.js?v=${__APP_VERSION__}`, { updateViaCache: "none" }).then(reg => {
         const w = reg.installing;
         if (first && w) w.addEventListener("statechange", () => { if (w.state === "activated") toast(t("MöbiusCAD now also starts offline in this browser.")); });
       }).catch(() => { /* offline start is a bonus */ });

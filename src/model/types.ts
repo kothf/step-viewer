@@ -54,11 +54,18 @@ export type RelKind =
   | "intersection"
   /** Equal curvature (G2) where a spline meets a line, arc or spline at a shared end; includes tangency (FR-SK-051). */
   | "curvature"
+  /**
+   * Offset (FR-SK-034): e = [source curve, offset curve, then pairs of (source end point, offset end point) at open chain ends].
+   * `of` names the lead offset relation of the same offset: this pair keeps the lead's distance. The lead pair's distance is a dimension.
+   */
+  | "offset"
   /** Pierce (FR-SK-051): the point sits where the model edge `ext` crosses the sketch plane, e = [point]. */
   | "pierce";
 
 export interface SkRel {
   id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
+  /** Offset: the lead offset relation whose distance this pair keeps (absent = this pair leads). */
+  of?: string;
   /** "On edge" (fix, FR-SK-064): the model edge a converted curve follows on every rebuild; pierce: the edge crossing the plane. */
   ext?: EdgeRef;
   /** Set by the rebuild when `ext` no longer resolves: the curve keeps its place, shown as dangling. */
@@ -83,6 +90,8 @@ export interface SkDim {
   dia?: boolean;
   /** Ordinate dimension (horizontal/vertical distance from the base e[0]); pos holds the row of the values. */
   ord?: boolean;
+  /** Offset between two concentric arcs/circles: the difference of their radii (FR-SK-034). */
+  off?: boolean;
 }
 
 /** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */
