@@ -158,6 +158,7 @@ export class AsmController {
 
   private load(doc: AsmDoc, fileName: string, handle: FileSystemFileHandle | null) {
     this.host.leaveOthers();
+    this.motion?.close();
     this.doc = doc;
     this.savedAt = JSON.stringify(doc);
     this.undoStack = [];
@@ -189,6 +190,7 @@ export class AsmController {
 
   close() {
     if (!this.doc) return;
+    this.motion?.close();
     this.doc = null;
     this.drag = null;
     this.mating = null;
@@ -284,6 +286,7 @@ export class AsmController {
       if (this.mating || this.patterning || this.exploding) this.drawPicks();
       if (this.patterning) this.drawPatternPreview();
       if (this.exploded || this.exploding) this.applyExplode();
+      this.motion?.rebuilt();
     })();
   }
 
@@ -1939,6 +1942,7 @@ export class AsmController {
       + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
       + b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !this.doc.components.length)
       + b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !this.doc.components.length)
+      + b("motion", t("Motion study"), t("Motion study: animate mates with keys and motors, explode and camera, record a video"), !this.doc.components.length)
       + b("interfere", t("Interference"), t("Interference detection: components whose solids overlap"), this.doc.components.length < 2)
       + b("bom", t("BOM"), t("Bill of materials: parts and quantities, CSV export"), !this.doc.components.length)
       + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !this.doc.components.length)
@@ -1968,6 +1972,7 @@ export class AsmController {
     else if (c === "pattern") { if (this.patterning) this.closeTools(); else this.startPattern(); }
     else if (c === "explode") { if (this.exploding) this.closeTools(); else this.startExplode(); }
     else if (c === "interfere") { if (this.interfere) this.closeInterference(); else void this.runInterference(); }
+    else if (c === "motion") this.motion?.open();
     else if (c === "bom") this.showBom();
     else if (c === "step") void this.exportStep();
     else if (c === "move" && sel) this.moveComponent(sel.id);
@@ -2281,6 +2286,84 @@ export class AsmController {
       this.previewMate();
     });
     vi?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); vi.dispatchEvent(new Event("change")); this.okMate(); } });
+  }
+
+  // ---------- motion studies (FR-FT-122): the API src/motion uses ----------
+
+  /** The motion manager: opened from the bar, told when the document is rebuilt, replaced or closed. */
+  motion: { open(): void; rebuilt(): void; close(): void } | null = null;
+
+  /** A mate reference's face geometry in its component's own coordinates. */
+  localGeo(ref: MateRef): Geo | null { const c = this.anyComp(ref.comp); return (c && this.geo.get(c.part)?.get(ref.face)) ?? null; }
+
+  /** Every solved component's transform at rest (flexible sub-assembly children included), as the solver sees them. */
+  restTfs(): Record<string, Tf> {
+    const out: Record<string, Tf> = {};
+    if (this.doc) for (const c of solveView(this.doc).components) out[c.id] = c.tf.slice();
+    return out;
+  }
+
+  /** Solves the mates with these values and extra mates, starting from `start` (the previous frame). Nothing is stored. */
+  motionSolve(values: Record<string, number>, extra: Mate[], start?: Record<string, Tf>): { ok: boolean; tfs: Record<string, Tf>; bad: string[] } {
+    const doc = this.doc;
+    if (!doc) return { ok: false, tfs: {}, bad: [] };
+    if (!needsSolve(doc) && !extra.length) return { ok: true, tfs: start ?? this.restTfs(), bad: [] };
+    const d: AsmDoc = { ...doc, mates: (doc.mates ?? []).map(m => (m.id in values ? { ...m, value: values[m.id] } : m)) };
+    const r = this.solveDoc(d, extra, start);
+    return { ok: r.ok, tfs: r.ok ? r.tfs : { ...(start ?? this.restTfs()) }, bad: [...r.bad, ...r.missing] };
+  }
+
+  /** Shows the components at solved transforms, with exploded views applied at their progress (0..1). */
+  motionShow(tfs: Record<string, Tf>, explode: { id: string; k: number }[] = []) {
+    const doc = this.doc;
+    if (!doc) return;
+    // Pattern instances follow their moved seeds.
+    let inst: Map<string, Tf> | null = null;
+    if (doc.patterns?.length) {
+      const moved: AsmDoc = { ...doc, components: doc.components.map(c => (tfs[c.id] ? { ...c, tf: tfs[c.id] } : c)) };
+      const byId = new Map(moved.components.map(c => [c.id, c]));
+      const ex = expandPatterns(moved, ref => { const c = byId.get(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face); return c && g ? placeGeo(g, c.tf) : null; });
+      inst = new Map(ex.doc.components.map(c => [c.id, c.tf]));
+    }
+    const off = new Map<string, V3>();
+    for (const e of explode) {
+      const v = doc.explodes?.find(x => x.id === e.id);
+      if (!v || e.k <= 0) continue;
+      for (const [id, o] of explodeOffsets(v)) { const p = off.get(id) ?? [0, 0, 0]; off.set(id, [p[0] + o[0] * e.k, p[1] + o[1] * e.k, p[2] + o[2] * e.k]); }
+    }
+    const all: Record<string, Tf> = {};
+    for (const id of this.shownIds) {
+      const top = topOf(id);
+      let base = tfs[id] ?? inst?.get(id) ?? null;
+      if (!base && top !== id && tfs[top] && this.builtTf[top] && this.shownTf[id]) base = compose(tfs[top], compose(invert(this.builtTf[top]), this.shownTf[id]));
+      base ??= this.shownTf[id];
+      if (!base) continue;
+      const o = off.get(id) ?? off.get(top);
+      all[id] = o ? compose(translation(o), base) : base;
+    }
+    this.previewTfs(all);
+  }
+
+  /** Puts the components back where the document has them (and the shown exploded view). */
+  motionRestore() {
+    cancelAnimationFrame(this.explodeAnim);
+    this.previewTfs(this.shownTf);
+    if (this.exploded) this.applyExplode();
+  }
+
+  /** Changes the motion studies as one undo step, without placing the components again. */
+  changeMotions(fn: (d: AsmDoc) => void) {
+    if (!this.doc) return;
+    const before = JSON.stringify(this.doc);
+    const next = JSON.parse(before) as AsmDoc;
+    fn(next);
+    if (JSON.stringify(next) === before) return;
+    this.undoStack.push(before);
+    if (this.undoStack.length > 100) this.undoStack.shift();
+    this.redoStack = [];
+    this.doc = next;
+    this.host.setDoc(this.label());
+    this.renderBar();
   }
 }
 

@@ -14,6 +14,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Sketch driven pattern** (pattern ▾): a copy at each free point of a sketch, moved from the seed's centroid or a picked reference point.
   - **Table driven pattern** (pattern ▾): copies moved by X, Y offsets typed one row per copy, along the part's axes or a coordinate system.
 
+## [1.94.0] - 2026-11-08
+
+### Added
+
+- **Motion studies** (FR-FT-122, FRS P6): **Motion study** on the assembly bar opens a timeline under the view, as SolidWorks' MotionManager does.
+  - Key tracks on distance and angle mates; select a key to type its time, value and interpolation (linear or ease in/out), drag keys along the timeline, double-click a track to add one.
+  - Motors on mates: rotary (rpm) or linear (mm/s), constant speed or oscillating, from a start to an end time, on distance, angle, concentric, hinge and screw mates. The other components follow through the mate solver, frame by frame from the one before, so linkages keep their branch; frames that cannot be solved are reported.
+  - Exploded view and camera tracks, and the animation wizard: Explode, Collapse and Rotate model fill a track over the study.
+  - Play once, loop or back and forth at 0.25× to 4×; scrub the ruler; Space, ←/→, Home and End in the pane.
+  - Record a WebM video of the view in real time, or save an animated GIF.
+  - Several named studies per assembly, saved in the `.mcadasm` file, with undo.
 ## [1.92.0] - 2026-11-08
 
 ### Added
@@ -926,7 +937,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.95.0...HEAD
-[1.95.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.95.0
+[1.95.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.95.0
+[1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0
 [1.92.0]: https://github.com/kothf/step-viewer/compare/v1.90.0...v1.92.0
 [1.90.0]: https://github.com/kothf/step-viewer/compare/v1.89.0...v1.90.0
 [1.89.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.89.0

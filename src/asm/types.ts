@@ -2,6 +2,7 @@
 // Every source is kept as a part document: a MöbiusCAD part as it is, a STEP/IGES/BREP
 // model as a part with one Imported feature, so the kernel evaluates them all the same way.
 import type { PartDoc, V3 } from "../model/types";
+import type { MotionStudy } from "../motion/types";
 
 /** Rigid transform as the top three rows of a 4×4 matrix, row-major: [r00 r01 r02 tx, r10 r11 r12 ty, r20 r21 r22 tz]. */
 export type Tf = number[];
@@ -49,6 +50,8 @@ export interface AsmDoc {
   activeConfig?: string;
   /** Assembly features (FR-ASM-027): cuts that exist only in the assembly, applied to the placed components in order. */
   features?: AsmFeature[];
+  /** Motion studies (FR-FT-122): keys and motors on mates, explode and camera animation. */
+  motions?: MotionStudy[];
   /** Display states (FR-ASM-025) and the active one. */
   states?: DisplayState[];
   activeState?: string;
@@ -99,6 +102,9 @@ export interface Mate {
   ratio?: number;
   /** Gear and screw: a's and b's transforms when the mate was made (their motion is measured from there). */
   t0?: [Tf, Tf];
+  /** Lock only: hold just the orientation ("rot") or just the travel along `along` (in a's coordinates, "slide"); motion study motors use these. */
+  keep?: "rot" | "slide";
+  along?: V3;
 }
 
 /** Linear or circular pattern of components along a face's normal / cylinder axis. */
