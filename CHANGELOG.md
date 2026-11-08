@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
 
+## [1.233.0] - 2026-11-08
+
+### Changed
+
+- **Embossed text and other many-region extrudes build several times faster.** The regions of one sketch are now joined in a single boolean operation instead of one after another, and a boss that only stands on the body (its sketch plane is the body's outer face, as with a nameplate's lettering) is glued on without intersecting the faces that lie on each other. The Leuenberger nameplate (a 25-letter emboss, 441 faces) builds in 2.8 s instead of 16 s, with the same faces, names, volume and area. A boss that reaches into the body still takes the full boolean.
+
 ## [1.232.0] - 2026-11-08
 
 ### Changed
@@ -1557,7 +1563,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.236.0...HEAD
-[1.236.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.236.0
+[1.236.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.236.0
+[1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
 [1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
 [1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0
