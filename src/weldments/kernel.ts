@@ -683,6 +683,9 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     return set;
   };
   const set1 = grow(f.faces1), set2 = grow(f.faces2);
+  /** One straight or round stretch of the root: its ends, length, and a builder for the bead from distance a to b along it. */
+  type Run = { p0: V3; p1: V3; len: number; make: (a: number, b: number) => void };
+  const runs: Run[] = [];
   for (const fa of set1) for (const fb of set2) {
     if (fa.IsSame(fb)) continue;
     const sec = new oc.BRepAlgoAPI_Section_3(fa, fb, true);
@@ -690,24 +693,74 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     for (const e of h.sub(sec.Shape(), "EDGE")) {
       const ad = new oc.BRepAdaptor_Curve_2(e);
       const ty = ad.GetType(), t0 = ad.FirstParameter(), t1 = ad.LastParameter();
-      const q0 = ad.Value(t0), p0: V3 = [q0.X(), q0.Y(), q0.Z()];
-      const pt = new oc.gp_Pnt_1(), tv = new oc.gp_Vec_1();
-      ad.D1(t0, pt, tv);
-      const tdir = unit([tv.X(), tv.Y(), tv.Z()]);
-      const na = normalAt(fa, p0), nb = normalAt(fb, p0);
-      if (!na || !nb || len(cross(na, nb)) < 1e-6) { skipped++; continue; }
-      // Legs: along each face, square to the edge, towards the side the other face looks at.
-      const inFace = (v: V3, n: V3) => unit(sub(sub(v, mul(n, dot(v, n))), mul(tdir, dot(v, tdir))));
-      const { face, edges } = tri(p0, inFace(nb, na), inFace(na, nb));
+      const at = (t: number) => {
+        const pt = new oc.gp_Pnt_1(), tv = new oc.gp_Vec_1();
+        ad.D1(t, pt, tv);
+        return { p: [pt.X(), pt.Y(), pt.Z()] as V3, tdir: unit([tv.X(), tv.Y(), tv.Z()]) };
+      };
+      /** The cross-section at parameter t (null where a face is neither flat nor round, or the faces are tangent). */
+      const section = (t: number) => {
+        const { p, tdir } = at(t);
+        const na = normalAt(fa, p), nb = normalAt(fb, p);
+        if (!na || !nb || len(cross(na, nb)) < 1e-6) return null;
+        // Legs: along each face, square to the edge, towards the side the other face looks at.
+        const inFace = (v: V3, n: V3) => unit(sub(sub(v, mul(n, dot(v, n))), mul(tdir, dot(v, tdir))));
+        return tri(p, inFace(nb, na), inFace(na, nb));
+      };
+      if (!section(t0)) { skipped++; continue; }
+      const p0 = at(t0).p, p1 = at(t1).p;
       if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) {
-        const q1 = ad.Value(t1), dv = sub([q1.X(), q1.Y(), q1.Z()], p0);
-        if (len(dv) < 1e-6) continue;
-        push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(dv[0], dv[1], dv[2]), false, true), edges);
+        const dv = sub(p1, p0), L = len(dv);
+        if (L < 1e-6) continue;
+        const w = mul(dv, 1 / L);
+        runs.push({ p0, p1, len: L, make: (a, b) => {
+          const { face, edges } = section(t0 + (a * (t1 - t0)) / L)!;
+          const v = mul(w, b - a);
+          push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(v[0], v[1], v[2]), false, true), edges);
+        } });
       } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
         // Round the circle's axis: a tube standing on a plate, or the round corners of a hollow section.
-        const ax = ad.Circle().Axis();
-        push(new oc.BRepPrimAPI_MakeRevol_1(face, ax, t1 - t0, true), edges);
+        const ax = ad.Circle().Axis(), r = ad.Circle().Radius();
+        runs.push({ p0, p1, len: r * (t1 - t0), make: (a, b) => {
+          const { face, edges } = section(t0 + a / r)!;
+          push(new oc.BRepPrimAPI_MakeRevol_1(face, ax, (b - a) / r, true), edges);
+        } });
       } else skipped++;
+    }
+  }
+  if (!f.inter) for (const r of runs) r.make(0, r.len);
+  else {
+    // Intermittent: runs chained end to end, then welds of length l every pitch along each chain from its start
+    // (staggered: every other chain starts half a pitch on, so the welds on two sides of a joint alternate).
+    const l = f.inter.len.v, e = Math.max(f.inter.pitch.v, l);
+    if (!(l > 0)) throw new FeatureError("E-WLD-BEAD", "The weld length must be more than zero.");
+    const tol = 1e-4 * (1 + sz), left = new Set(runs.map((_r, i) => i));
+    const touches = (p: V3, skip: number) => [...left].some(j => j !== skip && (d3(runs[j].p0, p) < tol || d3(runs[j].p1, p) < tol));
+    let chain = 0;
+    while (left.size) {
+      // An open chain starts at a free end; a closed one anywhere.
+      let first = [...left][0], rev = false;
+      for (const i of left) {
+        if (!touches(runs[i].p0, i)) { first = i; rev = false; break; }
+        if (!touches(runs[i].p1, i)) { first = i; rev = true; break; }
+      }
+      const off = f.inter.stagger && chain % 2 ? e / 2 : 0;
+      let s = 0, cur: number | undefined = first;
+      while (cur != null) {
+        left.delete(cur);
+        const r: Run = runs[cur];
+        for (let w0 = off + Math.max(0, Math.floor((s - off - l) / e)) * e; w0 < s + r.len; w0 += e) {
+          const x = Math.max(w0, s), y = Math.min(w0 + l, s + r.len);
+          if (y - x < 0.05) continue;
+          const a = x - s, b = y - s;
+          if (rev) r.make(r.len - b, r.len - a); else r.make(a, b);
+        }
+        s += r.len;
+        const end: V3 = rev ? r.p0 : r.p1;
+        cur = [...left].find(j => d3(runs[j].p0, end) < tol || d3(runs[j].p1, end) < tol);
+        if (cur != null) rev = d3(runs[cur].p1, end) < tol && !(d3(runs[cur].p0, end) < tol);
+      }
+      chain++;
     }
   }
   // Pieces that meet end to end become one bead (all round a tube, along a side and round its corners).
@@ -796,8 +849,10 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         const l2 = legEdges("leg2");
         const roots = legEdges("leg1").filter((e, i, arr) => l2.some(x => x.IsSame(e)) && arr.findIndex(y => y.IsSame(e)) === i);
         const length = roots.length ? roots.reduce((t, e) => t + elen(e), 0) : volume / (owner.size.v * owner.size.v / 2);
-        put(`b|${owner.size.v}`, { kind: "bead", desc: `${owner.size.v}`, length: 0, volume: 0 }, key);
-        const r = rows.get(`b|${owner.size.v}`)!;
+        const it = owner.inter, pl = it ? Math.max(it.pitch.v, it.len.v) : 0, inter: CutItem["inter"] = it ? (it.stagger ? [it.len.v, pl, 1] : [it.len.v, pl]) : undefined;
+        const bk = `b|${owner.size.v}${inter ? `|${inter.join("|")}` : ""}`;
+        put(bk, { kind: "bead", desc: `${owner.size.v}`, length: 0, volume: 0, ...(inter ? { inter } : {}) }, key);
+        const r = rows.get(bk)!;
         r.length = r1((r.length ?? 0) + length);
         r.volume += volume;
       } else {

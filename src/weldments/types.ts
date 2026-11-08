@@ -104,6 +104,8 @@ export interface WeldBeadFeature {
   size: Num;
   /** false: only the picked faces; otherwise faces that run on smoothly from them join their set (tangent propagation). */
   tangent?: boolean;
+  /** Intermittent weld: welds of length `len` every `pitch` (centre to centre) along each chain of edges; `stagger` starts every other chain half a pitch on. */
+  inter?: { len: Num; pitch: Num; stagger?: boolean };
 }
 
 export type WeldFeature = MemberFeature | TrimExtendFeature | EndCapFeature | GussetFeature | WeldBeadFeature;
@@ -122,6 +124,8 @@ export interface CutItem {
   angle2?: number;
   /** Plate size (box in its plane) and thickness, mm. */
   plate?: [number, number, number];
+  /** Intermittent bead: weld length, pitch, and 1 when staggered. */
+  inter?: [number, number] | [number, number, 1];
   /** Volume of one item, mm³ (mass = volume × density). */
   volume: number;
   /** Body keys of the items (Bodies folder). */
@@ -131,7 +135,7 @@ export interface CutItem {
 /** A cut list item's key in `PartDoc.cutProps`: what makes items alike (kind, description, length, end angles, plate size). */
 export function cutKey(c: CutItem): string {
   const r = (v: number | undefined) => v == null ? "" : String(Math.round(v * 10) / 10);
-  return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|");
+  return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "");
 }
 
 /** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */
