@@ -290,3 +290,21 @@ test("member groups: segments in group 2 take their own profile position, rotati
   const zr = m.props(rot.body!).com[2];
   assert.ok(Math.abs(zr - dz) > 5 && Math.abs(zr) > 5, `rotated group com z ${zr} vs ${dz}`);
 });
+
+test("Trim/Extend end miter between two members (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  // Two separate beams on XY that stop short of the corner at the origin: one along X, one along Y.
+  const a = poly("a", [[100, 0], [400, 0]], false), b = poly("b", [[0, 100], [0, 400]], false);
+  const ma: MemberFeature = { id: "ma", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "a", ent: "al0" }], corner: "none" };
+  const mb: MemberFeature = { id: "mb", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "b", ent: "bl0" }], corner: "none" };
+  const base = run(m, doc([a, b, ma, mb]));
+  assert.deepEqual(base.cut.map(c => [c.qty, c.length]), [[2, 300]]);
+  const tr: Feature = { id: "t", type: "trimext", name: "Trim/Extend1", bodies: [{ name: "ma:al0:start" }], boundary: { name: "mb:bl0:start" }, kind: "mitre" };
+  const r = run(m, doc([a, b, ma, mb, tr]));
+  // Both now reach the outer corner (−20, −20): 420 long, mitred 45° at that end, square at the other; the bodies touch without overlap.
+  assert.equal(r.cut.length, 1, JSON.stringify(r.cut));
+  assert.equal(r.cut[0].qty, 2);
+  near(r.cut[0].length!, 420, 1e-3);
+  assert.deepEqual([r.cut[0].angle1, r.cut[0].angle2].sort(), [0, 45]);
+  near(r.volume, 2 * (base.volume / 2) * (400 / 300), 0.01 * base.volume);
+});

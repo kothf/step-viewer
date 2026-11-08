@@ -189,13 +189,13 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
   if (f.type === "trimext") {
     return {
       title: t("Trim/Extend"),
-      body: group(t("Corner type"), sel("wkind", t("Trim to"), [["face", t("Face or plane")], ["body", t("Body")]], f.kind))
+      body: group(t("Corner type"), sel("wkind", t("Trim to"), [["face", t("Face or plane")], ["body", t("Body")], ["mitre", t("End miter")]], f.kind))
         + group(t("Bodies to be trimmed"), box("wbodies", t("Bodies"), t("{n} body|{n} bodies", { n: f.bodies.length }))
           + (f.bodies.length ? `<button class="btn small" data-k="wclear" data-wlist="bodies">${esc(t("Clear selections"))}</button>` : "")
           + help(t("Click faces of the members to trim or extend.")))
-        + group(t("Trimming boundary"), box("wbound", f.kind === "face" ? t("Face") : t("Body"), f.boundary ? t("Picked") : t("None"))
+        + group(t("Trimming boundary"), box("wbound", f.kind === "face" ? t("Face") : f.kind === "mitre" ? t("Member") : t("Body"), f.boundary ? t("Picked") : t("None"))
           + chk("allowExt", !f.noExtend, t("Allow extension"))
-          + help(f.kind === "face" ? t("Click a flat face: members are cut at its plane, or lengthened up to it.") : t("Click any face of the body the members stop at."))),
+          + help(f.kind === "face" ? t("Click a flat face: members are cut at its plane, or lengthened up to it.") : f.kind === "mitre" ? t("Click a face of the other member: both are lengthened to where their axes meet and cut on the plane halving the corner.") : t("Click any face of the body the members stop at."))),
     };
   }
   if (f.type === "endcap") {
@@ -275,7 +275,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k.startsWith("wgmirror:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val) g.mirror = true; else delete g.mirror; };
   }
   if (f.type === "trimext") {
-    if (k === "wkind") return () => { f.kind = val as "face" | "body"; delete f.boundary; };
+    if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; if (f.kind === "mitre") f.bodies = f.bodies.slice(0, 1); };
     if (k === "allowExt") return () => { if (val) delete f.noExtend; else f.noExtend = true; };
   }
   if (f.type === "endcap") {
@@ -384,9 +384,10 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
       if (!mf) { toast(t("Only structural member bodies can be trimmed: pick a face of a member.")); return focus; }
       // One pick per member segment: a second click on it takes it out.
       const i = f.bodies.findIndex(x => { const o = memberFace(ctx, x.name); return o?.id === mf.id && o.ent === mf.ent; });
-      if (i >= 0) f.bodies.splice(i, 1); else f.bodies.push(fr);
+      if (i >= 0) f.bodies.splice(i, 1); else if (f.kind === "mitre") { f.bodies = [fr]; next = "wbound"; } else f.bodies.push(fr);
     } else {
       if (f.kind === "face" && !flat) { toast(t("Pick a flat face.")); return focus; }
+      if (f.kind === "mitre" && !memberFace(ctx, fr.name)) { toast(t("Only structural member bodies can be trimmed: pick a face of a member.")); return focus; }
       f.boundary = fr;
     }
   } else if (f.type === "endcap") {

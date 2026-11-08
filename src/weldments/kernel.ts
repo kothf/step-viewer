@@ -384,6 +384,7 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
   if (!f.boundary) throw new FeatureError("E-WLD-TRIM", "Pick the boundary: a flat face or a body.");
   const list = h.bodyList(prev);
   const bi = bodyOf(h, list, prev, f.boundary);
+  if (f.kind === "mitre") return endMitre(h, f, doc, prev, list, bi, frames);
   let plane: { p: V3; n: V3 } | null = null;
   if (f.kind === "face") {
     const fr = h.planeFrame({ face: f.boundary }, prev, frames);
@@ -427,6 +428,51 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     } else body = bool(h, "cut", body, { ...bound, names: bound.names.map(() => nm) }, f.id);
     list[i] = unify(h, pieceNear(h, body, mid));
   }
+  return h.compoundOf(list);
+}
+
+/**
+ * End miter (SolidWorks Trim/Extend corner type): the picked member and the boundary member are both
+ * lengthened to the point where their axes meet (the middle of the shortest join for skew axes) and cut
+ * on the plane that halves the corner, so their end faces meet flush.
+ */
+function endMitre(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named, list: Named[], bi: number, frames: Record<string, Frame>): Named {
+  const bad = (msg: string) => new FeatureError("E-WLD-TRIM", msg);
+  const m1 = memberOfFace(f.bodies[0].name, doc), m2 = memberOfFace(f.boundary!.name, doc);
+  if (!m1 || !m2) throw bad("Only structural member bodies can be trimmed: pick a face of a member.");
+  const i1 = bodyOf(h, list, prev, f.bodies[0]);
+  if (i1 === bi) throw bad("A member can't be trimmed by itself.");
+  const ends = [{ mo: m1, i: i1 }, { mo: m2, i: bi }].map(({ mo, i }) => {
+    const sref = mo.f.segs.find(s => s.ent === mo.ent)!;
+    const s = segOf(sref, doc, frames);
+    if (s.arc) throw bad("Curved members can't be trimmed or extended.");
+    return { mo, i, s, sref, pl: placement(mo.f, s, sref, doc, frames) };
+  });
+  // Closest points of the two axes.
+  const [A, B] = ends.map(e => e.s);
+  const r = sub(A.a, B.a), b = dot(A.w, B.w), d = dot(A.w, r), e2 = dot(B.w, r), den = 1 - b * b;
+  if (den < 1e-9) throw bad("The members are parallel: an end miter needs members at an angle.");
+  const ta = (b * e2 - d) / den, tb = (e2 - b * d) / den;
+  const C = mul(add(add(A.a, mul(A.w, ta)), add(B.a, mul(B.w, tb))), 0.5);
+  // Each member's end nearer C, and the direction out of that end.
+  const outs = ends.map(({ s }) => {
+    const nearB = d3(s.b, C) < d3(s.a, C);
+    return { end: nearB ? 1 as const : 0 as const, out: nearB ? s.w : mul(s.w, -1) };
+  });
+  // Bisector plane normal: along member 1 into the corner, then out along member 2.
+  const n = unit(sub(outs[0].out, outs[1].out));
+  const R = Math.max(ends[0].pl.R, ends[1].pl.R);
+  ends.forEach(({ i, s, pl, mo }, k) => {
+    const { end, out } = outs[k];
+    const P = end ? s.b : s.a, base = `${mo.f.id}:${mo.ent}`, nm = `${base}:${end ? "end" : "start"}`;
+    const mid = add(s.a, mul(s.w, s.L / 2));
+    let body = list[i];
+    const reach = Math.max(0, dot(sub(C, P), out)) + 4 * R;
+    if (!f.noExtend) body = bool(h, "fuse", body, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
+    const away = dot(out, n) > 0 ? n : mul(n, -1);
+    body = bool(h, "cut", body, halfBox(h, C, away, 4 * (s.L + reach + R * 10), nm), f.id);
+    list[i] = unify(h, pieceNear(h, body, mid));
+  });
   return h.compoundOf(list);
 }
 
