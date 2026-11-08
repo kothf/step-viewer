@@ -5102,7 +5102,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.155: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
+  // --- 1.158: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
@@ -5174,7 +5174,7 @@ try {
       && mc.pn === "91290A115" && mc.desc === "Black-Oxide Alloy Steel Socket Head Screw" && mc.vendor === "McMaster-Carr"
       && mc.href === "https://www.mcmaster.com/91290A115/" && mc.target === "_blank" && mc.row.includes("91290A115")
       && mc.csv.endsWith("Vendor,Vendor URL") && mc.csvRow?.endsWith("McMaster-Carr,https://www.mcmaster.com/91290A115/"),
-      `asm 1.155: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
+      `asm 1.158: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
     await ctx.close();
   }
 
@@ -5417,16 +5417,51 @@ try {
       return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
-    let boxed = { err: "no track" };
+    let boxed = { err: "no track" }, stretched = { err: "no track" };
     if (pose.multi) {
       const laneEl = mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"]`);
       await laneEl.scrollIntoViewIfNeeded();
-      const lane = await laneEl.boundingBox();
-      await mp.mouse.move(lane.x + 1, lane.y + 1);
+      let lane = await laneEl.boundingBox();
+      const boxAll = async () => {
+        await laneEl.scrollIntoViewIfNeeded();
+        lane = await laneEl.boundingBox();
+        await mp.mouse.move(lane.x + 1, lane.y + 1);
+        await mp.mouse.down();
+        await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.up();
+      };
+      // Stretch: the three keys (frames 1, 46, 60) at a 50 % time scale stretch about the first one; Alt+dragging the last
+      // one to the end of the track stretches them back; a plain click then a Ctrl+drag of the first key copies it to 1 s.
+      const frames = () => mp.evaluate(() => { const m = window.__sv.motion; return m.study.tracks.find(k => k.kind === "pose").keys.map(k => Math.round(k.t * m.study.fps)); });
+      // The panel under the timeline changes with the selection, so the track is measured again before each drag.
+      const keyBox = async i => { await laneEl.scrollIntoViewIfNeeded(); lane = await laneEl.boundingBox(); return mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"] .mo-key`).nth(i).boundingBox(); };
+      await boxAll();
+      const scaleField = await mp.locator('#motion [data-p="scale"]').count();
+      await mp.locator('#motion [data-p="scale"]').fill("50");
+      await mp.locator('#motion [data-p="scale"]').press("Enter");
+      const half = await frames();
+      const k2 = await keyBox(2);
+      await mp.keyboard.down("Alt");
+      await mp.mouse.move(k2.x + k2.width / 2, k2.y + k2.height / 2);
       await mp.mouse.down();
-      await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
-      await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.move(lane.x + lane.width - 1, k2.y + k2.height / 2, { steps: 6 });
       await mp.mouse.up();
+      await mp.keyboard.up("Alt");
+      const back = await frames();
+      let k0 = await keyBox(0);
+      await mp.mouse.click(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      k0 = await keyBox(0);
+      await mp.keyboard.down("Control");
+      await mp.mouse.move(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      await mp.mouse.down();
+      await mp.mouse.move(lane.x + lane.width / 2, k0.y + k0.height / 2, { steps: 6 });
+      await mp.mouse.up();
+      await mp.keyboard.up("Control");
+      const copied = await frames();
+      const nSel = await mp.locator("#motion .mo-key.sel").count(), ghosts = await mp.locator("#motion .mo-ghost").count();
+      stretched = { scaleField, half, back, copied, nSel, ghosts };
+      await boxAll();
       boxed = await mp.evaluate(() => {
         const n = document.querySelectorAll("#motion .mo-key.sel").length, boxGone = !document.querySelector(".mo-box");
         document.querySelector("#motion .mo-key.sel")?.focus();
@@ -5437,8 +5472,12 @@ try {
     await mp.click('#motion [data-mo="close"]');
     const mu = pose.multi;
     check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
-      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 3 && boxed.boxGone && boxed.left === 0,
+      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 4 && boxed.boxGone && boxed.left === 0,
       `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
+    const st = stretched;
+    check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
+      && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
+      `motion study: a time scale and Alt+drag stretch selected keys, Ctrl+drag copies a key (FR-FT-122) (${JSON.stringify(st)})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
@@ -7778,6 +7817,41 @@ try {
     await settle();
     const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
     check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
+    // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xsa", type: "sketch", name: "SketchA", plane: { std: "XY" }, rels: [], dims: [], ents: [P("u1", 2100, 2000), P("u2", 2400, 2000), L("ua", "u1", "u2")] },
+          { id: "xsb", type: "sketch", name: "SketchB", plane: { std: "XY" }, rels: [], dims: [], ents: [P("v1", 2000, 2100), P("v2", 2000, 2400), L("vb", "v1", "v2")] },
+          { id: "xma", type: "member", name: "Beam A", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsa", ent: "ua" }], corner: "none" },
+          { id: "xmb", type: "member", name: "Beam B", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsb", ent: "vb" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "mitre");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; m.draft.boundary = { name: "xmb:vb:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    const mh = await mp.evaluate(() => document.querySelector("#mc-pm")?.textContent?.includes("Member"));
+    await mp.click("#mc-ok");
+    await settle();
+    const mit = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 420) < 0.01).map(c => [c.qty, c.angle1 + c.angle2]) }; });
+    check(mh && !mit.bad && JSON.stringify(mit.rows) === "[[2,45]]", `weldments: Trim/Extend End miter joins two separate members (${JSON.stringify({ mh, mit })})`);
+    // The same corner as End butt 1 (picked in the panel's type list): one beam stops at the other's side.
+    const trId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), trId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "butt1");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; m.draft.boundary = { name: "xmb:vb:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
+    check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
