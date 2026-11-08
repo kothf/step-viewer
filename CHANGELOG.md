@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.179.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace path results plot more, as SolidWorks' Results → Plot. Besides the distance, speed and X/Y/Z of the picked point, the plot shows its **Acceleration** and the component's **angle** (how far it has turned since the start, counted on past a full turn, about the axis it turns most about) and **angular speed**. The CSV gains acceleration and angle columns (FR-FT-122).
+
 ## [1.177.0] - 2026-11-08
 
 ### Added
@@ -1393,7 +1399,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.177.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.179.0...HEAD
+[1.179.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.179.0
 [1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0
 [1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
 [1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
