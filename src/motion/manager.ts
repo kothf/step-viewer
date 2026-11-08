@@ -507,7 +507,19 @@ export class MotionManager {
         this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode);
       }
       for (const x of tr) {
-        if (x.gap) continue;
+        if (x.gap) {
+          // A line between the nearest points, moved every frame.
+          const geo = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
+          const line = new THREE.Line(geo, new THREE.LineDashedMaterial({ color: x.color, dashSize: 2, gapSize: 1.5, depthTest: false, transparent: true }));
+          line.renderOrder = 998;
+          line.userData.gapLine = x.id;
+          const sub = new THREE.Group();
+          sub.userData.trace = x.id;
+          sub.matrixAutoUpdate = false;
+          sub.add(line);
+          g.add(sub);
+          continue;
+        }
         if (x.mate) {
           const m = mates.get(x.mate), ga = m && this.asm.localGeo(m.a), gb = m && this.asm.localGeo(m.b);
           this.mateVals.set(x.id, m && ga && gb ? mateMeasures(all, m.a.comp, m.b.comp, ga, gb) : { dist: [], angle: [] });
@@ -554,6 +566,17 @@ export class MotionManager {
       for (const c of sub.children) {
         const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
         if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+        const gid = c.userData.gapLine as string | undefined, gx = gid ? tr.find(x => x.id === gid) : null;
+        if (gx?.gap) {
+          const r = this.asm.motionGapPts(gx.gap[0], gx.gap[1]), line = c as THREE.Line;
+          line.visible = !!r && r.d > 1e-6;
+          if (r) {
+            const a = line.geometry.getAttribute("position") as THREE.BufferAttribute;
+            a.setXYZ(0, ...r.p[0]); a.setXYZ(1, ...r.p[1]); a.needsUpdate = true;
+            line.geometry.computeBoundingSphere();
+            line.computeLineDistances();
+          }
+        }
       }
     }
     this.updatePlot(i);

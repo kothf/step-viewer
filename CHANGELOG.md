@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Trim/Extend to a plane (FR-FT-121).** With *Face or plane*, the Trimming boundary's new **Plane** list takes Top, Front, Right or any reference plane above the feature, so members can be cut at, or lengthened up to, a plane that isn't a face of the model, as in SolidWorks. Picking a face again goes back to the face.
 
+## [1.252.0] - 2026-11-08
+
+### Added
+
+- Motion studies: a Proximity result is drawn in the view as a dashed line between the two components' nearest points, moving with the playhead (FR-FT-122).
+
 ## [1.251.0] - 2026-11-08
 
 ### Added
@@ -1631,7 +1637,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.253.0...HEAD
-[1.253.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.253.0
+[1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
+[1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
 [1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
