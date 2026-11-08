@@ -851,6 +851,11 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .v-warn { color: #92400e; }
 :root[data-theme="dark"] .v-bad { color: #fca5a5; }
 :root[data-theme="dark"] .v-warn { color: #fcd34d; }
+.v-warn-i { color: #92400e; font-weight: 600; }
+:root[data-theme="dark"] .v-warn-i { color: #fcd34d; }
+.v-stale { margin: 6px 0; font-size: var(--fs-caption); }
+.v-stale p, .v-stale ul { margin: 2px 0; }
+.v-stale ul { padding-left: 16px; color: var(--text); }
 .v-found { margin: 0; }
 .v-cmp { align-items: center; gap: 6px; margin-bottom: 8px; }
 @media (max-width: 768px) { .v-form { grid-template-columns: 1fr; } }

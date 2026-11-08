@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.84.0] - 2026-11-08
+## [1.85.0] - 2026-11-08
 
 ### Added
 
@@ -14,6 +14,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Guide curve**: a sweep's profile grows, shrinks and turns so that its edge keeps touching a guide curve (a sketch, helix, curve or 3D sketch).
   - **Centerline**: a loft follows a path between its profiles instead of the straight join.
   - **Variable pitch** helix: a table of height, pitch and diameter rows; pitch and diameter change linearly between rows.
+
+## [1.84.0] - 2026-11-08
+
+### Added
+
+- **Linked components in the vault** (FR-ASM-003, FR-PDM-020/022): a linked assembly component is tied to the exact vault version its file hash names, even when newer versions exist.
+  - Contains marks linked components ⛓ and shows when the vault holds a newer version.
+  - The selected assembly lists its outdated links. **Update links** on the checked-out assembly brings them to the latest versions; check it in to keep them.
+  - Opening an assembly with its latest components updates the link hashes too, and renaming a part rewrites the link path.
+- **Crop view and break view** in drawings (FR-DRW-015): select a view for **Crop** (click two corners; only what is inside stays) or a **Vertical / Horizontal break** (click the two ends of the part to leave out). The view closes up to a 6 mm gap with zig-zag break lines. Dimensions and annotations stay on their geometry and keep their true values. **Remove crop** and **Remove breaks** undo them.
 
 ## [1.83.0] - 2026-11-08
 
@@ -840,7 +850,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.84.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.85.0...HEAD
+[1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
 [1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0
 [1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0
 [1.82.0]: https://github.com/kothf/step-viewer/compare/v1.81.0...v1.82.0

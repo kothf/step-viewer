@@ -5455,7 +5455,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.84: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
+  // --- 1.85: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5500,7 +5500,7 @@ try {
     await settle();
     const end = hx.pts.at(-1) ?? [0, 0, 0];
     check(rows0 === 6 && rows1 === 3 && hx.rows === 2 && Math.abs(turns(hx.pts) - Math.log(3) / 0.2) < 1e-3 && Math.abs(end[2] - 20) < 1e-6 && Math.abs(Math.hypot(end[0], end[1]) - 15) < 1e-6,
-      `model 1.84: variable pitch helix from the row table (FR-FT-083) (${JSON.stringify({ rows0, rows1, rows: hx.rows, turns: turns(hx.pts), end })})`);
+      `model 1.85: variable pitch helix from the row table (FR-FT-083) (${JSON.stringify({ rows0, rows1, rows: hx.rows, turns: turns(hx.pts), end })})`);
     // Sweep with a 45° twist: the square along the straight curve keeps its volume, the top corner turns out to 5√2.
     await mp.evaluate(() => { window.__sv.model.store.change("Sweep", d => d.features.push({ id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" } })); window.__sv.modeller.editFeature("w"); });
     await settle();
@@ -5517,9 +5517,9 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(Math.abs(tw.twist - Math.PI / 4) < 1e-9 && Math.abs(tw.v - 3000) / 3000 < 2e-3 && Math.abs(tw.x - 5 * Math.SQRT2) < 0.05,
-      `model 1.84: Sweep with a twist along the path (FR-FT-080) (${JSON.stringify(tw)})`);
+      `model 1.85: Sweep with a twist along the path (FR-FT-080) (${JSON.stringify(tw)})`);
     check(gd.guide?.curve === "g1" && !gd.twist && !gd.twistBox && !gd.bad && Math.abs(gd.v - 7000) / 7000 < 5e-3,
-      `model 1.84: Sweep with a guide curve (${JSON.stringify(gd)})`);
+      `model 1.85: Sweep with a guide curve (${JSON.stringify(gd)})`);
     // Loft along a centreline: 10 mm square to 20 mm square, the straight curve as centreline.
     await mp.evaluate(() => { window.__sv.model.store.change("Loft", d => { d.features = d.features.filter(f => f.id !== "w"); d.features.push({ id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["s", "t"] }); }); window.__sv.modeller.editFeature("l"); });
     await settle();
@@ -5528,14 +5528,14 @@ try {
     const lf = await mp.evaluate(() => { const m = window.__sv.model.mode(), l = window.__sv.model.last(); return { c: m.draft.centerline, ruled: !!document.querySelector('#mc-pm input[data-k="ruled"]'), v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     await mp.click("#mc-ok");
     await settle();
-    check(lf.c?.curve === "c1" && !lf.ruled && !lf.bad && Math.abs(lf.v - 7000) / 7000 < 2e-3, `model 1.84: Loft along a centerline (FR-FT-082) (${JSON.stringify(lf)})`);
+    check(lf.c?.curve === "c1" && !lf.ruled && !lf.bad && Math.abs(lf.v - 7000) / 7000 < 2e-3, `model 1.85: Loft along a centerline (FR-FT-082) (${JSON.stringify(lf)})`);
     // In Russian: the helix panel with its row table.
     await mp.click("#lang-btn");
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), hx.id);
     await settle();
     const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm th, #mc-pm label")].map(e => e.textContent).join("|"));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(/Переменный шаг/.test(ru) && !/[A-Za-z]{3}/.test(ru.replace(/\(mm\)|mm|Enter|Esc|Tab/g, "")), `model 1.84: helix panel in Russian (${ru})`);
+    check(/Переменный шаг/.test(ru) && !/[A-Za-z]{3}/.test(ru.replace(/\(mm\)|mm|Enter|Esc|Tab/g, "")), `model 1.85: helix panel in Russian (${ru})`);
     await ctx.close();
   }
 
@@ -5628,6 +5628,23 @@ try {
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
     check(tab.views && !tab.annot && tab.n === 12 && mode === "note", `drawing: annotation tab shows the 12 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
+    const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
+    const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
+    await clickAt(fv.x + (35 - fv.uc) * fv.s, fv.y);
+    await ap.click('.drw-props [data-a="vbreak"]');
+    await clickAt(fv.x + (-25 - fv.uc) * fv.s, fv.y);
+    await clickAt(fv.x + (15 - fv.uc) * fv.s, fv.y);
+    const br = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { breaks: v.breaks, w: pl.box[2] - pl.box[0], zig: (window.__sv.drw.svg().match(/<polyline/g) ?? []).length, mode: window.__sv.drw.mode() }; }, fv.id);
+    check(br.breaks?.length === 1 && Math.abs(br.breaks[0].a + 25) < 0.6 && Math.abs(br.breaks[0].b - 15) < 0.6 && Math.abs(br.w - (fv.w - 40 + 6 / fv.s)) < 1 && br.mode === "none",
+      `drawing: break view leaves out the picked band and closes up (${JSON.stringify([fv, br])})`);
+    // Crop view: replace the break with a crop around the hole end.
+    await ap.click('.drw-props [data-a="unbreak"]');
+    await ap.click('.drw-props [data-a="crop"]');
+    await clickAt(fv.x + (0 - fv.uc) * fv.s, fv.y - 15 * fv.s);
+    await clickAt(fv.x + (40 - fv.uc) * fv.s, fv.y + 15 * fv.s);
+    const cr = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { crop: v.crop, breaks: v.breaks ?? null, w: pl.box[2] - pl.box[0], h: pl.box[3] - pl.box[1], ru: !!document.querySelector('.drw-props [data-a="uncrop"]') }; }, fv.id);
+    check(cr.crop && !cr.breaks && Math.abs(cr.w - 40) < 1 && Math.abs(cr.h - 20) < 0.6 && cr.ru, `drawing: crop view keeps only the rectangle (${JSON.stringify(cr)})`);
     await ctx.close();
   }
 
