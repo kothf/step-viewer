@@ -334,6 +334,8 @@ export interface DraftFeature {
  */
 export interface CopySource {
   copy?: "features" | "faces" | "bodies";
+  /** Copying features (FR-FT-074): false/unset = geometry pattern (the result is copied); true = each instance is re-evaluated (end conditions such as up to face or through all hold at each place). */
+  vary?: boolean;
   faces?: FaceRef[];
   bodies?: FaceRef[];
 }

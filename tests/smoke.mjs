@@ -2810,6 +2810,53 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.141.0: geometry pattern option (FR-FT-074) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A block whose top slopes from z = 10 (x = 0) to z = 20 (x = 60); an Ø6 pocket from the bottom up to the slope, patterned 3 × 20 mm along X.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const pts = [[0, 0], [60, 0], [60, 20], [0, 10]];
+      d.features.push({ id: "w", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [...pts.map(([x, y], i) => ({ id: `wp${i}`, t: "point", x, y })), ...pts.map((_p, i) => ({ id: `wl${i}`, t: "line", a: `wp${i}`, b: `wp${(i + 1) % 4}` }))] });
+      d.features.push({ id: "eb", type: "extrude", name: "Extrude1", sketch: "w", op: "boss", end: "mid", depth: { v: 20 } });
+      d.features.push({ id: "c", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "cc", t: "point", x: 10, y: 0 }, { id: "ck", t: "circle", c: "cc", r: 3 }] });
+      d.features.push({ id: "ec", type: "extrude", name: "Cut1", sketch: "c", op: "cut", end: "upto", flip: true, depth: { v: 1 }, upTo: { face: { name: "eb:side:wl2" } } });
+      d.features.push({ id: "p", type: "lpattern", name: "LPattern1", features: ["ec"], dir: { edge: { faces: ["eb:side:wl0", "eb:end"] } }, spacing: { v: 20 }, count: 3 });
+    }));
+    await idle();
+    const vol = () => mp.evaluate(() => window.__sv.model.last().props.volume);
+    const v0 = 60 * 15 * 20, a = Math.PI * 9, h = x => 10 + x / 6;
+    const geo = await vol();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("p"));
+    await mp.waitForSelector('#mc-pm [data-k="geometry"]');
+    const was = await mp.evaluate(() => document.querySelector('#mc-pm [data-k="geometry"]').checked);
+    await mp.click('#mc-pm [data-k="geometry"]');
+    await mp.waitForTimeout(500);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const vary = await vol();
+    const flag = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "p").vary);
+    check(was && flag === true && Math.abs(v0 - geo - 3 * a * h(10)) < 0.5 && Math.abs(v0 - vary - a * (h(10) + h(30) + h(50))) < 0.5, `model 1.141: geometry pattern off rebuilds each pocket up to the slope (${(v0 - geo).toFixed(1)} → ${(v0 - vary).toFixed(1)})`);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("p"));
+    await mp.waitForSelector('#mc-pm [data-k="geometry"]');
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => document.querySelector('#mc-pm [data-k="geometry"]').parentElement.textContent.trim());
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ru === "Геометрический массив", `model 1.141: Geometry pattern in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -3440,7 +3440,8 @@ export class Modeller {
    * Applies a mirror or pattern's transforms. Bodies: each copy becomes a new body (a mirror with merge
    * joins it to its original). Otherwise the tools are applied as bosses and cuts (see `applyCopies`).
    */
-  private copyBy(f: CopySource & { id: string; type: string; merge?: boolean }, prev: Named, set: { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[]): Named {
+  private copyBy(f: CopySource & { id: string; type: string; merge?: boolean; features?: string[] }, prev: Named, set: { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[], ctx?: { doc: PartDoc; frames: Record<string, Frame> }): Named {
+    if (f.vary && (f.copy ?? "features") === "features" && ctx && f.features?.length) return this.varyCopies(f as CopySource & { id: string; features: string[] }, prev, set, xfs, ctx.doc, ctx.frames);
     if (f.copy === "bodies") {
       const out = [...set.list];
       for (const xf of xfs) for (const i of set.idx) {
@@ -3454,6 +3455,56 @@ export class Modeller {
     return this.applyCopies(prev, copies, f.id, set.seeds);
   }
 
+  /**
+   * Instances re-evaluated (FR-FT-074, geometry pattern off): each extrude or revolve seed is built again
+   * from its sketch moved by the instance transform, against the body as it stands, so end conditions
+   * (up to face, up to next, through all) hold at every place. Other seeds are copied as geometry.
+   */
+  private varyCopies(f: CopySource & { id: string; features: string[] }, prev: Named, set: { seeds: Tool[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[], doc: PartDoc, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    let body = prev;
+    const skipped: string[] = [];
+    const used: Tool[] = [];
+    let total = 0;
+    const tfP = (trsf: any, p: V3): V3 => this.xyz(this.P(p).Transformed(trsf));
+    const tfD = (trsf: any, d: V3): V3 => { const v = this.V(d).Transformed(trsf); return [v.X(), v.Y(), v.Z()]; };
+    for (const xf of xfs) {
+      for (const [k, id] of f.features.entries()) {
+        const seed = doc.features.find(x => x.id === id);
+        if (!seed || seed.suppressed) continue;
+        total++;
+        const before = this.volume(body.shape), solids = this.solids(body.shape);
+        try {
+          let out: Named;
+          const iid = `${f.id}:${xf.tag(k)}`;
+          if (seed.type === "extrude" || seed.type === "revolve") {
+            const sk = doc.features.find(x => x.id === seed.sketch);
+            if (!sk || sk.type !== "sketch") throw new Error("no sketch");
+            const fr = frames[sk.id] ?? this.frameOf(sk, body, frames);
+            const moved: Frame = { o: tfP(xf.trsf, fr.o), x: tfD(xf.trsf, fr.x), y: tfD(xf.trsf, fr.y), n: tfD(xf.trsf, fr.n) };
+            out = this.sweep({ ...seed, id: iid, merge: true } as typeof seed, doc, body, { ...frames, [sk.id]: moved });
+            used.push(...(this.tools.get(iid) ?? []));
+            this.tools.delete(iid);
+          } else {
+            const ts = this.tools.get(id);
+            if (!ts) throw new Error("no tool");
+            out = body;
+            for (const t of ts) { const c = this.transformed(t, xf.trsf, f.id, xf.tag(k)); out = this.bool(c.op, out, c.shape, f.id); used.push(c); }
+          }
+          const after = this.volume(out.shape);
+          const boss = seed.type === "extrude" || seed.type === "revolve" ? seed.op === "boss" : false;
+          if (Math.abs(after - before) < 1e-9 || (boss && this.solids(out.shape) > solids)) { skipped.push(xf.label); continue; }
+          body = out;
+        } catch { skipped.push(xf.label); }
+      }
+    }
+    if (!used.length || skipped.length === total) throw new FeatureError("E-PAT-NONE", "No copy touches the body.");
+    this.tools.set(f.id, [...set.seeds, ...used]);
+    if (skipped.length) this.warning = `${skipped.length} of ${total} copies fall outside the body and were skipped: ${[...new Set(skipped)].join("; ")}.`;
+    void oc;
+    return body;
+  }
+
   /** Mirror (FR-FT-072): the seed features' tools reflected in a plane, or the whole body joined to its reflection. */
   private mirror(f: MirrorFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
@@ -3463,7 +3514,7 @@ export class Modeller {
     const trsf = new oc.gp_Trsf_1();
     trsf.SetMirror_3(new oc.gp_Ax2_3(this.P(fr.o), this.D(fr.n)));
     const set = this.seedSet(f, doc, prev, true);
-    return this.copyBy(f, prev, set, [{ trsf, tag: k => f.copy === "bodies" ? `mb${k}` : `m${k}`, label: "1" }]);
+    return this.copyBy(f, prev, set, [{ trsf, tag: k => f.copy === "bodies" ? `mb${k}` : `m${k}`, label: "1" }], { doc, frames });
   }
 
   /** Linear pattern (FR-FT-070): count × count2 copies; instance (0, 0) is the seed. */
@@ -3487,7 +3538,7 @@ export class Modeller {
       const tk = key.replace(",", "_");
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   /** Circular pattern (FR-FT-071): copies turned about an axis; equal spacing spreads them over the angle. */
@@ -3509,7 +3560,7 @@ export class Modeller {
       trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
     }
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   /**
@@ -3548,7 +3599,7 @@ export class Modeller {
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `p${i}b${k}` : `p${i}s${k}`, label: String(i + 1) });
     });
     if (!xfs.length) throw new FeatureError("E-SPAT-NONE", f.src === "table" ? "Add table rows with offsets other than 0, 0." : "The sketch has no free points away from the seed.");
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   private size(shape: any) {
