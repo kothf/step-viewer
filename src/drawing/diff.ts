@@ -13,6 +13,7 @@ function primKey(p: Prim): string {
   }
   if (p.t === "a") return `a${p.pen}${r(p.o[0])},${r(p.o[1])},${r(p.r)},${Math.round(p.a0 * 1000)},${Math.round(p.a1 * 1000)}`;
   if (p.t === "p") return `p${p.pen}${p.fill ? "f" : ""}${p.p.map(r).join(",")}`;
+  if (p.t === "i") return `i${r(p.x)},${r(p.y)},${r(p.w)},${r(p.h)}:${p.src.length}:${p.src.slice(-32)}`;
   return `t${r(p.x)},${r(p.y)},${r(p.h)},${p.al},${Math.round(p.rot ?? 0)}:${p.s}`;
 }
 

@@ -28,6 +28,8 @@ export function svgBody(prims: Prim[], H: number, color = "#000"): string {
       let d = "";
       for (let i = 0; i < p.p.length; i += 2) d += `${i ? "L" : "M"}${f(p.p[i])} ${f(H - p.p[i + 1])}`;
       parts.push(`<path d="${d}${p.closed || p.fill ? "Z" : ""}" fill="${p.fill ? color : "none"}" ${style(p.pen)} stroke-linejoin="round" data-l="${p.layer}"/>`);
+    } else if (p.t === "i") {
+      parts.push(`<image x="${f(p.x)}" y="${f(H - p.y - p.h)}" width="${f(p.w)}" height="${f(p.h)}" href="${escXml(p.src)}" preserveAspectRatio="xMidYMid meet" data-l="${p.layer}"/>`);
     } else {
       parts.push(`<text x="${f(p.x)}" y="${f(H - p.y)}" font-size="${f(p.h * FONT_K)}" text-anchor="${p.al === "l" ? "start" : p.al === "c" ? "middle" : "end"}"${p.bold ? ' font-weight="bold"' : ""}${p.rot ? ` transform="rotate(${f(-p.rot)} ${f(p.x)} ${f(H - p.y)})"` : ""} fill="${color}" data-l="${p.layer}">${escXml(p.s)}</text>`);
     }
@@ -142,6 +144,8 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
       g(0, "POLYLINE"); g(8, p.layer); o.push(66, 1); g(10, 0); g(20, 0); g(30, 0); o.push(70, p.closed ? 1 : 0);
       for (let i = 0; i < p.p.length; i += 2) { g(0, "VERTEX"); g(8, p.layer); g(10, p.p[i]); g(20, p.p[i + 1]); g(30, 0); }
       g(0, "SEQEND"); g(8, p.layer);
+    } else if (p.t === "i") {
+      continue;
     } else {
       g(0, "TEXT"); g(8, p.layer); g(10, p.x); g(20, p.y); g(30, 0); g(40, p.h); g(1, p.s.replace(/[\r\n]+/g, " ")); if (p.rot) g(50, p.rot);
       if (p.al !== "l") { o.push(72, p.al === "c" ? 1 : 2); g(11, p.x); g(21, p.y); g(31, 0); }
@@ -203,6 +207,13 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
         for (let j = 2; j < p.p.length; j += 2) segs.push([p.p[j] - p.p[j - 2], -(p.p[j + 1] - p.p[j - 1])]);
         if (p.fill) doc.setFillColor(0, 0, 0);
         doc.lines(segs, p.p[0], H - p.p[1], [1, 1], p.fill ? "FD" : "S", !!p.closed || !!p.fill);
+      } else if (p.t === "i") {
+        // Kept to its own aspect ratio inside the box, like the SVG.
+        try {
+          const fmt = /^data:image\/jpe?g/i.test(p.src) ? "JPEG" : "PNG";
+          const ip = doc.getImageProperties(p.src), k = Math.min(p.w / ip.width, p.h / ip.height), w = ip.width * k, h = ip.height * k;
+          doc.addImage(p.src, fmt, p.x + (p.w - w) / 2, H - p.y - p.h + (p.h - h) / 2, w, h);
+        } catch { /* an unreadable image is left out */ }
       } else {
         doc.setFontSize(p.h * FONT_K / 0.3528);
         if (p.rot) {

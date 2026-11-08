@@ -129,10 +129,21 @@ export interface Sheet {
   projection: Projection;
   /** Sheet format: ISO 7200, ANSI Y14.1 or GOST 2.104 (form 1) title block. */
   format: "iso" | "ansi" | "gost";
+  /** A user title block (FR-DRW-004) in place of the ISO/ANSI one (not with GOST); the zones follow `format`. */
+  tb?: TitleFormat;
   views: DrawingView[];
   /** Dimensions, notes and hole callouts (FR-DRW-020..023). */
   annots?: Annot[];
 }
+
+/** What a title block cell shows: a property, a sheet fact, or the projection symbol. */
+export type TbKey = keyof DrawingProps | "scale" | "sheet" | "size" | "units" | "projection";
+/** A user title block cell (mm from the block's bottom-left corner); a cell without a key is a label or a box. */
+export interface TbCell { x: number; y: number; w: number; h: number; key?: TbKey; label?: string; big?: boolean }
+/** A logo image (PNG or JPEG data URL) placed in the block. */
+export interface TbLogo { src: string; x: number; y: number; w: number; h: number }
+/** A user sheet format's title block (FR-DRW-004): its size, cells and logo. */
+export interface TitleFormat { id: string; name: string; w: number; h: number; cells: TbCell[]; logo?: TbLogo }
 
 /** Title block fields (FR-DRW-003); empty ones come from the model or the sheet. */
 export interface DrawingProps {
