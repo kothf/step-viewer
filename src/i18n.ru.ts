@@ -3464,4 +3464,7 @@ export const RU: Record<string, string> = {
   "Rho must be between 0 and 1.": "Rho должно быть между 0 и 1.",
   "The range is empty.": "Диапазон пуст.",
   "The equation has no value somewhere in its range.": "Уравнение не имеет значения в части диапазона.",
+  "Style spline": "Сплайн по контрольным точкам",
+  "Style spline: click its control points; double-click ends it": "Сплайн по контрольным точкам: щёлкайте его контрольные точки; двойной щелчок завершает его",
+  "Click the control points; the curve follows them without passing through. Double-click ends it": "Щёлкайте контрольные точки; кривая следует за ними, не проходя через них. Двойной щелчок завершает её",
 };
