@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Linked sketch offsets (FR-SK-034)**: Offset entities now works as in SolidWorks. By default the copy keeps offset relations to its source and gets one distance dimension, so editing that dimension or moving the source moves the copy with it (turn off **Follow the source** for a static copy, as before). **Both sides** offsets to both sides at once, and for an open chain **Cap ends** closes the two copies with arcs about the source ends or with straight lines. Offsets of arcs and circles are dimensioned as the gap between the concentric curves. The relation glyph is ⇉.
 
+## [1.236.0] - 2026-11-08
+
+### Added
+
+- **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
+
 ## [1.234.0] - 2026-11-08
 
 ### Added
@@ -1569,7 +1575,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.237.0...HEAD
-[1.237.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.237.0
+[1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
+[1.236.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.236.0
 [1.234.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.234.0
 [1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0

@@ -3,12 +3,12 @@
 // generic panel handlers take `data-num` (lengths, angles) and `data-k` (plain values), and the
 // `data-sm` controls here need their own handling (gauge rows, K-factor, toggles that add fields).
 import { t } from "../i18n";
-import type { EdgeRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
+import type { EdgeRef, FaceRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
 import { flatSize, type SheetState } from "./sheet";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmCornerFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
-export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
@@ -19,13 +19,14 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smbend", t("Sketched Bend"), t("Sketched bend: fold a flat face along a line sketched on it")],
   ["smjog", t("Jog"), t("Jog: two opposite bends along a sketched line that offset the rest of the face")],
   ["smcorner", t("Break Corner"), t("Break corner: chamfer or round outside corners of the sheet through its thickness")],
+  ["smclosed", t("Closed Corner"), t("Closed corner: run flange ends on to meet the neighbouring flange, overlapping or underlapping it")],
   ["smflat", t("Flatten"), t("Flatten: show the flat pattern, or fold it back")],
   ["smdxf", t("Flat pattern DXF"), t("Export the flat pattern with its bend lines as DXF")],
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smflat: "▭" };
+export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
@@ -35,6 +36,7 @@ export const SM_ICONS: Record<string, string> = {
   smbend: S('<path d="M2 12h6l5-7"/><path d="M8 3v11" stroke-dasharray="1.6 1.4"/>'),
   smjog: S('<path d="M1.5 11h5l3-5h5"/><path d="M1.5 13h5.6l3-5h4.4"/>'),
   smcorner: S('<path d="M2 13h7l5-5V3"/><path d="M9 13l5-5" stroke-dasharray="1.6 1.4"/><path d="M9 13V8h5"/>'),
+  smclosed: S('<path d="M3 3v10h10"/><path d="M5.5 3v7.5H13" stroke-dasharray="1.6 1.4"/><path d="M3 13l2.5-2.5"/>'),
   smflat: S('<path d="M1.5 11h13M4 5h8"/><path d="M8 5v6" stroke-dasharray="1.6 1.4"/><path d="M4 5 1.5 11M12 5l2.5 6"/>'),
   smdxf: S('<path d="M3 2h7l3 3v9H3z"/><path d="M5 9h6M8 6v6" stroke-dasharray="1.6 1.4"/>'),
 };
@@ -50,6 +52,8 @@ export interface DraftCtx {
   name: (type: SheetFeature["type"]) => string;
   /** The edge picked with Smart measure before the command, if any. */
   edge: EdgeRef | null;
+  /** The face picked before the command, if any. */
+  face?: FaceRef | null;
   hasBody: boolean;
 }
 
@@ -59,7 +63,7 @@ const usable = (s: SketchFeature) => !sketchProfile(s).error || (() => { const p
 const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
 
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner", c: DraftCtx): Feature | string {
+export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed", c: DraftCtx): Feature | string {
   const base = c.doc.features.find((f): f is SmBaseFeature => f.type === "smbase");
   if (type === "smbase") {
     if (base) {
@@ -84,6 +88,7 @@ export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjo
     return { id: c.id, type: "smjog", name: c.name("smjog"), sketch: sk.id, offset: { v: 10 }, angle: { v: Math.PI / 2 } } satisfies SmJogFeature;
   }
   const edges = c.edge ? [c.edge] : [];
+  if (type === "smclosed") return { id: c.id, type: "smclosed", name: c.name("smclosed"), faces: c.face && /:p\d+:(?!top$|bot$)[^:]+$/.test(c.face.name) ? [c.face] : [], kind: "overlap" } satisfies SmClosedFeature;
   if (type === "smcorner") return { id: c.id, type: "smcorner", name: c.name("smcorner"), edges: edges.filter(e => !e.faces.some(n => /:(top|bot)$/.test(n))), kind: "fillet", size: { v: 5 } } satisfies SmCornerFeature;
   if (type === "smflange") return { id: c.id, type: "smflange", name: c.name("smflange"), edges, length: { v: 20 }, angle: { v: Math.PI / 2 } } satisfies SmFlangeFeature;
   return { id: c.id, type: "smhem", name: c.name("smhem"), edges, kind: "closed", length: { v: 6 } } satisfies SmHemFeature;
@@ -96,6 +101,7 @@ export function smCheck(f: Feature): string | null {
   if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
   if (f.type === "smcorner" && !f.edges.length) return t("Pick the corner edges to break.");
+  if (f.type === "smclosed" && !f.faces.length) return t("Pick the end faces of the flanges to close.");
   return null;
 }
 
@@ -176,6 +182,16 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + help(t("The corner is cut in the outline of the flat face, so the flat pattern shows it too."))),
     };
   }
+  if (f.type === "smclosed") {
+    return {
+      title: t("Closed Corner"),
+      body: group(t("Faces to extend"), `<p class="pm-count" data-sm-faces>${esc(f.faces.length ? t("{n} face|{n} faces", { n: f.faces.length }) : t("click the end faces of flanges at the corners"))}</p>`
+        + (f.faces.length ? `<button class="btn small" data-sm="clear">${esc(t("Clear faces"))}</button>` : ""))
+        + group(t("Corner type"), sel("kind", t("Type"), [["overlap", t("Overlap")], ["underlap", t("Underlap")]], f.kind)
+          + numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length")
+          + help(t("Overlap: the picked flange runs over the other flange's end. Underlap: it stops at the other flange, the gap short of it. The other flange's end moves to meet it."))),
+    };
+  }
   if (f.type === "smtab") {
     const closed = k.sketches.filter(s => !sketchProfile(s).error || s.id === f.sketch);
     return {
@@ -222,6 +238,7 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
       el.addEventListener("click", () => {
         if (key === "dxf") dxf();
         if (key === "clear" && (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner")) upd(() => { f.edges = []; }, true);
+        if (key === "clear" && f.type === "smclosed") upd(() => { f.faces = []; }, true);
       });
       return;
     }
@@ -258,6 +275,10 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         if (key === "position") upd(() => { if (val === "center") delete f.position; else f.position = val as SmSketchBendFeature["position"]; });
         if (key === "customR") upd(() => { if (val) f.radius = { v: 2 }; else delete f.radius; }, true);
         if (key === "dim" && f.type === "smjog") upd(() => { if (val === "outside") delete f.dim; else f.dim = val as SmJogFeature["dim"]; });
+        return;
+      }
+      if (f.type === "smclosed") {
+        if (key === "kind") upd(() => { f.kind = val === "underlap" ? "underlap" : "overlap"; });
         return;
       }
       if (f.type === "smcorner") {
