@@ -3361,4 +3361,14 @@ export const RU: Record<string, string> = {
   "Add centerpoint slot": "Добавить паз от центра",
   "Add arc slot": "Добавить дуговой паз",
   "Add slot": "Добавить паз",
+  // 1.146.0: section hatching by material and component (FR-DRW-012).
+  "Hatch pattern": "Тип штриховки",
+  "By material": "По материалу",
+  "By material: each component or body gets its material's pattern, and neighbouring ones turn and change spacing": "По материалу: каждый компонент или тело штрихуется по своему материалу, а соседние — под другим углом и с другим шагом",
+  "ANSI31 (iron, general)": "ANSI31 (чугун, общий случай)",
+  "ANSI32 (steel)": "ANSI32 (сталь)",
+  "ANSI33 (brass, bronze, copper)": "ANSI33 (латунь, бронза, медь)",
+  "ANSI34 (plastic, rubber)": "ANSI34 (пластмасса, резина)",
+  "ANSI37 (lead, zinc, insulation)": "ANSI37 (свинец, цинк, изоляция)",
+  "ANSI38 (aluminium)": "ANSI38 (алюминий)",
 };

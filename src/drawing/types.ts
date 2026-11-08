@@ -46,8 +46,9 @@ export interface DrawingView {
   r?: number;
   /** Letter of a section, detail or auxiliary view (A, B, …). */
   letter?: string;
-  /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. */
-  hatch?: { gap?: number; angle?: number };
+  /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. `pattern` (FR-DRW-012):
+   * an ANSI pattern for every cut face, or "material" (absent): each component or body by its material, adjacent ones at other angles. */
+  hatch?: { gap?: number; angle?: number; pattern?: HatchPattern };
   /** Centre marks on round edges seen end-on and centrelines on cylinders seen from the side (FR-DRW-023); false hides them. */
   marks?: boolean;
   /** Crop view (FR-DRW-015): only what lies inside this rectangle (view axes, model mm: [u0, v0, u1, v1]) is drawn. */
@@ -211,3 +212,7 @@ export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | 
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }
+
+/** Section hatch patterns (ANSI Y14.2 / ISO 128-50): 31 general use and cast iron, 32 steel, 33 brass, bronze and copper,
+ * 34 plastics and rubber, 37 lead, zinc and insulation, 38 aluminium and light alloys. */
+export type HatchPattern = "material" | "ansi31" | "ansi32" | "ansi33" | "ansi34" | "ansi37" | "ansi38";
