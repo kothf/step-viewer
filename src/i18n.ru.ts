@@ -2620,4 +2620,13 @@ export const RU: Record<string, string> = {
   "The loft did not close into a solid.": "Элемент по сечениям не замкнулся в твёрдое тело.",
   "The guide curve must start on the profile's edge, away from the path.": "Направляющая кривая должна начинаться на краю профиля, в стороне от траектории.",
   "The guide curve meets the path: the profile would shrink to nothing.": "Направляющая кривая касается траектории: профиль сжался бы в точку.",
+  // 1.86.0: drafting style (FR-DRW-025).
+  "Drafting style": "Стиль оформления",
+  "Text height": "Высота текста",
+  "Arrowheads": "Стрелки",
+  "Line group": "Группа линий",
+  "mm": "мм",
+  "Filled": "Залитые",
+  "Dot": "Точка",
+  "Oblique stroke": "Засечка",
 };
