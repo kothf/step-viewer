@@ -3177,6 +3177,23 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === 1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
+    for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    const pathPreview = await dp.evaluate(() => document.querySelectorAll("#drw polyline.drw-cut").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await scr(top.x, top.y - 75);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const off = vs.find(v => v.kind === "section" && v.path);
+    const offProj = off && await dp.evaluate(i => window.__sv.drw.proj(i), off.id);
+    const offArea = (offProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
+      `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
     // DXF has the hatch on its own layer; Russian labels; a saved drawing keeps the views.
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
@@ -3516,6 +3533,25 @@ try {
     await ready();
     const left = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM").length);
     check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
+    // 1.114.0 (FR-DRW-012): a section through both pins cuts them; Don't cut Pin<1> draws it whole.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="h"]');
+    [x, y] = await at(top, -45, 0);
+    await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top, 0, -95);
+    await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 4, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    const asec = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.find(v => v.kind === "section")?.id);
+    const carea = async () => { const pr = await dp.evaluate(i => window.__sv.drw.proj(i), asec); return (pr?.cut ?? []).reduce((t, l) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return t + Math.abs(a / 2); }, 0); };
+    const a0 = await carea();
+    await dp.check('#drw .drw-props [data-ex="c2"]');
+    await ready();
+    const a1 = await carea();
+    const exc = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].views.find(v => v.id === i)?.exclude ?? null, asec);
+    check(asec && Math.abs(a0 - (100 * 20 + 2 * 8 * 15)) < 0.5 && Math.abs(a1 - (100 * 20 + 8 * 15)) < 0.5 && JSON.stringify(exc) === '["c2"]',
+      `drawing: an assembly section cuts both pins, and Don't cut leaves Pin<1> whole (${a0.toFixed(1)} → ${a1.toFixed(1)} mm²; ${JSON.stringify(exc)})`);
     await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
