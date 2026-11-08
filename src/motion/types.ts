@@ -79,6 +79,8 @@ export interface TracePath {
   /** The point in the component's own coordinates (mm). */
   p: [number, number, number];
   color: string;
+  /** Traced relative to this component (top-level id): the path moves with it and the plots are in its coordinates. */
+  rel?: string;
   /** What the panel plots (default "dist"). */
   plot?: "dist" | "speed" | "accel" | "x" | "y" | "z" | "angle" | "aspeed";
   /** Hidden in the view. */
