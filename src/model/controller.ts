@@ -23,7 +23,7 @@ import { parseXyz } from "./curves";
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -93,11 +93,11 @@ type Mode =
 /** Which selection box of the feature panel the next click in the view fills. */
 type Focus = "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
-type BodyFeature = CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
+type BodyFeature = IntersectFeature | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length) : f.edges.length > 0;
-const isBodyOp = (f: Feature): f is BodyFeature => f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
+const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
 /** Features whose result mirror and patterns can copy. */
 const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpattern", "hole"]);
@@ -131,7 +131,7 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
 const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -591,7 +591,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -605,7 +605,7 @@ export class ModelController {
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     const csysEdge = type === "csys" ? this.pickedEdge() : null;
-    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" ? this.pickedFace() : null;
+    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" || type === "untrimsurf" ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
     const d = this.doc;
@@ -657,10 +657,11 @@ export class ModelController {
       const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
       if (threadEdge) this.setThreadEdge(th, threadEdge);
       draft = th;
-    } else if (type === "combine" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
+    } else if (type === "combine" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const nm = nextName(d, type);
-      draft = type === "combine" ? { id, type, name: nm, op: "add", tools: [] } satisfies CombineFeature
+      draft = type === "intersect" ? { id, type, name: nm, bodies: [], exclude: [] } satisfies IntersectFeature
+        : type === "combine" ? { id, type, name: nm, op: "add", tools: [] } satisfies CombineFeature
         : type === "bsplit" ? { id, type, name: nm, bodies: [] } satisfies SplitBodyFeature
         : type === "delbody" ? { id, type, name: nm, bodies: [] } satisfies DeleteBodyFeature
         : type === "scale" ? { id, type, name: nm, bodies: [], about: "centroid", factor: { v: 1 } } satisfies ScaleFeature
@@ -736,7 +737,7 @@ export class ModelController {
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" ? "bodies" : undefined;
+      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies" : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
     this.renderAll();
@@ -869,6 +870,7 @@ export class ModelController {
     if (f.type === "knit" && f.surfaces.length < (f.solid ? 1 : 2)) { toast(t("Pick two or more surface bodies."), true); return; }
     if (f.type === "thicken" && !f.surface) { toast(t("Pick the surface to thicken."), true); return; }
     if ((f.type === "revsurf" || f.type === "loftsurf") && (f.type === "revsurf" ? !f.sketch : f.profiles.length < 2)) { toast(t(f.type === "revsurf" ? "Pick a sketch." : "Pick two or more profile sketches."), true); return; }
+    if (f.type === "untrimsurf" && !f.surface) { toast(t("Pick the surface to untrim."), true); return; }
     if ((f.type === "fillsurf" || f.type === "extendsurf") && !f.surface) { toast(t(f.type === "fillsurf" ? "Pick the surface whose opening to fill." : "Pick the surface to extend."), true); return; }
     if (f.type === "trimsurf" && (!f.surface || !f.tool)) { toast(t(f.surface ? "Pick a plane or a surface to trim with." : "Pick the surface to trim."), true); return; }
     if (f.type === "replaceface" && (!f.faces.length || !f.surface)) { toast(t(f.faces.length ? "Pick the replacement surface." : "Click the faces to replace."), true); return; }
@@ -1356,7 +1358,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "csys") this.pickCsys(e, m.draft);
       else if (m.kind === "feature" && isBodyOp(m.draft)) this.pickBody(e);
       else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
-      else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface" || m.draft.type === "trimsurf" || m.draft.type === "fillsurf" || m.draft.type === "extendsurf")) this.pickSurface(e);
+      else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface" || m.draft.type === "trimsurf" || m.draft.type === "fillsurf" || m.draft.type === "extendsurf" || m.draft.type === "untrimsurf")) this.pickSurface(e);
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "thread") {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
@@ -1721,9 +1723,9 @@ export class ModelController {
   /** Knit and Thicken (FRS 9.11): a surface body is picked by clicking any face of it. */
   private pickSurface(e: PointerEvent) {
     const m = this.mode;
-    if (m.kind !== "feature" || (m.draft.type !== "knit" && m.draft.type !== "thicken" && m.draft.type !== "replaceface" && m.draft.type !== "trimsurf" && m.draft.type !== "fillsurf" && m.draft.type !== "extendsurf")) return;
+    if (m.kind !== "feature" || (m.draft.type !== "knit" && m.draft.type !== "thicken" && m.draft.type !== "replaceface" && m.draft.type !== "trimsurf" && m.draft.type !== "fillsurf" && m.draft.type !== "extendsurf" && m.draft.type !== "untrimsurf")) return;
     const f = m.draft;
-    if (f.type === "fillsurf" || f.type === "extendsurf") {
+    if (f.type === "fillsurf" || f.type === "extendsurf" || f.type === "untrimsurf") {
       // Fill: the clicked point says which opening; Extend: the surface body to grow.
       const h = this.host.faceAt(e.clientX, e.clientY);
       const fr = h ? this.faceRef(h.faceId) : null;
@@ -1826,12 +1828,13 @@ export class ModelController {
     if (type === "trimsurf") return { id, type, name: nm, surface: onSheet ?? undefined, keep: [] } satisfies TrimSurfFeature;
     if (type === "fillsurf") return { id, type, name: nm, surface: onSheet ?? undefined } satisfies FillSurfFeature;
     if (type === "extendsurf") return { id, type, name: nm, surface: onSheet ?? undefined, distance: { v: 5 } } satisfies ExtendSurfFeature;
+    if (type === "untrimsurf") return { id, type, name: nm, surface: onSheet ?? undefined } satisfies UntrimSurfFeature;
     if (type === "replaceface") return { id, type, name: nm, faces: fr && !onSheet ? [fr] : [], surface: onSheet ?? undefined } satisfies ReplaceFaceFeature;
     return { id, type, name: nm, surface: onSheet ?? undefined, thickness: { v: 2 }, side: "one" } satisfies ThickenFeature;
   }
 
   /** PropertyManager groups for the surface features (FRS 9.11). */
-  private surfPanel(f: PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature, sketches: SketchFeature[], group: (legend: string, inner: string) => string,
+  private surfPanel(f: PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature, sketches: SketchFeature[], group: (legend: string, inner: string) => string,
     numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, chk: (k: string, on: boolean | undefined, label: string) => string): { title: string; body: string } {
     const opt = (v: string, l: string, cur: string) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`;
     const sel = (k: string, label: string, inner: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${inner}</select></label>`;
@@ -1891,6 +1894,12 @@ export class ModelController {
       return { title: t("Filled Surface"), body: group(t("Patch boundary"), `<div class="pm-field"><span>${esc(t("Surface"))}</span><button class="pm-box focus" translate="no">${esc(f.surface ? t("Surface picked") : t("None"))}</button></div>`
           + chk("merge", f.merge !== false, t("Merge result")))
         + help(t("Click a surface body next to the opening to fill: the patch runs through its edges. With Merge result the patch is sewn to the surface.")) };
+    }
+    if (f.type === "untrimsurf") {
+      const o = (v: string, l: string) => `<option value="${v}"${(f.mode ?? "all") === v ? " selected" : ""}>${esc(l)}</option>`;
+      return { title: t("Untrim Surface"), body: group(t("Selections"), `<div class="pm-field"><span>${esc(t("Surface"))}</span><button class="pm-box focus" translate="no">${esc(f.surface ? t("Surface picked") : t("None"))}</button></div>`
+          + `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="untrimMode">${o("all", t("All edges (natural bounds)"))}${o("holes", t("Internal edges (fill holes)"))}</select></label>`)
+        + help(t("Click a surface body of one face: it goes back to the bounds of its underlying surface, or only its holes are filled.")) };
     }
     if (f.type === "extendsurf") {
       return { title: t("Extend Surface"), body: group(t("End condition"), `<div class="pm-field"><span>${esc(t("Surface"))}</span><button class="pm-box focus" translate="no">${esc(f.surface ? t("Surface picked") : t("None"))}</button></div>`
@@ -3157,7 +3166,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3834,7 +3843,7 @@ export class ModelController {
     if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
-    if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
+    if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf" || f.type === "untrimsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
     if (f.type === "import") {
       const st = this.last?.statuses.find(x => x.id === f.id);
       title = t("Imported body");
@@ -4036,6 +4045,7 @@ export class ModelController {
           upd(() => { f.sketch = String(val); f.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }, true);
           return;
         }
+        if (f.type === "untrimsurf" && k === "untrimMode") { upd(() => { if (val === "holes") f.mode = "holes"; else delete f.mode; }, true); return; }
         if (f.type === "trimsurf" && k === "toolKind") { upd(() => { if (val === "surface") f.toolKind = "surface"; else delete f.toolKind; delete f.tool; m.focus = "ttool"; }, true); return; }
         if (f.type === "loftsurf" && /^lp\d+$/.test(k)) {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
@@ -4160,7 +4170,18 @@ export class ModelController {
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
-      if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; this.draftChanged(); } });
+      if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; if (f.type === "intersect") f.exclude = []; this.draftChanged(); } });
+    if (f.type === "intersect") {
+      pm.querySelector<HTMLButtonElement>('[data-k="keepAll"]')?.addEventListener("click", () => upd(() => { f.exclude = []; }, true));
+      pm.querySelectorAll<HTMLInputElement>("input[data-rgn]").forEach(inp => inp.addEventListener("change", () => {
+        const r = this.last?.regions?.[f.id]?.[+inp.dataset.rgn!];
+        if (!r) return;
+        upd(() => {
+          if (inp.checked) f.exclude = f.exclude.filter((_, i) => !(r.ex ?? []).includes(i));
+          else f.exclude.push(r.c);
+        }, true);
+      }));
+    }
     pm.querySelectorAll<HTMLInputElement>("input[data-int]").forEach(inp => {
       const apply = () => {
         const v = Math.round(Number(inp.value.trim()));
@@ -4848,6 +4869,15 @@ export class ModelController {
         + group(t("Main body"), box("main", t("Body"), f.main ? t("Body picked") : t("None")))
         + group(f.op === "subtract" ? t("Bodies to subtract") : t("Bodies to combine"), box("bodies", t("Bodies"), n(f.tools.length)) + clear) + help + status };
     }
+    if (f.type === "intersect") {
+      const regions = this.last?.regions?.[f.id] ?? [];
+      const u = UNITS[this.doc.units.length], vol = (v: number) => `${trimNum(v * u.f ** 3, 2)} ${this.doc.units.length}³`;
+      const rows = regions.length ? `<ul class="pm-items" aria-label="${esc(t("Regions"))}">${regions.map((r, i) => `<li><label class="chk pm-chk"><input type="checkbox" data-rgn="${i}"${r.out ? "" : " checked"} />${esc(t("Region {n}", { n: i + 1 }))}</label><span class="muted" translate="no">${esc(vol(r.v))}</span></li>`).join("")}</ul>` : `<p class="pm-count">${esc(t("No regions yet"))}</p>`;
+      return { title: t("Intersect"), body: group(t("Selections"), box("bodies", t("Bodies and surfaces"), list.length ? t("{n} picked", { n: list.length }) : t("All bodies and surfaces")) + clear)
+        + group(t("Regions to keep"), rows + (f.exclude.length ? `<button class="btn small" data-k="keepAll">${esc(t("Keep all"))}</button>` : ""))
+        + group(t("Options"), chk("merge", f.merge !== false, t("Merge result")) + chk("consume", f.consume, t("Consume surfaces")))
+        + `<p class="pm-help muted">${esc(t("Solids and surfaces cut each other into closed regions. Untick the regions to leave out; the rest replace the picked solids."))}</p>` + status };
+    }
     if (f.type === "bsplit") {
       return { title: t("Split"), body: group(t("Trim tool"), box("mplane", t("Plane"), this.refLabel(f.plane)) + `<p class="pm-help muted">${esc(t("Click a plane or a flat face in the view or the tree."))}</p>`)
         + group(t("Target bodies"), box("bodies", t("Bodies"), f.bodies.length ? n(f.bodies.length) : t("All bodies it cuts")) + clear) + status };
@@ -5014,6 +5044,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["split", t("Split Line"), t("Split line: project a sketch onto faces to split them")],
   ["import", t("Insert body"), t("Insert body: a part, STEP, IGES or BREP file into this part, with check and heal")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
+  ["intersect", t("Intersect"), t("Intersect: solids and surfaces cut each other into regions; keep the ones you want")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
   ["delbody", t("Body-Delete/Keep"), t("Delete bodies, or keep only the picked ones")],
@@ -5023,8 +5054,8 @@ const P3_TOOLS = (): [string, string, string][] => [
 ];
 
 /** The surface flyout's commands (FRS 9.11). */
-type SurfTool = "planesurf" | "extsurf" | "offsurf" | "knit" | "thicken" | "replaceface" | "revsurf" | "loftsurf" | "sweepsurf" | "trimsurf" | "fillsurf" | "extendsurf";
-const SURF_TYPES: ReadonlySet<string> = new Set(["planesurf", "extsurf", "offsurf", "knit", "thicken", "replaceface", "revsurf", "loftsurf", "sweepsurf", "trimsurf", "fillsurf", "extendsurf"]);
+type SurfTool = "planesurf" | "extsurf" | "offsurf" | "knit" | "thicken" | "replaceface" | "revsurf" | "loftsurf" | "sweepsurf" | "trimsurf" | "fillsurf" | "extendsurf" | "untrimsurf";
+const SURF_TYPES: ReadonlySet<string> = new Set(["planesurf", "extsurf", "offsurf", "knit", "thicken", "replaceface", "revsurf", "loftsurf", "sweepsurf", "trimsurf", "fillsurf", "extendsurf", "untrimsurf"]);
 /** The 3D curve commands in Sweep ▾ (FR-FT-085). */
 type CurveTool = "xyzcurve" | "compcurve" | "projcurve" | "sketch3d";
 /** A sweep path's select value: h:/c:/s: + id. */
@@ -5040,6 +5071,7 @@ const SURF_TOOLS = (): [SurfTool, string, string][] => [
   ["fillsurf", t("Filled Surface"), t("Filled surface: a patch across an opening of a surface")],
   ["trimsurf", t("Trim Surface"), t("Trim a surface with a plane or another surface")],
   ["extendsurf", t("Extend Surface"), t("Extend a surface past its edges")],
+  ["untrimsurf", t("Untrim Surface"), t("Untrim a surface: back to its natural bounds, or fill its holes")],
   ["knit", t("Knit Surface"), t("Knit surfaces into one, or into a solid when they close a volume")],
   ["thicken", t("Thicken"), t("Thicken a surface into a solid")],
   ["replaceface", t("Replace Face"), t("Replace faces of a solid with a surface")],
@@ -5055,6 +5087,8 @@ const ICON_SVG: Record<string, string> = {
   trimsurf: S('<path d="M2 11l4-7h8l-4 7z"/><path d="M9 2v13" stroke-dasharray="2 1.5"/>'),
   fillsurf: S('<path d="M3 5l5-3 5 3v6l-5 3-5-3z"/><path d="M5 6l3-2 3 2v4l-3 2-3-2z" fill="currentColor" fill-opacity=".3" stroke="none"/>'),
   extendsurf: S('<path d="M2 12l3-6h6l-3 6z"/><path d="M11 6h4M8 12h4l3-6" stroke-dasharray="2 1.5"/>'),
+  untrimsurf: S('<path d="M2 12l3-6h9l-3 6z" stroke-dasharray="2 1.5"/><path d="M5 11l2-4h4l-2 4z" fill="currentColor" fill-opacity=".3"/>'),
+  intersect: S('<rect x="2" y="3" width="8" height="8"/><rect x="6" y="6" width="8" height="8"/><path d="M6 6h4v5H6z" fill="currentColor" fill-opacity=".35" stroke="none"/>'),
   replaceface: S('<path d="M2 14V7h10v7z"/><path d="M1 6c4-3 9-3 14 0" stroke-dasharray="2 1.5"/><path d="M7 9V5"/>'),
   thicken: S('<path d="M2 9c3-3 9-3 12 0v3c-3-3-9-3-12 0z" fill="currentColor" fill-opacity=".2"/>'),
   sweep: S('<path d="M3 13c0-6 4-10 10-10"/><circle cx="3" cy="13" r="1.8"/><circle cx="13" cy="3" r="1.8"/>'),
