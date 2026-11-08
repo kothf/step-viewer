@@ -19,7 +19,7 @@ import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } 
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
 import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
-import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
+import { applySolved, autoExplode, expandPatterns, explodeAt, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
@@ -2509,7 +2509,7 @@ export class AsmController {
   }
 
   /** Shows the components at solved transforms, with exploded views applied at their progress (0..1). */
-  motionShow(tfs: Record<string, Tf>, explode: { id: string; k: number }[] = []) {
+  motionShow(tfs: Record<string, Tf>, explode: { id: string; k: number; seq?: boolean }[] = []) {
     const doc = this.doc;
     if (!doc) return;
     // Pattern instances follow their moved seeds.
@@ -2524,7 +2524,7 @@ export class AsmController {
     for (const e of explode) {
       const v = doc.explodes?.find(x => x.id === e.id);
       if (!v || e.k <= 0) continue;
-      for (const [id, o] of explodeOffsets(v)) { const p = off.get(id) ?? [0, 0, 0]; off.set(id, [p[0] + o[0] * e.k, p[1] + o[1] * e.k, p[2] + o[2] * e.k]); }
+      for (const [id, o] of explodeAt(v, e.k, e.seq)) { const p = off.get(id) ?? [0, 0, 0]; off.set(id, [p[0] + o[0], p[1] + o[1], p[2] + o[2]]); }
     }
     const all: Record<string, Tf> = {};
     for (const id of this.shownIds) {
