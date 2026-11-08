@@ -5906,6 +5906,41 @@ try {
     await ctx.close();
   }
 
+  // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(), d = window.__sv.model.store.doc; return { v: Math.round((l.props?.volume ?? 0) * 100) / 100, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), types: d.features.map(f => f.type).join(","), holes: d.features.filter(f => f.type === "hole").map(f => `${f.end}:${f.pts.length}:${Math.round(f.diameter.v * 10) / 10}`).sort().join(" ") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 60 × 40 × 20 block with two Ø10 through holes and one Ø8 × 8 flat blind hole.
+    await mp.evaluate(() => window.__sv.model.store.change("Holed block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("s1", -30, -20), P("s2", 30, -20), P("s3", 30, 20), P("s4", -30, 20), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } },
+        { id: "h1", type: "hole", name: "Hole1", plane: { face: { name: "e:end" } }, pts: [[-15, 0], [-15, 12]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 10 } },
+        { id: "h2", type: "hole", name: "Hole2", plane: { face: { name: "e:end" } }, pts: [[15, 0]], kind: "simple", diameter: { v: 8 }, end: "blind", depth: { v: 8 }, flat: true });
+    }));
+    await settle();
+    const r0 = await state();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Recognize Holes$/ }).click();
+    await settle();
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "delface"), null, { timeout: 60000 });
+    await settle();
+    const r1 = await state();
+    check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
+      `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+    await ctx.close();
+  }
+
   // --- 1.108: Indent a plate with a tool body, with a wall and as a cut (FR-BODY-007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -6830,6 +6865,18 @@ try {
     await settle();
     const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
     check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
+    // Corners group: one corner of the frame butted, a weld gap at all of them.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "member").id));
+    await settle();
+    const nCorners = await mp.evaluate(() => document.querySelectorAll('#mc-pm select[data-k^="wcorner:"]').length);
+    await mp.selectOption('#mc-pm select[data-k^="wcorner:"] >> nth=0', "butt1");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wGap"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const co = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "member"); return { corners: f.corners, gap: f.gap?.v, rows: (l.cutList ?? []).filter(c => c.desc === "SHS 50x50x4").map(c => [c.qty, c.length, c.angle1, c.angle2]) }; });
+    check(nCorners === 4 && Object.keys(co.corners ?? {}).length === 1 && co.gap === 2 && JSON.stringify(co.rows) === "[[1,648.6,0,45],[1,647.2,45,45],[1,447.2,45,45],[1,396.6,0,45]]", `weldments: per-corner treatment and weld gap (${JSON.stringify({ nCorners, co })})`);
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });

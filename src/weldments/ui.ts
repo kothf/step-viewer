@@ -9,6 +9,7 @@ import { units, UNITS } from "../tools/units";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
+import { cornerKey } from "./types";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
 export const WELD_TOOL_SET: ReadonlySet<string> = new Set(["member", "trimext", "endcap", "gusset", "weldbead"]);
@@ -56,6 +57,18 @@ function pathSketches(ctx: WeldCtx): (SketchFeature | Sketch3dFeature)[] {
 /** A path sketch's usable lines (construction lines are left out). */
 function pathLines(sk: SketchFeature | Sketch3dFeature): string[] {
   return sk.type === "sketch" ? sk.ents.filter(e => e.t === "line" && !e.cons).map(e => e.id) : sk.segs.filter(s => s.t === "line").map(s => s.id);
+}
+
+/** The corners between a member's segments: the segments that share an end point, by the sketch's point ids. */
+function memberCorners(sk: SketchFeature | Sketch3dFeature, ents: string[]): string[][] {
+  const at = new Map<string, string[]>();
+  for (const ent of ents) {
+    const ends = sk.type === "sketch"
+      ? (() => { const e = sk.ents.find(x => x.id === ent); return e?.t === "line" ? [e.a, e.b] : []; })()
+      : sk.segs.find(x => x.id === ent)?.pts.slice(0, 2) ?? [];
+    for (const p of ends) at.set(p, [...(at.get(p) ?? []), ent]);
+  }
+  return [...at.values()].filter(l => l.length > 1);
 }
 
 /** 2D sketches with a closed region (custom member profiles), before the edited feature; not the path sketch. */
@@ -126,6 +139,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const sk = paths.find(s => s.id === cur);
     const lines = sk ? pathLines(sk) : [];
     const on = new Set(f.segs.map(s => s.ent));
+    const corners = sk ? memberCorners(sk, f.segs.map(x => x.ent)) : [];
     const segList = lines.map((ent, i) => `<label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(t("Line {n}", { n: i + 1 }))}</label>`).join("");
     return {
       title: t("Structural Member"),
@@ -138,9 +152,17 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + `<p class="pm-count">${esc(t("{n} segment|{n} segments", { n: f.segs.length }))}</p>${segList}`
           + help(t("Each segment becomes its own body; where two segments meet end to end the corner is treated.")))
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
+          + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
           + sel("anchor", t("Profile position"), [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])])], f.anchor ?? (f.profile === "sketch" ? "o" : "c"))
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
-          + chk("mirror", f.mirror, t("Mirror profile"))),
+          + chk("mirror", f.mirror, t("Mirror profile")))
+        + (corners.length ? group(t("Corners"), corners.map(c => {
+          const key = cornerKey(c);
+          const label = c.map(ent => t("Line {n}", { n: lines.indexOf(ent) + 1 })).join(" / ");
+          const opts: [string, string][] = [["", t("As set above")], ...(c.length === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
+          return sel(`wcorner:${key}`, label, opts, f.corners?.[key] ?? "");
+        }).join("") + help(t("A corner set here keeps its own treatment when the one above changes."))) : "")
+        + group(t("Cut list"), `<label class="pm-field"><span>${esc(t("Description"))}</span><input type="text" data-k="wdesc" value="${esc(f.desc ?? "")}" placeholder="${esc(f.profile === "sketch" ? t("Profile sketch") : f.size)}" /></label>`),
     };
   }
   if (f.type === "trimext") {
@@ -208,6 +230,13 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wsize") return () => { f.size = String(val); };
     if (k === "wsketch") return () => { const sk = pathSketches(ctx).find(s => s.id === val); f.segs = sk ? pathLines(sk).map(ent => ({ sketch: sk.id, ent })) : []; };
     if (k === "corner") return () => { f.corner = val as MemberFeature["corner"]; };
+    if (k.startsWith("wcorner:")) return () => {
+      const key = k.slice(8), c = { ...f.corners };
+      if (val) c[key] = val as MemberFeature["corner"]; else delete c[key];
+      if (Object.keys(c).length) f.corners = c; else delete f.corners;
+    };
+    if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
+    if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
     if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
   }
   if (f.type === "trimext") {

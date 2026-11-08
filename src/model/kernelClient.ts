@@ -9,7 +9,7 @@ import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
-import type { FaceRef, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, RecognizedHole, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -140,6 +140,12 @@ export class ModelKernel {
   async partBody(doc: PartDoc): Promise<{ brep: string; solids: number; faces: number }> {
     await this.start();
     return this.call<{ brep: string; solids: number; faces: number }>({ type: "partBody", doc });
+  }
+
+  /** Feature recognition (FR-FT-102): the round holes of the part's body, as hole features would make them. */
+  async recognizeHoles(doc: PartDoc): Promise<{ faces: FaceRef[]; holes: RecognizedHole[] }> {
+    await this.start();
+    return this.call<{ faces: FaceRef[]; holes: RecognizedHole[] }>({ type: "recognize", doc });
   }
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
