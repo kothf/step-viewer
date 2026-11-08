@@ -6,7 +6,8 @@ import { makeGrip } from "../resize";
 import { t, onLangChange } from "../i18n";
 import { toast } from "../ui";
 import { uid } from "../model/doc";
-import { compose, invert } from "../asm/math";
+import * as THREE from "three";
+import { applyPoint, compose, invert } from "../asm/math";
 import { download } from "../tools/exporters";
 import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
@@ -14,7 +15,8 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, Track } from "./types";
+import { TRACE_COLORS, TRACE_PLOTS, pathLength, plotSvg, speeds, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -46,9 +48,18 @@ export class MotionManager {
   private more: KeyRef[] = [];
   /** When a key drag ended: the click that follows it must not select or toggle. */
   private noClick = false;
+  /** The selected trace path (its row and panel), or null. */
+  selTrace: string | null = null;
+  /** Waiting for a click on a component to start a trace path. */
+  tracing = false;
+  /** The drawn paths and markers, rebuilt when the frames or the traces change. */
+  private traceGroup = new THREE.Group();
+  private traceKey = "";
+  /** Each trace's world points per frame (by trace id). */
+  private tracePts = new Map<string, V3[]>();
   /** The selected key or motor; setting it drops the other selected keys. */
   get sel(): Sel { return this._sel; }
-  set sel(v: Sel) { this._sel = v; this.more = []; }
+  set sel(v: Sel) { this._sel = v; this.more = []; if (v) this.selTrace = null; }
   /** The copied keys (Ctrl+C or the key menu): each with its track, the unit of that track and its time after the first. */
   private clip: { items: { track: string; unit: string; dt: number; key: AnyKey }[] } | null = null;
   /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
@@ -79,6 +90,13 @@ export class MotionManager {
     this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
     this.grip.classList.add("mo-grip");
     asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide() };
+    // Picking a trace point: the click on the view goes to the study, not to the assembly's tools or the orbit controls.
+    window.addEventListener("pointerdown", e => {
+      if (!this.tracing || e.button !== 0 || e.target !== viewer.renderer.domElement) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.pickTrace(e.clientX, e.clientY);
+    }, true);
     viewer.onRender(() => {
       if (this.capture) this.capture(viewer.renderer.domElement);
       const w = this.renderWaiters.splice(0);
@@ -278,17 +296,146 @@ export class MotionManager {
     const s = this.study, i = Math.min(frameCount(s) - 1, Math.max(0, Math.round(tq * s.fps)));
     this.ensure(i);
     const f = frameAt(s, tq, new Map((this.asm.doc.mates ?? []).map(m => [m.id, m])));
+    const tfs = this.tfsAt(i, tq);
+    this.asm.motionShow(tfs, f.explode);
+    this.syncTraces(i);
+    this.asm.motionLook(f.look);
+    if (f.camera) this.setCamera(f.camera);
+    this.viewer.invalidate();
+    this.updateHead(i);
+  }
+
+  /** Component transforms at frame `i` (time `tq`): the solved frame with placement keys applied. */
+  private tfsAt(i: number, tq = i / this.study.fps): Record<string, Tf> {
+    const s = this.study;
     let tfs = this.frames[i] ?? this.asm.restTfs();
+    const f = frameAt(s, tq, new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m])));
     if (Object.keys(f.pose).length) {
       const rest = this.asm.restTfs();
       tfs = { ...tfs };
       for (const [id, p] of Object.entries(f.pose)) if (rest[id]) tfs[id] = posed(rest[id], p);
     }
-    this.asm.motionShow(tfs, f.explode);
-    this.asm.motionLook(f.look);
-    if (f.camera) this.setCamera(f.camera);
-    this.viewer.invalidate();
-    this.updateHead(i);
+    return tfs;
+  }
+
+  // ---------- trace paths (Results → Trace Path) ----------
+
+  private get traces(): TracePath[] { return this.study.traces ?? []; }
+
+  /** Starts picking a point to trace: the next click on a component in the view (Esc cancels). */
+  startTrace() {
+    this.tracing = true;
+    this.setStatus(t("Click a point on a moving component to trace its path (Esc cancels)."));
+    this.viewer.renderer.domElement.style.cursor = "crosshair";
+  }
+
+  private stopTracing() {
+    this.tracing = false;
+    this.viewer.renderer.domElement.style.cursor = "";
+    this.setStatus("");
+  }
+
+  /** The click while picking: the component under it and the point in that component's coordinates at the shown frame. */
+  pickTrace(x: number, y: number): boolean {
+    const hit = this.asm.shownAt(x, y);
+    const i = Math.round(this.time * this.study.fps), tfs = this.tfsAt(i, this.time);
+    const comp = hit && (tfs[hit.id] ? hit.id : tfs[hit.top] ? hit.top : null);
+    if (!hit || !comp) { toast(t("Click a component that moves in the study."), "warn"); return false; }
+    this.stopTracing();
+    this.addTrace(comp, applyPoint(invert(tfs[comp]), hit.point));
+    return true;
+  }
+
+  /** Adds a trace path of point `p` (component coordinates) on `comp` and selects it. */
+  addTrace(comp: string, p: V3) {
+    const id = uid("tr_"), color = TRACE_COLORS[this.traces.length % TRACE_COLORS.length];
+    this.edit(st => { (st.traces ??= []).push({ id, comp, p: [p[0], p[1], p[2]], color }); });
+    this.sel = null;
+    this.selTrace = id;
+    this.render();
+    this.showAt(this.time);
+  }
+
+  deleteTrace(id: string) {
+    this.edit(st => { st.traces = (st.traces ?? []).filter(x => x.id !== id); if (!st.traces.length) delete st.traces; });
+    if (this.selTrace === id) this.selTrace = null;
+    this.render();
+    this.showAt(this.time);
+  }
+
+  private setTrace(id: string, fn: (x: TracePath) => void) {
+    this.edit(st => { const x = st.traces?.find(k => k.id === id); if (x) fn(x); });
+    this.render();
+    this.showAt(this.time);
+  }
+
+  /** A trace's points over the whole study (every frame solved). */
+  tracePath(id: string): V3[] {
+    this.ensure(frameCount(this.study) - 1);
+    this.syncTraces(Math.round(this.time * this.study.fps));
+    return this.tracePts.get(id) ?? [];
+  }
+
+  /** Draws the paths (solving every frame once when the study or the traces change) and moves the markers to frame `i`. */
+  private syncTraces(i: number) {
+    const tr = this.traces, g = this.traceGroup;
+    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); return; }
+    const s = this.study, n = frameCount(s);
+    const key = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off), tr]);
+    if (key !== this.traceKey) {
+      this.ensure(n - 1);
+      this.traceKey = key;
+      this.tracePts.clear();
+      for (const c of [...g.children]) { c.removeFromParent(); const o = c as THREE.Line; o.geometry?.dispose(); (o.material as THREE.Material)?.dispose(); }
+      const all: Record<string, Tf>[] = [];
+      for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
+      for (const x of tr) {
+        const pts = tracePoints(all, x.comp, x.p);
+        this.tracePts.set(x.id, pts);
+        if (x.off || pts.length < 1) continue;
+        const geo = new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(q[0], q[1], q[2])));
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: x.color, depthTest: false, transparent: true }));
+        line.renderOrder = 998;
+        line.userData.trace = x.id;
+        const dot = new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3)),
+          new THREE.PointsMaterial({ color: x.color, size: x.id === this.selTrace ? 9 : 7, sizeAttenuation: false, depthTest: false, transparent: true }));
+        dot.renderOrder = 999;
+        dot.userData.dot = x.id;
+        g.add(line, dot);
+      }
+    }
+    if (!g.parent) this.viewer.scene.add(g);
+    for (const c of g.children) {
+      const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
+      if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+    }
+    this.updatePlot(i);
+  }
+
+  /** Moves the plot's playhead line and the readout under it (no re-render while playing). */
+  private updatePlot(i: number) {
+    const x = this.traces.find(k => k.id === this.selTrace), box = this.pane.querySelector<HTMLElement>(".mo-trace-plot");
+    if (!x || !box) return;
+    box.innerHTML = this.plotHtml(x, i);
+  }
+
+  private plotHtml(x: TracePath, i: number): string {
+    const pts = this.tracePts.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
+    if (!pts.length) return "";
+    const vals = traceSeries(pts, s.fps, q), j = Math.min(pts.length - 1, Math.max(0, i)), p = pts[j], sp = speeds(pts, s.fps)[j];
+    const unit = q === "speed" ? t("mm/s") : "mm", label = t(TRACE_PLOTS.find(([k]) => k === q)![1]);
+    return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label))
+      + `<span class="mo-tread muted">${esc(t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(j / s.fps), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(sp) }))}</span>`;
+  }
+
+  private traceProps(x: TracePath): string {
+    const pts = this.tracePts.get(x.id) ?? [], i = Math.round(this.time * this.study.fps);
+    return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${TRACE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+      + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
+      + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
+      + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed)"))}">CSV</button>`
+      + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
+      + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
   }
 
   private setCamera(k: CamKey) {
@@ -444,6 +591,9 @@ export class MotionManager {
     document.getElementById("app")?.classList.remove("motion-on");
     this.frames = [];
     this.cacheKey = "";
+    if (this.tracing) this.stopTracing();
+    this.syncTraces(0);
+    this.viewer.invalidate();
     if (this.asm.doc) this.asm.motionRestore();
   }
 
@@ -479,7 +629,8 @@ export class MotionManager {
       ...(doc.explodes ?? []).map(v => `<option value="explode:${esc(v.id)}" translate="no">${esc(t("Explode"))}: ${esc(v.name)}</option>`),
       ...this.movable().filter(c => !s.tracks.some(k => k.kind === "pose" && k.comp === c.id)).map(c => `<option value="pose:${esc(c.id)}" translate="no">${esc(t("Placement"))}: ${esc(c.name)}</option>`),
       ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
-      ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`])].join("");
+      ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`]),
+      `<option value="trace:">${esc(t("Trace path…"))}</option>`].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
     const shown = s.duration / this.zoom;
     const step = shown <= 0.6 ? 0.05 : shown <= 1.5 ? 0.1 : shown <= 3 ? 0.5 : shown <= 20 ? 1 : shown <= 60 ? 5 : 10;
@@ -490,7 +641,12 @@ export class MotionManager {
       const l = this.trackLabel(k), sel = this.sel?.track === k.id && this.sel.key == null;
       return `<div class="mo-name${sel ? " sel" : ""}${k.off ? " off" : ""}" data-track="${esc(k.id)}"><span class="mo-ico" aria-hidden="true">${l.icon}</span><span class="mo-kind">${esc(l.kind)}</span>${l.name ? `<span class="mo-tn" translate="no">${esc(l.name)}</span>` : ""}`
         + `<span class="mo-acts"><input type="checkbox" data-on="${esc(k.id)}"${k.off ? "" : " checked"} title="${esc(t("Track on"))}" aria-label="${esc(t("Track on"))}" />${ib(`del:${k.id}`, "✕", t("Delete track"))}</span></div>`;
+    }).join("") + this.traces.map(x => {
+      const c = doc.components.find(k => k.id === x.comp || k.id === x.comp.split("/")[0]);
+      return `<div class="mo-name mo-trace${this.selTrace === x.id ? " sel" : ""}${x.off ? " off" : ""}" data-trace="${esc(x.id)}"><span class="mo-ico" aria-hidden="true" style="color:${esc(x.color)}">〰</span><span class="mo-kind">${esc(t("Trace path"))}</span><span class="mo-tn" translate="no">${esc(c?.name ?? "?")}</span>`
+        + `<span class="mo-acts"><input type="checkbox" data-ton="${esc(x.id)}"${x.off ? "" : " checked"} title="${esc(t("Show the path"))}" aria-label="${esc(t("Show the path"))}" />${ib(`tdel:${x.id}`, "✕", t("Delete trace path"))}</span></div>`;
     }).join("");
+    const tlanes = this.traces.map(x => `<div class="mo-tlane${x.off ? " off" : ""}" data-tlane="${esc(x.id)}"></div>`).join("");
     const lanes = s.tracks.map(k => {
       let inner = "";
       if (k.kind === "motor") inner = `<button class="mo-bar${this.sel?.track === k.id ? " sel" : ""}" data-bar="${esc(k.id)}" style="left:${this.x(k.start)};width:calc(${this.x(Math.max(0, k.end - k.start))})" title="${esc(t("Motor"))}" aria-label="${esc(t("Motor"))} ${esc(fmt(k.start))}–${esc(fmt(k.end))} ${esc(t("s"))}"></button>`;
@@ -501,7 +657,7 @@ export class MotionManager {
       }
       return `<div class="mo-lane${k.off ? " off" : ""}" data-lane="${esc(k.id)}">${inner}</div>`;
     }).join("");
-    const empty = s.tracks.length ? "" : `<p class="mo-empty muted">${esc(dr.value.length + dr.axis.length || doc.explodes?.length ? t("Add a track: keys or a motor on a mate, an exploded view or camera keys.") : t("Add a distance, angle, concentric or hinge mate (or an exploded view) to animate it."))}</p>`;
+    const empty = s.tracks.length || this.traces.length ? "" : `<p class="mo-empty muted">${esc(dr.value.length + dr.axis.length || doc.explodes?.length ? t("Add a track: keys or a motor on a mate, an exploded view or camera keys.") : t("Add a distance, angle, concentric or hinge mate (or an exploded view) to animate it."))}</p>`;
     const playMode = s.play ?? "once";
     this.pane.innerHTML = `<div class="mo-head">`
       + `<h2 class="mo-title">${esc(t("Motion study"))}</h2>`
@@ -526,7 +682,7 @@ export class MotionManager {
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
-      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
+      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
     this.pane.prepend(this.grip);
     const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw");
@@ -561,6 +717,8 @@ export class MotionManager {
 
   /** The selected key's or motor's properties. */
   private propsHtml(): string {
+    const tx = this.selTrace ? this.traces.find(k => k.id === this.selTrace) : undefined;
+    if (tx) return this.traceProps(tx);
     const sel = this.sel, tr = sel && this.study.tracks.find(k => k.id === sel.track);
     if (!sel || !tr) return `<span class="muted">${esc(t("Select a key or a motor to edit it; double-click a track to add a key."))}</span>`;
     const field = (label: string, key: string, v: string, unitTxt = "") => `<label class="mo-f"><span>${esc(label)}</span><input type="text" inputmode="decimal" class="mo-n" data-p="${key}" value="${esc(v)}" />${unitTxt ? `<span class="muted">${esc(unitTxt)}</span>` : ""}</label>`;
@@ -646,9 +804,19 @@ export class MotionManager {
       else if (a === "webm") { if (this.recording) this.recording = null; else void this.recordWebm(); }
       else if (a === "gif") { if (this.recording) this.recording = null; else void this.recordGif(); }
       else if (a.startsWith("del:")) this.deleteTrack(a.slice(4));
+      else if (a.startsWith("tdel:")) this.deleteTrace(a.slice(5));
     });
     on("select[data-mo=study]", "change", (_e, el) => { this.stop(); this.studyId = (el as HTMLSelectElement).value; this.sel = null; this.render(); this.showAt(0); });
-    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v) this.addTrack(v); });
+    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v) this.addTrack(v); });
+    on(".mo-name[data-trace]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = null; this.selTrace = el.dataset.trace!; this.render(); this.showAt(this.time); });
+    on("input[data-ton]", "change", (_e, el) => { const v = (el as HTMLInputElement).checked; this.setTrace(el.dataset.ton!, x => { if (v) delete x.off; else x.off = true; }); });
+    on("select[data-tr=plot]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value as TracePlot; this.setTrace(this.selTrace!, x => { if (v === "dist") delete x.plot; else x.plot = v; }); });
+    on("input[data-tr=color]", "change", (_e, el) => { const v = (el as HTMLInputElement).value; this.setTrace(this.selTrace!, x => { x.color = v; }); });
+    on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
+    on("button[data-tr=csv]", "click", () => {
+      const x = this.traces.find(k => k.id === this.selTrace);
+      if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
+    });
     on("select[data-mo=mode]", "change", (_e, el) => this.edit(st => { st.play = (el as HTMLSelectElement).value as MotionStudy["play"]; }));
     on("select[data-mo=speed]", "change", (_e, el) => { this.speed = Number((el as HTMLSelectElement).value); if (this.playing) { this.pause(); this.play(); } });
     on("select[data-mo=fps]", "change", (_e, el) => this.edit(st => { st.fps = Number((el as HTMLSelectElement).value); }));
@@ -1197,6 +1365,8 @@ export class MotionManager {
   private key(e: KeyboardEvent) {
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (e.key === "Escape" && this.tracing) { e.preventDefault(); this.stopTracing(); return; }
+    if ((e.key === "Delete" || e.key === "Backspace") && this.selTrace && !this.sel) { e.preventDefault(); this.deleteTrace(this.selTrace); return; }
     if (e.key === " ") { e.preventDefault(); this.play(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && this.sel) { e.preventDefault(); this.deleteSel(); }
     else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "a") { e.preventDefault(); this.selectAll(); }

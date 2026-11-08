@@ -2479,6 +2479,12 @@ export class AsmController {
   /** The motion manager: opened from the bar, told when the document is rebuilt, replaced or closed. */
   motion: { open(): void; rebuilt(): void; close(): void } | null = null;
 
+  /** The shown component under a screen point (client coordinates), its top-level component and the world point hit (motion trace paths). */
+  shownAt(x: number, y: number): { id: string; top: string; point: V3 } | null {
+    const hit = this.host.partAt(x, y), id = hit ? this.shownIds[hit.idx] : undefined;
+    return hit && id ? { id, top: topOf(id), point: hit.point } : null;
+  }
+
   /** A mate reference's face geometry in its component's own coordinates. */
   localGeo(ref: MateRef): Geo | null { const c = this.anyComp(ref.comp); return (c && this.geo.get(c.part)?.get(ref.face)) ?? null; }
 

@@ -67,4 +67,20 @@ export interface MotionStudy {
   /** Playback: once, loop, or back and forth. */
   play?: "once" | "loop" | "reciprocate";
   tracks: Track[];
+  /** Trace paths (Results → Trace Path): points on components followed through the study. */
+  traces?: TracePath[];
+}
+
+/** A point on a component whose path is drawn and plotted over the study. */
+export interface TracePath {
+  id: string;
+  /** The component (as the solver names it) the point moves with. */
+  comp: string;
+  /** The point in the component's own coordinates (mm). */
+  p: [number, number, number];
+  color: string;
+  /** What the panel plots (default "dist"). */
+  plot?: "dist" | "speed" | "x" | "y" | "z";
+  /** Hidden in the view. */
+  off?: boolean;
 }
