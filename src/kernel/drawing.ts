@@ -198,14 +198,30 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
 }
 
 /** A section view (FR-DRW-012): `view.dir` is the plane's normal, pointing at the viewer; material on the viewer's side of the plane through `p` is cut away. `cut` holds the cut faces as closed 2D loops (outer and holes alike; fill them even-odd). */
-export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[]): Projection {
   const { x, y, n } = viewAxes(view);
   const info = shapeInfo(oc, shape);
   const [lo, hi] = info.box;
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
-  const o = [p[0] - x[0] * L - y[0] * L, p[1] - x[1] * L - y[1] * L, p[2] - x[2] * L - y[2] * L];
-  const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(o[0], o[1], o[2]), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
-  const box = new oc.BRepPrimAPI_MakeBox_5(ax, 2 * L, 2 * L, L).Shape();
+  let box: any;
+  if (poly && poly.length >= 6) {
+    // Broken-out section (FR-DRW-015): only the material inside the outline (view axes u, v),
+    // from the plane through p towards the viewer, is taken away.
+    const d = dot(p, n);
+    const mp = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (let i = 0; i + 1 < poly.length; i += 2) {
+      const u = poly[i], v = poly[i + 1];
+      mp.Add_1(new oc.gp_Pnt_3(x[0] * u + y[0] * v + n[0] * d, x[1] * u + y[1] * v + n[1] * d, x[2] * u + y[2] * v + n[2] * d));
+    }
+    mp.Close();
+    if (!mp.IsDone()) throw new Error("The section could not be cut");
+    const face = new oc.BRepBuilderAPI_MakeFace_15(mp.Wire(), true).Face();
+    box = new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(n[0] * L, n[1] * L, n[2] * L), false, true).Shape();
+  } else {
+    const o = [p[0] - x[0] * L - y[0] * L, p[1] - x[1] * L - y[1] * L, p[2] - x[2] * L - y[2] * L];
+    const ax = new oc.gp_Ax2_2(new oc.gp_Pnt_3(o[0], o[1], o[2]), new oc.gp_Dir_4(n[0], n[1], n[2]), new oc.gp_Dir_4(x[0], x[1], x[2]));
+    box = new oc.BRepPrimAPI_MakeBox_5(ax, 2 * L, 2 * L, L).Shape();
+  }
   const cutter = new oc.BRepAlgoAPI_Cut_3(shape, box, new oc.Message_ProgressRange_1());
   cutter.Build(new oc.Message_ProgressRange_1());
   if (!cutter.IsDone()) throw new Error("The section could not be cut");

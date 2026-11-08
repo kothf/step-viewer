@@ -116,7 +116,7 @@ export function boxInView(box: [V3, V3], vd: ViewDir): [number, number, number, 
 }
 
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; key: string } {
+export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; key: string } {
   if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewReq(sheet, p, depth + 1); }
   const view = viewDir(sheet, v);
   if (v.kind === "section" && v.parent && v.line) {
@@ -126,6 +126,10 @@ export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDi
       const p = add(mul(x, v.line[0]), y, v.line[1]);
       return { view, p, key: `${dirKey(view)}|${p.map(c => c.toFixed(6)).join(",")}` };
     }
+  }
+  if (v.broken && v.kind !== "section" && v.broken.poly.length >= 6) {
+    const { n } = viewAxes(view), { poly, d } = v.broken;
+    return { view, p: mul(n, d), poly, key: `${dirKey(view)}|bo|${d.toFixed(6)}|${poly.map(c => c.toFixed(4)).join(",")}` };
   }
   return { view, key: dirKey(view) };
 }
