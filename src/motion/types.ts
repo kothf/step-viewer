@@ -10,7 +10,8 @@ export type Interp = "linear" | "ease";
 export interface Key { t: number; v: number; interp?: Interp }
 
 /** A camera at a time: eye position and the point looked at (world mm). */
-export interface CamKey { t: number; pos: V3; target: V3; up?: V3; interp?: Interp }
+/** `zoom` is the orthographic camera's zoom (a perspective view zooms by moving `pos`). */
+export interface CamKey { t: number; pos: V3; target: V3; up?: V3; zoom?: number; interp?: Interp }
 
 /** Keys on a distance or angle mate's value (SolidWorks: key points on a mate dimension). */
 export interface MateTrack { id: string; kind: "mate"; mate: string; keys: Key[]; off?: boolean }
@@ -42,10 +43,18 @@ export interface ExplodeTrack { id: string; kind: "explode"; view: string; keys:
 /** A component's appearance (SolidWorks: component visibility and transparency keys): opacity 0 hidden … 1 opaque. */
 export interface LookTrack { id: string; kind: "look"; comp: string; keys: Key[]; off?: boolean }
 
+/**
+ * A component's placement (SolidWorks animation: drag a component at a time to key it), for components no
+ * mate holds: `d` moves it (world mm) and `r` turns it about world X, then Y, then Z through its own
+ * origin (degrees), both from where the assembly has it.
+ */
+export interface PoseKey { t: number; d: V3; r: V3; interp?: Interp }
+export interface PoseTrack { id: string; kind: "pose"; comp: string; keys: PoseKey[]; off?: boolean }
+
 /** View orientation keys. */
 export interface CameraTrack { id: string; kind: "camera"; keys: CamKey[]; off?: boolean }
 
-export type Track = MateTrack | MotorTrack | ExplodeTrack | LookTrack | CameraTrack;
+export type Track = MateTrack | MotorTrack | ExplodeTrack | LookTrack | PoseTrack | CameraTrack;
 
 export interface MotionStudy {
   id: string;

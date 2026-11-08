@@ -2629,8 +2629,33 @@ export const RU: Record<string, string> = {
   "Filled": "Залитые",
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
+  // View navigation (FR-UI-101..104)
+  "Zoom to fit": "Показать всё",
+  "Zoom to selection": "Показать выбранное",
+  "Zoom to area": "Увеличить область",
+  "Previous view": "Предыдущий вид",
+  "No previous view.": "Предыдущего вида нет.",
+  "Select a face, an edge or a part first.": "Сначала выберите грань, ребро или деталь.",
+  "Zoom to area: drag a box over the part of the view to fill the screen (Esc cancels).": "Увеличить область: обведите рамкой часть вида, которая должна заполнить экран (Esc — отмена).",
+  // Commands: undo list, repeat, pushpin, right-click OK (FR-UND-005, FR-UI-106/107/111)
+  "Add {name}": "Добавить: {name}",
+  "Edit {name}": "Изменить: {name}",
+  "Delete {name}": "Удалить: {name}",
+  "Undo: {what} (Ctrl+Z)": "Отменить: {what} (Ctrl+Z)",
+  "Redo: {what} (Ctrl+Y)": "Повторить: {what} (Ctrl+Y)",
+  "Nothing to undo.": "Отменять нечего.",
+  "Undo list": "Список отмены",
+  "Keep visible": "Не закрывать",
+  "Keep visible: OK starts the same command again (Ctrl+Enter does it once)": "Не закрывать: после ОК та же команда запускается снова (Ctrl+Enter — один раз)",
+  "Repeat: {name}": "Повтор: {name}",
+  // What's wrong (FR-HIS-022)
+  "{n} warning|{n} warnings": "{n} предупреждение|{n} предупреждения|{n} предупреждений",
+  "What's wrong": "Что не так",
+  "Click to select, double-click to edit": "Щелчок — выбрать, двойной щелчок — изменить",
   // Motion studies (FR-FT-122)
   "Appearance": "Внешний вид",
+  "Move {axis}": "Сдвиг по {axis}",
+  "Rotate {axis}": "Поворот вокруг {axis}",
   "Hidden": "Скрыт",
   "Shown": "Показан",
   "Make an exploded view first (Explode).": "Сначала создайте вид с разнесением (Разнести).",
@@ -2983,4 +3008,14 @@ export const RU: Record<string, string> = {
   "Click the edges of the parting line.": "Щёлкните рёбра линии разъёма.",
   "Draft works on ribs normal to the sketch.": "Уклон работает для рёбер жёсткости, перпендикулярных эскизу.",
   "The draft angle must be between 0° and 45°.": "Угол уклона должен быть от 0° до 45°.",
+  // Next: sketch relations to model edges picked in the view (FR-SK-064).
+  "Select sketch items or model edges to add relations (Ctrl+click for more).": "Выберите элементы эскиза или рёбра модели, чтобы добавить взаимосвязи (Ctrl+щелчок добавляет).",
+  "Reference model edge": "Ссылка на ребро модели",
+  // 1.104.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
+  "Chain dimension": "Цепной размер",
+  "Baseline dimension": "Размеры от базы",
+  "Ordinate dimension": "Координатный размер",
+  "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
+  "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
+  "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
 };

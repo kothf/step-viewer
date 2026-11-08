@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.103.0] - 2026-11-08
+## [1.110.0] - 2026-11-08
 
 ### Added
 
@@ -13,6 +13,57 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Gusset**: two arrows in the view, one per leg, change the lengths along face 1 and face 2 by dragging (also from the tree, like extrude depth); click an arrow's value to type it.
   - **Fillet Bead**: **Tangent propagation** (on by default) brings in the faces that run on smoothly from a picked one, so picking one side of a square tube and the plate gives a bead all round it, round corners included.
   - Bead pieces that meet end to end are fused into one bead body; the cut list gives its length along the root.
+
+## [1.107.0] - 2026-11-08
+
+### Added
+
+- View navigation as in mechanical CAD (FRS 13.13, FR-UI-101 to FR-UI-104):
+  - **Arrow keys** turn the view 15°, **Shift+arrows** 90°, **Ctrl+arrows** pan.
+  - **Z** zooms out and **Shift+Z** zooms in.
+  - **Alt+Z** goes back to the previous view, through the last 20 view changes. Orbiting, standard views, Normal to and fits all count.
+  - A **double middle click** fits the model.
+  - **Space** opens the orientation picker at the cursor: the six views laid out as an unfolded cube, plus Isometric, Normal to, Zoom to fit, Zoom to selection, Zoom to area and Previous view.
+  - **Zoom to area** frames a box you drag.
+  - **Zoom to selection** frames the picked face, edge or parts.
+- Part modelling commands (FR-UND-005, FR-UI-043, FR-UI-106, FR-UI-107, FR-UI-111, FR-HIS-022):
+  - The **Undo** and **Redo** tooltips name the step ("Undo: Add Extrude1").
+  - **Undo ▾** lists the last 20 steps; picking one undoes back to it.
+  - **Enter** with no command running repeats the last feature command.
+  - The feature panel's **📌 Keep visible** pushpin opens the same command again after OK; **Ctrl+Enter** does it once.
+  - A **right-click** without a drag while a command runs offers **OK** and **Cancel** (fillet and chamfer keep their edge helpers below).
+  - New feature panels start with the options used last for that command (end condition, merge, chamfer type, shell outward, rib side; never sizes or picked geometry).
+  - **What's wrong**: the error count above the feature tree opens a list of the features with errors and warnings. A click selects one; a double click edits it.
+
+### Changed
+
+- Camera moves take 300 ms, down from 450 ms. They apply at once when the system asks for reduced motion.
+
+### Fixed
+
+- New assembly (or opening one) while a part was open left the part modelling bar and the "Start a sketch on a plane" card showing in the assembly.
+
+## [1.106.0] - 2026-11-08
+
+### Added
+
+- Motion studies: placement tracks move and turn a component that no mate holds over the study (keys with a move along X/Y/Z in mm and turns about X/Y/Z in degrees about its own origin), as dragging a component at a time in SolidWorks' animator (FR-FT-122).
+- Camera keys keep the orthographic zoom, which changes smoothly between keys.
+
+## [1.104.0] - 2026-11-08
+
+### Added
+
+- More dimension types in drawings (FR-DRW-021):
+  - **Arc length.** Select a radius dimension on an arc seen end-on and set its Type to Arc length: a dimension arc concentric with the edge, radial extension lines and the value with the arc symbol (◠15.71).
+  - **Chamfer.** Select an angle dimension between a chamfer and the edge next to it and set its Type to Chamfer: a leader to the chamfer and "2 × 45°" (the run along the other edge and the angle). Either line can be picked first; the shorter one is the chamfer.
+  - **Chain, baseline and ordinate dimensions** (Annotate ▾ and the Annotation tab): click a base point (a corner or a circle centre), then one point after another. Each click adds its dimension at once, above the view for horizontal ones and to its right for vertical ones (the first step decides which). Baseline dimensions stack 7 mm apart; ordinate dimensions start with a 0 at the base and stand their values at the end of each extension line. Enter or Esc ends; every dimension can be dragged and follows the model like any other.
+
+## [1.101.0] - 2026-11-08
+
+### Added
+
+- **Relations to model edges in sketches (FR-SK-064).** In the sketcher, click a model edge in the view (not a sketch item) and it is referenced into the sketch as a construction copy that follows the edge. It joins the selection, so Parallel, Coincident, Equal, Tangent, Concentric and the other relations work straight against model geometry, like picking an edge in SolidWorks' Add Relations.
 
 ## [1.100.0] - 2026-11-08
 
@@ -113,7 +164,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - While sketching, the middle mouse button rotates the view (FR-UI-020). It still pans elsewhere.
 - Smart Dimension with one item picked: clicking a second item dimensions the pair instead of placing the first item's dimension.
 - A new part shows its origin planes at once, without a "Rebuild" step.
-
 ## [1.88.0] - 2026-11-08
 
 ### Added
@@ -989,8 +1039,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.103.0...HEAD
-[1.103.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.103.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.110.0...HEAD
+[1.110.0]: https://github.com/kothf/step-viewer/compare/v1.107.0...v1.110.0
+[1.107.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.107.0
+[1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
+[1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
+[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
