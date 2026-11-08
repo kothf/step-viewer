@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.142.0] - 2026-11-08
+
+### Added
+
+- **Text along a curve (FR-SK-020)**: a selected sketch text can follow a line, arc, circle, spline or ellipse of the sketch (Along curve in the text panel), starting where its start point is nearest. Flip side runs it the other way, so text round a circle stands on top instead of hanging inside. The letters stay closed regions for Extrude and Cut.
+
 ## [1.141.0] - 2026-11-08
 
 ### Added
@@ -1220,7 +1226,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.141.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.142.0...HEAD
+[1.142.0]: https://github.com/kothf/step-viewer/compare/v1.141.0...v1.142.0
 [1.141.0]: https://github.com/kothf/step-viewer/compare/v1.140.0...v1.141.0
 [1.140.0]: https://github.com/kothf/step-viewer/compare/v1.139.0...v1.140.0
 [1.139.0]: https://github.com/kothf/step-viewer/compare/v1.138.0...v1.139.0

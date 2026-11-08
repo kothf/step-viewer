@@ -29,8 +29,10 @@ export type SkEnt =
    * Text (FR-SK-020): `text` from the anchor point `p` (left end of the baseline), capital letters `h` mm
    * tall, turned by `ang` (radians). `gl` keeps the glyph outlines (from the bundled DejaVu fonts) so
    * profiles and the kernel need no font; the editor refreshes it when the text or the font changes.
+   * `along` = a curve of the sketch the baseline follows from the point nearest `p` (`ang` is then unused);
+   * `flip` runs it the other way, so the letters stand on the other side.
    */
-  | { id: string; t: "text"; p: string; text: string; h: number; ang?: number; font?: TextFont; bold?: boolean; italic?: boolean; gl?: TextOutline; cons?: boolean };
+  | { id: string; t: "text"; p: string; text: string; h: number; ang?: number; font?: TextFont; bold?: boolean; italic?: boolean; gl?: TextOutline; along?: string; flip?: boolean; cons?: boolean };
 
 export type TextFont = "sans" | "serif" | "mono";
 /**
