@@ -4663,6 +4663,92 @@ try {
     await ctx.close();
   }
 
+  // --- surfaces 2 (FRS 9.11): revolved, lofted and trimmed surfaces; Delete Face leaving a surface ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    const surf = async name => { await mp.click('#mc-tools [data-fly="surf"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${name}$`) }).click(); await settle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    // A vertical line beside a construction axis on the front plane, and two 20 mm lines 10 mm apart.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketches", d => {
+      d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [
+        { id: "a0", t: "point", x: 0, y: -5 }, { id: "a1", t: "point", x: 0, y: 30 }, { id: "ax", t: "line", a: "a0", b: "a1", cons: true },
+        { id: "b0", t: "point", x: 10, y: 0 }, { id: "b1", t: "point", x: 10, y: 20 }, { id: "l", t: "line", a: "b0", b: "b1" }] });
+    }));
+    await settle();
+    await surf("Revolved Surface");
+    const rv = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    await mp.evaluate(() => window.__sv.model.store.change("Loft sketches", d => {
+      const L = (id, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [{ id: `${id}a`, t: "point", x: 30, y: -10 }, { id: `${id}b`, t: "point", x: 30, y: 10 }, { id: `${id}l`, t: "line", a: `${id}a`, b: `${id}b` }] });
+      d.features.push(L("k1", { std: "XY" }), { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 10 } }, L("k2", { plane: "p1" }));
+    }));
+    await settle();
+    await surf("Lofted Surface");
+    const lf = await state();
+    const prof = await mp.evaluate(() => window.__sv.model.mode().draft.profiles.join(","));
+    await mp.click("#mc-ok");
+    await settle();
+    // Trim the cylinder with the top plane (z = 10 is Plane1): keep the lower half.
+    await surf("Trim Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft, rvId = m.store.doc.features.find(x => x.type === "revsurf").id; f.surface = { name: `${rvId}:side:l` }; f.tool = { plane: { plane: "p1" } }; f.keep = [{ name: `${rvId}:side:l`, hint: [10, 0, 2] }]; m.panel(); void m.rebuild(); });
+    await settle();
+    const tr = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const area = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
+    check(rv.title === "Surface-Revolve" && rv.sheets >= 1 && !rv.bad && lf.title === "Surface-Loft" && prof === "k1,k2" && !lf.bad
+      && tr.title === "Trim Surface" && !tr.bad && tr.sheets >= 2 && area >= 2,
+      `model: revolved, lofted and trimmed surfaces from Surface ▾ (FR-FT-100) (${JSON.stringify({ rv, lf, prof, tr, area })})`);
+    // Delete Face, "Delete (leave a surface)": a block without its top becomes a 5-face open surface body.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features = [];
+      const id = "s9", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -20, -10), P(2, 20, -10), P(3, 20, 10), P(4, -20, 10), { id: "q1", t: "line", a: "s9p1", b: "s9p2" }, { id: "q2", t: "line", a: "s9p2", b: "s9p3" }, { id: "q3", t: "line", a: "s9p3", b: "s9p4" }, { id: "q4", t: "line", a: "s9p4", b: "s9p1" }] },
+        { id: "f9", type: "extrude", name: "Extrude1", sketch: "s9", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Delete Face$/ }).click();
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="dfmode"]', "delete");
+    await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f9:end" }]; m.panel(); void m.rebuild(); });
+    await settle();
+    const dl = await state();
+    check(dl.v === 0 && dl.sheets === 5 && !dl.bad, `model: Delete Face "Delete" leaves an open surface body (FR-FT-100) (${JSON.stringify(dl)})`);
+    await mp.click("#mc-ok");
+    await settle();
+    // Filled Surface closes the top opening (sewn on: 6 faces); Extend Surface grows a 40×20 planar surface to 50×30.
+    await surf("Filled Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.surface = { name: m.last().faceNames.at(-1) }; f.at = [0, 0, 10]; m.panel(); void m.rebuild(); });
+    await settle();
+    const fl = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    await mp.evaluate(() => window.__sv.model.store.change("Planar", d => { d.features.push({ id: "f20", type: "planesurf", name: "Surface-Plane1", sketch: "s9" }); }));
+    await settle();
+    await surf("Extend Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.surface = { name: "f20:face:0" }; m.panel(); void m.rebuild(); });
+    await settle();
+    const ex = await state();
+    const exArea = await mp.evaluate(() => { const l = window.__sv.model.last(), p = window.__sv.viewer.parts[0]?.data; const i = l.faceNames.indexOf("f20:face:0"); return i >= 0 && p ? Math.round(p.faces[i].area) : -1; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(fl.title === "Filled Surface" && fl.sheets === 6 && !fl.bad && ex.title === "Extend Surface" && !ex.bad && exArea === 1500,
+      `model: Filled Surface patches an opening, Extend Surface grows a face (FR-FT-100) (${JSON.stringify({ fl, ex, exArea })})`);
+    await ctx.close();
+  }
+
   // --- surfaces (FRS 9.11, FR-FT-100): extruded, planar, offset, knit into a solid, thicken ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

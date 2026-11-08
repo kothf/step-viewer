@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -1155,6 +1155,208 @@ export class Modeller {
     return { body: f.merge === false ? this.compoundOf([...this.bodyList(body), solid]) : this.bool("fuse", body, solid, f.id), sheets: rest };
   }
 
+  /** Revolved surface: each sketch curve but the axis turned about it; touching sheets are sewn into one surface body. */
+  private revSurf(f: RevolveSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const oc = this.oc;
+    const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch");
+    const ax = sk.ents.find(e => e.id === f.axis);
+    if (!ax || ax.t !== "line") throw new FeatureError("E-FT-AXIS", "Pick a line of the sketch as the axis.");
+    const pa = sk.ents.find(e => e.id === ax.a), pb = sk.ents.find(e => e.id === ax.b);
+    if (!pa || pa.t !== "point" || !pb || pb.t !== "point") throw new FeatureError("E-FT-AXIS", "The axis line is broken.");
+    const A = this.w(frame, [pa.x, pa.y]), B = this.w(frame, [pb.x, pb.y]);
+    const dirV = sub3(B, A);
+    if (Math.hypot(...dirV) < 1e-9) throw new FeatureError("E-FT-AXIS", "The axis line has no length.");
+    const angle = Math.min(f.angle.v, 2 * Math.PI);
+    if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
+    const segs = sketchCurves(sk).filter(sg => sg.ent !== f.axis);
+    if (!segs.length) throw new FeatureError("E-SRF-EMPTY", "The sketch has no curves.");
+    const axis = new oc.gp_Ax1_2(this.P(A), this.D(mul(dirV, f.flip ? -1 : 1)));
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-6, true, true, true, false);
+    const pieces: [any, string][] = [];
+    for (const sg of segs) {
+      const mk = new oc.BRepPrimAPI_MakeRevol_1(this.segEdge(sg, frame), axis, angle, false);
+      mk.Build(new oc.Message_ProgressRange_1());
+      if (!mk.IsDone()) throw new FeatureError("E-FT-FAIL", "The revolve failed. Is the profile crossing the axis?");
+      const sh = mk.Shape();
+      for (const x of this.sub(sh, "FACE")) pieces.push([x, sg.ent]);
+      sew.Add(sh);
+    }
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const after = pieces.map(([x, ent]) => [sew.IsModified(x) ? sew.Modified(x) : x, ent] as [any, string]);
+    const parts = this.sheetParts(sew.SewedShape(), (x, k) => { const p = after.find(([g]) => g.IsSame(x)); return p ? `${f.id}:side:${p[1]}` : `${f.id}:new:${k}`; });
+    return this.sheetsOf([...this.sheetList(sheets), ...parts]);
+  }
+
+  /** Lofted surface: ThruSections without caps through each profile's chain of curves. */
+  private loftSurf(f: LoftSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const oc = this.oc;
+    if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    const mk = new oc.BRepOffsetAPI_ThruSections(false, !!f.ruled, 1e-6);
+    let firstEdges: [any, string][] = [];
+    let closed: boolean | null = null;
+    f.profiles.forEach((id, k) => {
+      const { sk, frame } = this.sketchOf(id, doc, body, frames, "the profile sketches");
+      const path = sketchPath(sk);
+      if (path.error) throw new FeatureError("E-LOFT-PROFILE", "Each surface loft profile must be one chain of curves.");
+      if (closed != null && closed !== path.closed) throw new FeatureError("E-LOFT-MIX", "The profiles must be all open or all closed.");
+      closed = path.closed;
+      const w = new oc.BRepBuilderAPI_MakeWire_1();
+      const edges = path.segs.map(sg => [this.segEdge(sg, frame), sg.ent] as [any, string]);
+      for (const [e] of edges) w.Add_1(e);
+      if (!w.IsDone()) throw new FeatureError("E-LOFT-PROFILE", "Each surface loft profile must be one chain of curves.");
+      if (k === 0) firstEdges = edges;
+      mk.AddWire(w.Wire());
+    });
+    mk.CheckCompatibility(true);
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
+    const shape = mk.Shape();
+    const named: [any, string][] = [];
+    for (const [e, ent] of firstEdges) {
+      let g: any = null;
+      try { g = mk.GeneratedFace(e); } catch { g = null; }
+      if (g && !g.IsNull()) named.push([g, ent]);
+    }
+    const parts = this.sheetParts(shape, (x, k) => { const p = named.find(([g]) => g.IsSame(x)); return p ? `${f.id}:side:${p[1]}` : `${f.id}:new:${k}`; });
+    return this.sheetsOf([...this.sheetList(sheets), ...parts]);
+  }
+
+  /**
+   * Trim surface: the surface body split by a plane or a surface into the part on the tool's normal side
+   * (common with a long slab: the tool pushed far along its normal) and the rest (cut); the side holding
+   * the `keep` faces' hints stays, else the larger one.
+   */
+  private trimSurf(f: TrimSurfFeature, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const oc = this.oc;
+    if (!f.surface) throw new FeatureError("E-TRIM-PICK", "Pick the surface to trim.");
+    if (!f.tool) throw new FeatureError("E-TRIM-TOOL", "Pick a plane or a surface to trim with.");
+    const list = this.sheetList(sheets);
+    const i = this.sheetIndex(list, sheets, f.surface);
+    const target = list[i];
+    const big = this.size(target.shape) * 4 + (body ? this.size(body.shape) : 0) + 100;
+    let toolFace: any, n: V3;
+    if ("plane" in f.tool) {
+      const fr = this.planeFrame(f.tool.plane, body, frames);
+      toolFace = new oc.BRepBuilderAPI_MakeFace_9(new oc.gp_Pln_2(new oc.gp_Ax3_3(this.P(fr.o), this.D(fr.n), this.D(fr.x))), -big, big, -big, big).Face();
+      n = fr.n;
+    } else {
+      const ti = this.sheetIndex(list, sheets, f.tool.surface);
+      if (ti === i) throw new FeatureError("E-TRIM-SELF", "A surface cannot trim itself.");
+      toolFace = list[ti].shape;
+      const pl = this.facePlane(list[ti].faces[0]);
+      n = pl ? pl.n : this.faceNormalAt(list[ti].faces[0]);
+    }
+    const slab = new oc.BRepPrimAPI_MakePrism_1(toolFace, this.V(mul(n, big)), false, true).Shape();
+    const pr = () => new oc.Message_ProgressRange_1();
+    const inMk = new oc.BRepAlgoAPI_Common_3(target.shape, slab, pr());
+    const outMk = new oc.BRepAlgoAPI_Cut_3(target.shape, slab, pr());
+    if (!inMk.IsDone() || !outMk.IsDone()) throw new FeatureError("E-TRIM-FAIL", "The surface could not be trimmed.");
+    const sides = [this.carry(inMk, [target], inMk.Shape(), f.id), this.carry(outMk, [target], outMk.Shape(), f.id)];
+    const area = (x: Named) => x.faces.reduce((a, g) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(g, p, false, false); return a + p.Mass(); }, 0);
+    const areas = sides.map(area);
+    if (areas.some(a => a < 1e-9)) throw new FeatureError("E-TRIM-MISS", "The tool does not cross the surface.");
+    let keep = areas[0] >= areas[1] ? 0 : 1;
+    const hints = f.keep.map(r => r.hint).filter((h): h is V3 => !!h);
+    if (hints.length) {
+      const dist = (x: Named) => Math.min(...hints.map(h => Math.min(...x.faces.map(g => d3(this.centroid(g), h)))));
+      keep = dist(sides[0]) <= dist(sides[1]) ? 0 : 1;
+    }
+    const parts = this.sheetParts(sides[keep].shape, (x, k) => { const j = sides[keep].faces.findIndex(g => g.IsSame(x)); return j >= 0 ? sides[keep].names[j] : `${f.id}:new:${k}`; });
+    return this.sheetsOf([...list.slice(0, i), ...parts, ...list.slice(i + 1)]);
+  }
+
+  /** Filled surface: an n-sided patch (BRepOffsetAPI_MakeFilling) bounded by an open loop of a surface body. */
+  private fillSurf(f: FillSurfFeature, sheets: Named | null): Named | null {
+    const oc = this.oc;
+    if (!f.surface) throw new FeatureError("E-FILL-PICK", "Pick the surface whose opening to fill.");
+    const list = this.sheetList(sheets);
+    const i = this.sheetIndex(list, sheets, f.surface);
+    const src = list[i];
+    let loops = this.subWires(new oc.ShapeAnalysis_FreeBounds_3(src.shape, false, false, false).GetClosedWires());
+    if (!loops.length) throw new FeatureError("E-FILL-NONE", "The surface has no closed opening to fill.");
+    if (f.at) {
+      const at = f.at;
+      const dist = (w: any) => Math.min(...this.sub(w, "EDGE").map(e => d3(this.edgeMid(e), at)));
+      loops = [loops.reduce((a, b) => (dist(b) < dist(a) ? b : a))];
+    }
+    const patches: Named[] = [];
+    loops.forEach((w, k) => {
+      const mk = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+      for (const e of this.sub(w, "EDGE")) mk.Add_1(e, oc.GeomAbs_Shape.GeomAbs_C0, true);
+      try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+      if (!mk.IsDone()) throw new FeatureError("E-FILL-FAIL", "The opening could not be filled.");
+      const faces = this.sub(mk.Shape(), "FACE");
+      patches.push({ shape: mk.Shape(), faces, names: faces.map((_, q) => `${f.id}:fill:${k}${q ? `:${q}` : ""}`) });
+    });
+    const rest = list.filter((_, j) => j !== i);
+    if (f.merge === false) return this.sheetsOf([...list, ...patches]);
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-4, true, true, true, false);
+    sew.Add(src.shape);
+    for (const p of patches) sew.Add(p.shape);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    // Sewing may rebuild faces without reporting them as modified, so fall back to the nearest centroid.
+    const map: [any, string, V3][] = [src, ...patches].flatMap(n => n.faces.map((x, j) => [sew.IsModified(x) ? sew.Modified(x) : x, n.names[j], this.centroid(x)] as [any, string, V3]));
+    const nameOf = (x: any, q: number) => {
+      const hit = map.find(([g]) => g.IsSame(x));
+      if (hit) return hit[1];
+      const c = this.centroid(x);
+      let best: [any, string, V3] | null = null;
+      for (const e of map) if (!best || d3(e[2], c) < d3(best[2], c)) best = e;
+      return best && d3(best[2], c) < 1e-3 * (1 + this.size(x)) ? best[1] : `${f.id}:new:${q}`;
+    };
+    return this.sheetsOf([...rest, ...this.sheetParts(sew.SewedShape(), nameOf)]);
+  }
+
+  /** Extend surface: a one-face surface body's face grown past every side (BRepLib::ExtendFace); it keeps its name. */
+  private extendSurf(f: ExtendSurfFeature, sheets: Named | null): Named | null {
+    const oc = this.oc;
+    if (!f.surface) throw new FeatureError("E-EXT-PICK", "Pick the surface to extend.");
+    const list = this.sheetList(sheets);
+    const i = this.sheetIndex(list, sheets, f.surface);
+    if (list[i].faces.length !== 1) throw new FeatureError("E-EXT-ONE", "Extend works on surface bodies of one face.");
+    const d = f.distance.v;
+    if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    const out = new oc.TopoDS_Face();
+    try { oc.BRepLib.ExtendFace(list[i].faces[0], d, true, true, true, true, out); } catch { /* reported below */ }
+    if (out.IsNull()) throw new FeatureError("E-EXT-FAIL", "The surface could not be extended.");
+    const part: Named = { shape: out, faces: [out], names: [list[i].names[0]] };
+    return this.sheetsOf([...list.slice(0, i), part, ...list.slice(i + 1)]);
+  }
+
+  /** The normal of a face at the middle of its parameter range (orientation-corrected). */
+  private faceNormalAt(face: any): V3 {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    const u = (ad.FirstUParameter() + ad.LastUParameter()) / 2, v = (ad.FirstVParameter() + ad.LastVParameter()) / 2;
+    const p = new oc.gp_Pnt_1(), d1u = new oc.gp_Vec_1(), d1v = new oc.gp_Vec_1();
+    ad.D1(u, v, p, d1u, d1v);
+    let n = unit(cross(this.xyz(d1u), this.xyz(d1v)));
+    if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) n = mul(n, -1);
+    return n;
+  }
+
+  /** Delete face, "delete": the faces leave their solid, and what is left of it becomes a surface body. */
+  private deleteToSurface(f: { id: string; faces: FaceRef[] }, prev: Named, sheets: Named | null): { body: Named | null; sheets: Named | null } {
+    const oc = this.oc;
+    const list = this.bodyList(prev);
+    const gone = f.faces.map(r => this.resolveFace(prev, r));
+    const idx = [...new Set(gone.map(g => list.findIndex(b => b.faces.some(x => x.IsSame(g)))))];
+    if (idx.some(k => k < 0)) throw new FeatureError("E-TN-LOST", "Reference lost: a face to delete");
+    const parts: Named[] = [];
+    for (const k of idx) {
+      const b = list[k];
+      const sew = new oc.BRepBuilderAPI_Sewing(1e-6, true, true, true, false);
+      const kept = b.faces.map((x, j) => [x, b.names[j]] as [any, string]).filter(([x]) => !gone.some(g => g.IsSame(x)));
+      if (!kept.length) continue;
+      for (const [x] of kept) sew.Add(x);
+      sew.Perform(new oc.Message_ProgressRange_1());
+      const map = kept.map(([x, nm]) => [sew.IsModified(x) ? sew.Modified(x) : x, nm] as [any, string]);
+      parts.push(...this.sheetParts(sew.SewedShape(), (x, q) => map.find(([g]) => g.IsSame(x))?.[1] ?? `${f.id}:new:${q}`));
+    }
+    const rest = list.filter((_, k) => !idx.includes(k));
+    return { body: rest.length ? this.compoundOf(rest) : null, sheets: this.sheetsOf([...this.sheetList(sheets), ...parts]) };
+  }
+
   /**
    * Replace face (FR-FT-101): each picked flat face is pushed far out as a prism (its far end `fid:cap`),
    * the extended body is split by the surface, and the pieces that reach a cap go. What is left meets the
@@ -2186,7 +2388,7 @@ export class Modeller {
         if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
         if (hit.curve) this.curves.set(f.id, hit.curve);
         if (!hit.status.ok) failed.add(f.id);
-        if (hit.body) body = hit.body;
+        body = hit.body;
         sheets = hit.sheets;
         return;
       }
@@ -2210,7 +2412,13 @@ export class Modeller {
           else if (f.type === "extrude" || f.type === "revolve") body = this.sweep(f, doc, body, frames);
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
+          else if (f.type === "delface" && f.mode === "delete") { if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet."); if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to delete."); ({ body, sheets } = this.deleteToSurface(f, body, sheets)); }
           else if (f.type === "delface") body = this.deleteFaces(f, body);
+          else if (f.type === "revsurf") sheets = this.revSurf(f, doc, body, sheets, frames);
+          else if (f.type === "loftsurf") sheets = this.loftSurf(f, doc, body, sheets, frames);
+          else if (f.type === "trimsurf") sheets = this.trimSurf(f, body, sheets, frames);
+          else if (f.type === "fillsurf") sheets = this.fillSurf(f, sheets);
+          else if (f.type === "extendsurf") sheets = this.extendSurf(f, sheets);
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
