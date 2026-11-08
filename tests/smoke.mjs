@@ -3458,6 +3458,18 @@ try {
     const hand = an.filter(a => a.t === "balloon" && a.view === top);
     const nums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(hand.length === 1 && hand[0].ref.e.startsWith("c2@") && nums === "1,2,2", `drawing: a balloon on a pin reads its item number 2 (${JSON.stringify(hand.map(a => a.ref.e))}; ${nums})`);
+    // Stack item 1 under the hand balloon: two circles share its leader.
+    [x, y] = await at(top, 55, 35);
+    await dp.mouse.click(x, y);
+    await dp.waitForSelector('#drw [data-d="bstack"]');
+    await dp.selectOption('#drw [data-d="bstack"]', "c1");
+    await dp.waitForTimeout(150);
+    an = await annots();
+    const stacked = an.find(a => a.t === "balloon" && a.view === top);
+    const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
+    const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
+    check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
     await dp.click('#drw [data-a="back"]');
@@ -4359,7 +4371,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.73: flexible sub-assemblies (FR-ASM-006), linked components (FR-ASM-003, FR-IO-011) ---
+  // --- 1.74: flexible sub-assemblies (FR-ASM-006), linked components (FR-ASM-003, FR-IO-011) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4414,7 +4426,7 @@ try {
     await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id); return !a.building && i >= 0 && Math.abs(window.__sv.viewer.parts[i].data.bboxMin[2]) < 1e-3; }, `${ids.sub}/${ids.kid}`, { timeout: 120000 });
     const rigid = { z: await zOf(), missing: await mp.evaluate(() => window.__sv.asm.solved?.missing ?? []) };
     check(flex.z === 10 && flex.mark === "flexible" && flex.ok && rigid.z === 0 && rigid.missing.includes("m1"),
-      `asm 1.73: flexible sub-assembly solves its parts with the parent's mates; rigid puts them back (FR-ASM-006) (${JSON.stringify({ flex, rigid })})`);
+      `asm 1.74: flexible sub-assembly solves its parts with the parent's mates; rigid puts them back (FR-ASM-006) (${JSON.stringify({ flex, rigid })})`);
     // Linked component: link the top box to box.mcadprt, change the file to a 20 mm tall box and update links from the folder.
     await mp.evaluate(ids => window.__sv.asm.change(d => { delete d.mates; }), ids);
     await mp.evaluate(([b, id]) => window.__sv.asm.linkComponent(id, new File([new Uint8Array(b)], "box.mcadprt")), [box, ids.top]);
@@ -4429,7 +4441,7 @@ try {
     // Saved and opened again, the link is kept; Embed drops it.
     const re = await mp.evaluate(async id => { const a = window.__sv.asm, b = await a.bytes(); await a.openFile({ name: "p.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); const c = a.doc.components.find(x => x.id === id); const kept = !!a.doc.parts[c.part].link; a.setLink(c.part, null); return { kept, embedded: !a.doc.parts[c.part].link }; }, ids.top);
     check(linked.path === "parts/box.mcadprt" && linked.hash === 64 && linked.row && gone === 3 && re.kept && re.embedded,
-      `asm 1.73: linked component reads its file again when it changed, marks it missing, embeds (FR-ASM-003, FR-IO-011) (${JSON.stringify({ linked, gone, re })})`);
+      `asm 1.74: linked component reads its file again when it changed, marks it missing, embeds (FR-ASM-003, FR-IO-011) (${JSON.stringify({ linked, gone, re })})`);
     await ctx.close();
   }
 

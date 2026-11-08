@@ -27,3 +27,25 @@ export function rect(x: number, y: number, w: number, h: number, pen: Pen, layer
     { t: "l", p: [x + w, y + h, x, y + h], pen, layer }, { t: "l", p: [x, y + h, x, y], pen, layer },
   ];
 }
+
+/** Primitives turned by `ang` radians (counter-clockwise) about `o`. */
+export function rotatePrims(prims: Prim[], o: [number, number], ang: number): Prim[] {
+  if (!ang) return prims;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const r = (x: number, y: number): [number, number] => [o[0] + (x - o[0]) * c - (y - o[1]) * s, o[1] + (x - o[0]) * s + (y - o[1]) * c];
+  return prims.map((q): Prim => {
+    if (q.t === "l") { const a = r(q.p[0], q.p[1]), b = r(q.p[2], q.p[3]); return { ...q, p: [a[0], a[1], b[0], b[1]] }; }
+    if (q.t === "a") return { ...q, o: r(...q.o), a0: q.a0 + ang, a1: q.a1 + ang };
+    if (q.t === "p") { const p: number[] = []; for (let i = 0; i + 1 < q.p.length; i += 2) p.push(...r(q.p[i], q.p[i + 1])); return { ...q, p }; }
+    const [x, y] = r(q.x, q.y);
+    return { ...q, x, y, rot: (q.rot ?? 0) + ang * 180 / Math.PI };
+  });
+}
+
+/** The box around box `b` turned by `ang` about `o`. */
+export function rotateBox(b: [number, number, number, number], o: [number, number], ang: number): [number, number, number, number] {
+  if (!ang) return b;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const pts = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(([x, y]) => [o[0] + (x - o[0]) * c - (y - o[1]) * s, o[1] + (x - o[0]) * s + (y - o[1]) * c]);
+  return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+}

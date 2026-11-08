@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.73.0] - 2026-11-08
+## [1.74.0] - 2026-11-08
 
 ### Added
 
@@ -15,6 +15,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - Faster assemblies with repeated parts (FR-ASM-031): each part is analysed once (B-rep faces, edges and exact values) and every component of it gets a moved copy, instead of analysing each instance's mesh again.
+
+## [1.73.0] - 2026-11-08
+
+### Added
+
+- **Parts-only bill of materials** (FR-ASM-024, FR-DRW-030): select the parts list on an assembly drawing and switch List to Parts only. It then lists the parts inside sub-assemblies instead of the sub-assemblies, with the same part used in several places on one row, and the balloons on that sheet follow its numbering.
+- **Stacked balloons**: select a balloon and pick Stack another item. The extra items stack under it in touching circles and share one leader, which leaves from the circle nearest the part. Auto balloon skips items already in a stack.
+- The GOST 2.104 title block takes the **technical control** and **standards control** signatures and the **letter** (one character per cell), typed in the sheet panel or by double-clicking the cell.
+
+### Changed
+
+- A surface finish symbol placed on a slanted or vertical edge now stands on that edge, readable from the bottom or the right of the sheet (ISO 1302).
 
 ## [1.72.0] - 2026-11-08
 
@@ -709,7 +721,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.73.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.74.0...HEAD
+[1.74.0]: https://github.com/kothf/step-viewer/compare/v1.73.0...v1.74.0
 [1.73.0]: https://github.com/kothf/step-viewer/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/kothf/step-viewer/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/kothf/step-viewer/compare/v1.70.0...v1.71.0

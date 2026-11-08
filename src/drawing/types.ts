@@ -91,13 +91,14 @@ export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef;
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
 export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string }
 /** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), its top-right one with `anchor: "tr"` (revision tables grow to the left), or its bottom-right one with `anchor: "br"` (a BOM on the title block: header at the bottom, items upwards). A BOM's rows come from the assembly when drawn. */
-export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br" }
+export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br"; /** BOM only: "parts" lists the parts inside sub-assemblies (FR-ASM-024). */ mode?: "top" | "parts" }
 
 /**
  * A balloon (FR-DRW-030) on a component of an assembly view: `ref` is an edge of it (its face names
  * start with `<component id>@`), the number is that part's item in the BOM unless `txt` overrides it.
+ * `stack` lists more components whose items are stacked under it (one leader for all).
  */
-export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[] }
 
 export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot;
 
@@ -130,6 +131,10 @@ export interface DrawingProps {
   approved?: string;
   company?: string;
   date?: string;
+  /** GOST 2.104: technical and standards control signatures, and the letter (up to 3 characters). */
+  tcontrol?: string;
+  ncontrol?: string;
+  litera?: string;
 }
 
 export interface DrawingDoc {

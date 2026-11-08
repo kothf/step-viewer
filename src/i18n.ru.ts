@@ -2368,4 +2368,14 @@ export const RU: Record<string, string> = {
   "Links: {u} updated, {s} unchanged, {m} missing.": "Связи: обновлено {u}, без изменений {s}, не найдено {m}.",
   "Linked file not found: {file}. The last loaded copy is shown.": "Связанный файл не найден: {file}. Показана последняя загруженная копия.",
   "Linked to {file}": "Связан с {file}",
+  // Drawings 1.73.0: BOM parts mode, stacked balloons, GOST signature cells.
+  "Technical control": "Технический контроль",
+  "Standards control": "Нормоконтроль",
+  "List": "Список",
+  "Drawing letter": "Литера",
+  "Top-level only": "Только верхний уровень",
+  "Remove from the stack": "Убрать из стопки",
+  "Stack another item": "Добавить позицию в стопку",
+  "Stacked balloons": "Стопка позиций",
+  "Stacked balloon": "Стопка позиций",
 };
