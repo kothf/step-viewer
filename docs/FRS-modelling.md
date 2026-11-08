@@ -1672,7 +1672,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
 | FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Tool solids are always copied | Not built |
 | FR-FT-080 | Sweep start/end tangency (P5) | Twist and guide curve are built; tangency is missing | Partly |
-| FR-FT-082 | Loft start/end constraints, connectors, guide curves | Ruled, close, centreline, start/end normal and guide curves (1.119.0) are built; connectors are missing | Partly |
+| FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
 | FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
 | FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
 | FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.126.0 (Check-Heal feature; Insert body also heals) | Built |

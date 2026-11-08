@@ -6041,6 +6041,51 @@ try {
     await ctx.close();
   }
 
+  // --- 1.131: Loft connectors (FR-FT-082) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), types: window.__sv.model.store.doc.features.map(f => f.type).join(",") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two 10 mm squares 10 apart.
+    await mp.evaluate(() => window.__sv.model.store.change("Two squares", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", 0, 0), P(id + "2", 10, 0), P(id + "3", 10, 10), P(id + "4", 0, 10), L(id + "a", id + "1", id + "2"), L(id + "b", id + "2", id + "3"), L(id + "c", id + "3", id + "4"), L(id + "d", id + "4", id + "1")] });
+      d.features.push(sq("Sketch1", { std: "XY" }), { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 10 } }, sq("Sketch2", { plane: "p1" }));
+    }));
+    await settle();
+    await runCmd(mp, "Loft");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="lp0"]', "Sketch1");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="lp1"]', "Sketch2");
+    await settle();
+    const free = await state();
+    const opts = await mp.locator('#mc-pm select[data-k="lc1"] option').count();
+    await mp.selectOption('#mc-pm select[data-k="lc0"]', "Sketch11");
+    await mp.selectOption('#mc-pm select[data-k="lc1"]', "Sketch21");
+    await settle();
+    const same = await state();
+    await mp.selectOption('#mc-pm select[data-k="lc1"]', "Sketch22");
+    await settle();
+    const twisted = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await state();
+    const conn = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "loft")?.connectors?.join());
+    check(opts === 5 && Math.abs(free.v - 1000) < 2 && Math.abs(same.v - 1000) < 2 && twisted.v < 990 && twisted.v > 500 && !twisted.bad && done.v === twisted.v && conn === "Sketch11,Sketch22",
+      `model 1.131: loft connectors pick the corners the loft joins; one corner along twists it (FR-FT-082) (${JSON.stringify({ free, same, twisted, opts, done, conn })})`);
+    await ctx.close();
+  }
+
   // --- 1.126: Check-Heal feature (FR-FT-131) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
