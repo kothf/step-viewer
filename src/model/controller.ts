@@ -49,6 +49,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { onLangChange, t } from "../i18n";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 
 export interface ModelHost {
   viewer: Viewer;
@@ -91,7 +92,7 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
 type BodyFeature = CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
@@ -132,7 +133,7 @@ function applyHoleSize(f: HoleFeature) {
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
 const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim"];
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -591,7 +592,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -606,6 +607,7 @@ export class ModelController {
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     const csysEdge = type === "csys" ? this.pickedEdge() : null;
     const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" || type === "trimsurf" || type === "fillsurf" || type === "extendsurf" ? this.pickedFace() : null;
+    const weldFace = WELD_TOOL_SET.has(type) ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
     const d = this.doc;
@@ -700,6 +702,11 @@ export class ModelController {
       const p3 = this.p3Draft(type, id, sketches, used);
       if (!p3) return;
       draft = p3;
+    } else if (WELD_TOOL_SET.has(type)) {
+      // Weldments (FR-FT-121).
+      const wf = weldDraft(this.weldCtx(end), type as WeldTool, id, nextName(d, type as WeldTool), weldFace);
+      if (!wf) return;
+      draft = wf;
     } else if (SURF_TYPES.has(type)) {
       const sf = this.surfDraft(type as SurfTool, id, sketches, used, shellFace);
       if (!sf) return;
@@ -736,7 +743,8 @@ export class ModelController {
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" ? "bodies" : undefined;
+      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" ? "bodies"
+      : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
     this.renderAll();
@@ -872,6 +880,8 @@ export class ModelController {
     if ((f.type === "fillsurf" || f.type === "extendsurf") && !f.surface) { toast(t(f.type === "fillsurf" ? "Pick the surface whose opening to fill." : "Pick the surface to extend."), true); return; }
     if (f.type === "trimsurf" && (!f.surface || !f.tool)) { toast(t(f.surface ? "Pick a plane or a surface to trim with." : "Pick the surface to trim."), true); return; }
     if (f.type === "replaceface" && (!f.faces.length || !f.surface)) { toast(t(f.faces.length ? "Pick the replacement surface." : "Click the faces to replace."), true); return; }
+    const wm = weldMissing(f);
+    if (wm) { toast(t(wm), true); return; }
     if (f.type === "rib" && !f.sketch) { toast(t("Pick an open sketch: the line the rib is built on."), true); return; }
     if (f.type === "loft" && f.profiles.length < 2) { toast(t("Pick two or more profile sketches."), true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
@@ -1357,6 +1367,7 @@ export class ModelController {
       else if (m.kind === "feature" && isBodyOp(m.draft)) this.pickBody(e);
       else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
       else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface" || m.draft.type === "trimsurf" || m.draft.type === "fillsurf" || m.draft.type === "extendsurf")) this.pickSurface(e);
+      else if (m.kind === "feature" && isWeldFeature(m.draft)) { m.focus = weldPick(this.weldCtx(m.index), e, m.draft, m.focus) as Focus | undefined; this.draftChanged(); }
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "thread") {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
@@ -1485,6 +1496,14 @@ export class ModelController {
   }
 
   /** The open feature's draft changed: panel, decorations and preview. */
+  /** What the weldment panels and picks see (FR-FT-121); `index` is where the edited feature goes. */
+  private weldCtx(index: number): WeldCtx {
+    return {
+      doc: this.doc, before: this.doc.features.slice(0, index), selected: this.selected, last: this.last,
+      faceAt: (x, y) => this.host.faceAt(x, y), faceRef: id => this.faceRef(id), faceType: id => this.host.viewer.parts[0]?.data.faces[id]?.type,
+      changed: () => this.draftChanged(),
+    };
+  }
   private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
@@ -2911,6 +2930,13 @@ export class ModelController {
           return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="surf" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
         })()
         + (() => {
+          // Weldments flyout (FR-FT-121): Structural Member ▾ Trim/Extend, End Cap, Gusset, Fillet Bead, Cut List.
+          const open = m.kind === "feature" ? m.draft.type : null;
+          const all = WELD_TOOLS();
+          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("weld")) ?? all[0];
+          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="weld" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
+        })()
+        + (() => {
           // Pattern flyout: Linear ▾ Circular, Mirror.
           const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
           const open = m.kind === "feature" ? m.draft.type : null;
@@ -2952,6 +2978,12 @@ export class ModelController {
         const r = b.getBoundingClientRect();
         this.showMenu(SURF_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("surf", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="surf"]')?.focus());
+        return;
+      }
+      if (b.dataset.fly === "weld" && mm.kind !== "sketch") {
+        const r = b.getBoundingClientRect();
+        this.showMenu(WELD_TOOLS().map(([id, l]) => [l, () => { if (id !== "cutlist") this.flyLast.set("weld", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="weld"]')?.focus());
         return;
       }
       if (b.dataset.fly === "save") {
@@ -3157,7 +3189,8 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.startFeature(c); break;
+      case "cutlist": showCutList(this.last?.cutList, this.doc); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3834,6 +3867,7 @@ export class ModelController {
     if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
+    if (isWeldFeature(f)) ({ title, body } = weldPanel(f, this.weldCtx(m.index), m.focus, group, numField, chk));
     if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
     if (f.type === "import") {
       const st = this.last?.statuses.find(x => x.id === f.id);
@@ -3877,7 +3911,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || /^vpitch\.0\.h$/.test(key))) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || (key === "angle" && f.type === "member") || /^vpitch\.0\.h$/.test(key))) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
@@ -4055,6 +4089,7 @@ export class ModelController {
           }, true);
           return;
         }
+        if (isWeldFeature(f)) { const fn = weldChange(f, k, val, this.weldCtx(m.index)); if (fn) { upd(fn, true); return; } }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
         if (k === "sketch" && f.type === "revolve") {
@@ -4113,6 +4148,7 @@ export class ModelController {
       f.edges.splice(+b.dataset.rm!, 1);
       this.drawDecor(); this.renderPanel(); void this.rebuild();
     }));
+    if (isWeldFeature(f)) bindWeldPanel(pm, f, this.weldCtx(m.index));
     pm.querySelector<HTMLInputElement>("[data-ui=tangent]")?.addEventListener("change", e => { this.tangentProp = (e.target as HTMLInputElement).checked; });
     pm.querySelector("[data-k=clear]")?.addEventListener("click", () => { if (f.type === "fillet" || f.type === "chamfer") { f.edges = []; this.drawDecor(); this.renderPanel(); void this.rebuild(); } });
     pm.querySelector("[data-k=focus-base]")?.addEventListener("click", () => { if (m.kind === "feature") { m.focus = "base"; this.renderPanel(); this.drawDecor(); } });
@@ -5140,3 +5176,4 @@ const ICON_SVG: Record<string, string> = {
   "sk:hord": S('<path d="M3 13V4M8 13V4M13 13V4"/><path d="M2 13h12" opacity=".5"/><path d="M2.5 2.5h1M7 2.5h2M12 2.5h2"/>'),
   "sk:vord": S('<path d="M3 3h9M3 8h9M3 13h9"/><path d="M3 2v12" opacity=".5"/><path d="M13.5 2.5v1M13.5 7v2M13.5 12v2"/>'),
 };
+Object.assign(ICON_SVG, WELD_ICONS);
