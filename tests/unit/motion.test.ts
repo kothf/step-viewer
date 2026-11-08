@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, alertSpans, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, alertSpans, gapCsv, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -334,4 +334,8 @@ test("result sensors: out-of-range frames, spans and the frame where they trip",
   assert.equal(tripFrame(v, { max: 4.5 }, 2, 7), 6, "already out at the start of the step: trips only when it comes back in and out again");
   assert.equal(tripFrame(v, { max: 4.5 }, 3, 5), -1);
   assert.equal(tripFrame(v, { min: -1 }, 0, 7), -1);
+});
+
+test("proximity CSV: one row per frame", () => {
+  assert.equal(gapCsv([1, 0.5, 0.25], 2), "t (s),distance (mm)\n0,1\n0.5,0.5\n1,0.25\n");
 });

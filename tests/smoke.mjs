@@ -5760,7 +5760,18 @@ try {
       const sensor = { alert: m.study.traces.find(x => x.id === tr0.id).alert, spans, from: spans[0]?.[0], to: spans[0]?.[1], one: spans.length === 1,
         bands: document.querySelectorAll(`#motion .mo-tlane[data-tlane="${tr0.id}"] .mo-aspan`).length, out: !!document.querySelector("#motion .mo-alert"),
         trip: m.tripAt(0, 2 * sfps)?.i, want: sfps + 1, fromOk: Math.abs(spans[0]?.[0] - (sfps + 1) / sfps) < 1e-9 };
-      const trace = { sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Proximity: Add track… → Proximity measures the smallest gap between two components every frame; the panel
+      // switches the second component and the values follow; frame 0 matches the gap measured in the view there.
+      const gadd = document.querySelector('#motion select[data-mo="add"]'), gopt = [...gadd.options].some(o => o.value === "gap:");
+      gadd.value = "gap:"; gadd.dispatchEvent(new Event("change"));
+      const gt = m.study.traces.at(-1);
+      const gb = document.querySelector('#motion select[data-tr="gb"]'); gb.value = id; gb.dispatchEvent(new Event("change"));
+      const gv = m.gapValues(gt.id);
+      const prox = { gopt, pair: m.study.traces.at(-1).gap?.[1] === id, n: gv.length === path.length, ok: gv.every(v => Number.isFinite(v) && v >= 0),
+        same: (m.seek(0), Math.abs(a.motionGap(gt.gap[0], id) - gv[0]) < 1e-6), row: !!document.querySelector(`#motion .mo-name[data-trace="${gt.id}"]`),
+        read: /mm/.test(document.querySelector("#motion .mo-tread")?.textContent ?? "") };
+      m.deleteTrace(gt.id);
+      const trace = { prox, sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5919,6 +5930,7 @@ try {
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
       && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && Object.values(tc.prox).every(v => v === true)
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
@@ -7690,7 +7702,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 19 && mode === "note", `drawing: annotation tab shows the 19 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 20 && mode === "note", `drawing: annotation tab shows the 20 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8216,6 +8228,16 @@ try {
     check(capIn.dir === "in" && !capIn.bad && JSON.stringify(capIn.plate) === "[40,40,5]" && Math.abs(len0 - len1 - 5) < 0.05, `weldments: inward end cap keeps the overall length (${JSON.stringify({ ...capIn, len0, len1 })})`);
     await mp.evaluate(() => window.__sv.model.store.undo());
     await settle();
+    // The wider library: an unequal angle, an HEB beam and a square bar build and name their cut list items.
+    const lib = [];
+    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"]]) {
+      await mp.evaluate(([type, size]) => window.__sv.model.store.change("Profile", d => { const m = d.features.find(f => f.type === "member"); m.profile = type; m.size = size; }), [type, size]);
+      await settle();
+      lib.push(await mp.evaluate(name => { const l = window.__sv.model.last(); return { name, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), found: (l.cutList ?? []).some(c => c.kind === "member" && c.desc === name) }; }, name));
+      await mp.evaluate(() => window.__sv.model.store.undo());
+      await settle();
+    }
+    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB and square bar profiles (${JSON.stringify(lib)})`);
     // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
@@ -8420,7 +8442,7 @@ try {
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|HEB|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
@@ -9089,6 +9111,50 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: weld symbol ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwweld", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
+    const fr = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])]; });
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="weld"]');
+    const ex = fr[0] + (fr[2] - fr[0]) * 0.3;
+    await clickSheet(ex, fr[3]);
+    await clickSheet(ex + 15, fr[3] + 15);
+    await dp.waitForTimeout(150);
+    const prims = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT"));
+    const w1 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
+    const p1 = await prims();
+    const tri = p1.filter(p => p.t === "p" && p.closed && !p.fill).length, a4 = p1.some(p => p.t === "t" && p.s === "a4");
+    const panel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="wosym"]'));
+    check(w1 && w1.leader && w1.arrow?.sym === "fillet" && tri >= 1 && a4 && panel, `drawing: weld symbol with an arrow to the clicked joint, fillet a4 on the arrow side (${JSON.stringify({ w1, tri, a4, panel })})`);
+    await dp.selectOption('#drw .drw-props [data-d="wosym"]', "v");
+    await dp.waitForTimeout(150);
+    await dp.check('#drw .drw-props [data-d="waround"]');
+    await dp.waitForTimeout(150);
+    const p2 = await prims(), w2 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
+    const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
+    const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
+    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
     await ctx.close();
   }
 

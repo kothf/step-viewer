@@ -6,7 +6,7 @@
 //
 // Sizes follow the usual European tables: EN 10219 hollow sections (SHS, RHS, CHS), EN 10056-1 equal
 // angles, DIN 1026-1 UPN channels (8 % flange taper, thickness at half the flange width), EN 10365 IPE
-// and HEA beams, flat and round bars. Corner radii of hollow sections are the EN 10219 values used for
+// HEA and HEB beams, EN 10056-1 unequal angles, flat, square and round bars. Corner radii of hollow sections are the EN 10219 values used for
 // section properties (outer 2t up to 6 mm wall, 2.5t up to 10 mm, inner = outer - t).
 import type { V2 } from "../model/types";
 
@@ -15,7 +15,7 @@ export type Loop = { pts: V2[]; r: number[] } | { circle: number; c: V2 } | { se
 /** `origin`: where the sketch origin of a custom profile lies (the default pierce point). */
 export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number; origin?: V2 }
 
-export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "upn" | "ipe" | "hea" | "flat" | "bar";
+export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "uangle" | "upn" | "ipe" | "hea" | "heb" | "flat" | "sqbar" | "bar";
 
 /** Profile types in menu order, with English labels (translated where shown). */
 export const PROFILE_TYPES: [ProfileType, string][] = [
@@ -23,10 +23,13 @@ export const PROFILE_TYPES: [ProfileType, string][] = [
   ["rhs", "Rectangular tube (EN 10219)"],
   ["chs", "Round tube (EN 10219)"],
   ["angle", "Equal angle (EN 10056)"],
+  ["uangle", "Unequal angle (EN 10056)"],
   ["upn", "Channel UPN (DIN 1026)"],
   ["ipe", "I-beam IPE (EN 10365)"],
   ["hea", "H-beam HEA (EN 10365)"],
+  ["heb", "H-beam HEB (EN 10365)"],
   ["flat", "Flat bar"],
+  ["sqbar", "Square bar"],
   ["bar", "Round bar"],
 ];
 
@@ -39,6 +42,15 @@ const ANGLE: Record<string, [number, number, number, number]> = {
   "35x35x4": [35, 4, 5, 2.5], "40x40x4": [40, 4, 6, 3], "40x40x5": [40, 5, 6, 3], "45x45x5": [45, 5, 7, 3.5], "50x50x5": [50, 5, 7, 3.5],
   "50x50x6": [50, 6, 7, 3.5], "60x60x6": [60, 6, 8, 4], "65x65x7": [65, 7, 9, 4.5], "70x70x7": [70, 7, 9, 4.5], "75x75x8": [75, 8, 10, 5],
   "80x80x8": [80, 8, 10, 5], "90x90x9": [90, 9, 11, 5.5], "100x100x10": [100, 10, 12, 6], "120x120x12": [120, 12, 13, 6.5],
+};
+/** a (long leg), b (short leg), t, r1 (root), r2 (toe). */
+const UANGLE: Record<string, [number, number, number, number, number]> = {
+  "30x20x3": [30, 20, 3, 4, 2], "40x20x4": [40, 20, 4, 4, 2], "40x25x4": [40, 25, 4, 4, 2], "45x30x4": [45, 30, 4, 4.5, 2.25],
+  "50x30x5": [50, 30, 5, 5, 2.5], "60x30x5": [60, 30, 5, 6, 3], "60x40x5": [60, 40, 5, 6, 3], "60x40x6": [60, 40, 6, 6, 3],
+  "65x50x5": [65, 50, 5, 6, 3], "70x50x6": [70, 50, 6, 7, 3.5], "75x50x6": [75, 50, 6, 7, 3.5], "75x50x8": [75, 50, 8, 7, 3.5],
+  "80x40x6": [80, 40, 6, 7, 3.5], "80x40x8": [80, 40, 8, 7, 3.5], "80x60x7": [80, 60, 7, 8, 4], "100x50x6": [100, 50, 6, 8, 4],
+  "100x50x8": [100, 50, 8, 8, 4], "100x65x7": [100, 65, 7, 10, 5], "100x75x8": [100, 75, 8, 10, 5], "120x80x8": [120, 80, 8, 11, 5.5],
+  "120x80x10": [120, 80, 10, 11, 5.5], "150x90x10": [150, 90, 10, 12, 6], "150x100x10": [150, 100, 10, 12, 6],
 };
 /** h, b, tw, tf, r1, r2. */
 const UPN: Record<string, [number, number, number, number, number, number]> = {
@@ -59,7 +71,13 @@ const HEA: Record<string, [number, number, number, number, number]> = {
   "180": [171, 180, 6, 9.5, 15], "200": [190, 200, 6.5, 10, 18], "220": [210, 220, 7, 11, 18], "240": [230, 240, 7.5, 12, 21],
   "260": [250, 260, 7.5, 12.5, 24], "280": [270, 280, 8, 13, 24], "300": [290, 300, 8.5, 14, 27],
 };
+const HEB: Record<string, [number, number, number, number, number]> = {
+  "100": [100, 100, 6, 10, 12], "120": [120, 120, 6.5, 11, 12], "140": [140, 140, 7, 12, 12], "160": [160, 160, 8, 13, 15],
+  "180": [180, 180, 8.5, 14, 15], "200": [200, 200, 9, 15, 18], "220": [220, 220, 9.5, 16, 18], "240": [240, 240, 10, 17, 21],
+  "260": [260, 260, 10, 17.5, 24], "280": [280, 280, 10.5, 18, 24], "300": [300, 300, 11, 19, 27],
+};
 const FLAT = ["20x3", "20x5", "25x5", "30x3", "30x5", "40x4", "40x5", "40x8", "50x5", "50x6", "50x8", "50x10", "60x6", "60x8", "60x10", "80x8", "80x10", "100x8", "100x10", "120x10", "150x10"];
+const SQBAR = ["8", "10", "12", "14", "16", "20", "25", "30", "35", "40", "50", "60"];
 const BAR = ["8", "10", "12", "14", "16", "18", "20", "22", "25", "30", "35", "40", "45", "50", "60"];
 
 /** The sizes of a profile type, as stored in a member feature. */
@@ -69,17 +87,20 @@ export function profileSizes(type: ProfileType): string[] {
     case "rhs": return RHS;
     case "chs": return CHS;
     case "angle": return Object.keys(ANGLE);
+    case "uangle": return Object.keys(UANGLE);
     case "upn": return Object.keys(UPN);
     case "ipe": return Object.keys(IPE);
     case "hea": return Object.keys(HEA);
+    case "heb": return Object.keys(HEB);
     case "flat": return FLAT;
+    case "sqbar": return SQBAR;
     case "bar": return BAR;
   }
 }
 
 /** A short designation for cut lists: "SHS 40x40x3", "IPE 200", "L 50x50x5". */
 export function profileName(type: ProfileType, size: string): string {
-  const pre: Record<ProfileType, string> = { shs: "SHS", rhs: "RHS", chs: "CHS", angle: "L", upn: "UPN", ipe: "IPE", hea: "HEA", flat: "FL", bar: "RD" };
+  const pre: Record<ProfileType, string> = { shs: "SHS", rhs: "RHS", chs: "CHS", angle: "L", uangle: "L", upn: "UPN", ipe: "IPE", hea: "HEA", heb: "HEB", flat: "FL", sqbar: "SQ", bar: "RD" };
   return `${pre[type]} ${size}`;
 }
 
@@ -110,11 +131,17 @@ export function profileShape(type: ProfileType, size: string): ProfileShape | nu
     return { outer: { circle: d / 2, c: [0, 0] }, holes: [{ circle: d / 2 - t, c: [0, 0] }], w: d, h: d };
   }
   if (type === "flat") { const [b, t] = nums(size); return { outer: rect(b, t, 0), holes: [], w: b, h: t }; }
+  if (type === "sqbar") { const a = Number(size); return { outer: rect(a, a, 0), holes: [], w: a, h: a }; }
   if (type === "bar") { const d = Number(size); return { outer: { circle: d / 2, c: [0, 0] }, holes: [], w: d, h: d }; }
   if (type === "angle") {
     const [a, t, r1, r2] = ANGLE[size];
     // Heel at the origin, legs along +u and +v (counter-clockwise).
     return centre({ outer: { pts: [[0, 0], [a, 0], [a, t], [t, t], [t, a], [0, a]], r: [0, 0, r2, r1, r2, 0] }, holes: [] }, 0, a, 0, a);
+  }
+  if (type === "uangle") {
+    const [a, b, t, r1, r2] = UANGLE[size];
+    // Heel at the origin, the long leg along +v (standing up) and the short one along +u.
+    return centre({ outer: { pts: [[0, 0], [b, 0], [b, t], [t, t], [t, a], [0, a]], r: [0, 0, r2, r1, r2, 0] }, holes: [] }, 0, b, 0, a);
   }
   if (type === "upn") {
     const [h, b, tw, tf, r1, r2] = UPN[size];
@@ -125,7 +152,7 @@ export function profileShape(type: ProfileType, size: string): ProfileShape | nu
       holes: [],
     }, 0, b, -h / 2, h / 2);
   }
-  const [h, b, tw, tf, r] = type === "ipe" ? IPE[size] : HEA[size];
+  const [h, b, tw, tf, r] = type === "ipe" ? IPE[size] : type === "heb" ? HEB[size] : HEA[size];
   const x = tw / 2, y = h / 2 - tf;
   return {
     outer: {

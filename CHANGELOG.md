@@ -5,11 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.246.0] - 2026-11-08
+## [1.250.0] - 2026-11-08
 
 ### Added
 
 - **Flat pattern views in drawings (FR-FT-120)**: a sheet metal part's drawing now offers a Flat pattern tile in the View palette, and Flat pattern in a model view's Configuration list. The view shows the unfolded part, with each bend line drawn as a centre line and a bend note along it ("UP 90° R2", in the sheet's language), as SolidWorks does. Either can be turned off in the view's properties.
+
+## [1.248.0] - 2026-11-08
+
+### Added
+
+- Weld symbols on drawings (ISO 2553 system A, FR-DRW-023, SolidWorks' Weld Symbol): Annotation → **Weld symbol** points an arrow at the joint you click (or stands alone) and draws the reference line. The panel sets the arrow-side and other-side welds (fillet, square butt, single V, single bevel, plug, spot) with their size and length, all around, field weld and a tail note; a weld on the other side alone adds the dashed identification line, and a symmetric weld sits across the line. The symbols are drawn from lines, so PDF, SVG and DXF show them the same, and the symbol follows the model like the other annotations.
+
+## [1.247.0] - 2026-11-08
+
+### Added
+
+- **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+## [1.245.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
 
 ## [1.241.0] - 2026-11-08
 
@@ -1600,8 +1617,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.246.0...HEAD
-[1.246.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.246.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.250.0...HEAD
+[1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
+[1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
+[1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
+[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
 [1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0

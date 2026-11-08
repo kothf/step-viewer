@@ -168,7 +168,15 @@ export interface CloudAnnot { id: string; t: "cloud"; view?: undefined; pos: [nu
  *  (also arcs, which get no automatic mark). `ext` is how far it runs past the geometry, in sheet mm (default 2). */
 export interface CLineAnnot { id: string; t: "cline"; view: string; k: "line" | "mark"; refs: GeoRef[]; ext?: number; pos?: undefined }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot;
+/** An ISO 2553 elementary weld symbol. */
+export type WeldSym = "fillet" | "square" | "v" | "bevel" | "plug" | "spot";
+/** One side of a weld symbol: the symbol, the size before it (e.g. "a4", "z5") and the length after it (e.g. "100", "3×50 (100)"). */
+export interface WeldSide { sym: WeldSym; size?: string; len?: string }
+/** A weld symbol (ISO 2553 system A, FR-DRW-023): `pos` is the knee (view axes, or sheet mm without a view); `leader` the joint the
+ *  arrow points at; `arrow`/`other` the arrow-side and other-side welds; `around` = all round, `field` = site weld, `tail` a note. */
+export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number, number]; leader?: GeoRef; arrow?: WeldSide; other?: WeldSide; around?: boolean; field?: boolean; tail?: string }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot;
 
 export interface Sheet {
   id: string;
