@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.106.0] - 2026-11-08
+
+### Added
+
+- Motion studies: placement tracks move and turn a component that no mate holds over the study (keys with a move along X/Y/Z in mm and turns about X/Y/Z in degrees about its own origin), as dragging a component at a time in SolidWorks' animator (FR-FT-122).
+- Camera keys keep the orthographic zoom, which changes smoothly between keys.
+
 ## [1.104.0] - 2026-11-08
 
 ### Added
@@ -995,7 +1002,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.104.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.106.0...HEAD
+[1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
 [1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
 [1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0

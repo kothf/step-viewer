@@ -4891,6 +4891,30 @@ try {
     await mp.click("#lang-btn");
     await mp.click('#motion [data-mo="close"]');
     const back = await pos();
+    // Placement keys (unmated components only): a third pin moves 20 mm up and turns 90° over the study.
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(3);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pose = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm, c = a.doc.components, id = c[2].id, g = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)].group;
+      const opts = [...document.querySelectorAll('#motion select[data-mo="add"] option')].map(o => o.value);
+      m.edit(s => { s.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const tr = m.study.tracks.find(k => k.kind === "pose");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      for (const [k, v] of [["dz", "20"], ["rz", "90"]]) { const inp = document.querySelector(`#motion [data-p="${k}"]`); inp.value = v; inp.dispatchEvent(new Event("change")); }
+      const [x0, y0] = [c[2].tf[3], c[2].tf[7]], q = Math.SQRT1_2;
+      m.seek(1);
+      const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
+      m.seek(2);
+      const end = { z: g().position.z };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end };
+    }).catch(e => ({ err: String(e) }));
+    await mp.click('#motion [data-mo="close"]');
+    check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
+      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && Math.abs(exploded.x - 50) < 0.01
