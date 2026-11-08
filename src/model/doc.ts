@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -165,6 +165,10 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "delbody") faces.push(...f.bodies.map(x => x.name));
   if (f.type === "movebody") { faces.push(...f.bodies.map(x => x.name)); line(f.axis); }
   if (f.type === "split") { features.push(f.sketch); faces.push(...f.faces.map(x => x.name)); }
+  if (f.type === "planesurf" || f.type === "extsurf") features.push(f.sketch);
+  if (f.type === "offsurf") faces.push(...f.faces.map(x => x.name));
+  if (f.type === "knit") faces.push(...f.surfaces.map(x => x.name));
+  if (f.type === "thicken" && f.surface) faces.push(f.surface.name);
   return { faces, features };
 }
 

@@ -4310,6 +4310,78 @@ try {
     await ctx.close();
   }
 
+  // --- surfaces (FRS 9.11, FR-FT-100): extruded, planar, offset, knit into a solid, thicken ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => {
+      const id = "s1", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -20, -10), P(2, 20, -10), P(3, 20, 10), P(4, -20, 10), { id: "l1", t: "line", a: "s1p1", b: "s1p2" }, { id: "l2", t: "line", a: "s1p2", b: "s1p3" }, { id: "l3", t: "line", a: "s1p3", b: "s1p4" }, { id: "l4", t: "line", a: "s1p4", b: "s1p1" }] });
+    }));
+    await settle();
+    const surf = async name => { await mp.click('#mc-tools [data-fly="surf"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${name}$`) }).click(); await settle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    // Extruded surface: the rectangle's four sides, 10 mm tall, no volume.
+    await surf("Extruded Surface");
+    const ex = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const ex2 = await state();
+    // Planar surface on the same sketch (the bottom), then its offset copy 10 mm up (the top).
+    await surf("Planar Surface");
+    const pl = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    await surf("Offset Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, ps = m.store.doc.features.find(f => f.type === "planesurf"); m.mode().draft.faces = [{ name: `${ps.id}:face:0` }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="distance"]', "10");
+    await mp.press('#mc-pm input[data-num="distance"]', "Tab");
+    await settle();
+    const of = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    // Knit the three surface bodies with Create solid: a closed 40×20×10 box.
+    await surf("Knit Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, l = m.last(), n = l.faceNames; m.mode().draft.surfaces = [...new Set(n.map(x => x.split(":")[0]))].map(id => ({ name: n.find(x => x.startsWith(`${id}:`)) })); m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.check('#mc-pm input[data-k="solid"]');
+    await settle();
+    const kn = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    // Thicken a new planar surface 3 mm downwards (side 2), merged into the box: +2400 mm³.
+    await surf("Planar Surface");
+    await mp.click("#mc-ok");
+    await settle();
+    await surf("Thicken");
+    await mp.evaluate(() => { const m = window.__sv.model, ps = m.store.doc.features.filter(f => f.type === "planesurf").at(-1); m.mode().draft.surface = { name: `${ps.id}:face:0` }; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="side"]', "other");
+    await mp.fill('#mc-pm input[data-num="thickness"]', "3");
+    await mp.press('#mc-pm input[data-num="thickness"]', "Tab");
+    await settle();
+    const th = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const fin = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(ex.title === "Surface-Extrude" && ex.sheets === 4 && !ex.v && !ex.bad && ex2.sheets === 4 && pl.title === "Planar Surface" && pl.sheets === 5
+      && of.title === "Offset Surface" && of.sheets === 6 && !of.bad && kn.title === "Knit Surface" && Math.abs(kn.v - 8000) < 1 && kn.sheets === 0 && !kn.bad
+      && th.title === "Thicken" && Math.abs(th.v - 10400) < 1 && th.sheets === 0 && !th.bad
+      && /Surface-Extrude1,Surface-Plane1,Surface-Offset1,Surface-Knit1,Surface-Plane2,Thicken1$/.test(fin),
+      `model: surfaces: extruded, planar, offset, knit into a solid, thicken (FR-FT-100) (${JSON.stringify({ ex, ex2, pl, of, kn, th, fin })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

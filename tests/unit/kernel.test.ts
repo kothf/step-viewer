@@ -894,3 +894,47 @@ test("direct editing: move face out and in, delete face heals (FR-FT-101)", asyn
   r = run(m, doc([s1, ex, s2, cut, del]));
   close(r.props!.volume, 120000, 1e-6);
 });
+
+test("surfaces: planar, extruded, offset, knit and thicken (FR-FT-100)", async () => {
+  const m = new Modeller(await occ());
+  // A 40×20 planar surface thickened 3 mm up: a 2400 mm³ plate; the surface is used up.
+  const s1 = rect("s1", 0, 0, 40, 20);
+  const ps: Feature = { id: "f1", type: "planesurf", name: "Surface-Plane1", sketch: "s1" };
+  let r = run(m, doc([s1, ps]));
+  assert.equal(r.body, null);
+  assert.deepEqual(r.sheets!.names, ["f1:face:0"]);
+  const th: Feature = { id: "f2", type: "thicken", name: "Thicken1", surface: { name: "f1:face:0" }, thickness: { v: 3 }, side: "one" };
+  r = run(m, doc([s1, ps, th]));
+  close(r.props!.volume, 2400, 1e-4);
+  assert.equal(r.sheets, null);
+  assert.ok(r.body!.names.includes("f1:face:0"), r.body!.names.join());
+  // Both sides: centred on the surface.
+  r = run(m, doc([s1, ps, { ...th, side: "both" } as Feature]));
+  close(r.props!.volume, 2400, 1e-4);
+  close(r.props!.com[2], 0, 1e-6);
+  // The rectangle extruded as a surface: an open tube of four sheets, sewn into one surface body.
+  const es: Feature = { id: "f3", type: "extsurf", name: "Surface-Extrude1", sketch: "s1", depth: { v: 10 } };
+  r = run(m, doc([s1, es]));
+  assert.equal(r.sheets!.faces.length, 4);
+  assert.ok(r.sheets!.names.includes("f3:side:s1l2"), r.sheets!.names.join());
+  // Caps: a planar surface at the bottom, an offset copy 10 mm up; knitting the three closes a 40×20×10 box.
+  const off: Feature = { id: "f4", type: "offsurf", name: "Surface-Offset1", faces: [{ name: "f1:face:0" }], distance: { v: 10 } };
+  r = run(m, doc([s1, es, ps, off]));
+  assert.equal(r.sheets!.faces.length, 6, r.sheets!.names.join());
+  assert.ok(r.sheets!.names.includes("f4:off:f1:face:0"), r.sheets!.names.join());
+  const kn: Feature = { id: "f5", type: "knit", name: "Surface-Knit1", surfaces: [{ name: "f3:side:s1l1" }, { name: "f1:face:0" }, { name: "f4:off:f1:face:0" }], tol: { v: 0.01 }, solid: true };
+  r = run(m, doc([s1, es, ps, off, kn]));
+  close(r.props!.volume, 8000, 1e-6);
+  assert.equal(r.sheets, null);
+  assert.equal(r.props!.bodies, 1);
+  // Without "solid", the knit is one closed surface body and no solid.
+  r = run(m, doc([s1, es, ps, off, { ...kn, solid: false } as Feature]));
+  assert.equal(r.body, null);
+  assert.equal(r.sheets!.faces.length, 6);
+  // Offset faces of a solid: a copy of its top 5 mm above.
+  const ex: Feature = { id: "f6", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  const off2: Feature = { id: "f7", type: "offsurf", name: "Surface-Offset2", faces: [{ name: "f6:end" }], distance: { v: 5 } };
+  r = run(m, doc([s1, ex, off2]));
+  close(r.props!.volume, 8000, 1e-6);
+  assert.deepEqual(r.sheets!.names, ["f7:off:f6:end"]);
+});

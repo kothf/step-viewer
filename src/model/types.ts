@@ -484,10 +484,57 @@ export interface ImportFeature {
   tol?: Num;
 }
 
+/*
+ * Surfaces (FRS 9.11, FR-FT-100). Surface bodies are open sheets kept apart from the solid bodies:
+ * they show in the view and can be picked, but have no volume and take no part in solid features.
+ * Their faces are named like any other, so later features pick them by FaceRef.
+ */
+/** Planar surface: the sketch's closed regions as flat faces (`<id>:face:k`). */
+export interface PlaneSurfFeature {
+  id: string; type: "planesurf"; name: string; suppressed?: boolean;
+  sketch: string;
+}
+
+/** Extruded surface: each sketch curve (open or closed) swept along the sketch normal into a sheet (`<id>:side:<entity>`). */
+export interface ExtrudeSurfFeature {
+  id: string; type: "extsurf"; name: string; suppressed?: boolean;
+  sketch: string;
+  depth: Num;
+  flip?: boolean;
+  /** Mid plane: half the depth each way. */
+  mid?: boolean;
+}
+
+/** Offset surface: copies of faces (of solids or surfaces) at a distance along their normals; 0 copies them. */
+export interface OffsetSurfFeature {
+  id: string; type: "offsurf"; name: string; suppressed?: boolean;
+  faces: FaceRef[];
+  distance: Num;
+  flip?: boolean;
+}
+
+/** Knit: sews surface bodies (each named by a face on it) into one; `solid` turns a closed result into a new solid body. */
+export interface KnitFeature {
+  id: string; type: "knit"; name: string; suppressed?: boolean;
+  surfaces: FaceRef[];
+  tol: Num;
+  solid?: boolean;
+}
+
+/** Thicken: a surface body given a thickness to one side, the other or both; merged into the solid bodies unless `merge` is false. */
+export interface ThickenFeature {
+  id: string; type: "thicken"; name: string; suppressed?: boolean;
+  surface?: FaceRef;
+  thickness: Num;
+  side: "one" | "other" | "both";
+  merge?: boolean;
+}
+
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature
-  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature;
+  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {
