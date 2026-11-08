@@ -76,11 +76,17 @@ circle.drw-edge { fill: none; }
 .drw-stack { align-items: center; justify-content: space-between; font-size: 12px; }
 
 /* View palette (FR-UI-072) */
-.drw-pal { border-bottom: 1px solid var(--line); padding: 4px 10px 8px; }
-.drw-pal summary { cursor: pointer; font-weight: 600; font-size: 12px; padding: 4px 0; }
+.drw-ptabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); }
+.drw-ptabs button { flex: 1; padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.drw-ptabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.drw-pal { border-bottom: 1px solid var(--line); padding: 8px 10px; }
+.drw-pal[hidden] { display: none; }
+.drw-at-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.drw-at { justify-content: flex-start; text-align: left; }
 .drw-pal-note { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
 .drw-pal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
 .drw-pt { display: grid; justify-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 11px; cursor: grab; }
 .drw-pt:hover, .drw-pt:focus-visible { border-color: var(--accent); }
 .drw-pt svg { width: 56px; height: 56px; }
 .drw-pt path { fill: none; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.drw-guide { stroke: #e8590c; stroke-width: .3; stroke-dasharray: 2 1.5; }

@@ -238,3 +238,18 @@ test("vault: full-text search in notes and drawing text; STEP stamped with the r
   assert.match(s, /#21=PRODUCT_DEFINITION_FORMATION\('','',#20\)/);
   assert.match(stampStep("#1=PRODUCT('P','P','',(#2));#2=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#1,.NOT_KNOWN.);", { revision: "Ä" }), /SOURCE\('\\X2\\00C4\\X0\\'/);
 });
+
+test("vault: check in referenced files too, deepest first, changed ones marked (FR-PDM-011)", async () => {
+  const v = await Vault.create(memDir("W"), "W", "Andrey", "pc1");
+  const bolt = await v.add("parts/Bolt.mcadprt", await doc("part"));
+  const plate = await v.add("parts/Plate.mcadprt", await doc("part"));
+  const sub = await v.add("asm/Sub.mcadasm", await doc("assembly", [{ path: "../parts/Bolt.mcadprt", qty: 4 }, { path: "../parts/Plate.mcadprt" }]));
+  const top = await v.add("asm/Top.mcadasm", await doc("assembly", [{ path: "Sub.mcadasm" }]));
+  for (const f of [bolt, plate, sub, top]) await v.checkOut(f.id);
+  await v.saveWorking(bolt.id, await doc("part", [], { description: "M6 bolt" }));
+  const list = await v.checkInWith(top.id);
+  assert.deepEqual(list.map(x => [x.path, x.modified]), [["parts/Bolt.mcadprt", true], ["parts/Plate.mcadprt", false], ["asm/Sub.mcadasm", false]]);
+  // A file no longer checked out here drops off the list.
+  await v.undoCheckOut(plate.id);
+  assert.deepEqual((await v.checkInWith(top.id)).map(x => x.path), ["parts/Bolt.mcadprt", "asm/Sub.mcadasm"]);
+});

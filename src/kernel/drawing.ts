@@ -310,3 +310,67 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
   emap.delete(); fmap.delete();
   return { edges, cyls };
 }
+
+// ---------- geometry compare (FR-PDM-050) ----------
+
+/** Triangles of a shape (positions and indices, no normals: the viewer computes them). */
+export interface Tris { position: number[]; index: number[] }
+
+export function triangles(oc: any, shape: any, lin: number): Tris {
+  new oc.BRepMesh_IncrementalMesh_2(shape, lin, false, 0.4, false);
+  const pos: number[] = [], idx: number[] = [];
+  const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+  for (; ex.More(); ex.Next()) {
+    const face = oc.TopoDS.Face_1(ex.Current());
+    const loc = new oc.TopLoc_Location_1();
+    const h = oc.BRep_Tool.Triangulation(face, loc, 0);
+    if (h.IsNull()) continue;
+    const tri = h.get(), trsf = loc.Transformation(), base = pos.length / 3;
+    for (let i = 1; i <= tri.NbNodes(); i++) { const p = tri.Node(i).Transformed(trsf); pos.push(p.X(), p.Y(), p.Z()); }
+    const rev = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+    for (let t = 1; t <= tri.NbTriangles(); t++) {
+      const T = tri.Triangle(t);
+      let a = T.Value(1) - 1, b = T.Value(2) - 1;
+      if (rev) [a, b] = [b, a];
+      idx.push(base + a, base + b, base + T.Value(3) - 1);
+    }
+  }
+  return { position: pos, index: idx };
+}
+
+export interface ShapeFacts { volume: number; area: number; com: V3; box: [V3, V3] }
+
+export function shapeFacts(oc: any, shape: any): ShapeFacts {
+  const vp = new oc.GProp_GProps_1(), sp = new oc.GProp_GProps_1();
+  oc.BRepGProp.VolumeProperties_1(shape, vp, true, false, false);
+  oc.BRepGProp.SurfaceProperties_1(shape, sp, false, false);
+  const c = vp.CentreOfMass();
+  return { volume: Math.abs(vp.Mass()), area: sp.Mass(), com: [c.X(), c.Y(), c.Z()], box: shapeInfo(oc, shape).box };
+}
+
+export interface GeomDiff {
+  a: ShapeFacts; b: ShapeFacts;
+  /** Material only in the older version, only in the newer one, and in both. */
+  removed: { volume: number; mesh: Tris }; added: { volume: number; mesh: Tris }; common: Tris;
+}
+
+/** Two versions of a body: what each has that the other lacks, by booleans, with meshes to show it. */
+export function geometryDiff(oc: any, a: any, b: any): GeomDiff {
+  const fa = shapeFacts(oc, a), fb = shapeFacts(oc, b);
+  const size = Math.max(...[0, 1, 2].map(k => Math.max(fa.box[1][k], fb.box[1][k]) - Math.min(fa.box[0][k], fb.box[0][k])));
+  const lin = Math.max(size * 1e-3, 1e-3);
+  const run = (kind: "cut" | "common", x: any, y: any) => {
+    const pr = new oc.Message_ProgressRange_1();
+    const mk = kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(x, y, pr) : new oc.BRepAlgoAPI_Common_3(x, y, pr);
+    if (!mk.IsDone() || mk.HasErrors()) throw new Error("The two versions could not be compared.");
+    return mk.Shape();
+  };
+  const rem = run("cut", a, b), add = run("cut", b, a), com = run("common", a, b);
+  const vol = (s: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(s, p, true, false, false); return Math.abs(p.Mass()); };
+  return {
+    a: fa, b: fb,
+    removed: { volume: vol(rem), mesh: triangles(oc, rem, lin) },
+    added: { volume: vol(add), mesh: triangles(oc, add, lin) },
+    common: triangles(oc, com, lin),
+  };
+}

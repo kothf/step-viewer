@@ -91,6 +91,12 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const SVGNS = "http://www.w3.org/2000/svg";
 const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+/** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
+const ANNOT_TOOLS: [string, string][] = [
+  ["dim", "Dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
+  ["surf", "Surface finish"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+];
+
 const ICON = {
   std3: I('<rect x="1.5" y="1.5" width="6" height="5"/><rect x="1.5" y="9.5" width="6" height="5"/><rect x="9.5" y="1.5" width="5" height="5"/>'),
   model: I('<path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5z"/><path d="M8 8v6.2M8 8l5.5-3M8 8 2.5 5"/>'),
@@ -333,10 +339,17 @@ export class DrawingWorkspace {
       </div>
       <div class="drw-body">
         <aside class="drw-side" aria-label="${esc(t("Sheets and views"))}">
-          <details class="drw-pal" open><summary>${esc(t("View palette"))}</summary>
+          <div class="drw-ptabs" role="tablist" aria-label="${esc(t("Palettes"))}">
+            <button role="tab" id="drw-pt-views" aria-selected="true" aria-controls="drw-pane-views" data-ptab="views" class="on">${esc(t("View palette"))}</button>
+            <button role="tab" id="drw-pt-annot" aria-selected="false" aria-controls="drw-pane-annot" tabindex="-1" data-ptab="annot">${esc(t("Annotation"))}</button>
+          </div>
+          <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
             <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
-          </details>
+          </div>
+          <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
+            <div class="drw-at-grid">${ANNOT_TOOLS.map(([k, label]) => `<button class="btn small drw-at" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${esc(t(label))}</button>`).join("")}</div>
+          </div>
           <div class="drw-tree" role="tree" aria-label="${esc(t("Drawing tree"))}"></div>
           <div class="drw-props"></div>
         </aside>
@@ -488,6 +501,7 @@ export class DrawingWorkspace {
         if (pp) s += `<line class="drw-align" x1="${pp.x}" y1="${H - pp.y}" x2="${pl.x}" y2="${H - pl.y}"/>`;
       }
     }
+    if (this.drag?.moved || this.mode.kind === "model") for (const [x1, y1, x2, y2] of this.guides) s += `<line class="drw-guide" x1="${x1}" y1="${H - y1}" x2="${x2}" y2="${H - y2}"/>`;
     s += this.modeMarks(H) + this.annotPreview(H);
     g.innerHTML = s;
   }
@@ -650,6 +664,7 @@ export class DrawingWorkspace {
       return;
     }
     const m = this.mode;
+    if (m.kind === "model") { const s = this.infer(p, new Set()); m.at = s.p; this.guides = s.guides; this.renderOverlay(); return; }
     if (m.kind !== "none") { m.at = p; this.renderOverlay(); return; }
     const h = this.viewAt(p);
     if (h !== this.hover) { this.hover = h; this.renderOverlay(); }
@@ -670,7 +685,32 @@ export class DrawingWorkspace {
       for (const c of sh.views) if (c.parent === vid && !out.has(c.id)) visit(c.id);
     };
     visit(id);
+    // A free view lines up with the others' centres when it comes close (inference lines, FR-UI-072).
+    this.guides = [];
+    if (!ax) {
+      const p0 = o.get(id)!, s = this.infer([p0[0] + dx, p0[1] + dy], new Set(out.keys()));
+      if (s.guides.length) { dx = s.p[0] - p0[0]; dy = s.p[1] - p0[1]; out.clear(); visit(id); this.guides = s.guides; }
+    }
     return out;
+  }
+
+  /** Lines a point up with the centres of the views on the sheet (except `skip`) within a few pixels. */
+  private guides: [number, number, number, number][] = [];
+  private infer(p: [number, number], skip: Set<string>): { p: [number, number]; guides: [number, number, number, number][] } {
+    const rc = this.svg.getBoundingClientRect();
+    const tol = 6 * (rc.width ? this.vb.w / rc.width : 0.5);
+    let bx: { d: number; x: number; y: number } | null = null, by: { d: number; x: number; y: number } | null = null;
+    for (const [id, pl] of this.placements) {
+      if (skip.has(id) || !findView(this.sheet, id)) continue;
+      const dx = Math.abs(pl.x - p[0]), dy = Math.abs(pl.y - p[1]);
+      if (dx < tol && (!bx || dx < bx.d)) bx = { d: dx, x: pl.x, y: pl.y };
+      if (dy < tol && (!by || dy < by.d)) by = { d: dy, x: pl.x, y: pl.y };
+    }
+    const q: [number, number] = [bx ? bx.x : p[0], by ? by.y : p[1]];
+    const guides: [number, number, number, number][] = [];
+    if (bx) guides.push([bx.x, bx.y, q[0], q[1]]);
+    if (by) guides.push([by.x, by.y, q[0], q[1]]);
+    return { p: q, guides };
   }
 
   private onUp(e: PointerEvent) {
@@ -779,7 +819,9 @@ export class DrawingWorkspace {
       if (!dragged || this.mode.kind !== "model") return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "copy";
-      this.mode.at = this.sheetPt(e);
+      const s = this.infer(this.sheetPt(e), new Set());
+      this.mode.at = s.p;
+      this.guides = s.guides;
       this.renderOverlay();
     });
     this.svg.addEventListener("dragleave", () => { if (this.mode.kind === "model") { this.mode.at = null; this.renderOverlay(); } });
@@ -794,6 +836,8 @@ export class DrawingWorkspace {
   }
 
   private placeModel(m: Extract<Mode, { kind: "model" }>, p: [number, number]) {
+    p = this.infer(p, new Set()).p;
+    this.guides = [];
     const id = uid("v_");
     const n = this.nextViewNumber();
     this.store!.change("Model view", d => {
@@ -1611,6 +1655,14 @@ export class DrawingWorkspace {
     if (!b || !this.store) return;
     const a = b.dataset.a;
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.selA = null; this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
+    if (b.dataset.ptab) {
+      for (const x of this.el.querySelectorAll<HTMLElement>("[data-ptab]")) {
+        const on = x === b;
+        x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); x.tabIndex = on ? 0 : -1;
+        this.el.querySelector<HTMLElement>(`#drw-pane-${x.dataset.ptab}`)!.hidden = !on;
+      }
+      return;
+    }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
     if (b.dataset.an) {
@@ -1864,6 +1916,7 @@ export class DrawingWorkspace {
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
+      mode: () => this.mode.kind,
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
     };
   }

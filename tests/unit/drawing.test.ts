@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { project, bounds, type V3 } from "../../src/kernel/drawing";
+import { project, bounds, geometryDiff, type V3 } from "../../src/kernel/drawing";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import { occ } from "./occ";
 
@@ -351,4 +351,19 @@ test("composite feature control frame, all around, and the BOM of one sub-assemb
   const b = sheetBom(sheet as never, top, flat);
   assert.equal(b.itemOf("c3/p"), 2);
   assert.equal(b.itemOf("c1"), null);
+});
+
+test("geometry compare of two versions: removed and added material by booleans (FR-PDM-050)", async () => {
+  const oc = await occ();
+  const ext = (depth: number, w = 100) => new Modeller(oc).evaluate(doc([rect("s1", w, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: depth } }])).body!.shape;
+  // v1 100 × 60 × 20; v2 is 10 mm narrower and 5 mm taller.
+  const d = geometryDiff(oc, ext(20), ext(25, 90));
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-3, `${a} ≈ ${b}`);
+  near(d.a.volume, 120000); near(d.b.volume, 135000);
+  near(d.removed.volume, 10 * 60 * 20); near(d.added.volume, 90 * 60 * 5);
+  near(d.b.box[1][2] - d.b.box[0][2], 25);
+  assert.ok(d.removed.mesh.index.length > 0 && d.added.mesh.index.length > 0 && d.common.index.length > 0);
+  // The same body twice: nothing either way.
+  const same = geometryDiff(oc, ext(20), ext(20));
+  assert.ok(same.removed.volume < 1e-6 && same.added.volume < 1e-6);
 });
