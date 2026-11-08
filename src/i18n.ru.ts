@@ -3039,6 +3039,13 @@ export const RU: Record<string, string> = {
   "Start tangency": "Касательность в начале",
   "Path tangent": "Касательно к траектории",
   "The profile is turned square to the path where the path starts.": "Профиль поворачивается перпендикулярно траектории в её начале.",
+  // 1.116.0: feature recognition (FR-FT-102).
+  "Recognize Holes": "Распознать отверстия",
+  "Recognize holes: round holes in the body become Hole features you can edit": "Распознать отверстия: круглые отверстия тела становятся редактируемыми элементами «Отверстие»",
+  "Recognize holes": "Распознать отверстия",
+  "Feature recognition failed: {msg}": "Не удалось распознать элементы: {msg}",
+  "No holes were found to recognise.": "Отверстий для распознавания не найдено.",
+  "{n} hole recognised|{n} holes recognised": "Распознано {n} отверстие|Распознано {n} отверстия|Распознано {n} отверстий",
   // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
   "Hole table": "Таблица отверстий",
   "Tag": "Обозн.",

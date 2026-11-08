@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
 
+## [1.116.0] - 2026-11-08
+
+### Added
+
+- **Recognize Holes (FR-FT-102).** Sweep ▾ → Recognize Holes finds the round holes in the body, through or blind with a flat or drilled bottom, like SolidWorks FeatureWorks. A Delete Face fills them, and they come back as Hole features, one per face and size. An imported STEP body gets holes you can resize, move or delete, and the solid stays the same.
+
 ## [1.115.0] - 2026-11-08
 
 ### Added
@@ -1077,7 +1083,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.117.0...HEAD
-[1.117.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.117.0
+[1.117.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.117.0
+[1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
 [1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0
 [1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0

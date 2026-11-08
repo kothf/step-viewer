@@ -1388,3 +1388,34 @@ test("sweep start tangency: path tangent turns the profile square to the path (F
   const r1 = run(m, doc([path, prof, { ...sw, orient: undefined, startTangent: true } as Feature]));
   close(r1.props!.volume, 24 * 40, 1e-4);
 });
+
+test("feature recognition: holes in an imported body become hole features (FR-FT-102)", async () => {
+  const m = new Modeller(await occ());
+  const s = rect("s", 0, 0, 60, 40);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = { face: { name: "e:end" } };
+  const hs: Feature[] = [
+    { id: "h1", type: "hole", name: "H1", plane: top, pts: [[-15, 0], [-15, 12]], kind: "simple", diameter: { v: 10 }, end: "through", depth: { v: 0 } },
+    { id: "h2", type: "hole", name: "H2", plane: top, pts: [[15, 0]], kind: "simple", diameter: { v: 8 }, end: "blind", depth: { v: 8 }, flat: true },
+    { id: "h3", type: "hole", name: "H3", plane: top, pts: [[15, -12]], kind: "simple", diameter: { v: 6 }, end: "blind", depth: { v: 10 } },
+  ] as Feature[];
+  const src = run(m, doc([s, ex, ...hs]));
+  const brep = m.brepText(src.body!).brep;
+  const imp: Feature = { id: "i", type: "import", name: "Imported1", file: "block.brep", brep };
+  const base = doc([imp]);
+  const r0 = run(m, base);
+  close(r0.props!.volume, src.props!.volume, 1e-6);
+  const rec = m.recognizeHoles(base);
+  assert.equal(rec.holes.length, 4, JSON.stringify(rec.holes));
+  assert.equal(rec.holes.filter(h => h.end === "through").length, 2);
+  const blind = rec.holes.filter(h => h.end === "blind").sort((a, b) => a.diameter - b.diameter);
+  close(blind[0].diameter, 6, 1e-6); assert.equal(blind[0].flat, false); close(blind[0].depth, 10, 1e-6);
+  close(blind[1].diameter, 8, 1e-6); assert.equal(blind[1].flat, true); close(blind[1].depth, 8, 1e-6);
+  // Fill them and rebuild them as hole features: the same solid, with holes that can be edited.
+  const feats: Feature[] = [{ id: "d", type: "delface", name: "D", faces: rec.faces } as Feature,
+    ...rec.holes.map((h, k) => ({ id: `r${k}`, type: "hole", name: `R${k}`, plane: h.plane, pts: [h.pt], kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.depth }, flat: h.flat || undefined }) as Feature)];
+  const r1 = run(m, doc([imp, feats[0]]));
+  close(r1.props!.volume, 60 * 40 * 20, 1e-6);
+  const r2 = run(m, doc([imp, ...feats]));
+  close(r2.props!.volume, src.props!.volume, 1e-6);
+});

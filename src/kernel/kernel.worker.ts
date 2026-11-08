@@ -28,6 +28,7 @@ export type KernelRequest =
   | { id: number; type: "solidworks"; files: { name: string; buffer: ArrayBuffer }[]; main: string }
   /** Modelling: evaluate a part document and return its body (FRS 6.3). */
   | { id: number; type: "partBody"; doc: PartDoc }
+  | { id: number; type: "recognize"; doc: PartDoc }
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
   | { id: number; type: "asm"; doc: AsmDoc; quality: number }
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
@@ -202,6 +203,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const other = new Modeller(kernel.module).evaluate(r.doc);
       if (!other.body) throw new Error("The part has no body.");
       post({ id: r.id, ok: true, ...(modeller ??= new Modeller(kernel.module)).brepText(other.body) });
+    } else if (r.type === "recognize") {
+      // Feature recognition (FR-FT-102) in its own modeller, so the part's feature cache stays as it is.
+      post({ id: r.id, ok: true, ...new Modeller(kernel.module).recognizeHoles(r.doc) });
     } else if (r.type === "importBody") {
       kernel.load(new Uint8Array(r.buffer), r.name);
       post({ id: r.id, ok: true, ...kernel.brepText() });
