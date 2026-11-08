@@ -5,11 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.186.0] - 2026-11-08
+## [1.188.0] - 2026-11-08
 
 ### Added
 
 - **Mitred edge flange corners (FR-FT-120)**: when an edge flange is put on edges that meet at a corner of the same face, the flanges now run on past the corner and are mitred where they meet, like SolidWorks. A new Corner gap setting, 0.1 mm by default, sets the gap left between them. It works for every flange position and shows in the flat pattern.
+## [1.184.0] - 2026-11-08
+
+### Added
+
+- **Gusset offset and thickness side (FR-FT-121).** Gusset's location gets an **Offset** (in from the start or end, or from the middle towards the end) and, at a start or end location, the thickness goes on the **Inner side**, **Both sides** or the **Outer side**, as in SolidWorks.
 
 ## [1.183.0] - 2026-11-08
 
@@ -1423,8 +1428,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.186.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.188.0...HEAD
+[1.188.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.188.0
 [1.186.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.186.0
+[1.184.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.184.0
 [1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
 [1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
 [1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
