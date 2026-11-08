@@ -80,7 +80,7 @@ export interface TracePath {
   p: [number, number, number];
   color: string;
   /** What the panel plots (default "dist"). */
-  plot?: "dist" | "speed" | "x" | "y" | "z";
+  plot?: "dist" | "speed" | "accel" | "x" | "y" | "z" | "angle" | "aspeed";
   /** Hidden in the view. */
   off?: boolean;
 }
