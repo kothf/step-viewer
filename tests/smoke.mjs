@@ -6184,6 +6184,9 @@ try {
     const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
     await cp.click("#lang-btn");
     check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
+    await ctx.close();
+  }
+
   // --- Weldments (FR-FT-121): structural members on a sketch, cut list, end cap, Russian panel ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
