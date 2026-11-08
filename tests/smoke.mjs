@@ -3275,6 +3275,19 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
+    const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
+    await clicks(top.id, [[-50, -30], [10, 0], [50, -30]]);
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="chain"]');
+    await clicks(top.id, [[-50, 30], [10, 0], [50, 30]]);
+    await dp.keyboard.press("Escape");
+    an = await annots();
+    tx = await texts();
+    const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
+    check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
+      `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-dims.png` });
     // Exports carry the annotations; Russian uses the decimal comma.
     const svgT = await dp.evaluate(() => window.__sv.drw.svg());
@@ -4879,6 +4892,30 @@ try {
     await mp.click("#lang-btn");
     await mp.click('#motion [data-mo="close"]');
     const back = await pos();
+    // Placement keys (unmated components only): a third pin moves 20 mm up and turns 90° over the study.
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin);
+    await shown(3);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pose = await mp.evaluate(() => {
+      const m = window.__sv.motion, a = window.__sv.asm, c = a.doc.components, id = c[2].id, g = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)].group;
+      const opts = [...document.querySelectorAll('#motion select[data-mo="add"] option')].map(o => o.value);
+      m.edit(s => { s.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const tr = m.study.tracks.find(k => k.kind === "pose");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      for (const [k, v] of [["dz", "20"], ["rz", "90"]]) { const inp = document.querySelector(`#motion [data-p="${k}"]`); inp.value = v; inp.dispatchEvent(new Event("change")); }
+      const [x0, y0] = [c[2].tf[3], c[2].tf[7]], q = Math.SQRT1_2;
+      m.seek(1);
+      const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
+      m.seek(2);
+      const end = { z: g().position.z };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end };
+    }).catch(e => ({ err: String(e) }));
+    await mp.click('#motion [data-mo="close"]');
+    check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
+      && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && Math.abs(exploded.x - 50) < 0.01
@@ -6260,7 +6297,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 12 && mode === "note", `drawing: annotation tab shows the 12 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 15 && mode === "note", `drawing: annotation tab shows the 15 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
