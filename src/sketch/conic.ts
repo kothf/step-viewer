@@ -2,6 +2,7 @@
 // conic/parabola pts = [start, top vertex, end] (the vertex is where the end tangents meet) and `rho`;
 // equation curves pts = [start, end] and `eq`. Their shape becomes cubic Bézier poles like an
 // interpolating spline's, so profiles, the kernel and everything else that takes splines takes them.
+// Style splines (FR-SK-019 P5) are kind "style": pts = the control polygon of a clamped uniform B-spline.
 import type { SkEnt, V2 } from "../model/types";
 import { evaluate } from "../model/expr";
 import { splineBezier } from "./spline";
@@ -135,7 +136,55 @@ export function entBezier(e: Spline, pt: (id: string) => V2, vars: Record<string
       return bz.map(f);
     } catch { return [P[0], P[0], P[1], P[1]]; }
   }
+  if (e.kind === "style" && P.length >= 2) return styleBezier(P);
   return splineBezier(P, !!e.closed && P.length >= 3);
+}
+
+/** Clamped uniform B-spline of the control polygon: degree min(3, n - 1), knots 0…n - degree. */
+export function styleBspline(P: V2[]): { poles: V2[]; knots: number[]; mults: number[]; deg: number } {
+  const deg = Math.min(3, P.length - 1), spans = P.length - deg;
+  const knots = Array.from({ length: spans + 1 }, (_, i) => i);
+  const mults = knots.map((_, i) => (i === 0 || i === spans ? deg + 1 : 1));
+  return { poles: P.slice(), knots, mults, deg };
+}
+
+/** The style spline as cubic Bézier poles: each span by Boehm knot insertion, raised to degree 3. */
+export function styleBezier(P: V2[]): V2[] {
+  const { deg, knots } = styleBspline(P);
+  // Full knot vector, then insert every interior knot up to multiplicity deg.
+  let U: number[] = [...Array(deg + 1).fill(0), ...knots.slice(1, -1), ...Array(deg + 1).fill(knots[knots.length - 1])];
+  let C: V2[] = P.slice();
+  for (const u of knots.slice(1, -1)) {
+    for (let have = 1; have < deg; have++) {
+      const k = U.lastIndexOf(u); // span index with U[k] <= u < U[k+1] after the existing copies
+      const out: V2[] = [];
+      for (let i = 0; i < C.length + 1; i++) {
+        if (i <= k - deg) out.push(C[i]);
+        else if (i > k - have) out.push(C[i - 1]);
+        else {
+          const a = (u - U[i]) / (U[i + deg] - U[i]);
+          out.push([(1 - a) * C[i - 1][0] + a * C[i][0], (1 - a) * C[i - 1][1] + a * C[i][1]]);
+        }
+      }
+      C = out;
+      U = [...U.slice(0, k + 1), u, ...U.slice(k + 1)];
+    }
+  }
+  // C now holds deg·spans + 1 Bézier poles; raise each piece to cubic.
+  const out: V2[] = [C[0]];
+  const lerp = (a: V2, b: V2, t: number): V2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  for (let s = 0; s + deg < C.length; s += deg) {
+    const q = C.slice(s, s + deg + 1);
+    if (deg === 3) out.push(q[1], q[2], q[3]);
+    else if (deg === 2) out.push(lerp(q[0], q[1], 2 / 3), lerp(q[2], q[1], 2 / 3), q[2]);
+    else out.push(lerp(q[0], q[1], 1 / 3), lerp(q[0], q[1], 2 / 3), q[1]);
+  }
+  return out;
+}
+
+/** A style spline's exact B-spline (the kernel builds it as is); null for other splines. */
+export function entBspline(e: Spline, pt: (id: string) => V2) {
+  return e.kind === "style" && e.pts.length >= 2 ? styleBspline(e.pts.map(pt)) : null;
 }
 
 /** A conic's exact form: start, top vertex, end and the middle weight rho / (1 - rho); null for other splines. */
@@ -146,4 +195,4 @@ export function entConic(e: Spline, pt: (id: string) => V2): [V2, V2, V2, number
 }
 
 /** True for spline entities whose points are not all on the curve (the conic's top vertex). */
-export const hasControl = (e: SkEnt) => e.t === "spline" && (e.kind === "conic" || e.kind === "parabola");
+export const hasControl = (e: SkEnt) => e.t === "spline" && (e.kind === "conic" || e.kind === "parabola" || e.kind === "style");

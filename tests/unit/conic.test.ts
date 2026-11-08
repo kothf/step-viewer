@@ -68,3 +68,30 @@ test("a conic closed by a line makes a region the solver keeps defined by its po
   const seg = prof.faces[0].outer.find(s => s.kind === "spline")!;
   assert.ok(seg && seg.kind === "spline" && seg.bz.length === 49);
 });
+
+test("style spline: clamped uniform B-spline as Bézier pieces matches de Boor everywhere (FR-SK-019 P5)", async () => {
+  const { styleBezier, styleBspline } = await import("../../src/sketch/conic");
+  const deBoor = (P: V2[], u: number): V2 => {
+    const { deg: p, knots, mults } = styleBspline(P);
+    const U = knots.flatMap((k, i) => Array(mults[i]).fill(k));
+    let k = p; while (k < P.length - 1 && U[k + 1] <= u) k++;
+    const d = P.slice(k - p, k + 1).map(q => [...q] as V2);
+    for (let r = 1; r <= p; r++) for (let j = p; j >= r; j--) {
+      const i = j + k - p, a = (u - U[i]) / (U[i + p + 1 - r] - U[i]);
+      d[j] = [(1 - a) * d[j - 1][0] + a * d[j][0], (1 - a) * d[j - 1][1] + a * d[j][1]];
+    }
+    return d[p];
+  };
+  for (const P of [[[0, 0], [10, 20], [30, 25], [40, 0], [55, -10], [70, 5]], [[0, 0], [10, 20], [30, 0]], [[0, 0], [10, 5]], [[0, 0], [5, 10], [15, 10], [20, 0]]] as V2[][]) {
+    const bz = styleBezier(P), spans = Math.max(1, P.length - Math.min(3, P.length - 1));
+    assert.equal(bz.length, 3 * spans + 1);
+    near(bz[0][0], P[0][0]); near(bz.at(-1)![1], P.at(-1)![1]);
+    // Bézier piece s, parameter t ↔ B-spline parameter s + t.
+    for (let s = 0; s < spans; s++) for (const t of [0.1, 0.5, 0.9]) {
+      const [a, b, c, d] = bz.slice(3 * s, 3 * s + 4), u = 1 - t;
+      const q = [0, 1].map(j => u * u * u * a[j] + 3 * u * u * t * b[j] + 3 * u * t * t * c[j] + t * t * t * d[j]);
+      const w = deBoor(P, s + t);
+      near(q[0], w[0], 1e-9); near(q[1], w[1], 1e-9);
+    }
+  }
+});

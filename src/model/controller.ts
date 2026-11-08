@@ -54,7 +54,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet } from "../sheetmetal/types";
@@ -2809,6 +2809,7 @@ export class ModelController {
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
+    this.drawWeldSymbols();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
@@ -2882,6 +2883,31 @@ export class ModelController {
   }
 
   /** Cosmetic threads (FR-FT-054): dashed circles at both ends and four lines along the cylinder. */
+  /** Weld symbols (FR-FT-121): a one-line ISO 2553 callout on every fillet bead's weld face; a click edits the bead. */
+  private drawWeldSymbols() {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return;
+    const m = this.mode, draft = m.kind === "feature" && m.draft.type === "weldbead" ? m.draft : null;
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const ok = new Set((this.last?.statuses ?? []).filter(s => s.ok).map(s => s.id));
+    for (const { id, text } of weldSymbols(this.doc.features.slice(0, end), draft, ok)) {
+      // The weld face of its first piece (any of its faces when that one is gone).
+      let i = names.findIndex(n => n.startsWith(`${id}:`) && n.endsWith(":face"));
+      if (i < 0) i = names.findIndex(n => n.startsWith(`${id}:`));
+      const fi = i >= 0 ? data.faces[i] : undefined;
+      if (!fi) continue;
+      const label = document.createElement("button");
+      label.className = "mc-handle mc-callout wld-sym";
+      label.dataset.weld = id;
+      label.textContent = text;
+      label.title = t("Weld symbol: click to edit the bead");
+      label.dataset.at = JSON.stringify(fi.center);
+      label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
   private drawThreads() {
     const m = this.mode;
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -3596,12 +3622,12 @@ export class ModelController {
       const tools: [SkTool, string, string][] = [
         ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
         ["crect", t("Centre rect"), t("Centre rectangle")],
-        ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
+        ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")], ["pcircle", t("Perimeter circle"), t("Perimeter circle: click three points or curves; it touches the lines, circles and arcs")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
         ["aslot3", t("3-pt arc slot"), t("3-point arc slot: start, end, a point on the arc, then the width")],
-        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
+        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["sspline", t("Style spline"), t("Style spline: click its control points; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
         ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
@@ -3609,7 +3635,7 @@ export class ModelController {
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -3662,8 +3688,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      const g = ({ line: ["line", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -6511,12 +6537,14 @@ const ICON_SVG: Record<string, string> = {
   point: S('<path d="M8 3v10M3 8h10M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
   csys: S('<path d="M3 13h10M3 13V3M3 13l-1.5 1.5"/><path d="M11 11l2 2-2 2M1.5 5 3 3l1.5 2"/>'),
   plane: S('<path d="M1.5 11 5 4h9.5L11 11z"/><path d="M8 7.5v-6M6.5 3 8 1.5 9.5 3" />'),
+  "sk:pcircle": S('<circle cx="8" cy="8" r="4.5"/><path d="M1.5 3.5h13M1.5 12.5h13M3.5 1.5v13"/>'),
   "sk:circle3": S('<circle cx="8" cy="8" r="5.5"/><circle cx="2.5" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="4.3" r="1.1" fill="currentColor"/><circle cx="11" cy="12.6" r="1.1" fill="currentColor"/>'),
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),
   "sk:polygon": S('<path d="M8 2 13.7 6.1 11.5 12.9h-7L2.3 6.1z"/>'),
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
   "sk:spline": S('<path d="M2 12c2.5-8 5-8 6-4s3.5 4 6-4"/><circle cx="2" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="14" cy="4" r="1" fill="currentColor"/>'),
   "sk:ellipse": S('<ellipse cx="8" cy="8" rx="6" ry="3.5" transform="rotate(-25 8 8)"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/>'),
+  "sk:sspline": S('<path d="M2 13 5 3 11 13 14 3" stroke-dasharray="1.2 1.4"/><path d="M2 13C4 6 7 6 8 8S12 10 14 3"/>'),
   "sk:parabola": S('<path d="M2.5 2.5Q8 20 13.5 2.5"/><circle cx="8" cy="7" r="0.9" fill="currentColor"/>'),
   "sk:conic": S('<path d="M2.5 13Q3 3 13 2.5"/><path d="M2.5 13 2.5 2.5 13 2.5" stroke-dasharray="1.2 1.4"/>'),
   "sk:eqn": S('<path d="M1.5 9c2-5 3.5-5 5 0s3 5 5 0 2.5-3 3-3"/><path d="M1.5 14.5h13M1.5 1.5v13" stroke-width="1"/>'),

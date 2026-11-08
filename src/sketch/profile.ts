@@ -7,7 +7,7 @@
 import type { SketchFeature, SkEnt, V2 } from "../model/types";
 import { ellOf, ellParam, ellPts, ellSweep, type Ell } from "./ellipse";
 import { bezPts } from "./spline";
-import { entBezier, entConic } from "./conic";
+import { entBezier, entBspline, entConic } from "./conic";
 import { textLoops } from "./text";
 
 export type Seg =
@@ -21,9 +21,10 @@ export type Seg =
   | { ent: string; kind: "earc"; el: Ell; a: V2; b: V2; ccw: boolean }
   /**
    * Spline as cubic Bézier control points in the direction of travel (closed: first = last). A conic also
-   * has `rq` = its exact rational quadratic (start, top vertex, end, middle weight), which the kernel uses.
+   * has `rq` = its exact rational quadratic (start, top vertex, end, middle weight), a style spline `bs` = its
+   * exact clamped B-spline; the kernel builds those instead of the Bézier chain.
    */
-  | { ent: string; kind: "spline"; bz: V2[]; rq?: [V2, V2, V2, number] };
+  | { ent: string; kind: "spline"; bz: V2[]; rq?: [V2, V2, V2, number]; bs?: { poles: V2[]; knots: number[]; mults: number[]; deg: number } };
 
 export interface ProfileFace { outer: Seg[]; holes: Seg[][] }
 export interface Profile { faces: ProfileFace[]; error?: { code: string; message: string; at?: V2 } }
@@ -81,9 +82,12 @@ function segsCross(a: V2, b: V2, c: V2, d: V2, tol: number) {
 /** The closed regions of a sketch. */
 /** A spline entity's segment, in the direction of travel (a conic keeps its exact form). */
 function splineSeg(e: SkEnt & { t: "spline" }, m: Map<string, SkEnt>, forward: boolean): Seg {
-  const bz = entBezier(e, q => pt(m, q)), rq = entConic(e, q => pt(m, q));
-  if (forward) return { ent: e.id, kind: "spline", bz, ...(rq ? { rq } : {}) };
-  return { ent: e.id, kind: "spline", bz: bz.reverse(), ...(rq ? { rq: [rq[2], rq[1], rq[0], rq[3]] as [V2, V2, V2, number] } : {}) };
+  const bz = entBezier(e, q => pt(m, q)), rq = entConic(e, q => pt(m, q)), bs = entBspline(e, q => pt(m, q));
+  if (forward) return { ent: e.id, kind: "spline", bz, ...(rq ? { rq } : {}), ...(bs ? { bs } : {}) };
+  // Backwards: poles and knots reversed (u → end − u).
+  const end = bs ? bs.knots[bs.knots.length - 1] : 0;
+  return { ent: e.id, kind: "spline", bz: bz.reverse(), ...(rq ? { rq: [rq[2], rq[1], rq[0], rq[3]] as [V2, V2, V2, number] } : {}),
+    ...(bs ? { bs: { poles: bs.poles.slice().reverse(), knots: bs.knots.map(u => end - u).reverse(), mults: bs.mults.slice().reverse(), deg: bs.deg } } : {}) };
 }
 
 export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()): Profile {
