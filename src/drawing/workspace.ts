@@ -17,7 +17,9 @@ import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
-import { FIELD_LABEL, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
+import { editTitleBlock } from "./tbEditor";
+import { loadFormats } from "./formats";
+import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
@@ -1709,7 +1711,8 @@ export class DrawingWorkspace {
         </div>
         <label class="drw-f">${esc(t("Scale"))}<select data-s="scale">${SCALES.map(s => `<option value="${scaleText(s)}"${scaleText(sh.scale) === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${SCALES.some(s => scaleText(s) === scaleText(sh.scale)) ? "" : `<option selected value="${scaleText(sh.scale)}">${scaleText(sh.scale)}</option>`}<option value="custom">${esc(t("Custom…"))}</option></select></label>
         <label class="drw-f">${esc(t("Projection"))}<select data-s="projection"><option value="first"${sh.projection === "first" ? " selected" : ""}>${esc(t("First angle (ISO)"))}</option><option value="third"${sh.projection === "third" ? " selected" : ""}>${esc(t("Third angle (ANSI)"))}</option></select></label>
-        <label class="drw-f">${esc(t("Sheet format"))}<select data-s="format"><option value="iso"${sh.format === "iso" ? " selected" : ""}>ISO 7200</option><option value="ansi"${sh.format === "ansi" ? " selected" : ""}>ANSI Y14.1</option><option value="gost"${sh.format === "gost" ? " selected" : ""}>GOST 2.104</option></select></label>
+        <label class="drw-f">${esc(t("Sheet format"))}<select data-s="format">${this.formatOptions(sh)}</select></label>
+        ${sh.format === "gost" ? "" : `<div class="row"><button class="btn small" data-a="tbedit">${esc(sh.tb ? t("Edit title block…") : t("New title block…"))}</button></div>`}
       </fieldset>
       <fieldset class="pm-group drw-style"><legend>${esc(t("Drafting style"))}</legend>
         <label class="drw-f">${esc(t("Text height"))}<select data-st="text">${[2.5, 3.5, 5].map(h => `<option value="${h}"${(this.doc.style?.text ?? 3.5) === h ? " selected" : ""}>${String(h).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
@@ -1798,6 +1801,7 @@ export class DrawingWorkspace {
       case "uncrop": this.setView("Remove crop", v => { delete v.crop; }); break;
       case "unbreak": this.setView("Remove breaks", v => { delete v.breaks; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
+      case "tbedit": void this.editFormat(); break;
       case "align": this.realign(); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;
@@ -1857,6 +1861,24 @@ export class DrawingWorkspace {
         if (mv) { o.x = round(mv[0]); o.y = round(mv[1]); }
       }
     });
+  }
+
+  /** The sheet format choices: the built-in title blocks, then the user formats (the sheet's own one first if it is not in the library). */
+  private formatOptions(sh: Sheet): string {
+    const lib = loadFormats(), cur = sh.tb ? `user:${sh.tb.id}` : sh.format;
+    const users = sh.tb && !lib.some(f => f.id === sh.tb!.id) ? [sh.tb, ...lib] : lib;
+    const opt = (v: string, label: string, tr = false) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}${tr ? ' translate="no"' : ""}>${esc(label)}</option>`;
+    return opt("iso", "ISO 7200") + opt("ansi", "ANSI Y14.1") + opt("gost", "GOST 2.104")
+      + (users.length ? `<optgroup label="${esc(t("My formats"))}">${users.map(f => opt(`user:${f.id}`, f.name, true)).join("")}</optgroup>` : "");
+  }
+
+  /** Edit the sheet's title block (FR-DRW-004), starting from its own one or the ISO block. */
+  private async editFormat() {
+    const sh = this.sheet;
+    const start = sh.tb ?? { ...isoFormat(), name: t("My title block") };
+    const f = await editTitleBlock(start, sh, this.fields(), (b, n) => this.host.download(b, n));
+    if (f) this.setSheet("Title block", s => { s.tb = f; if (s.format === "gost") s.format = "iso"; });
+    else this.renderProps();
   }
 
   /** Default alignment (FR-DRW-017): the view goes back in line with its parent, taking the views that follow it along. */
@@ -1944,7 +1966,12 @@ export class DrawingWorkspace {
     } else if (vk === "hang") this.setView("Hatch angle", v => { v.hatch = { ...v.hatch, angle: +val }; });
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
     else if (sk === "projection") this.setSheet("Projection type", sh => { sh.projection = val as Sheet["projection"]; });
-    else if (sk === "format") this.setSheet("Sheet format", sh => { sh.format = val as Sheet["format"]; });
+    else if (sk === "format") {
+      if (val.startsWith("user:")) {
+        const id = val.slice(5), f = this.sheet.tb?.id === id ? this.sheet.tb : loadFormats().find(x => x.id === id);
+        if (f) this.setSheet("Sheet format", sh => { sh.tb = structuredClone(f); if (sh.format === "gost") sh.format = "iso"; });
+      } else this.setSheet("Sheet format", sh => { sh.format = val as Sheet["format"]; delete sh.tb; });
+    }
     else if (el.dataset.st) {
       const k = el.dataset.st as keyof DraftStyle;
       this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else (st as Record<string, number>)[k] = +val; d.style = st; });

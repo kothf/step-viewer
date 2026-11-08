@@ -1,7 +1,7 @@
 // Sheet formats (FR-DRW-001/002/003): sizes, the frame with zone marks
 // (ISO 5457), and the title block (ISO 7200 or ANSI Y14.1 style) with its fields.
 import { rect, type Prim } from "./prims";
-import type { DrawingProps, Sheet, SheetSize } from "./types";
+import type { DrawingProps, Sheet, SheetSize, TitleFormat } from "./types";
 
 /** Landscape sizes in mm. */
 export const SIZES: Record<Exclude<SheetSize, "custom">, [number, number]> = {
@@ -21,7 +21,7 @@ export function frameOf(s: Sheet): [number, number, number, number] {
 }
 
 /** Title block size: ISO/ANSI 180 × 40, GOST 2.104 form 1 185 × 55. */
-export function tbSize(s: Sheet): [number, number] { return s.format === "gost" ? [185, 55] : [TB_W, TB_H]; }
+export function tbSize(s: Sheet): [number, number] { return s.format === "gost" ? [185, 55] : s.tb ? [s.tb.w, s.tb.h] : [TB_W, TB_H]; }
 
 export const TB_W = 180;
 export const TB_H = 40;
@@ -81,6 +81,11 @@ const GOST: GCell[] = (() => {
   return out;
 })();
 
+/** The ISO title block as a user format (FR-DRW-004): where a new one starts. */
+export function isoFormat(): TitleFormat {
+  return { id: "", name: "ISO 7200", w: TB_W, h: TB_H, cells: [...CELLS.map(c => ({ x: c.x, y: c.y, w: c.w, h: c.h, key: c.key, label: c.label, ...(c.big ? { big: true } : {}) })), { x: 120, y: 0, w: 60, h: 16, key: "projection" as const }] };
+}
+
 /** Fields a user can type (the others come from the sheet). */
 export const EDITABLE: (keyof DrawingProps)[] = ["title", "number", "revision", "material", "mass", "company", "author", "checked", "approved", "date"];
 export const FIELD_LABEL: Record<keyof DrawingProps, string> = {
@@ -106,7 +111,7 @@ export function fieldAt(s: Sheet, x: number, y: number): keyof DrawingProps | nu
     for (const c of GOST) if (c.key && x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (editableOf(s) as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
     return null;
   }
-  for (const c of CELLS) if (x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (EDITABLE as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
+  for (const c of s.tb?.cells ?? CELLS) if (c.key && x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (EDITABLE as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
   return null;
 }
 
@@ -142,6 +147,7 @@ export function formatPrims(s: Sheet, f: Fields, label: (cellLabel: string) => s
   }
   // Title block.
   const [bx, by] = titleBlockAt(s);
+  if (s.tb) { out.push(...userBlock(s, s.tb, bx, by, f, label)); return out; }
   out.push(...rect(bx, by, TB_W, TB_H, "frame", "FORMAT"));
   for (const c of CELLS) {
     out.push(...rect(bx + c.x, by + c.y, c.w, c.h, "thin", "FORMAT"));
@@ -152,11 +158,37 @@ export function formatPrims(s: Sheet, f: Fields, label: (cellLabel: string) => s
       out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + (c.big ? c.h / 2 - h / 2 - 1 : 1.3), s: v, h, al: "c", layer: "TEXT", bold: c.big });
     }
   }
-  // Projection symbol (ISO 128-30 / ASME Y14.3): a truncated cone and its end view.
-  const px = bx + 120, pw = 60;
-  out.push(...rect(px, by, pw, 16, "thin", "FORMAT"));
-  out.push({ t: "t", x: px + 1, y: by + 13.4, s: s.format === "ansi" ? (s.projection === "third" ? "THIRD ANGLE PROJECTION" : "FIRST ANGLE PROJECTION") : label(s.projection === "third" ? "Third angle projection" : "First angle projection"), h: 1.8, al: "l", layer: "FORMAT" });
-  const cy = by + 6, D = 7, d = 3.5, L = 9;
+  out.push(...rect(bx + 120, by, 60, 16, "thin", "FORMAT"), ...projSymbol(s, bx + 120, by, 60, 16, label));
+  return out;
+}
+
+/** A user title block (FR-DRW-004): its cells (label at the top-left, value centred), the logo, and the projection symbol where a cell asks for it. */
+export function userBlock(s: Sheet, tb: TitleFormat, bx: number, by: number, f: Fields, label: (cellLabel: string) => string): Prim[] {
+  const out: Prim[] = [...rect(bx, by, tb.w, tb.h, "frame", "FORMAT")];
+  if (tb.logo) out.push({ t: "i", x: bx + tb.logo.x, y: by + tb.logo.y, w: tb.logo.w, h: tb.logo.h, src: tb.logo.src, layer: "FORMAT" });
+  for (const c of tb.cells) {
+    out.push(...rect(bx + c.x, by + c.y, c.w, c.h, "thin", "FORMAT"));
+    if (c.key === "projection") { out.push(...projSymbol(s, bx + c.x, by + c.y, c.w, c.h, label)); continue; }
+    const v = c.key ? String(f[c.key] ?? "") : "";
+    if (c.label) {
+      const l = label(c.label);
+      // A cell with only a label shows it centred, larger.
+      if (c.key) out.push({ t: "t", x: bx + c.x + 1, y: by + c.y + c.h - 2.6, s: l, h: 1.8, al: "l", layer: "FORMAT" });
+      else { const h = fitH(l, Math.min(c.big ? 5 : 3.5, c.h - 1.5), c.w - 2); out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + c.h / 2 - h / 2, s: l, h, al: "c", layer: "FORMAT", bold: c.big }); }
+    }
+    if (v) {
+      const room = c.label ? c.h - 4 : c.h - 1.5, h = fitH(v, Math.max(1.8, Math.min(c.big ? 5 : 3, room)), c.w - 2);
+      out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + (c.label ? Math.max(1.3, (c.h - 3.2) / 2 - h / 2) : c.h / 2 - h / 2), s: v, h, al: "c", layer: "TEXT", bold: c.big });
+    }
+  }
+  return out;
+}
+
+/** Projection symbol (ISO 128-30 / ASME Y14.3): a truncated cone and its end view, with its caption, in a w × h box. */
+function projSymbol(s: Sheet, px: number, by: number, pw: number, ph: number, label: (cellLabel: string) => string): Prim[] {
+  const out: Prim[] = [];
+  out.push({ t: "t", x: px + 1, y: by + ph - 2.6, s: s.format === "ansi" ? (s.projection === "third" ? "THIRD ANGLE PROJECTION" : "FIRST ANGLE PROJECTION") : label(s.projection === "third" ? "Third angle projection" : "First angle projection"), h: 1.8, al: "l", layer: "FORMAT" });
+  const cy = by + Math.min(6, (ph - 3) / 2), D = 7, d = 3.5, L = 9;
   const trap = (x: number) => [
     { t: "l" as const, p: [x, cy - d / 2, x, cy + d / 2] as [number, number, number, number] },
     { t: "l" as const, p: [x + L, cy - D / 2, x + L, cy + D / 2] as [number, number, number, number] },
