@@ -165,6 +165,18 @@ test("bead all round a square tube on a plate: tangent faces join, the pieces fu
   // Without tangent propagation only the picked side gets a bead.
   const r1 = run(m, doc([sk, plate, k, mem, { ...bead, tangent: false } as Feature]));
   near(r1.cut.find(c => c.kind === "bead")!.length!, 28, 1e-3);
+  // Intermittent 20 every 40 round the 149.7 mm loop: welds at 0, 40, 80 and 120 (pieces over a corner fuse), 80 mm of weld.
+  const ri = run(m, doc([sk, plate, k, mem, { ...bead, inter: { len: { v: 20 }, pitch: { v: 40 } } } as Feature]));
+  const bi = ri.cut.filter(c => c.kind === "bead");
+  assert.equal(bi.length, 1);
+  near(bi[0].length!, 80, 1e-3);
+  assert.deepEqual(bi[0].inter, [20, 40]);
+  near(ri.volume - base.volume, 8 * 80, 2);
+  // On one straight side (28 mm) with pitch 10: welds at 0, 10, 20 of 5 mm.
+  const rs = run(m, doc([sk, plate, k, mem, { ...bead, tangent: false, inter: { len: { v: 5 }, pitch: { v: 10 }, stagger: true } } as Feature]));
+  const bs = rs.cut.find(c => c.kind === "bead")!;
+  near(bs.length!, 15, 1e-3);
+  assert.deepEqual(bs.inter, [5, 10, 1]);
 });
 
 test("gusset faces on the two picked faces are named for the leg arrows (FR-FT-121)", async () => {

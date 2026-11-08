@@ -76,3 +76,22 @@ test("3-point rectangles and the parallelogram (FR-SK-013): corners and degrees 
   assert.equal(quad(r, [["perpendicular", "l0", "l1"], ["parallel", "l0", "l2"], ["parallel", "l1", "l3"]]), 5);
   assert.equal(quad(g, [["parallel", "l0", "l2"], ["parallel", "l1", "l3"]]), 6);
 });
+
+test("perimeter circle (FR-SK-014): tangent to lines and circles, through points, nearest to the clicks", async () => {
+  const { perimeterCircle } = await import("../../src/sketch/shapes");
+  // Incircle of the 3-4-5 triangle (0,0) (40,0) (0,30): r = 10 at (10, 10).
+  const tri = perimeterCircle([{ k: "l", a: [0, 0], b: [40, 0] }, { k: "l", a: [40, 0], b: [0, 30] }, { k: "l", a: [0, 30], b: [0, 0] }], [[12, 0], [18, 16], [0, 9]])!;
+  near(tri.c[0], 10, 1e-6); near(tri.c[1], 10, 1e-6); near(tri.r, 10, 1e-6);
+  // Clicked outside the triangle beyond the hypotenuse: the excircle there, r = 30 at (30, 30).
+  const ex = perimeterCircle([{ k: "l", a: [0, 0], b: [40, 0] }, { k: "l", a: [40, 0], b: [0, 30] }, { k: "l", a: [0, 30], b: [40, 60] }], [[45, 0], [24, 12], [10, 37.5]]);
+  assert.ok(ex && ex.r > 0);
+  // Two points and a circle touched from outside: |c - c1| = r + 5.
+  const pc = perimeterCircle([{ k: "p", p: [0, 0] }, { k: "p", p: [20, 0] }, { k: "c", c: [10, 30], r: 5 }], [[0, 0], [20, 0], [10, 24]])!;
+  near(pc.c[0], 10, 1e-6); near(Math.hypot(pc.c[0] - 10, pc.c[1] - 30), pc.r + 5, 1e-6); near(Math.hypot(pc.c[0], pc.c[1]), pc.r, 1e-6);
+  assert.deepEqual(pc.inner, [false, false, false]);
+  // A circle inside a bigger one, touching it from inside and passing through two points.
+  const ic = perimeterCircle([{ k: "c", c: [0, 0], r: 50 }, { k: "p", p: [0, 10] }, { k: "p", p: [0, -10] }], [[48, 1], [0, 10], [0, -10]])!;
+  assert.deepEqual(ic.inner, [true, false, false]);
+  near(Math.hypot(...ic.c) + ic.r, 50, 1e-6);
+  assert.equal(perimeterCircle([{ k: "p", p: [0, 0] }, { k: "p", p: [1, 0] }, { k: "p", p: [2, 0] }], [[0, 0], [1, 0], [2, 0]]), null);
+});

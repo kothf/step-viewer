@@ -54,7 +54,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet } from "../sheetmetal/types";
@@ -196,6 +196,28 @@ function statusText(s: FeatureStatus) {
 
 /** A part kept in a document tab while another document is shown. */
 export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null }
+
+/**
+ * Hole positions in the panel (FR-FT-052): on a face square to a world axis they show as the world coordinates
+ * of the other two axes (a face square to Y shows X and Z), so a typed value means what the drawing says
+ * whatever way the face's own sketch axes point; on any other face, the face's sketch X/Y.
+ */
+function holeAxes(fr: Frame | undefined): { names: string[]; show: (p: [number, number]) => [number, number]; store: (q: [number, number]) => [number, number] } {
+  const plain = { names: ["X", "Y"], show: (p: [number, number]) => [p[0], p[1]] as [number, number], store: (q: [number, number]) => [q[0], q[1]] as [number, number] };
+  if (!fr) return plain;
+  const k = [0, 1, 2].find(a => Math.abs(Math.abs(fr.n[a]) - 1) < 1e-9);
+  if (k === undefined) return plain;
+  const [a, b] = [0, 1, 2].filter(x => x !== k);
+  // World (a, b) = o + x·fx + y·fy restricted to the two axes; fx, fy lie in that plane.
+  const m = [[fr.x[a], fr.y[a]], [fr.x[b], fr.y[b]]], det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  if (Math.abs(det) < 1e-12) return plain;
+  const q = (x: number) => Math.abs(x) < 1e-9 ? 0 : Math.round(x * 1e9) / 1e9;
+  return {
+    names: ["XYZ"[a], "XYZ"[b]],
+    show: p => [q(fr.o[a] + fr.x[a] * p[0] + fr.y[a] * p[1]), q(fr.o[b] + fr.x[b] * p[0] + fr.y[b] * p[1])],
+    store: w => { const u = w[0] - fr.o[a], v = w[1] - fr.o[b]; return [q((u * m[1][1] - v * m[0][1]) / det), q((m[0][0] * v - m[1][0] * u) / det)]; },
+  };
+}
 
 export class ModelController {
   store: DocStore | null = null;
@@ -664,7 +686,7 @@ export class ModelController {
     const name = this.last?.faceNames[faceId];
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
-    if (face.type !== "plane") { toast(t("A sketch needs a flat face or a plane."), true); return null; }
+    if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
     return { face: { name, hint: face.centroid } };
   }
 
@@ -1756,7 +1778,8 @@ export class ModelController {
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
-      if (m.editor.key(e)) { stop(); this.renderBar(); return; }
+      // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
+      if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
@@ -2786,6 +2809,7 @@ export class ModelController {
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
+    this.drawWeldSymbols();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
@@ -2859,6 +2883,31 @@ export class ModelController {
   }
 
   /** Cosmetic threads (FR-FT-054): dashed circles at both ends and four lines along the cylinder. */
+  /** Weld symbols (FR-FT-121): a one-line ISO 2553 callout on every fillet bead's weld face; a click edits the bead. */
+  private drawWeldSymbols() {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return;
+    const m = this.mode, draft = m.kind === "feature" && m.draft.type === "weldbead" ? m.draft : null;
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const ok = new Set((this.last?.statuses ?? []).filter(s => s.ok).map(s => s.id));
+    for (const { id, text } of weldSymbols(this.doc.features.slice(0, end), draft, ok)) {
+      // The weld face of its first piece (any of its faces when that one is gone).
+      let i = names.findIndex(n => n.startsWith(`${id}:`) && n.endsWith(":face"));
+      if (i < 0) i = names.findIndex(n => n.startsWith(`${id}:`));
+      const fi = i >= 0 ? data.faces[i] : undefined;
+      if (!fi) continue;
+      const label = document.createElement("button");
+      label.className = "mc-handle mc-callout wld-sym";
+      label.dataset.weld = id;
+      label.textContent = text;
+      label.title = t("Weld symbol: click to edit the bead");
+      label.dataset.at = JSON.stringify(fi.center);
+      label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
   private drawThreads() {
     const m = this.mode;
     const end = this.doc.rollback ?? this.doc.features.length;
@@ -3573,12 +3622,12 @@ export class ModelController {
       const tools: [SkTool, string, string][] = [
         ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
         ["crect", t("Centre rect"), t("Centre rectangle")],
-        ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
+        ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")], ["pcircle", t("Perimeter circle"), t("Perimeter circle: click three points or curves; it touches the lines, circles and arcs")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
         ["aslot3", t("3-pt arc slot"), t("3-point arc slot: start, end, a point on the arc, then the width")],
-        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
+        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["sspline", t("Style spline"), t("Style spline: click its control points; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
         ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
@@ -3586,7 +3635,7 @@ export class ModelController {
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "sspline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -3639,8 +3688,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      const g = ({ line: ["line", "spline", "sspline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "pcircle", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), sspline: t("Style spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), pcircle: t("Perimeter circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -4643,6 +4692,8 @@ export class ModelController {
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
     }
@@ -4777,8 +4828,8 @@ export class ModelController {
     // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
     // A rebuild re-renders the panel; keep what is being typed (and the caret) instead of the stored value.
     const typing = new Map<string, { value: string; focus: boolean; a: number | null; b: number | null }>();
-    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k]").forEach(inp => {
-      const key = inp.dataset.num ? `n:${inp.dataset.num}` : `k:${inp.dataset.k}`;
+    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k], input[data-hp]").forEach(inp => {
+      const key = inp.dataset.num ? `n:${inp.dataset.num}` : inp.dataset.hp ? `h:${inp.dataset.hp}` : `k:${inp.dataset.k}`;
       const focus = document.activeElement === inp;
       if (focus || inp.value !== inp.defaultValue) typing.set(key, { value: inp.value, focus, a: inp.selectionStart, b: inp.selectionEnd });
     });
@@ -4786,7 +4837,7 @@ export class ModelController {
       + err + `<p class="pm-help muted">${esc(m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels."))}</p>`
       + name + body;
     typing.forEach((st, key) => {
-      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
+      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : key.startsWith("h:") ? `input[data-hp="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
       if (!inp) return;
       inp.value = st.value;
       if (st.focus) { inp.focus(); try { inp.setSelectionRange(st.a, st.b); } catch { /* not a text input */ } }
@@ -4808,6 +4859,22 @@ export class ModelController {
         const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
         upd(() => {
+          // Head sizes still at their automatic values (the size's ISO table, or the custom defaults) follow
+          // a typed diameter: a Ø3.2 countersink kept the M6 head (Ø13.44) before.
+          if (f.type === "hole" && key === "diameter" && cur && cur.v > 0) {
+            const auto: HoleFeature = JSON.parse(JSON.stringify(f));
+            if (f.size) applyHoleSize(auto);
+            else {
+              const d0 = cur.v;
+              auto.cbDia = { v: Math.round(d0 * 17) / 10 }; auto.cbDepth = { v: d0 }; auto.csDia = { v: d0 * 2 }; auto.threadDepth = { v: d0 * 2 };
+              auto.cdDia = { v: Math.round(d0 * 17) / 10 }; auto.cdDepth = { v: d0 }; auto.slotLen = { v: Math.round(d0 * 20) / 10 };
+            }
+            const k = n.v / cur.v;
+            for (const h of ["cbDia", "cbDepth", "csDia", "threadDepth", "cdDia", "cdDepth", "slotLen"] as const) {
+              const x = f[h], a = auto[h];
+              if (x && a && !x.expr && Math.abs(x.v - a.v) < 1e-9) f[h] = { v: Math.round(x.v * k * 100) / 100 };
+            }
+          }
           (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
@@ -5187,6 +5254,46 @@ export class ModelController {
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
+    // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
+    pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      const last = f.pts.at(-1);
+      f.pts.push(last ? [last[0] + Math.max(f.diameter.v * 2, 5), last[1]] : [0, 0]);
+      this.draftChanged();
+      setTimeout(() => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${f.pts.length - 1}:0"]`); inp?.focus(); inp?.select(); }, 0);
+    });
+    pm.querySelectorAll<HTMLElement>("[data-rmh]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      f.pts.splice(+b.dataset.rmh!, 1);
+      this.draftChanged();
+    }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-hp]").forEach(inp => {
+      const apply = () => {
+        if (f.type !== "hole") return;
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        let v: number;
+        try { v = evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const p = f.pts[i];
+        if (!p) return;
+        const ha = holeAxes(this.last?.frames[f.id]), shown = ha.show(p);
+        if (shown[j] === v) return;
+        shown[j] = v;
+        f.pts[i] = ha.store(shown);
+        this.draftChanged();
+      };
+      inp.addEventListener("change", apply);
+      // Enter applies and goes on to the next coordinate (X, Y, then the next hole), so a table of holes is typed in one go.
+      inp.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault(); e.stopPropagation();
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        const next = j === 0 ? `${i}:1` : `${i + 1}:0`;
+        apply();
+        setTimeout(() => { const n = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${next}"]`); n?.focus(); n?.select(); }, 0);
+      });
+    });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
@@ -6430,12 +6537,14 @@ const ICON_SVG: Record<string, string> = {
   point: S('<path d="M8 3v10M3 8h10M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
   csys: S('<path d="M3 13h10M3 13V3M3 13l-1.5 1.5"/><path d="M11 11l2 2-2 2M1.5 5 3 3l1.5 2"/>'),
   plane: S('<path d="M1.5 11 5 4h9.5L11 11z"/><path d="M8 7.5v-6M6.5 3 8 1.5 9.5 3" />'),
+  "sk:pcircle": S('<circle cx="8" cy="8" r="4.5"/><path d="M1.5 3.5h13M1.5 12.5h13M3.5 1.5v13"/>'),
   "sk:circle3": S('<circle cx="8" cy="8" r="5.5"/><circle cx="2.5" cy="8" r="1.1" fill="currentColor"/><circle cx="12" cy="4.3" r="1.1" fill="currentColor"/><circle cx="11" cy="12.6" r="1.1" fill="currentColor"/>'),
   "sk:arc3": S('<path d="M2.5 11a5.5 5.5 0 0 1 11 0"/><circle cx="2.5" cy="11" r="1.1" fill="currentColor"/><circle cx="13.5" cy="11" r="1.1" fill="currentColor"/><circle cx="8" cy="5.5" r="1.1" fill="currentColor"/>'),
   "sk:polygon": S('<path d="M8 2 13.7 6.1 11.5 12.9h-7L2.3 6.1z"/>'),
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
   "sk:spline": S('<path d="M2 12c2.5-8 5-8 6-4s3.5 4 6-4"/><circle cx="2" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="14" cy="4" r="1" fill="currentColor"/>'),
   "sk:ellipse": S('<ellipse cx="8" cy="8" rx="6" ry="3.5" transform="rotate(-25 8 8)"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/>'),
+  "sk:sspline": S('<path d="M2 13 5 3 11 13 14 3" stroke-dasharray="1.2 1.4"/><path d="M2 13C4 6 7 6 8 8S12 10 14 3"/>'),
   "sk:parabola": S('<path d="M2.5 2.5Q8 20 13.5 2.5"/><circle cx="8" cy="7" r="0.9" fill="currentColor"/>'),
   "sk:conic": S('<path d="M2.5 13Q3 3 13 2.5"/><path d="M2.5 13 2.5 2.5 13 2.5" stroke-dasharray="1.2 1.4"/>'),
   "sk:eqn": S('<path d="M1.5 9c2-5 3.5-5 5 0s3 5 5 0 2.5-3 3-3"/><path d="M1.5 14.5h13M1.5 1.5v13" stroke-width="1"/>'),

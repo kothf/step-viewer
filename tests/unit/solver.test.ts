@@ -200,3 +200,15 @@ test("diameter about a centerline and ordinate dimensions (FR-SK-063)", () => {
   assert.equal(solve(o).status, "ok");
   near(P(o, "q")![0], 20, 1e-6); near(P(o, "r")![0], 35, 1e-6);
 });
+
+test("tangency at a shared end counts once: a fully dimensioned slot has 0 DOF (exam bug 13)", () => {
+  const s = sk([
+    pt("c1", 0, 0), pt("c2", 30, 1), pt("a1", 0, 5), pt("b1", 0, -5), pt("a2", 30, -5), pt("b2", 30, 5),
+    { id: "arc1", t: "arc", c: "c1", a: "a1", b: "b1" }, { id: "arc2", t: "arc", c: "c2", a: "a2", b: "b2" },
+    ln("top", "b2", "a1"), ln("bot", "b1", "a2"),
+  ], [rel("tangent", "top", "arc1"), rel("tangent", "top", "arc2"), rel("tangent", "bot", "arc1"), rel("tangent", "bot", "arc2"), rel("equal", "arc1", "arc2"), rel("horizontal", "c1", "c2"), rel("coincident", "c1", ORIGIN)],
+  [dim("radius", 5, "arc1"), dim("distance", 40, "c1", "c2")]);
+  const r = solve(s);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 0);
+});

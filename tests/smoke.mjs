@@ -2666,7 +2666,7 @@ try {
     // The Circle flyout also holds Ellipse and Partial ellipse.
     await mp.click('#mc-tools [data-fly="circle"]');
     const elFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(4)");
     // Ellipse 2 × 30 by 2 × 12 round the origin (the centre snaps to it: 3 DOF left); the third click is on the ellipse at x = 18.
     await click([0, 0]); await click([30, 0]); await click([18, 12 * Math.sqrt(1 - 0.36)]);
     const el = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const e = sk.ents.find(x => x.t === "ellipse"); return e ? { r1: Math.hypot(P(e.a).x - P(e.c).x, P(e.a).y - P(e.c).y), r2: Math.hypot(P(e.b).x - P(e.c).x, P(e.b).y - P(e.c).y), st: ed.info.status, dof: ed.info.dof } : null; });
@@ -2691,7 +2691,7 @@ try {
     await idle();
     const cut = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok) }; });
     const dT = Math.PI - 2 * Math.atan2(0.6, 0.8), half = 80 * (dT - Math.sin(dT)) * 2;
-    check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
+    check(elFly === "Circle|3-point circle|Perimeter circle|Ellipse|Partial ellipse|Parabola|Conic" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
     // 1.35: a closed spline (FR-SK-019) from the Line flyout on the end face, cut through all.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [-15, 0, 5] } }, rels: [], dims: [], ents: [] }); }));
     await idle();
@@ -2708,7 +2708,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -3020,7 +3020,7 @@ try {
     // Circle ▾ lists Parabola and Conic after the ellipses; pick Conic.
     await mp.click('#mc-tools [data-fly="circle"]');
     const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(6)");
+    await mp.click("#mc-menu button:nth-child(7)");
     const picked = await mp.evaluate(() => window.__sv.model.editor().tool);
     // Start (0, 0), end (40, 0), top vertex (20, 30), shoulder (20, 12): rho 0.4.
     await click([0, 0]); await click([40, 0]); await click([20, 30]);
@@ -3032,7 +3032,7 @@ try {
     await click([40, 0]); await click([0, 0]);
     await mp.keyboard.press("Escape");
     const con = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.find(e => e.kind === "conic"); return { rho: c?.rho, pts: c?.pts.length, lines: ed.sk.ents.filter(e => e.t === "line").length, ok: ed.info.status }; });
-    check(fly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
+    check(fly === "Circle|3-point circle|Perimeter circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
       `model 1.157: Conic from the Circle menu: start, end, top vertex, rho from the fourth click (${fly}, ${picked}, ${label}, ${JSON.stringify(con)})`);
     // The panel edits rho; the conic region extrudes exactly (rational quadratic edge).
     await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); ed.select([ed.sk.ents.find(e => e.kind === "conic").id]); window.__sv.modeller.renderPanel(); });
@@ -3060,7 +3060,7 @@ try {
     check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(4)");
     await mp.waitForSelector("#mc-pm [data-cq=add]");
     await mp.selectOption("#mc-pm [data-cq=mode]", "param");
     await mp.waitForSelector("#mc-pm [data-cq=x]");
@@ -3076,9 +3076,30 @@ try {
     })();
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
-    check(lfly === "Line|Spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+    check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
+    // 1.164: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-fly="line"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    const sTool = await mp.evaluate(() => window.__sv.model.editor().tool);
+    for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
+    const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
+    check(sTool === "sspline" && sty && sty.n === 4 && !sty.closed && sty.ends === "12,-15 30,-9" && sty.ok === "ok",
+      `model 1.164: style spline from four control points (${sTool}, ${JSON.stringify(sty)})`);
+    // 1.167: Perimeter circle (FR-SK-014 P2) from the Circle menu, clicked on the three sides of a triangle: its incircle.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const q of [[0, -14], [10, -14], [0, -4], [0, -14]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-fly="circle"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    const pTool = await mp.evaluate(() => window.__sv.model.editor().tool);
+    for (const q of [[3.5, -14], [7, -11], [0, -7.5]]) await click(q);
+    const pc = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.filter(e => e.t === "circle").at(-1); return c ? { r: Math.round(c.r * 1000) / 1000, c: [P(c.c).x, P(c.c).y].map(v => Math.round(v * 1000) / 1000).join(","), tan: sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, ok: ed.info.status } : null; });
+    // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
+    check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
+      `model 1.167: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
     await ctx.close();
   }
 
@@ -4636,7 +4657,7 @@ try {
     const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
     await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "Cube 10x10.stp")), cube);
     await shown(3);
-    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent }));
+    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent, exact: window.__sv.viewer.parts[0].data.faces.filter(f => f.surface === "plane").length }));
     // Move the second plate by typing its pose: X = 100, 90° about Z.
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
@@ -4665,7 +4686,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined" && a0.exact > 0
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -7545,6 +7566,14 @@ try {
     for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
     const back = await cam();
     check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // A command button keeps focus after its click; the arrows still turn the view (exam bug 29).
+    await np.focus("#lang-btn");
+    const cb0 = await cam();
+    await np.keyboard.press("ArrowLeft"); await settleCam();
+    const cb1 = await cam();
+    check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    await np.evaluate(() => document.activeElement?.blur());
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();
@@ -7909,6 +7938,22 @@ try {
     await settle();
     const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
     check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    // Intermittent bead from the panel: the defaults (50 every 100) round the 149.7 mm loop give welds at 0 and 100.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInter"]');
+    await settle();
+    const ifs = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm [data-num="inter.len"], #mc-pm [data-num="inter.pitch"], #mc-pm input[data-k="wStagger"]')].length);
+    await mp.click("#mc-ok");
+    await settle();
+    const ib = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.length, c.inter]) }; });
+    check(ifs === 3 && !ib.bad && ib.beads.length === 1 && Math.abs(ib.beads[0][0] - (50 + 4 * 28 + 12 * Math.PI - 100)) < 0.2 && JSON.stringify(ib.beads[0][1]) === "[50,100]", `weldments: intermittent fillet bead (${JSON.stringify({ ifs, ib })})`);
+    // Its weld symbol sits on the bead in the view; a click opens the bead for editing.
+    const sym = await mp.evaluate(() => { const el = document.querySelector('#mc-layer .wld-sym[data-weld="w5"]'); const t = el?.textContent; el?.click(); return { t, mode: window.__sv.model.mode().kind, id: window.__sv.model.mode().draft?.id }; });
+    await settle();
+    await mp.click("#mc-cancel");
+    await settle();
+    check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
@@ -7919,7 +7964,7 @@ try {
       const a = as[0];
       if (!a) return { n: 0 };
       const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
-      return { n: as.length, keys: as.map(x => x.key), key: a.key, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 20)), labels: [...document.querySelectorAll("#mc-layer .mc-handle")].map(e => e.textContent) };
+      return { n: as.length, keys: as.map(x => x.key), key: a.key, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 20)), labels: [...document.querySelectorAll("#mc-layer .mc-handle:not(.wld-sym)")].map(e => e.textContent) };
     });
     if (gs.from) {
       await mp.mouse.move(gs.from[0], gs.from[1]);

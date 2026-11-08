@@ -23,8 +23,8 @@ import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
-import { quadCorners } from "./shapes";
-import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, type CurveEq } from "./conic";
+import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
+import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -59,7 +59,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "pcircle" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -141,7 +141,7 @@ export class SketchEditor {
   private lastEv: PointerEvent | null = null;
   /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
   modelSnap = true;
-  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean } = { pts: [], ids: [], cursor: null, snap: null };
+  private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null } = { pts: [], ids: [], cursor: null, snap: null };
   private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
   /** Ordinate dimensioning: the base picked first, then the row the values go on. */
   private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
@@ -371,6 +371,7 @@ export class SketchEditor {
     this.offsetPreview = this.tool === "offset" ? this.offsetAt(p, false) : [];
     this.draft.cursor = snap.p;
     this.draft.snap = snap.id;
+    this.draft.hoverCurve = snap.id ? null : snap.curve;
     this.render();
     return true;
   }
@@ -516,6 +517,18 @@ export class SketchEditor {
   // ---------- drawing ----------
 
   /** The ellipse being drawn: centre c, major end a, and q on it (null when q cannot be on one). */
+  /** The perimeter circle for three clicks, each a point or on a curve (line, circle or arc), FR-SK-014. */
+  private perimFit(at: V2[], curves: (string | null)[]) {
+    const items: PerimItem[] = at.map((p, i) => {
+      const e = curves[i] ? this.ent(curves[i]!) : undefined;
+      if (e?.t === "line") return { k: "l", a: this.pt(e.a), b: this.pt(e.b) };
+      if (e?.t === "circle") return { k: "c", c: this.pt(e.c), r: e.r };
+      if (e?.t === "arc") { const c = this.pt(e.c), a = this.pt(e.a); return { k: "c", c, r: Math.hypot(a[0] - c[0], a[1] - c[1]) }; }
+      return { k: "p", p };
+    });
+    return perimeterCircle(items, at);
+  }
+
   private draftEll(c: V2, a: V2, q: V2): Ell | null {
     const r1 = Math.hypot(a[0] - c[0], a[1] - c[1]);
     if (r1 < 1e-9) return null;
@@ -640,14 +653,18 @@ export class SketchEditor {
   }
 
   private drawClick(raw: V2, e: { detail: number }, exact?: { hv: "horizontal" | "vertical" | null; dims: (made: SkEnt[]) => SkDim[] }) {
-    const s = exact ? { p: raw, id: null, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
+    // A typed end that lands on an existing point (within 0.001 mm: typed angles are rounded) joins it, so a
+    // typed chain closes on its start, as when clicked.
+    const joinTol = Math.min(1e-3, this.px(raw));
+    const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= joinTol)?.id ?? (Math.hypot(raw[0], raw[1]) <= joinTol ? ORIGIN : null) : null;
+    const s = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
     const before = exact ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
-      if (exact && before) this.addTypedDims(exact.dims(this.sk.ents.filter(x => !before.has(x.id))));
+      if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
       this.commit(label);
     };
     if (this.tool === "eqn") return;
@@ -664,7 +681,7 @@ export class SketchEditor {
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
       finish("Add line");
       // Chain on from the end, unless the loop closed on an existing point.
-      const closed = !!s.id && s.id !== ORIGIN && d.ids.length > 0;
+      const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN) && d.ids.length > 0;
       if (closed || e.detail >= 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; }
       else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; }
       this.render();
@@ -713,6 +730,25 @@ export class SketchEditor {
         rels.push({ id: uid("r"), t: "midpoint", e: [d.ids[0] === ORIGIN ? ORIGIN : this.usePoint(d.pts[0], d.ids[0], d.snapCurve ?? null, rels), diag] });
       }
       finish(this.tool === "pgram" ? "Add parallelogram" : centred ? "Add 3-point centre rectangle" : "Add 3-point rectangle");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "pcircle") {
+      // Perimeter circle (FR-SK-014, P2): three clicks; one on a line, circle or arc makes the circle tangent to it.
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      const curves = (d.curves ??= []);
+      if (d.pts.length < 2) { d.pts.push(p); d.ids.push(s.id); curves.push(s.id ? null : s.curve); this.render(); return; }
+      const all = [...curves, s.id ? null : s.curve], ids = [...d.ids, s.id], at = [...d.pts, p];
+      const sol = this.perimFit(at, all);
+      if (!sol) { this.host.toast(t("No circle touches those three."), "warn"); return; }
+      const id = uid("c");
+      this.sk.ents.push({ id, t: "circle", c: this.usePoint(sol.c, null, null, rels), r: sol.r });
+      all.forEach((cv, i) => {
+        if (cv) rels.push({ id: uid("r"), t: "tangent", e: [cv, id], ...(sol.inner[i] ? { inner: true } : {}) });
+        else if (ids[i] && ids[i] !== ORIGIN) rels.push({ id: uid("r"), t: "onCurve", e: [ids[i]!, id] });
+      });
+      finish("Add perimeter circle");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -769,17 +805,19 @@ export class SketchEditor {
       this.render();
       return;
     }
-    if (this.tool === "spline") {
+    if (this.tool === "spline" || this.tool === "sspline") {
       // Through the clicked points (FR-SK-019): a double-click ends it, the first point again closes it.
+      // A style spline (P5) takes the clicks as its control polygon and stays open.
+      const style = this.tool === "sspline";
       const near = (q: V2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < this.px(p) * 3;
-      const closing = d.pts.length >= 3 && (near(d.pts[0]) || (!!s.id && s.id === d.ids[0]));
+      const closing = !style && d.pts.length >= 3 && (near(d.pts[0]) || (!!s.id && s.id === d.ids[0]));
       const again = d.pts.length > 0 && near(d.pts.at(-1)!);
       if (!closing && !again) { d.pts.push(p); d.ids.push(s.id); if (d.pts.length === 1) d.snapCurve = s.curve; }
       if (!closing && !(e.detail >= 2 || again)) { this.render(); return; }
       if (d.pts.length < 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return; }
       const ids = d.pts.map((q, i) => this.usePoint(q, d.ids[i] ?? null, i === 0 ? d.snapCurve ?? null : null, rels));
-      this.sk.ents.push({ id: uid("s"), t: "spline", pts: ids, ...(closing ? { closed: true } : {}) });
-      finish("Add spline");
+      this.sk.ents.push({ id: uid("s"), t: "spline", pts: ids, ...(closing ? { closed: true } : {}), ...(style ? { kind: "style" as const } : {}) });
+      finish(style ? "Add style spline" : "Add spline");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -1383,12 +1421,35 @@ export class SketchEditor {
 
   // ---------- sketch fillet (FR-SK-033) ----------
 
+  /**
+   * Before a corner is rounded or chamfered: a length dimension on either line becomes the distance from the
+   * corner to the line's other end, so the sizes keep meaning the sharp corner (SolidWorks' virtual sharp).
+   */
+  private keepSharpDims(V: string, lines: (SkEnt & { t: "line" })[]) {
+    for (const d of this.sk.dims) {
+      if (d.e.length !== 1 || (d.t !== "distance" && d.t !== "hdistance" && d.t !== "vdistance")) continue;
+      const l = lines.find(x => x.id === d.e[0]);
+      if (l) d.e = [V, l.a === V ? l.b : l.a];
+    }
+  }
+
+  /**
+   * After the corner is cut: a corner point that dimensions, relations or construction lines still use stays as
+   * a virtual sharp where the two lines meet; otherwise it goes.
+   */
+  private settleCorner(V: string, lines: (SkEnt & { t: "line" })[]) {
+    const used = this.sk.dims.some(d => d.e.includes(V)) || this.sk.rels.some(r => r.e.includes(V)) || this.sk.ents.some(o => refPts(o).includes(V));
+    if (used) this.sk.rels.push({ id: uid("r"), t: "intersection", e: [V, lines[0].id, lines[1].id] });
+    else this.dropLoosePoints(new Set([V]));
+  }
+
   private filletAt(p: V2) {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
     const V = h.id;
-    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
-    const curves = this.sk.ents.filter(e => (e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V)));
+    // Construction lines at the corner (a centre rectangle's diagonals) stay on the sharp corner, as in SolidWorks.
+    const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    const curves = this.sk.ents.filter(e => !("cons" in e && e.cons) && ((e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V))));
     if (lines.length !== 2 || curves.length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
     const v = this.pt(V);
     const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
@@ -1403,6 +1464,7 @@ export class SketchEditor {
     const T = u.map(w => [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2);
     const bis = norm2([u[0][0] + u[1][0], u[0][1] + u[1][1]]);
     const C: V2 = [v[0] + bis[0] * (r / Math.sin(half)), v[1] + bis[1] * (r / Math.sin(half))];
+    this.keepSharpDims(V, lines);
     const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
     lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
     const cId = uid("p");
@@ -1411,8 +1473,8 @@ export class SketchEditor {
     const arc = uid("a");
     this.sk.ents.push({ id: arc, t: "arc", c: cId, a: ccw ? tIds[0] : tIds[1], b: ccw ? tIds[1] : tIds[0] });
     this.sk.rels.push({ id: uid("r"), t: "tangent", e: [lines[0].id, arc] }, { id: uid("r"), t: "tangent", e: [lines[1].id, arc] });
-    // The corner point goes when nothing else uses it (its relations and dimensions with it).
-    this.dropLoosePoints(new Set([V]));
+    // The corner point goes when nothing else uses it; else it stays as a virtual sharp.
+    this.settleCorner(V, lines);
     const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "radius", e: [arc], val: { v: r }, pos: [C[0] + (v[0] - C[0]) * 1.6, C[1] + (v[1] - C[1]) * 1.6] };
     const res = tryAdd(this.sk, { dim });
     if (res.ok && !res.redundant) { this.sk = res.sketch; this.info = res.result; }
@@ -1568,18 +1630,19 @@ export class SketchEditor {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
     const V = h.id;
-    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
-    if (lines.length !== 2 || this.usersOf(V).length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
+    const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    if (lines.length !== 2 || this.usersOf(V).filter(o => !("cons" in o && o.cons)).length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
     const v = this.pt(V), dist = this.chamferDist;
     const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
     const len = far.map(q => Math.hypot(q[0] - v[0], q[1] - v[1]));
     if (Math.abs(cross2(norm2(sub2(far[0], v)), norm2(sub2(far[1], v)))) < 1e-9) { this.host.toast(t("The lines are in line: there is no corner to round."), "warn"); return; }
     if (dist >= len[0] - 1e-9 || dist >= len[1] - 1e-9) { this.host.toast(t("The distance is too large for these lines."), "error"); return; }
     const T = far.map(q => { const w = norm2(sub2(q, v)); return [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2; });
+    this.keepSharpDims(V, lines);
     const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
     lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
     this.sk.ents.push({ id: uid("l"), t: "line", a: tIds[0], b: tIds[1] });
-    this.dropLoosePoints(new Set([V]));
+    this.settleCorner(V, lines);
     this.commit("Sketch chamfer");
     this.render();
   }
@@ -2204,9 +2267,26 @@ export class SketchEditor {
   }
 
   /** Typed sizes become driving dimensions where they add information (no toast when they do not). */
-  private addTypedDims(dims: SkDim[]) {
+  private addTypedDims(dims: SkDim[], made: SkEnt[] = []) {
+    // The new entities' centre: each label goes beside its line on the far side from it (not at the origin,
+    // where a label without a place would sit and hide the origin from the next click).
+    const pts = made.filter((x): x is SkEnt & { t: "point" } => x.t === "point").map(x => [x.x, x.y] as V2);
+    const centre: V2 = pts.length ? [pts.reduce((a, q) => a + q[0], 0) / pts.length, pts.reduce((a, q) => a + q[1], 0) / pts.length] : [0, 0];
     for (const dim of dims) {
       dim.name = this.nextDimName();
+      if (!dim.pos) {
+        const ent = this.ent(dim.e[0]);
+        if (ent?.t === "line") {
+          const a = this.pt(ent.a), b = this.pt(ent.b), mid: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          let n = norm2([a[1] - b[1], b[0] - a[0]]);
+          if (dot2(n, sub2(mid, centre)) < 0) n = [-n[0], -n[1]];
+          const off = this.px(mid) * 28;
+          dim.pos = [mid[0] + n[0] * off, mid[1] + n[1] * off];
+        } else if (ent?.t === "circle") {
+          const c = this.pt(ent.c), k = ent.r + this.px(c) * 24;
+          dim.pos = [c[0] + k * Math.SQRT1_2, c[1] + k * Math.SQRT1_2];
+        }
+      }
       const r = tryAdd(this.sk, { dim });
       if (!r.ok || r.redundant) continue;
       this.sk = r.sketch;
@@ -2245,6 +2325,7 @@ export class SketchEditor {
       point: "Click to place a point",
       text: "Type the text and its height in the panel, then click where it starts",
       circle3: "Click three points on the circle",
+      pcircle: "Click three points or curves; the circle passes through the points and touches the lines, circles and arcs",
       arc3: "Click the start, the end, then a point on the arc",
       polygon: "Click the centre, then a corner; set the sides in the panel",
       trim: "Click the piece of a curve to remove, up to where it crosses others",
@@ -2265,6 +2346,7 @@ export class SketchEditor {
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
+      sspline: "Click the control points; the curve follows them without passing through. Double-click ends it",
       conic: "Click the start, the end, the top vertex where the end tangents meet, then a point the conic passes through",
       parabola: "Click the focus, the vertex, then the start and the end",
       eqn: "Type the equation and its range in the panel, then Add curve",
@@ -2347,8 +2429,8 @@ export class SketchEditor {
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") {
         poly(this.splineLine(e), c);
-        // A conic's top vertex: thin lines to the ends, where the end tangents run.
-        if (hasControl(e)) { const [a, v, b] = e.pts.map(q => this.pt(q)); push(a, v, C.cons, dimSegs, dimCols); push(v, b, C.cons, dimSegs, dimCols); }
+        // A conic's top vertex or a style spline's control polygon: thin lines between its points.
+        if (hasControl(e)) { const q = e.pts.map(id => this.pt(id)); for (let i = 0; i + 1 < q.length; i++) push(q[i], q[i + 1], C.cons, dimSegs, dimCols); }
       } else if (e.t === "text") {
         const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
         for (const l of ls) poly(l, c);
@@ -2398,6 +2480,10 @@ export class SketchEditor {
       } else if (this.tool === "polygon") {
         const r = Math.hypot(p[0] - a[0], p[1] - a[1]), a0 = Math.atan2(p[1] - a[1], p[0] - a[0]), n = this.polySides;
         poly(Array.from({ length: n + 1 }, (_, i) => [a[0] + r * Math.cos(a0 + (2 * Math.PI * i) / n), a[1] + r * Math.sin(a0 + (2 * Math.PI * i) / n)] as V2), C.pre);
+      } else if (this.tool === "pcircle") {
+        const sol = d.pts.length === 2 ? this.perimFit([...d.pts, p], [...(d.curves ?? []), this.draft.hoverCurve ?? null]) : null;
+        if (sol) poly(arcPts(sol.c, sol.r, 0, Math.PI * 2, 72), C.pre);
+        else push(d.pts.at(-1)!, p, C.pre);
       } else if (this.tool === "circle3" || this.tool === "arc3") {
         const c = d.pts.length === 2 ? circumcentre(d.pts[0], d.pts[1], p) : null;
         if (!c) push(d.pts.at(-1)!, p, C.pre);
@@ -2427,6 +2513,10 @@ export class SketchEditor {
           const q = parabolaFrom(f, v, s0, s1);
           if (q) poly(bezPts(conicBezier(q[0], q[1], q[2], 0.5), 48), d.pts.length === 3 ? C.pre : C.cons);
         }
+      } else if (this.tool === "sspline") {
+        const q = [...d.pts, p];
+        poly(q, C.cons);
+        poly(bezPts(styleBezier(q), 16), C.pre);
       } else if (this.tool === "spline") {
         const closing = d.pts.length >= 3 && Math.hypot(p[0] - a[0], p[1] - a[1]) < this.px(p) * 3;
         poly(bezPts(splineBezier(closing ? d.pts : [...d.pts, p], closing), 16), C.pre);
