@@ -3078,4 +3078,11 @@ export const RU: Record<string, string> = {
   "Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.": "Щёлкните следующий угол: участки идут вдоль первого или перпендикулярно ему. Enter или повторный щелчок по последней точке завершают линию.",
   "Every leg of the cutting path must run along or square to the first.": "Каждый участок линии сечения должен идти вдоль первого или перпендикулярно ему.",
   "Don't cut": "Не разрезать",
+  // 1.119.0: loft guide curves (FR-FT-082).
+  "Guide curves": "Направляющие кривые",
+  "Add guide curve": "Добавить направляющую",
+  "Each guide touches every profile. The loft's sections grow and shrink so that they pass through the guides.": "Каждая направляющая касается всех профилей. Сечения лофта растут и сжимаются так, чтобы проходить через направляющие.",
+  "Each guide curve must touch every profile.": "Каждая направляющая кривая должна касаться всех профилей.",
+  "Each guide curve must run from the first profile to the last.": "Каждая направляющая кривая должна идти от первого профиля до последнего.",
+  "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
 };

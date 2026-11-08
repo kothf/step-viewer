@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.119.0] - 2026-11-08
+## [1.120.0] - 2026-11-08
 
 ### Added
 
 - **Curved structural members (FR-FT-121).** Arcs in a Structural Member's path sketch now make bent members: the profile is revolved along the arc, and the cut list gives the arc length. Where a line runs on smoothly from an arc nothing is cut. At a sharp corner the line runs through the arc, and two arcs meet in a mitre. The segment list and the Corners group show arcs as "Arc n" and lines as "Line n".
+
+## [1.119.0] - 2026-11-08
+
+### Added
+
+- **Loft guide curves (FR-FT-082).** The Loft panel has a Guide curves group: pick open sketches or curves that touch every profile, and the loft's sections grow and shrink to pass through them, like SolidWorks. One guide scales the sections evenly; two or more stretch them towards each guide, so two guides on the sides of a rectangle widen it without making it taller. A guide that misses a profile is reported.
 
 ## [1.118.0] - 2026-11-08
 
@@ -1089,7 +1095,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.119.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.120.0...HEAD
+[1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
 [1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
