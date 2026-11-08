@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { occ } from "./occ";
@@ -338,4 +338,37 @@ test("sheet metal: the flat pattern laid on XY for drawings (FR-FT-120)", async 
   close(bends[0].a[2], 2); close(bends[0].angle, Math.PI / 2); close(bends[0].r, 2);
   // The bend line lies across the pattern, inside its box.
   for (const p of [bends[0].a, bends[0].b]) assert.ok(p[0] >= lo.X() - 1e-6 && p[0] <= hi.X() + 1e-6 && p[1] >= lo.Y() - 1e-6 && p[1] <= hi.Y() + 1e-6);
+});
+
+test("sheet metal: miter flange runs a sketched profile along edges (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  // On YZ (2D = Y, Z) at the front edge's start: up 30 to the outer sharp, then 20 outwards (-Y).
+  const pr = { ...chain("mp", [[0, 0], [0, 30], [-20, 30]]), plane: { std: "YZ" as const } };
+  const mf: SmMiterFeature = { id: "mf", type: "smmiter", name: "Miter-Flange1", sketch: "mp", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }] };
+  let r = run(doc([s, base(), pr, mf]));
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2);
+  // Bend 1 has the profile outside (setback r + T), bend 2 inside (setback r).
+  close(r.props.volume, 100 * ((50 - 4) + ba + (30 - 4 - 2) + ba + (20 - 2)) * 2, 1e-5);
+  close(r.size[0], 100, 1e-6); close(r.size[1], 70, 1e-5); close(r.size[2], 32, 1e-5);
+  close(r.min[1], -20, 1e-5);
+  assert.ok(r.body!.names.includes("mf:p0:top") && r.body!.names.includes("mf:p1:tip") && r.body!.names.includes("mf:b1:in"));
+  // The profile drawn from its far end works the same.
+  const rev = { ...chain("mp", [[-20, 30], [0, 30], [0, 0]]), plane: { std: "YZ" as const } };
+  close(run(doc([s, base(), rev, mf])).props.volume, r.props.volume, 1e-9);
+  assert.equal(flatLoops(r.sheet!).outer.length, 1);
+  run(doc([s, base(), pr, mf, flat]));
+
+  // Front and right edges meet at a corner: every level is mitred there.
+  const two: SmMiterFeature = { ...mf, edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }, { faces: ["b:p0:top", "b:p0:sl2"] }] };
+  r = run(doc([s, base(), pr, two]));
+  close(r.size[0], 120, 1e-5); close(r.size[1], 70, 1e-5); close(r.size[2], 32, 1e-5);
+  for (const id of ["mf:p0", "mf:p1", "mf:p2", "mf:p3"]) assert.equal(r.sheet!.panels.find(x => x.id === id)!.outer.filter(x => x.ent === "miter").length, 1, `${id} is mitred`);
+  run(doc([s, base(), pr, two, flat]));
+
+  // A profile away from the edges, or not square to it, is refused.
+  const off = { ...chain("mp", [[0, 0], [30, 10]]), plane: { std: "XZ" as const } };
+  const bad = m.evaluate(doc([s, base(), off, mf])).statuses.find(x => x.id === "mf");
+  assert.ok(bad && !bad.ok);
 });

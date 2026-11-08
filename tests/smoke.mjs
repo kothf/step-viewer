@@ -8697,6 +8697,33 @@ try {
     });
     check(cc0.title === "Closed Corner" && JSON.stringify(cc0.faces) === '["fa:p0:s1"]' && !cc1.bad && Math.abs(cc1.fx - (100 + T)) < 1e-6 && Math.abs(cc1.gy - 0.1) < 1e-6,
       `sheet metal: Closed Corner runs the clicked flange end over the other flange, which runs to the gap (${JSON.stringify({ cc0, cc1 })})`);
+    // Miter Flange: a profile on Right (YZ) at the front edge's start, up 20 then 10 outwards; the right and front top edges clicked.
+    await mp.evaluate(() => window.__sv.model.store.change("Miter profile", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s5", type: "sketch", name: "Sketch5", plane: { std: "YZ" }, rels: [], dims: [], ents: [P("w1", 0, 0), P("w2", 0, 20), P("w3", -10, 20), { id: "w4", t: "line", a: "w1", b: "w2" }, { id: "w5", t: "line", a: "w2", b: "w3" }] });
+    }));
+    await settle();
+    await smMenu("Miter Flange");
+    for (const p of [[100, 25, T], [60, 0, T]]) { const [x, y] = await scr(p); await mp.mouse.click(x, y); await settle(); }
+    const mf0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, edges: window.__sv.model.mode().draft?.edges.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const mf1 = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), mitres: (l.sheet?.panels ?? []).filter(p => p.outer.some(x => x.ent === "miter")).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") };
+    });
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smmiter").id));
+    await settle();
+    const mru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm .pm-count, #mc-pm button")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await mp.click("#lang-btn");
+    check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
+      && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
+      `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
     await ctx.close();
   }
 
