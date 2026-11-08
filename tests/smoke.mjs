@@ -2708,7 +2708,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Spline|Style spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -3060,7 +3060,7 @@ try {
     check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(4)");
     await mp.waitForSelector("#mc-pm [data-cq=add]");
     await mp.selectOption("#mc-pm [data-cq=mode]", "param");
     await mp.waitForSelector("#mc-pm [data-cq=x]");
@@ -3076,9 +3076,18 @@ try {
     })();
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
-    check(lfly === "Line|Spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+    check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
+    // 1.162: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-fly="line"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    const sTool = await mp.evaluate(() => window.__sv.model.editor().tool);
+    for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
+    const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
+    check(sTool === "sspline" && sty && sty.n === 4 && !sty.closed && sty.ends === "12,-15 30,-9" && sty.ok === "ok",
+      `model 1.162: style spline from four control points (${sTool}, ${JSON.stringify(sty)})`);
     await ctx.close();
   }
 

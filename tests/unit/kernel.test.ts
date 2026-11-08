@@ -488,6 +488,23 @@ test("conic and equation curve profiles extrude (FR-SK-021)", async () => {
   close(r.props!.volume, (Math.PI * 100 / 2) * 10, 1e-4);
 });
 
+test("style spline profiles extrude exactly (FR-SK-019 P5)", async () => {
+  const { styleBezier } = await import("../../src/sketch/conic");
+  const { bezPts } = await import("../../src/sketch/spline");
+  const { polyArea } = await import("../../src/sketch/profile");
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const xy: [number, number][] = [[0, 0], [5, 25], [20, 30], [35, 10], [45, 28], [60, 0]];
+  const sk: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [...xy.map((q, i) => P(`p${i}`, q[0], q[1])), { id: "s", t: "spline", pts: xy.map((_, i) => `p${i}`), kind: "style" }, { id: "l", t: "line", a: "p5", b: "p0" }] };
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 4 } };
+  const r = run(m, doc([sk, ex]));
+  const area = Math.abs(polyArea(bezPts(styleBezier(xy), 4000)));
+  // OCCT's default integration of a planar face along a multi-span B-spline edge is ~2e-4 off.
+  close(r.props!.volume, area * 4, 5e-4);
+  assert.equal(r.body!.faces.length, 4);
+});
+
 test("modelled thread cuts a helical groove into a hole (FR-FT-055)", async () => {
   const m = new Modeller(await occ());
   const s1 = rect("s1", 0, 0, 40, 40);

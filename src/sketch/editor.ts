@@ -24,7 +24,7 @@ import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, 
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
 import { quadCorners } from "./shapes";
-import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, type CurveEq } from "./conic";
+import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -59,7 +59,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "sspline" | "conic" | "parabola" | "eqn" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -769,17 +769,19 @@ export class SketchEditor {
       this.render();
       return;
     }
-    if (this.tool === "spline") {
+    if (this.tool === "spline" || this.tool === "sspline") {
       // Through the clicked points (FR-SK-019): a double-click ends it, the first point again closes it.
+      // A style spline (P5) takes the clicks as its control polygon and stays open.
+      const style = this.tool === "sspline";
       const near = (q: V2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < this.px(p) * 3;
-      const closing = d.pts.length >= 3 && (near(d.pts[0]) || (!!s.id && s.id === d.ids[0]));
+      const closing = !style && d.pts.length >= 3 && (near(d.pts[0]) || (!!s.id && s.id === d.ids[0]));
       const again = d.pts.length > 0 && near(d.pts.at(-1)!);
       if (!closing && !again) { d.pts.push(p); d.ids.push(s.id); if (d.pts.length === 1) d.snapCurve = s.curve; }
       if (!closing && !(e.detail >= 2 || again)) { this.render(); return; }
       if (d.pts.length < 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; this.render(); return; }
       const ids = d.pts.map((q, i) => this.usePoint(q, d.ids[i] ?? null, i === 0 ? d.snapCurve ?? null : null, rels));
-      this.sk.ents.push({ id: uid("s"), t: "spline", pts: ids, ...(closing ? { closed: true } : {}) });
-      finish("Add spline");
+      this.sk.ents.push({ id: uid("s"), t: "spline", pts: ids, ...(closing ? { closed: true } : {}), ...(style ? { kind: "style" as const } : {}) });
+      finish(style ? "Add style spline" : "Add spline");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -2265,6 +2267,7 @@ export class SketchEditor {
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
+      sspline: "Click the control points; the curve follows them without passing through. Double-click ends it",
       conic: "Click the start, the end, the top vertex where the end tangents meet, then a point the conic passes through",
       parabola: "Click the focus, the vertex, then the start and the end",
       eqn: "Type the equation and its range in the panel, then Add curve",
@@ -2347,8 +2350,8 @@ export class SketchEditor {
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") {
         poly(this.splineLine(e), c);
-        // A conic's top vertex: thin lines to the ends, where the end tangents run.
-        if (hasControl(e)) { const [a, v, b] = e.pts.map(q => this.pt(q)); push(a, v, C.cons, dimSegs, dimCols); push(v, b, C.cons, dimSegs, dimCols); }
+        // A conic's top vertex or a style spline's control polygon: thin lines between its points.
+        if (hasControl(e)) { const q = e.pts.map(id => this.pt(id)); for (let i = 0; i + 1 < q.length; i++) push(q[i], q[i + 1], C.cons, dimSegs, dimCols); }
       } else if (e.t === "text") {
         const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
         for (const l of ls) poly(l, c);
@@ -2427,6 +2430,10 @@ export class SketchEditor {
           const q = parabolaFrom(f, v, s0, s1);
           if (q) poly(bezPts(conicBezier(q[0], q[1], q[2], 0.5), 48), d.pts.length === 3 ? C.pre : C.cons);
         }
+      } else if (this.tool === "sspline") {
+        const q = [...d.pts, p];
+        poly(q, C.cons);
+        poly(bezPts(styleBezier(q), 16), C.pre);
       } else if (this.tool === "spline") {
         const closing = d.pts.length >= 3 && Math.hypot(p[0] - a[0], p[1] - a[1]) < this.px(p) * 3;
         poly(bezPts(splineBezier(closing ? d.pts : [...d.pts, p], closing), 16), C.pre);

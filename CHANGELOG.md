@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.162.0] - 2026-11-08
+
+### Added
+
+- **Style spline (FR-SK-019)**: the Line ▾ menu adds Style spline, as in SolidWorks. Click its control points: the curve starts and ends at the first and last ones and is pulled towards the others without passing through them, with the control polygon drawn while you sketch and when it is selected. Drag a control point to reshape it. The kernel gets the same B-spline (cubic, clamped, uniform knots) as one exact edge, so extrudes, cuts and revolves follow it exactly.
+
 ## [1.157.0] - 2026-11-08
 
 ### Added
@@ -1291,7 +1297,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.157.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.162.0...HEAD
+[1.162.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.162.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
 [1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
