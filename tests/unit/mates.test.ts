@@ -195,3 +195,57 @@ test("display states keep visibility, colour and transparency per component (FR-
   assert.equal(d.components[0].hidden, undefined);
   assert.equal(deleteState(d, "ds_default"), false);
 });
+
+test("FR-ASM-006: a flexible sub-assembly's own mates solve in the parent, and parent mates reach its parts", async () => {
+  const { solveView, applySolved, flattenSubs } = await import("../../src/asm/patterns");
+  // Sub-assembly: a fixed plate and a pin concentric in its hole (free to slide and turn).
+  const sub: AsmDoc = { ...doc([conc]), id: "s", name: "Sub" };
+  sub.components[1].tf = translation([20, 10, 40]);
+  // Parent: a fixed plate, and the sub placed 100 mm along X; the parent pushes the sub's pin onto its own plate top.
+  const parent: AsmDoc = {
+    schema: 1, kind: "assembly", id: "a", name: "A", units: { length: "mm", decimals: 2 },
+    parts: { plate: { name: "plate", file: "plate.mcadprt", doc: stub }, sub: { name: "sub", file: "sub.mcadasm", doc: stub, asm: sub } },
+    components: [
+      { id: "base", name: "plate<1>", part: "plate", tf: IDENTITY, fixed: true },
+      { id: "S", name: "Sub<1>", part: "sub", tf: translation([100, 0, 0]), fixed: true },
+    ],
+    mates: [{ id: "pm", name: "Coincident1", type: "coincident", a: { comp: "base", face: "top" }, b: { comp: "S/q", face: "under" }, align: "anti" }],
+  };
+  const g = (part: string, face: string) => geos[part.split("/").at(-1)!]?.[face] ?? null;
+  // Rigid: the parent mate cannot reach into the sub-assembly.
+  assert.ok(solve({ doc: solveView(parent), geo: g, size: 100 }).missing.includes("pm"));
+  parent.components[1].flexible = true;
+  const view = solveView(parent);
+  assert.ok(view.components.some(c => c.id === "S/q") && view.mates!.some(m => m.id === "S/m1"));
+  const r = solve({ doc: view, geo: g, size: 100 });
+  assert.ok(r.ok, JSON.stringify(r.bad));
+  applySolved(parent, r.tfs);
+  // The pin stays in the sub's hole (x = 100 + 20, y = 10) and now sits on the parent plate's top (z = 5 + 0 under the head at 10).
+  const flat = flattenSubs(parent);
+  const pin = flat.components.find(c => c.id === "S/q")!;
+  const o = applyPoint(pin.tf, [0, 0, 0]);
+  assert.ok(Math.abs(o[0] - 120) < 1e-5 && Math.abs(o[1] - 10) < 1e-5 && Math.abs(applyPoint(pin.tf, [0, 0, 10])[2] - 5) < 1e-5, JSON.stringify(o));
+  // The sub's plate did not move, and making it rigid again puts the pin back.
+  assert.ok(Math.abs(applyPoint(flat.components.find(c => c.id === "S/p")!.tf, [0, 0, 0])[0] - 100) < 1e-9);
+  delete parent.components[1].flexible;
+  assert.ok(Math.abs(applyPoint(flattenSubs(parent).components.find(c => c.id === "S/q")!.tf, [0, 0, 0])[2] - 40) < 1e-9);
+});
+
+test("FR-ASM-003 / FR-IO-011: linked parts are found by path or by name, read again when changed, marked when missing", async () => {
+  const { planLinks, folderPath, hashBytes } = await import("../../src/asm/links");
+  const e = { name: "x", file: "x", doc: stub };
+  const parts: AsmDoc["parts"] = {
+    a: { ...e, link: { path: "parts/a.mcadprt", hash: "1" } },
+    b: { ...e, link: { path: "b.mcadprt", hash: "2" } },
+    c: { ...e, link: { path: "c.step", hash: "3" } },
+    d: { ...e, link: { path: "gone.mcadprt", hash: "4" } },
+    emb: e,
+  };
+  const plan = planLinks(parts, [{ path: "parts/a.mcadprt", hash: "1" }, { path: "b.mcadprt", hash: "9" }, { path: "old/c.step", hash: "3" }]);
+  assert.deepEqual(plan.same, ["a"]);
+  assert.deepEqual([...plan.update.entries()], [["b", { path: "b.mcadprt", hash: "9" }], ["c", { path: "old/c.step", hash: "3" }]]);
+  assert.deepEqual(plan.missing, ["d"]);
+  assert.equal(folderPath("Project/parts/a.mcadprt"), "parts/a.mcadprt");
+  assert.equal(folderPath("a.mcadprt"), "a.mcadprt");
+  assert.equal(await hashBytes(new TextEncoder().encode("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+});

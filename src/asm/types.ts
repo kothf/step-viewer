@@ -20,6 +20,10 @@ export interface Component {
   color?: V3;
   /** 0..1, unset = opaque (FR-ASM-025 transparency). */
   opacity?: number;
+  /** Sub-assembly only (FR-ASM-006): its own mates solve inside this assembly. */
+  flexible?: boolean;
+  /** Flexible sub-assembly: where its components ended up, relative to this component, by child id. */
+  subTfs?: Record<string, Tf>;
 }
 
 /** A component's look in a display state (FR-ASM-025). */
@@ -45,7 +49,10 @@ export interface AsmDoc {
   activeState?: string;
   /** The documents the components use, embedded (FR-ASM-003), by key. An entry with `asm` is a
    * sub-assembly (rigid, FR-ASM-006); its `doc` is then an empty placeholder part. */
-  parts: Record<string, { name: string; file: string; doc: PartDoc; asm?: AsmDoc }>;
+  parts: Record<string, { name: string; file: string; doc: PartDoc; asm?: AsmDoc;
+    /** Linked (FR-ASM-003): the source file by path relative to the assembly's folder and the SHA-256 of
+     * its bytes when last read; `doc`/`asm` are then the last loaded copy. Unset = embedded. */
+    link?: { path: string; hash: string } }>;
 }
 
 /** The kernel's answer for an assembly: one mesh per shown component, and mass properties of the solved assembly. */
