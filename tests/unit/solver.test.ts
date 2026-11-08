@@ -281,3 +281,41 @@ test("pierce: crossing points and the held point (FR-SK-051)", () => {
   const p = s.ents.find(e => e.id === "p") as SkEnt & { t: "point" };
   assert.ok(Math.abs(p.x - 3) < 1e-9 && Math.abs(p.y - 4) < 1e-9);
 });
+
+test("offset relations: the copy follows its source and one dimension (FR-SK-034)", () => {
+  // An L chain p1-p2-p3 held by fixes, offset 2 to its left (inside).
+  const fix = (id: string): SkRel => ({ id: `f${id}`, t: "fix", e: [id] });
+  const lead: SkRel = { id: "o1", t: "offset", e: ["l1", "m1", "p1", "q1"] };
+  const dd = dim("distance", 2, "l1", "m1");
+  const s = sk(
+    [pt("p1", 0, 0), pt("p2", 10, 0), pt("p3", 10, 10), ln("l1", "p1", "p2"), ln("l2", "p2", "p3"),
+      pt("q1", 0, 2), pt("q2", 8, 2), pt("q3", 8, 10), ln("m1", "q1", "q2"), ln("m2", "q2", "q3")],
+    [fix("p1"), fix("p2"), fix("p3"), rel("parallel", "l1", "m1"), rel("parallel", "l2", "m2"), lead, { id: "o2", t: "offset", e: ["l2", "m2", "p3", "q3"], of: "o1" }],
+    [dd],
+  );
+  let r = solve(s);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 0);
+  // The source moves: the copy keeps its distance and its ends stay square to the source ends.
+  const p3 = s.ents.find(e => e.id === "p3") as SkEnt & { t: "point" }, p2 = s.ents.find(e => e.id === "p2") as SkEnt & { t: "point" };
+  p3.x = 14; p2.x = 14;
+  r = solve(s);
+  assert.equal(r.status, "ok");
+  near(P(s, "q2")![0], 12); near(P(s, "q2")![1], 2); near(P(s, "q3")![0], 12); near(P(s, "q3")![1], 10); near(P(s, "q1")![0], 0);
+  // One dimension drives every segment.
+  dd.val.v = 3;
+  r = solve(s);
+  assert.equal(r.status, "ok");
+  near(P(s, "q1")![1], 3); near(P(s, "q2")![0], 11); near(P(s, "q3")![0], 11);
+  // Concentric curves: the radial offset dimension.
+  const c = sk([pt("c", 0, 0), { id: "k", t: "circle", c: "c", r: 10 }, { id: "k2", t: "circle", c: "c", r: 12 }, { id: "k3", t: "circle", c: "c", r: 8 }],
+    [fix("c"), { id: "o", t: "offset", e: ["k", "k2"] }, { id: "o3", t: "offset", e: ["k", "k3"], of: "o" }],
+    [dim("radius", 10, "k"), { ...dim("distance", 2, "k", "k2"), off: true }]);
+  assert.equal(measureDim(c, { t: "distance", e: ["k", "k2"], off: true }), 2);
+  (c.dims[0].val as { v: number }).v = 20;
+  r = solve(c);
+  assert.equal(r.status, "ok");
+  assert.equal(r.dof, 0);
+  const rad = (id: string) => (c.ents.find(e => e.id === id) as SkEnt & { t: "circle" }).r;
+  near(rad("k2"), 22); near(rad("k3"), 18);
+});

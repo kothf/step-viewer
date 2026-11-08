@@ -2108,6 +2108,32 @@ try {
     await click([80, 0]); await click([100, 0]); await click([90, 4]);
     const slot = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const arcs = sk.ents.filter(e => e.t === "arc"); const P = id => sk.ents.find(e => e.id === id); return { arcs: arcs.length, r: arcs.map(a => Math.hypot(P(a.a).x - P(a.c).x, P(a.a).y - P(a.c).y)), tan: sk.rels.filter(r => r.t === "tangent").length, ok: window.__sv.model.editor().info.status }; });
     check(slot.arcs === 2 && slot.r.every(r => near(r, 4, 0.01)) && slot.tan === 4 && slot.ok === "ok", `model 1.20: Slot makes two lines and two R4 end arcs, tangent (${JSON.stringify(slot)})`);
+    // 1.237.0 (FR-SK-034): offset both sides with arc caps round the open top line, linked to its source by one dimension.
+    await tool("offset");
+    await mp.evaluate(() => window.__sv.modeller.renderPanel());
+    await mp.waitForSelector('#mc-pm [data-a="oboth"]');
+    await mp.click('#mc-pm [data-a="oboth"]');
+    await mp.waitForSelector('#mc-pm [data-a="ocap"]');
+    const capOpts = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm [data-a="ocap"] option')].map(o => o.value).join("|"));
+    await mp.evaluate(() => { window.__sv.model.editor().offsetDist = 3; });
+    await click([62, 41]);
+    const ob = await mp.evaluate(() => {
+      const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id);
+      const offs = sk.rels.filter(r => r.t === "offset"), lead = offs.find(r => !r.of && r.e[0] === "hz");
+      const dm = lead && sk.dims.find(d => d.e[0] === "hz" && d.e[1] === lead.e[1]);
+      const caps = sk.ents.filter(e => e.t === "arc" && e.c && (e.c === "g" || e.c === "h"));
+      return { offs: offs.filter(r => r.e[0] === "hz").length, linked: offs.filter(r => r.e[0] === "hz" && r.of === lead?.id).length, dim: dm?.val.v, dimId: dm?.id, caps: caps.length, r: caps.map(a => Math.round(Math.hypot(P(a.a).x - P(a.c).x, P(a.a).y - P(a.c).y) * 1000) / 1000) };
+    });
+    // Change the offset dimension to 5: both copies and the caps follow.
+    await mp.evaluate(id => { const ed = window.__sv.model.editor(); ed.sk.dims.find(d => d.id === id).val.v = 5; ed.commit("Offset 5"); }, ob.dimId);
+    await mp.waitForTimeout(200);
+    const ob5 = await mp.evaluate(() => {
+      const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id);
+      const ys = sk.rels.filter(r => r.t === "offset" && r.e[0] === "hz").map(r => { const l = sk.ents.find(e => e.id === r.e[1]); return Math.round(P(l.a).y * 1000) / 1000; }).sort((a, b) => a - b);
+      return { ys, status: window.__sv.model.editor().info.status };
+    });
+    check(capOpts === "none|arc|line" && ob.offs === 2 && ob.linked === 1 && ob.dim === 3 && ob.caps === 2 && ob.r.every(r => near(r, 3, 0.01)) && ob5.ys.join(",") === "35,45" && ob5.status === "ok",
+      `model 1.237: Offset both sides caps the open line with arcs and one dimension drives both copies (${capOpts}, ${JSON.stringify(ob)}, ${JSON.stringify(ob5)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.

@@ -488,7 +488,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-031** (P1, M) Extend to the nearest intersection.
 - **FR-SK-032** (P1, M) Split entity at a point.
 - **FR-SK-033** (P1, M) Sketch fillet (radius) and sketch chamfer (distance, distance-angle) at a corner, keeping relations and adding a radius/distance dimension.
-- **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1).
+- **FR-SK-034** (P1, M) Offset entities: selected chain or loop, distance, side, both sides, cap ends (arc/line); keeps an offset relation so the result follows the source (P2) or is static (P1). *Done: static copy (1.20.0); both sides, arc/line caps and linked offsets (offset relations + one dimension) in 1.237.0.*
 - **FR-SK-035** (P1, M) Convert entities (project model edges, loops of a face, or other sketches' entities into this sketch) with an "on edge" relation that follows the model.
 - **FR-SK-036** (P2, M) Intersection curve: intersection of the sketch plane with selected faces/bodies.
 - **FR-SK-037** (P2, M) Mirror entities about a line (adds symmetric relations); dynamic mirror while drawing.
