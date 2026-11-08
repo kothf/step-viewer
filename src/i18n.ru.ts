@@ -2842,6 +2842,9 @@ export const RU: Record<string, string> = {
   "Add key here": "Добавить ключ здесь",
   "Paste here": "Вставить здесь",
   "Key point": "Ключевая точка",
+  "Zoom in on the timeline": "Увеличить шкалу времени",
+  "Zoom out on the timeline": "Уменьшить шкалу времени",
+  "Fit the whole study": "Показать всё исследование",
   "Constant speed": "Постоянная скорость",
   "Oscillating": "Колебательный",
   "Amplitude": "Амплитуда",
@@ -3250,4 +3253,6 @@ export const RU: Record<string, string> = {
   "Each guide curve must touch every profile.": "Каждая направляющая кривая должна касаться всех профилей.",
   "Each guide curve must run from the first profile to the last.": "Каждая направляющая кривая должна идти от первого профиля до последнего.",
   "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
+  // 1.122.0: shaded drawing views (FR-DRW-010).
+  "Shaded with edges": "Тонировка с рёбрами",
 };

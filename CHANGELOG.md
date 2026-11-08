@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.124.0] - 2026-11-08
+## [1.130.0] - 2026-11-08
 
 ### Added
 
@@ -20,6 +20,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Tab**: on a part with a base flange, Base Flange/Tab turns a closed sketch drawn beside a flat face (touching its edge) into a tab of the sheet's thickness that joins the flat pattern.
   - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
 
+
+## [1.125.0] - 2026-11-08
+
+### Added
+
+- Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as SolidWorks' timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
+
+## [1.122.0] - 2026-11-08
+
+### Added
+
+- **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
 ## [1.121.0] - 2026-11-08
 
 ### Added
@@ -1130,8 +1142,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.124.0...HEAD
-[1.124.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.124.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.130.0...HEAD
+[1.130.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.130.0
+[1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
 [1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
