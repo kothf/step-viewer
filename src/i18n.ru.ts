@@ -2665,4 +2665,7 @@ export const RU: Record<string, string> = {
   "Untrim works on surface bodies of one face.": "Восстановление работает с поверхностями из одной грани.",
   "The surface has no holes to fill.": "У поверхности нет отверстий для заполнения.",
   "The surface could not be untrimmed.": "Не удалось восстановить поверхность.",
+  // 1.89.0: sketch snapping to model geometry.
+  "Snap to model geometry": "Привязка к геометрии модели",
+  "Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges.": "Точки привязываются к вершинам модели, серединам рёбер и центрам окружностей и остаются связанными с ними; автоматический размер берёт рёбра модели.",
 };
