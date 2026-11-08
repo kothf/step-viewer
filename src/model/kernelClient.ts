@@ -8,7 +8,7 @@ import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { CutItem } from "../weldments/types";
-import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -17,6 +17,8 @@ export interface Rebuild {
   sketches?: Record<string, SketchFeature>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;
+  /** Regions each intersect feature found (FR-BODY-007). */
+  regions?: Record<string, IntersectRegion[]>;
   data: PartData | null;
   faceNames: string[];
   /** How many of the last `faceNames` belong to surface bodies (FRS 9.11); they come after the solids. */

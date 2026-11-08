@@ -44,7 +44,7 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     useStyle(doc.style);
     return doc.sheets.map(sh => {
       const [W, H] = sheetSize(sh);
-      const ctx = { topo: facts.topo, holes: facts.holes, items: facts.items, box: facts.box, dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null };
+      const ctx = { topo: facts.topo, holes: facts.holes, threads: facts.threads ?? [], sketches: facts.sketches ?? [], items: facts.items, box: facts.box, dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null };
       return { name: sh.name, W, H, prims: composeSheet(sh, fieldsOf(doc, sh, mass), k.cache, facts.box, label, ctx).prims };
     });
   } finally { k.stop(); }
