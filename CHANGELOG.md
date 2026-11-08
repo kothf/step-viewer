@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.171.0] - 2026-11-08
+## [1.174.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: trace paths, as SolidWorks' Results → Trace Path. **Add track… → Trace path…** asks for a click on a moving component; the path of that point over the study is drawn in the view with a marker that follows the playhead. Its row (show/hide, delete) opens a panel that plots the distance from the start, the speed or X/Y/Z against time with the playhead on the plot, shows the position and speed at the playhead and the path length, and saves the points as CSV (time, X, Y, Z, speed) (FR-FT-122).
+
+## [1.168.0] - 2026-11-08
+
+### Added
+
+- **All-around and field weld flags (FR-FT-121).** A fillet bead's panel adds **Weld all around** and **Field weld**: the weld symbol in the view then shows the ISO 2553 circle (○) and the site-weld flag (⚑), as in ○ ⚑ ◺ z4.
 
 ## [1.167.0] - 2026-11-08
 
@@ -1350,8 +1356,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.171.0...HEAD
-[1.171.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.171.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.174.0...HEAD
+[1.174.0]: https://github.com/kothf/step-viewer/compare/v1.168.0...v1.174.0
+[1.168.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.168.0
 [1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0
 [1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
 [1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0
