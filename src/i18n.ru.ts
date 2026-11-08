@@ -755,6 +755,8 @@ export const RU: Record<string, string> = {
   "Direction 2": "Направление 2",
   "Depth 2": "Глубина 2",
   "Line {n}": "Отрезок {n}",
+  "Arc {n}": "Дуга {n}",
+  "Curved members can't be trimmed or extended.": "Гнутые элементы нельзя обрезать или удлинять.",
   "construction": "вспомогательный",
   "Edges": "Рёбра",
   "click edges or faces in the view": "щёлкайте рёбра или грани в окне",

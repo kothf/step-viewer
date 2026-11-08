@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Check-Heal feature (FR-FT-131)** in Sweep ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
 
+## [1.120.0] - 2026-11-08
+
+### Added
+
+- **Curved structural members (FR-FT-121).** Arcs in a Structural Member's path sketch now make bent members: the profile is revolved along the arc, and the cut list gives the arc length. Where a line runs on smoothly from an arc nothing is cut. At a sharp corner the line runs through the arc, and two arcs meet in a mitre. The segment list and the Corners group show arcs as "Arc n" and lines as "Line n".
+
 ## [1.119.0] - 2026-11-08
 
 ### Added
@@ -1096,7 +1102,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.122.0...HEAD
-[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.122.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.122.0
+[1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
 [1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
