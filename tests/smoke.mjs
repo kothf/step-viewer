@@ -3224,6 +3224,15 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
+    // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
+    [x, y] = await at(top.id, -45, -25);
+    await dp.mouse.click(x, y);
+    await dp.click('#drw .drw-props [data-style="shadedEdges"]');
+    await ready();
+    const shadeP = await dp.evaluate(() => { const p = window.__sv.drw.prims(); return { tris: p.filter(q => q.layer === "SHADE").length, greys: new Set(p.filter(q => q.layer === "SHADE").map(q => q.gray)).size, svg: /data-l="SHADE"/.test(window.__sv.drw.svg()), dxf: /\nSHADE\n/.test(window.__sv.drw.dxf()) }; });
+    vs = await views();
+    check(vs.find(v => v.id === top.id)?.style === "shadedEdges" && shadeP.tris > 20 && shadeP.svg && !shadeP.dxf,
+      `drawing: a view shaded with edges draws grey triangles under its lines; DXF leaves the shading out (${JSON.stringify(shadeP)})`);
     // DXF has the hatch on its own layer; Russian labels; a saved drawing keeps the views.
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);

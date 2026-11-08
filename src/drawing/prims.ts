@@ -5,13 +5,14 @@
 /** Line types (ISO 128): thick visible, thin, hidden (dashed), centre (long dash dot), phantom (long dash double dot). */
 export type Pen = "thick" | "thin" | "hidden" | "center" | "frame" | "phantom";
 /** DXF layers / SVG classes. */
-export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT" | "THREAD" | "PHANTOM";
+export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT" | "THREAD" | "PHANTOM" | "SHADE";
 
 export type Prim =
   | { t: "l"; p: [number, number, number, number]; pen: Pen; layer: Layer }
   /** Counter-clockwise arc from a0 to a1 (radians). */
   | { t: "a"; o: [number, number]; r: number; a0: number; a1: number; pen: Pen; layer: Layer }
-  | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean; fill?: boolean }
+  /** `gray` (0 black … 1 white): a shaded view's filled triangle (FR-DRW-010), drawn in that grey with no outline. */
+  | { t: "p"; p: number[]; pen: Pen; layer: Layer; closed?: boolean; fill?: boolean; gray?: number }
   /** Text: baseline point, height in mm, horizontal alignment, optional rotation (degrees, CCW). */
   | { t: "t"; x: number; y: number; s: string; h: number; al: "l" | "c" | "r"; layer: Layer; bold?: boolean; rot?: number }
   /** An image (a title block logo): bottom-left corner, size in mm, a PNG/JPEG data URL; DXF leaves it out. */

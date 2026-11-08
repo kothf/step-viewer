@@ -171,8 +171,11 @@ export function staircase(legs: CutLeg[], m: [number, number]): { pts: number[];
 export interface Stair { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }
 
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; exclude?: string[]; key: string } {
-  if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewReq(sheet, p, depth + 1); }
+export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; exclude?: string[]; shade?: boolean; key: string } {
+  if (v.kind === "detail" && v.parent && depth < 20) {
+    const p = findView(sheet, v.parent);
+    if (p) { const r = viewReq(sheet, p, depth + 1); return isShaded(v) && !r.p && !r.shade ? { ...r, shade: true, key: `${r.key}|sh` } : r; }
+  }
   const view = viewDir(sheet, v);
   if (v.kind === "section" && v.parent && v.line) {
     const par = findView(sheet, v.parent);
@@ -200,8 +203,11 @@ export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDi
     const { n } = viewAxes(view), { poly, d } = v.broken;
     return { view, p: mul(n, d), poly, key: `${dirKey(view)}|bo|${d.toFixed(6)}|${poly.map(c => c.toFixed(4)).join(",")}` };
   }
-  return { view, key: dirKey(view) };
+  return isShaded(v) ? { view, shade: true, key: `${dirKey(view)}|sh` } : { view, key: dirKey(view) };
 }
+
+/** Shaded display styles (FR-DRW-010); section and broken-out views stay line drawings. */
+export function isShaded(v: DrawingView): boolean { return (v.style === "shaded" || v.style === "shadedEdges") && v.kind !== "section"; }
 
 /** A component moved for an alternate position: its id and the world transform (3×4 row-major). */
 export interface AltReq { view: ViewDir; moves: { comp: string; tf: number[] }[]; key: string }
