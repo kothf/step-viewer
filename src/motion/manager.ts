@@ -24,6 +24,9 @@ const DEG = Math.PI / 180;
 /** The selected key (by index into the track's sorted keys) or motor bar. */
 type Sel = { track: string; key?: number } | null;
 type AnyKey = Key | CamKey | PoseKey;
+/** A key named by its track and time (times are unique on a track). */
+type KeyRef = { track: string; t: number };
+const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
@@ -37,9 +40,14 @@ export class MotionManager {
   time = 0;
   playing = false;
   speed = 1;
-  sel: Sel = null;
-  /** The copied key (Ctrl+C or the key menu) and the kind of track it came from. */
-  private clip: { kind: Track["kind"]; unit: string; key: AnyKey } | null = null;
+  private _sel: Sel = null;
+  /** More selected keys (Ctrl/Shift+click, a box on the timeline, Ctrl+A), by track and time; `sel` is the one the panel shows. */
+  private more: KeyRef[] = [];
+  /** The selected key or motor; setting it drops the other selected keys. */
+  get sel(): Sel { return this._sel; }
+  set sel(v: Sel) { this._sel = v; this.more = []; }
+  /** The copied keys (Ctrl+C or the key menu): each with its track, the unit of that track and its time after the first. */
+  private clip: { items: { track: string; unit: string; dt: number; key: AnyKey }[] } | null = null;
   /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
   zoom = 1;
   /** Solved component transforms per frame, from frame 0 up. */
@@ -193,7 +201,12 @@ export class MotionManager {
     const tr = this.study.tracks.find(k => k.id === sel.track);
     if (!tr) return;
     if (sel.key == null || tr.kind === "motor") { this.deleteTrack(tr.id); return; }
+    const ps = this.picked();
     this.sel = null;
+    if (ps.length > 1) {
+      this.edit(s => { for (const k of s.tracks) if (k.kind !== "motor") (k as { keys: AnyKey[] }).keys = (k.keys as AnyKey[]).filter(x => !ps.some(p => p.track === k.id && same(p.t, x.t))); });
+      return;
+    }
     this.edit(s => { const k = s.tracks.find(x => x.id === sel.track); if (k && k.kind !== "motor") { const keys = sortKeys(k.keys as Key[]); keys.splice(sel.key!, 1); (k as { keys: unknown[] }).keys = keys; } });
   }
 
@@ -465,6 +478,7 @@ export class MotionManager {
     const step = shown <= 0.6 ? 0.05 : shown <= 1.5 ? 0.1 : shown <= 3 ? 0.5 : shown <= 20 ? 1 : shown <= 60 ? 5 : 10;
     let ticks = "";
     for (let v = 0; v <= s.duration + 1e-9; v += step) ticks += `<span class="mo-tick" style="left:${this.x(v)}">${esc(fmt(v, 1))}</span>`;
+    const picked = this.picked();
     const names = s.tracks.map(k => {
       const l = this.trackLabel(k), sel = this.sel?.track === k.id && this.sel.key == null;
       return `<div class="mo-name${sel ? " sel" : ""}${k.off ? " off" : ""}" data-track="${esc(k.id)}"><span class="mo-ico" aria-hidden="true">${l.icon}</span><span class="mo-kind">${esc(l.kind)}</span>${l.name ? `<span class="mo-tn" translate="no">${esc(l.name)}</span>` : ""}`
@@ -476,7 +490,7 @@ export class MotionManager {
       else {
         const keys = sortKeys(k.keys as AnyKey[]);
         if (keys.length > 1) inner += `<span class="mo-span" style="left:${this.x(keys[0].t)};width:calc(${this.x(keys[keys.length - 1].t - keys[0].t)})"></span>`;
-        inner += keys.map((key, i) => `<button class="mo-key${key.interp ? ` i-${key.interp}` : ""}${this.sel?.track === k.id && this.sel.key === i ? " sel" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
+        inner += keys.map((key, i) => `<button class="mo-key${key.interp ? ` i-${key.interp}` : ""}${picked.some(p => p.track === k.id && same(p.t, key.t)) ? " sel" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
       }
       return `<div class="mo-lane${k.off ? " off" : ""}" data-lane="${esc(k.id)}">${inner}</div>`;
     }).join("");
@@ -557,6 +571,14 @@ export class MotionManager {
     }
     const keys = sortKeys(tr.keys as Key[]), key = keys[sel.key ?? -1];
     if (!key) return "";
+    const n = this.picked().length;
+    if (n > 1) {
+      const all = this.picked().map(p => (this.study.tracks.find(k => k.id === p.track) as { keys: AnyKey[] }).keys.find(x => same(x.t, p.t))?.interp ?? "linear");
+      const one = all.every(v => v === all[0]) ? all[0] : "";
+      return `<span class="mo-multi">${esc(t("{n} keys selected", { n }))}</span>`
+        + `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="interp">${one ? "" : `<option value="" selected disabled>—</option>`}${INTERPS.map(([v, l]) => `<option value="${v}"${one === v ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+        + `<span class="muted">${esc(t("Drag one of them or press Alt+←/→ to move them together."))}</span>`;
+    }
     if (tr.kind === "camera") return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp) + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
     if (tr.kind === "pose") {
       const pk = key as unknown as PoseKey;
@@ -656,23 +678,51 @@ export class MotionManager {
       ruler.addEventListener("pointerup", up);
     });
     // Lanes: a click moves the playhead, a double-click adds a key there.
-    on(".mo-lane", "pointerdown", (e, el) => { if ((e.target as HTMLElement) === el) this.seek(this.snap(tAt(e as PointerEvent, el))); });
+    // Dragging on an empty part of the tracks draws a box that selects the keys in it (Ctrl or Shift adds to the selection).
+    on(".mo-lane", "pointerdown", (e, el) => {
+      const pe = e as PointerEvent;
+      if ((e.target as HTMLElement) !== el || pe.button !== 0) return;
+      this.seek(this.snap(tAt(pe, el)));
+      const x0 = pe.clientX, y0 = pe.clientY, add = pe.ctrlKey || pe.metaKey || pe.shiftKey;
+      el.setPointerCapture(pe.pointerId);
+      let box: HTMLElement | null = null;
+      const rect = (ev: PointerEvent) => ({ l: Math.min(x0, ev.clientX), r: Math.max(x0, ev.clientX), t: Math.min(y0, ev.clientY), b: Math.max(y0, ev.clientY) });
+      const move = (ev: PointerEvent) => {
+        if (!box && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
+        if (!box) { box = document.createElement("div"); box.className = "mo-box"; document.body.appendChild(box); }
+        const b = rect(ev);
+        Object.assign(box.style, { left: `${b.l}px`, top: `${b.t}px`, width: `${b.r - b.l}px`, height: `${b.b - b.t}px` });
+      };
+      const up = (ev: PointerEvent) => {
+        el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+        if (!box) return;
+        box.remove();
+        this.boxSelect(rect(ev), add);
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", up);
+    });
     on(".mo-lane", "dblclick", (e, el) => { if ((e.target as HTMLElement) === el) this.addKey(el.dataset.lane!, tAt(e as unknown as PointerEvent, el)); });
     // Keys and motor bars: select, drag along the timeline.
-    const drag = (el: HTMLElement, apply: (dt: number) => void) => {
+    const drag = (el: HTMLElement, apply: (dt: number) => void, group: () => HTMLElement[] = () => [el]) => {
       el.addEventListener("pointerdown", e => {
         e.stopPropagation();
-        const lane = el.parentElement!, r = lane.getBoundingClientRect(), x0 = e.clientX;
+        const lane = el.parentElement!, r = lane.getBoundingClientRect(), x0 = e.clientX, els = group();
         el.setPointerCapture(e.pointerId);
         let dt = 0;
-        const move = (ev: PointerEvent) => { dt = ((ev.clientX - x0) / Math.max(1, r.width)) * s.duration; el.style.transform = `translateX(${ev.clientX - x0}px)`; };
-        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.style.transform = ""; if (Math.abs(dt) * s.fps >= 0.5) apply(dt); };
+        const move = (ev: PointerEvent) => { dt = ((ev.clientX - x0) / Math.max(1, r.width)) * s.duration; for (const g of els) g.style.transform = `translateX(${ev.clientX - x0}px)`; };
+        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); for (const g of els) g.style.transform = ""; if (Math.abs(dt) * s.fps >= 0.5) apply(dt); };
         el.addEventListener("pointermove", move);
         el.addEventListener("pointerup", up);
       });
     };
-    on("[data-key]", "click", (_e, el) => { const [id, i] = el.dataset.key!.split(":"); this.sel = { track: id, key: Number(i) }; const k = sortKeys((this.study.tracks.find(x => x.id === id) as { keys: Key[] }).keys)[Number(i)]; if (k) this.seek(k.t); this.render(); });
+    on("[data-key]", "click", (e, el) => {
+      const [id, i] = el.dataset.key!.split(":"), me = e as MouseEvent;
+      if (me.ctrlKey || me.metaKey || me.shiftKey) { this.toggleKey(id, Number(i)); return; }
+      this.sel = { track: id, key: Number(i) }; const k = sortKeys((this.study.tracks.find(x => x.id === id) as { keys: Key[] }).keys)[Number(i)]; if (k) this.seek(k.t); this.render(); });
+    const inGroup = (el: HTMLElement) => el.classList.contains("sel") && this.picked().length > 1;
     pane.querySelectorAll<HTMLElement>("[data-key]").forEach(el => drag(el, dt => {
+      if (inGroup(el)) { if (this.moveGroup(dt)) { this.render(); this.showAt(this.time); } return; }
       const [id, i] = el.dataset.key!.split(":");
       let idx = Number(i);
       this.edit(st => {
@@ -686,12 +736,12 @@ export class MotionManager {
       });
       this.sel = { track: id, key: idx };
       this.render();
-    }));
+    }, () => inGroup(el) ? [...pane.querySelectorAll<HTMLElement>(".mo-key.sel")] : [el]));
     on("[data-key]", "contextmenu", (e, el) => {
       e.preventDefault();
       const [id, i] = el.dataset.key!.split(":");
-      this.sel = { track: id, key: Number(i) };
-      this.render();
+      // A right-click on one of several selected keys keeps them all (the menu acts on the group).
+      if (!inGroup(el)) { this.sel = { track: id, key: Number(i) }; this.render(); }
       const me = e as MouseEvent;
       this.keyMenu(me.clientX, me.clientY);
     });
@@ -722,6 +772,7 @@ export class MotionManager {
     const bad = () => el?.setAttribute("aria-invalid", "true");
     const tr0 = this.study.tracks.find(k => k.id === sel.track);
     if (!tr0) return;
+    if (p === "interp" && this.picked().length > 1) { this.setInterp(interpOf(raw) ?? "linear"); return; }
     const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
@@ -760,6 +811,15 @@ export class MotionManager {
 
   /** Moves the selected key by `dt` seconds (Alt+←/→, Shift for ten frames), keeping it inside the study and off its neighbours. */
   moveKey(dt: number) {
+    if (this.picked().length > 1) {
+      if (!this.moveGroup(dt)) return;
+      const s = this.selKey();
+      if (s) this.time = s.key.t;
+      this.render();
+      this.showAt(this.time);
+      this.focusSel();
+      return;
+    }
     const sel = this.sel, tr0 = sel && this.study.tracks.find(k => k.id === sel.track);
     if (!sel || sel.key == null || !tr0 || tr0.kind === "motor") return;
     const keys = sortKeys(tr0.keys as { t: number }[]), k = keys[sel.key];
@@ -789,39 +849,136 @@ export class MotionManager {
     return key ? { tr, key } : null;
   }
 
+  /** Every selected key by track and time, the panel's key first. */
+  private picked(): KeyRef[] {
+    const out: KeyRef[] = [], s = this.selKey();
+    if (s) out.push({ track: s.tr.id, t: s.key.t });
+    for (const m of this.more) {
+      const tr = this.study.tracks.find(k => k.id === m.track);
+      if (!tr || tr.kind === "motor" || !(tr.keys as AnyKey[]).some(k => same(k.t, m.t))) continue;
+      if (!out.some(o => o.track === m.track && same(o.t, m.t))) out.push(m);
+    }
+    return out;
+  }
+
+  /** Selects keys by track and time; the first one is shown in the panel. */
+  private pick(list: KeyRef[]) {
+    const tr = list[0] && this.study.tracks.find(k => k.id === list[0].track);
+    if (!tr || tr.kind === "motor") { this.sel = null; return; }
+    this.sel = { track: tr.id, key: sortKeys(tr.keys as AnyKey[]).findIndex(k => same(k.t, list[0].t)) };
+    this.more = list.slice(1);
+  }
+
+  /** Ctrl/Shift+click: adds a key to the selection or takes it out. */
+  toggleKey(trackId: string, idx: number) {
+    const tr = this.study.tracks.find(k => k.id === trackId);
+    const key = tr && tr.kind !== "motor" ? sortKeys(tr.keys as AnyKey[])[idx] : undefined;
+    if (!key) return;
+    const cur = this.picked(), i = cur.findIndex(p => p.track === trackId && same(p.t, key.t));
+    if (i >= 0) cur.splice(i, 1); else cur.unshift({ track: trackId, t: key.t });
+    this.pick(cur);
+    this.render();
+    this.focusSel();
+  }
+
+  /** Ctrl+A: every key of the study. */
+  selectAll() {
+    const cur = this.picked();
+    const all = this.study.tracks.flatMap(k => k.kind === "motor" ? [] : sortKeys(k.keys as AnyKey[]).map(x => ({ track: k.id, t: x.t })));
+    this.pick([...cur, ...all.filter(a => !cur.some(c => c.track === a.track && same(c.t, a.t)))]);
+    this.render();
+  }
+
+  /** Selects the keys a box on the screen touches (`add`: as well as those selected). */
+  private boxSelect(b: { l: number; r: number; t: number; b: number }, add: boolean) {
+    const hit: KeyRef[] = [];
+    this.pane.querySelectorAll<HTMLElement>("[data-key]").forEach(el => {
+      const r = el.getBoundingClientRect();
+      if (r.right < b.l || r.left > b.r || r.bottom < b.t || r.top > b.b) return;
+      const [id, i] = el.dataset.key!.split(":"), tr = this.study.tracks.find(k => k.id === id);
+      const key = tr && tr.kind !== "motor" ? sortKeys(tr.keys as AnyKey[])[Number(i)] : undefined;
+      if (key) hit.push({ track: id, t: key.t });
+    });
+    const cur = add ? this.picked() : [];
+    this.pick([...cur, ...hit.filter(h => !cur.some(c => c.track === h.track && same(c.t, h.t)))]);
+    this.render();
+  }
+
+  /** Moves every selected key by `dt` (whole frames), as far as the study's ends and the keys left behind allow. */
+  private moveGroup(dt: number): boolean {
+    const ps = this.picked(), s = this.study, f = 1 / s.fps;
+    let lo = -Infinity, hi = Infinity;
+    for (const p of ps) {
+      lo = Math.max(lo, -p.t); hi = Math.min(hi, s.duration - p.t);
+      for (const k of (s.tracks.find(x => x.id === p.track) as { keys: AnyKey[] }).keys) {
+        if (ps.some(q => q.track === p.track && same(q.t, k.t))) continue;
+        if (k.t < p.t) lo = Math.max(lo, k.t + f - p.t); else hi = Math.min(hi, k.t - f - p.t);
+      }
+    }
+    let d = Math.round(Math.max(lo, Math.min(hi, dt)) * s.fps) / s.fps;
+    if (d < lo - 1e-9) d += f;
+    if (d > hi + 1e-9) d -= f;
+    if (same(d, 0) || d < lo - 1e-9 || d > hi + 1e-9) return false;
+    this.edit(st => {
+      for (const tr of st.tracks) {
+        if (tr.kind === "motor") continue;
+        const keys = tr.keys as AnyKey[];
+        for (const k of keys) if (ps.some(p => p.track === tr.id && same(p.t, k.t))) k.t += d;
+        (tr as { keys: AnyKey[] }).keys = sortKeys(keys);
+      }
+    });
+    this.pick(ps.map(p => ({ track: p.track, t: p.t + d })));
+    return true;
+  }
+
+  private focusSel() {
+    const sel = this.sel;
+    if (sel?.key != null) (this.pane.querySelector(`[data-key="${CSS.escape(`${sel.track}:${sel.key}`)}"]`) as HTMLElement | null)?.focus();
+  }
+
   /** What a key's value means on a track: keys paste only onto tracks of the same kind and unit. */
   private unitOf(tr: Track): string {
     if (tr.kind !== "mate") return tr.kind;
     return (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate)?.type === "angle" ? "mate:angle" : "mate:distance";
   }
 
-  /** Copies the selected key (Ctrl+C). */
+  /** Copies the selected keys (Ctrl+C). */
   copyKey() {
-    const s = this.selKey();
-    if (!s) return;
-    this.clip = { kind: s.tr.kind, unit: this.unitOf(s.tr), key: structuredClone(s.key) };
-    toast(t("Key copied"));
+    const ps = this.picked();
+    if (!ps.length) return;
+    const t0 = Math.min(...ps.map(p => p.t));
+    this.clip = {
+      items: ps.map(p => {
+        const tr = this.study.tracks.find(k => k.id === p.track)!;
+        return { track: p.track, unit: this.unitOf(tr), dt: p.t - t0, key: structuredClone((tr as { keys: AnyKey[] }).keys.find(k => same(k.t, p.t))!) };
+      }),
+    };
+    toast(ps.length > 1 ? t("{n} keys copied", { n: ps.length }) : t("Key copied"));
   }
 
-  /** Can the copied key go on this track? */
+  /** Keys copied from one track go on any track of the same unit; keys from several tracks go back on their own tracks. */
+  private oneTrackClip(): boolean { return !!this.clip && new Set(this.clip.items.map(i => i.track)).size === 1; }
+
+  /** Can the copied keys be pasted (onto this track, when they came from one track)? */
   private canPaste(trackId: string): boolean {
-    const tr = this.study.tracks.find(k => k.id === trackId);
-    return !!(this.clip && tr && tr.kind !== "motor" && this.unitOf(tr) === this.clip.unit);
+    if (!this.clip) return false;
+    const fits = (id: string, unit: string) => { const tr = this.study.tracks.find(k => k.id === id); return !!tr && tr.kind !== "motor" && this.unitOf(tr) === unit; };
+    return this.oneTrackClip() ? fits(trackId, this.clip.items[0].unit) : this.clip.items.every(i => fits(i.track, i.unit));
   }
 
-  /** Pastes the copied key onto a track at `at` (Ctrl+V: the selected track at the playhead), replacing a key there. */
+  /** Pastes the copied keys at `at` (Ctrl+V: the playhead), the first onto `trackId` when they came from one track, replacing keys there. */
   pasteKey(trackId: string, at: number) {
     if (!this.clip) return;
-    if (!this.canPaste(trackId)) { toast(t("The copied key is for another kind of track."), "warn"); return; }
-    const tq = this.snap(at), key = { ...structuredClone(this.clip.key), t: tq };
-    let idx = 0;
+    if (!this.canPaste(trackId)) { toast(this.oneTrackClip() ? t("The copied key is for another kind of track.") : t("Some tracks of the copied keys are gone."), "warn"); return; }
+    const tq = this.snap(at), one = this.oneTrackClip(), d = this.study.duration;
+    const put = this.clip.items.map(i => ({ track: one ? trackId : i.track, t: this.snap(tq + i.dt), key: i.key })).filter(p => p.t <= d + 1e-9);
     this.edit(st => {
-      const tr = st.tracks.find(x => x.id === trackId) as { keys: AnyKey[] } | undefined;
-      if (!tr) return;
-      tr.keys = sortKeys([...tr.keys.filter(x => Math.abs(x.t - tq) > 1e-9), key]);
-      idx = tr.keys.indexOf(key);
+      for (const p of put) {
+        const tr = st.tracks.find(x => x.id === p.track) as { keys: AnyKey[] } | undefined;
+        if (tr) tr.keys = sortKeys([...tr.keys.filter(x => !same(x.t, p.t)), { ...structuredClone(p.key), t: p.t }]);
+      }
     });
-    this.sel = { track: trackId, key: idx };
+    this.pick(put.map(p => ({ track: p.track, t: p.t })));
     this.time = tq;
     this.render();
     this.showAt(tq);
@@ -829,13 +986,14 @@ export class MotionManager {
 
   /** Sets the selected key's interpolation (how the motion runs into it). */
   setInterp(i: Interp) {
-    const sel = this.sel;
-    if (!this.selKey() || !sel) return;
+    const ps = this.picked();
+    if (!ps.length) return;
     this.edit(st => {
-      const tr = st.tracks.find(x => x.id === sel.track) as { keys: AnyKey[] } | undefined;
-      const k = tr && sortKeys(tr.keys)[sel.key!];
-      if (!k) return;
-      if (i === "linear") delete k.interp; else k.interp = i;
+      for (const p of ps) {
+        const k = (st.tracks.find(x => x.id === p.track) as { keys: AnyKey[] } | undefined)?.keys.find(x => same(x.t, p.t));
+        if (!k) continue;
+        if (i === "linear") delete k.interp; else k.interp = i;
+      }
     });
     this.render();
   }
@@ -844,7 +1002,8 @@ export class MotionManager {
   private keyMenu(x: number, y: number) {
     const s = this.selKey(), sel = this.sel;
     if (!s || !sel) return;
-    const cur = s.key.interp ?? "linear";
+    const all = this.picked().map(p => (this.study.tracks.find(k => k.id === p.track) as { keys: AnyKey[] }).keys.find(x => same(x.t, p.t))?.interp ?? "linear");
+    const cur = all.every(v => v === all[0]) ? all[0] : "";
     this.menu([
       ...INTERPS.map(([v, l]) => ({ label: t(l), checked: cur === v, run: () => this.setInterp(v) })),
       null,
@@ -899,6 +1058,8 @@ export class MotionManager {
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.key === " ") { e.preventDefault(); this.play(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && this.sel) { e.preventDefault(); this.deleteSel(); }
+    else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "a") { e.preventDefault(); this.selectAll(); }
+    else if (e.key === "Escape" && this.picked().length) { e.preventDefault(); this.sel = null; this.render(); }
     else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c" && this.sel?.key != null) { e.preventDefault(); this.copyKey(); }
     else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v" && this.sel) { e.preventDefault(); this.pasteKey(this.sel.track, this.time); }
     else if ((e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) && this.sel?.key != null) {

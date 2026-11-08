@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.132.0] - 2026-11-08
+
+### Added
+
+- Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
+
 ## [1.125.0] - 2026-11-08
 
 ### Added
@@ -1126,7 +1132,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.125.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.132.0...HEAD
+[1.132.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.132.0
 [1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
 [1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
