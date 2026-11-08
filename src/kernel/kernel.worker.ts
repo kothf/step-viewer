@@ -4,6 +4,7 @@
 // its B-rep kept, so measurements can use exact values and the model can be
 // saved as STEP. The main thread compiles the WASM once and hands the module
 // to the worker; the worker is kept for the next file while it is idle.
+import { cutList, isWeld, type WeldHost } from "../weldments/kernel";
 import { Kernel, type PartProbe } from "./occ";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
@@ -123,6 +124,8 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       }
       if (res.body) props = modeller.props(res.body);
       const bodies = info.map(b => ({ key: b.key, ref: b.ref, volume: b.volume }));
+      // Weldment cut list (FR-FT-121).
+      const cut = res.body && r.doc.features.some(f => isWeld(f) && !f.suppressed) ? cutList(modeller as unknown as WeldHost, info, r.doc, res.frames) : undefined;
       // Preview of the feature at `previewAt` (fillet, chamfer) while its edges are picked on the body before it:
       // only the faces it makes, as a plain triangle list.
       let preview: { position: number[]; status: unknown } | null = null;
@@ -147,7 +150,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         }
         preview = { position, status };
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, cutList: cut, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
       shared ??= new WeakMap();

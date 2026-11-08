@@ -7,6 +7,7 @@ import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
+import type { CutItem } from "../weldments/types";
 import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
@@ -22,6 +23,8 @@ export interface Rebuild {
   sheetFaces?: number;
   /** The part's solid bodies, shown or hidden (FR-BODY-001). */
   bodies?: { key: string; ref: FaceRef; volume: number }[];
+  /** Weldment cut list (FR-FT-121), when the part has weldment features. */
+  cutList?: CutItem[];
   props: BodyProps | null;
   /** Faces made by the previewed feature, and its status (fillet and chamfer previews). */
   preview?: { position: number[]; status?: FeatureStatus } | null;
