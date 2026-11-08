@@ -4721,7 +4721,7 @@ try {
     const gimOk = gim.rx === "60" && [0, 1, 2, 4, 5, 6, 8, 9, 10].every((i, k) => Math.abs(gim.tf[i] - gimWant[k]) < 1e-6);
     await mp.keyboard.press("Escape");
     for (let i = 0; i < 3; i++) { await mp.keyboard.press("ControlOrMeta+z"); await shown(3); }
-    check(gimOk, `asm 1.187: Move component keeps the typed X turn at -90° about Y (${JSON.stringify(gim)})`);
+    check(gimOk, `asm 1.189: Move component keeps the typed X turn at -90° about Y (${JSON.stringify(gim)})`);
     // Hide the cube from its row (it still counts in the mass properties), then undo.
     await mp.hover("#asm-tree .ft-comp >> nth=2");
     await mp.click('#asm-tree .ft-comp >> nth=2 >> [data-a="hide"]');
@@ -5565,9 +5565,14 @@ try {
       const plot = !!document.querySelector("#motion .mo-trace-plot svg polyline"), row = !!document.querySelector(`#motion .mo-name[data-trace="${tr0.id}"]`);
       const psel = document.querySelector('#motion select[data-tr="plot"]'); if (psel) { psel.value = "speed"; psel.dispatchEvent(new Event("change")); }
       const speedPlot = m.study.traces.at(-1).plot;
+      // Results → Plot: acceleration and the component's angle (the pose key turns the pin 90° about Z by the end).
+      const plotAs = q => { const el = document.querySelector('#motion select[data-tr="plot"]'); if (el) { el.value = q; el.dispatchEvent(new Event("change")); } return { plot: m.study.traces.at(-1).plot, svg: !!document.querySelector("#motion .mo-trace-plot svg polyline"), read: document.querySelector("#motion .mo-tread")?.textContent ?? "" }; };
+      const accelPlot = plotAs("accel"), anglePlot = plotAs("angle"), angles = m.traceAngle(tr0.id);
+      const angleOk = angles.length === path.length && Math.abs(angles[0]) < 1e-9 && angles.every(Number.isFinite);
+      const angleEnd = angles.at(-1);
       const lines = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr0.id));
       const len = path.reduce((s2, q, k) => k ? s2 + Math.hypot(q[0] - path[k - 1][0], q[1] - path[k - 1][1], q[2] - path[k - 1][2]) : 0, 0);
-      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, lines };
+      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5680,8 +5685,10 @@ try {
     const tc = pose.trace;
     check(tc?.pickedTrace.picking === true && tc.pickedTrace.after === false && tc.pickedTrace.n === 1 && tc.n === tc.want
       && tc.start.every(v => Math.abs(v) < 0.01) && Math.abs(tc.end[0]) < 0.01 && Math.abs(tc.end[1]) < 0.01 && Math.abs(tc.end[2] - 20) < 0.01
-      && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone,
-      `motion study: a trace path follows a picked point, is drawn, plotted and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
+      && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
+      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle) and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
@@ -8074,6 +8081,22 @@ try {
     await settle();
     const moved = gs.key === "d1" ? gd.d1 : gd.d2, kept = gs.key === "d1" ? gd.d2 : gd.d1, was = gs.key === "d1" ? 50 : 70;
     check(gs.n === 2 && JSON.stringify(gs.keys) === '["d1","d2"]' && JSON.stringify(gs.labels) === '["50 mm","70 mm"]' && moved > was + 5 && moved < was + 40 && kept === 120 - was, `weldments: gusset leg arrows (${JSON.stringify({ gs, gd })})`);
+    // Gusset location: at the start, centred on it and moved in by an offset.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wloc"]', "start");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgside"]', "both");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wgOffset"]');
+    await settle();
+    const gLoc = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { loc: d?.loc, side: d?.side, off: d?.offset?.v, field: !!document.querySelector('#mc-pm [data-num="offset"]') }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const glBad = await mp.evaluate(() => window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"));
+    check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();

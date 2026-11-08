@@ -15,7 +15,7 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
-import { TRACE_COLORS, TRACE_PLOTS, pathLength, plotSvg, speeds, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { TRACE_COLORS, TRACE_PLOTS, accels, pathLength, plotSvg, plotUnit, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -57,6 +57,8 @@ export class MotionManager {
   private traceKey = "";
   /** Each trace's world points per frame (by trace id). */
   private tracePts = new Map<string, V3[]>();
+  /** Each trace's component angle (degrees from the first frame) per frame (by trace id). */
+  private traceAng = new Map<string, number[]>();
   /** The selected key or motor; setting it drops the other selected keys. */
   get sel(): Sel { return this._sel; }
   set sel(v: Sel) { this._sel = v; this.more = []; if (v) this.selTrace = null; }
@@ -370,6 +372,12 @@ export class MotionManager {
   }
 
   /** A trace's points over the whole study (every frame solved). */
+  /** A trace's component angle (degrees from the start, unwrapped) over the whole study. */
+  traceAngle(id: string): number[] {
+    this.tracePath(id);
+    return this.traceAng.get(id) ?? [];
+  }
+
   tracePath(id: string): V3[] {
     this.ensure(frameCount(this.study) - 1);
     this.syncTraces(Math.round(this.time * this.study.fps));
@@ -379,19 +387,21 @@ export class MotionManager {
   /** Draws the paths (solving every frame once when the study or the traces change) and moves the markers to frame `i`. */
   private syncTraces(i: number) {
     const tr = this.traces, g = this.traceGroup;
-    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); return; }
+    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); return; }
     const s = this.study, n = frameCount(s);
     const key = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off), tr]);
     if (key !== this.traceKey) {
       this.ensure(n - 1);
       this.traceKey = key;
       this.tracePts.clear();
+      this.traceAng.clear();
       for (const c of [...g.children]) { c.removeFromParent(); const o = c as THREE.Line; o.geometry?.dispose(); (o.material as THREE.Material)?.dispose(); }
       const all: Record<string, Tf>[] = [];
       for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
       for (const x of tr) {
         const pts = tracePoints(all, x.comp, x.p);
         this.tracePts.set(x.id, pts);
+        this.traceAng.set(x.id, traceAngles(all, x.comp));
         if (x.off || pts.length < 1) continue;
         const geo = new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(q[0], q[1], q[2])));
         const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: x.color, depthTest: false, transparent: true }));
@@ -422,10 +432,13 @@ export class MotionManager {
   private plotHtml(x: TracePath, i: number): string {
     const pts = this.tracePts.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
     if (!pts.length) return "";
-    const vals = traceSeries(pts, s.fps, q), j = Math.min(pts.length - 1, Math.max(0, i)), p = pts[j], sp = speeds(pts, s.fps)[j];
-    const unit = q === "speed" ? t("mm/s") : "mm", label = t(TRACE_PLOTS.find(([k]) => k === q)![1]);
-    return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label))
-      + `<span class="mo-tread muted">${esc(t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(j / s.fps), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(sp) }))}</span>`;
+    const ang = this.traceAng.get(x.id) ?? [], vals = traceSeries(pts, s.fps, q, ang), j = Math.min(pts.length - 1, Math.max(0, i)), p = pts[j];
+    const unit = t(plotUnit(q)), label = t(TRACE_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance from start");
+    const read = q === "angle" || q === "aspeed"
+      ? t("At {t} s: angle {a}°; angular speed {w}°/s", { t: fmt(j / s.fps), a: fmt(ang[j] ?? 0), w: fmt(rates(ang, s.fps)[j] ?? 0) })
+      : t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(j / s.fps), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(speeds(pts, s.fps)[j]) })
+        + (q === "accel" ? " " + t("acceleration {a} mm/s²", { a: fmt(accels(pts, s.fps)[j]) }) : "");
+    return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
   }
 
   private traceProps(x: TracePath): string {
@@ -433,7 +446,7 @@ export class MotionManager {
     return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${TRACE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
       + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
-      + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed)"))}">CSV</button>`
+      + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
   }
@@ -815,7 +828,7 @@ export class MotionManager {
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
-      if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
+      if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps, this.traceAngle(x.id))], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
     });
     on("select[data-mo=mode]", "change", (_e, el) => this.edit(st => { st.play = (el as HTMLSelectElement).value as MotionStudy["play"]; }));
     on("select[data-mo=speed]", "change", (_e, el) => { this.speed = Number((el as HTMLSelectElement).value); if (this.playing) { this.pause(); this.play(); } });
