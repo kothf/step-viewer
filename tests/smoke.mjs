@@ -3470,6 +3470,32 @@ try {
     const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
     await dp.keyboard.press("Escape");
+    // 1.99.0 alternate position (FR-DRW-015): select the top view, pick Pin<1>'s circle, drop that point 30 mm higher: the pin is drawn again in phantom lines.
+    [x, y] = await at(top, -45, -25);
+    await dp.mouse.click(x, y);
+    await dp.click('#drw .drw-props [data-a="altpos"]');
+    [x, y] = await at(top, 34, 0);
+    await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top, 34, 30);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    const alt = await dp.evaluate(id => JSON.parse(JSON.stringify(window.__sv.drw.doc().sheets[0].views.find(v => v.id === id).alt ?? null)), top);
+    const ph = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM" && p.pen === "phantom"));
+    const phc = ph.find(p => p.t === "a" && p.a1 - p.a0 > 6);
+    const tpl = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return { x: p.x, y: p.y, s: p.s, uc: p.uc, vc: p.vc }; }, top);
+    const want = [tpl.x + (30 - tpl.uc) * tpl.s, tpl.y + (30 - tpl.vc) * tpl.s];
+    check(alt?.length === 1 && alt[0].comp === "c2" && Math.abs(alt[0].dv - 30) < 1 && Math.abs(alt[0].du) < 1 && phc && Math.abs(phc.r - 4 * tpl.s) < 0.05 && Math.hypot(phc.o[0] - want[0], phc.o[1] - want[1]) < 1.5,
+      `drawing: alternate position draws the moved pin in phantom lines (${JSON.stringify([alt, ph.length, phc?.o, want])})`);
+    // Typing a turn keeps the circle where it is (it turns about its own centre line seen end-on).
+    await dp.fill('#drw .drw-props [data-v="alt:0:ang"]', "90");
+    await dp.keyboard.press("Enter");
+    await ready();
+    const phc2 = await dp.evaluate(() => window.__sv.drw.prims().find(p => p.layer === "PHANTOM" && p.t === "a" && p.a1 - p.a0 > 6) ?? null);
+    await dp.click('#drw .drw-props [data-a="altrm"]');
+    await ready();
+    const left = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM").length);
+    check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
+    await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
     await dp.click('#drw [data-a="back"]');

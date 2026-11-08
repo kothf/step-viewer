@@ -134,6 +134,35 @@ export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDi
   return { view, key: dirKey(view) };
 }
 
+/** A component moved for an alternate position: its id and the world transform (3×4 row-major). */
+export interface AltReq { view: ViewDir; moves: { comp: string; tf: number[] }[]; key: string }
+
+/**
+ * The alternate position lines a view needs (FR-DRW-015), or null: the moved components projected
+ * on their own along the view. A detail view shows its parent's.
+ */
+export function altReq(sheet: Sheet, v: DrawingView, depth = 0): AltReq | null {
+  if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); return p ? altReq(sheet, p, depth + 1) : null; }
+  if (!v.alt?.length || v.kind === "section") return null;
+  const view = viewDir(sheet, v), { x, y, n } = viewAxes(view);
+  const moves = v.alt.map(m => ({ comp: m.comp, tf: altTf(x, y, n, m) }));
+  return { view, moves, key: `${dirKey(view)}|alt|${moves.map(m => `${m.comp}:${m.tf.map(c => c.toFixed(5)).join(",")}`).join(";")}` };
+}
+
+/** A turn by `ang`° about the view normal through `c`, then a move by (du, dv), as a 3×4 transform. */
+export function altTf(x: V3, y: V3, n: V3, m: { du: number; dv: number; ang?: number; c?: [number, number] }): number[] {
+  const a = (m.ang ?? 0) * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a), k = 1 - cs;
+  // Rodrigues: R = cos I + sin [n]x + (1 − cos) n nᵀ.
+  const R = [
+    [cs + n[0] * n[0] * k, n[0] * n[1] * k - n[2] * sn, n[0] * n[2] * k + n[1] * sn],
+    [n[1] * n[0] * k + n[2] * sn, cs + n[1] * n[1] * k, n[1] * n[2] * k - n[0] * sn],
+    [n[2] * n[0] * k - n[1] * sn, n[2] * n[1] * k + n[0] * sn, cs + n[2] * n[2] * k],
+  ];
+  const c = m.c ?? [0, 0], P: V3 = add(mul(x, c[0]), y, c[1]), d: V3 = add(mul(x, m.du), y, m.dv);
+  const t = [0, 1, 2].map(i => P[i] - (R[i][0] * P[0] + R[i][1] * P[1] + R[i][2] * P[2]) + d[i]);
+  return [R[0][0], R[0][1], R[0][2], t[0], R[1][0], R[1][1], R[1][2], t[1], R[2][0], R[2][1], R[2][2], t[2]];
+}
+
 export const dirKey = (d: ViewDir) => [...d.dir, ...d.up].map(v => (Math.abs(v) < 1e-12 ? 0 : v).toFixed(9)).join(",");
 
 /** Standard scales (ISO 5455), largest first. */
