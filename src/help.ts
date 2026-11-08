@@ -106,8 +106,8 @@ const EN: Tab[] = [
 <ul>
   <li><b>Header</b>: open file, the open file's name and status, view controls, language (EN / RU), theme and this help.</li>
   <li><b>Left panel</b>: model tree or PCB layers, and the list of saved measurements. Hide it with <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Tools</b> (3D model, in the header): every measuring tool and the right-panel pages (Properties, Section, Explode, Mass, Export), always in view, next to the display modes, projection and Fit. Units, decimals, measurement colour, mesh quality, origin axes and ambient occlusion are in the <b>Display</b> menu. Hover an icon for its name and key; on narrow windows the tools move to a second row.</li>
-  <li><b>Right panel</b>: the page picked in the header; click the open page again to hide the panel, or press <kbd>Ctrl</kbd>+<kbd>]</kbd>. On a phone, the PCB panels open from the bottom bar.</li>
+  <li><b>Command bar</b> (3D model, under the header): one row of buttons for the tab picked below it. A model file shows <b>Evaluate</b> with every measuring tool; a part adds <b>Features</b>, <b>Sketch</b>, <b>Surfaces</b> and <b>Weldments</b>, an assembly <b>Assembly</b>. Filter, Undo, Redo, Save and STEP sit at the right of the tabs. Entering a sketch shows the Sketch tab, leaving it Features. Keys work whatever tab is shown. The header keeps the display modes, projection, views and the <b>Display</b> menu (units, decimals, measurement colour, mesh quality, origin axes, ambient occlusion).</li>
+  <li><b>Right panel</b>: its tabs at the top pick the page (Properties, Section, Explode, Mass, Export); the panel button in the header or <kbd>Ctrl</kbd>+<kbd>]</kbd> hides and shows it. On a phone, the PCB panels open from the bottom bar.</li>
   <li><b>Status bar</b>: snapping options, the snapped point and its coordinates.</li>
 </ul>
 <h4>Language</h4>
@@ -131,7 +131,7 @@ const EN: Tab[] = [
 <h4>Exact geometry</h4>
 <p>A model opens on its mesh, so you can measure at once. In the background the full OpenCASCADE kernel (about 15 MB, downloaded once and then cached by the browser) reads the file again; when the status bar shows <b>● Exact geometry</b>, volumes, mass, areas, edge and curve lengths, radii, cone angles and curvature come from the true B-rep surfaces and curves. Nothing needs to be switched on.</p>
 <h4>Section</h4>
-<p>Press <b>Section</b> in the header and click a face: a flat face puts the cutting plane on it, a cylinder cuts through its axis. You can also add up to three cutting planes: parallel to XY, YZ or XZ, on a selected planar face, through three picked points, or facing the view. A new plane shows as a see-through sheet with two arrows along its normal: drag either arrow to slide the cut through the model (<b>↕</b> brings the arrows back, <b>⟳</b> swaps them for rotation rings, Esc hides them), or type an offset and angles. Caps fill the cut (with ANSI31 hatching, optionally in each part's colour), and the cut curves can be snapped to for measuring. <b>Snap to cut only</b> limits snapping to the section. <b>DXF</b> and <b>SVG</b> on a plane save its cut curves as a 2D drawing in millimetres, with true circles and arcs (XY, YZ and XZ planes keep the world axes).</p>
+<p>Open the <b>Section</b> tab of the right panel and click a face: a flat face puts the cutting plane on it, a cylinder cuts through its axis. You can also add up to three cutting planes: parallel to XY, YZ or XZ, on a selected planar face, through three picked points, or facing the view. A new plane shows as a see-through sheet with two arrows along its normal: drag either arrow to slide the cut through the model (<b>↕</b> brings the arrows back, <b>⟳</b> swaps them for rotation rings, Esc hides them), or type an offset and angles. Caps fill the cut (with ANSI31 hatching, optionally in each part's colour), and the cut curves can be snapped to for measuring. <b>Snap to cut only</b> limits snapping to the section. <b>DXF</b> and <b>SVG</b> on a plane save its cut curves as a 2D drawing in millimetres, with true circles and arcs (XY, YZ and XZ planes keep the world axes).</p>
 <h4>Exploded view, mass and export</h4>
 <ul>
   <li><b>Exploded view</b> moves parts apart with the slider; <b>Move selected part</b> drags one part with a gizmo.</li>
@@ -223,7 +223,7 @@ const EN: Tab[] = [
   <li><b>Indent</b> (since 1.108.0): pick the target body, then the tool bodies pressed into it. The tools are cut out of the target, grown by the <b>Clearance</b>, and a wall of the <b>Thickness</b> follows their shape on the side they press into, like a stamped plate. <b>Cut</b> leaves only the pocket. The tool bodies stay.</li>
   <li><b>Recognize Holes</b> (since 1.116.0, Sweep ▾): round holes in the body, through or blind with a flat or drilled bottom, are filled by a <b>Delete Face</b> and made again as <b>Hole</b> features, one per face and size, so an imported body gets holes you can resize, move or delete.</li>
   <li><b>Loft guide curves</b> (since 1.119.0): in the Loft panel, <b>Guide curves</b> takes open sketches or curves that touch every profile. The loft's sections grow and shrink so that they pass through the guides: one guide scales them evenly, two or more stretch them towards each guide.</li>
-  <li><b>Check-Heal</b> (since 1.122.0, Sweep ▾): a feature that checks every body and heals it: faces whose edges are closer than the tolerance are sewn, faulty faces are fixed and closed shells become solids. Tick <b>Merge faces that lie on one surface</b> to join split faces. The panel reports free edges, validity and solid bodies before and after.</li>
+  <li><b>Check-Heal</b> (since 1.122.0, Features → Bodies ▾): a feature that checks every body and heals it: faces whose edges are closer than the tolerance are sewn, faulty faces are fixed and closed shells become solids. Tick <b>Merge faces that lie on one surface</b> to join split faces. The panel reports free edges, validity and solid bodies before and after.</li>
   <li><b>Solid Bodies</b> folder at the top of the Features tree: each body with show/hide, colour and delete; double-click a body to rename it. Hidden bodies leave the view but still count in mass properties.</li>
   <li><b>Insert body</b> (Sweep ▾): another MöbiusCAD part, or a STEP, IGES or BREP file, goes into the part as an Imported feature, stored in the part file. Tick <b>Check and heal</b> to sew faces whose edges are closer than the tolerance and close them into solids; the panel reports free edges and validity before and after.</li>
   <li><b>Scale</b> (Sweep ▾): scales the picked bodies (all when none are picked) about their centroid or the origin, by one factor or per axis.</li>
@@ -325,6 +325,7 @@ ${table([
   ["Q", "Construction geometry on / off"],
   ["Enter / Esc", "OK (leave the sketch) / cancel"],
   ["Enter (no command running)", "Repeat the last feature command"],
+  ["Ctrl+K", "Command search: type part of a command's name and press Enter"],
   ["Ctrl+Enter", "OK and start the same command again (📌 in the panel does it every time)"],
   ["Right-click (no drag) in a command", "OK / Cancel menu"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
@@ -369,8 +370,8 @@ const RU: Tab[] = [
 <ul>
   <li><b>Заголовок</b>: открытие файла, имя и состояние открытого файла, управление видом, язык (EN / RU), тема и эта справка.</li>
   <li><b>Левая панель</b>: дерево модели или слои платы и список сохранённых измерений. Скрыть: <kbd>Ctrl</kbd>+<kbd>[</kbd>.</li>
-  <li><b>Инструменты</b> (3D-модель, в заголовке): все инструменты измерения и страницы правой панели (Свойства, Сечение, Разнести, Масса, Экспорт), всегда на виду, рядом с режимами отображения, проекцией и «Вписать». Единицы, знаки, цвет измерения, качество сетки, оси и затенение — в меню <b>Отображение</b>. Наведите на значок, чтобы увидеть название и клавишу; в узком окне инструменты переходят во вторую строку.</li>
-  <li><b>Правая панель</b>: страница, выбранная в заголовке; повторный щелчок по открытой странице скрывает панель, также <kbd>Ctrl</kbd>+<kbd>]</kbd>. На телефоне панели платы открываются с нижней панели.</li>
+  <li><b>Панель команд</b> (3D-модель, под заголовком): один ряд кнопок вкладки, выбранной под ним. Для файла модели — <b>Анализ</b> со всеми инструментами измерения; у детали добавляются <b>Элементы</b>, <b>Эскиз</b>, <b>Поверхности</b> и <b>Сварные конструкции</b>, у сборки — <b>Сборка</b>. Фильтр, Отменить, Повторить, Сохранить и STEP — справа от вкладок. При входе в эскиз открывается вкладка «Эскиз», при выходе — «Элементы». Клавиши работают при любой вкладке. В заголовке остаются режимы отображения, проекция, виды и меню <b>Отображение</b> (единицы, знаки, цвет измерений, качество сетки, оси начала координат, затенение).</li>
+  <li><b>Правая панель</b>: вкладки вверху выбирают страницу (Свойства, Сечение, Разнести, Масса, Экспорт); кнопка панели в заголовке или <kbd>Ctrl</kbd>+<kbd>]</kbd> скрывает и показывает её. На телефоне панели PCB открываются из нижней строки.</li>
   <li><b>Строка состояния</b>: настройки привязки, найденная точка и её координаты.</li>
 </ul>
 <h4>Язык</h4>
@@ -394,7 +395,7 @@ const RU: Tab[] = [
 <h4>Точная геометрия</h4>
 <p>Модель открывается по сетке, так что измерять можно сразу. В фоне полное ядро OpenCASCADE (около 15 МБ, загружается один раз, дальше браузер берёт его из кэша) читает файл ещё раз; когда в строке состояния появится <b>● Точная геометрия</b>, объёмы, масса, площади, длины рёбер и кривых, радиусы, углы конусов и кривизна берутся из настоящих поверхностей и кривых B-rep. Ничего включать не нужно.</p>
 <h4>Сечение</h4>
-<p>Нажмите <b>Сечение</b> в заголовке и щёлкните грань: плоская грань задаёт секущую плоскость по ней, цилиндр режется по своей оси. Также можно добавить до трёх секущих плоскостей: параллельно XY, YZ или XZ, по выбранной плоской грани, через три указанные точки или перпендикулярно взгляду. Новая плоскость показывается полупрозрачной с двумя стрелками по нормали: тяните любую из них, чтобы двигать разрез через модель (<b>↕</b> возвращает стрелки, <b>⟳</b> меняет их на кольца поворота, Esc скрывает), либо введите смещение и углы. Заглушки закрашивают разрез (со штриховкой ANSI31, по желанию цветом детали), а к линиям разреза можно привязываться при измерениях. <b>Привязка только к разрезу</b> ограничивает привязку сечением. Кнопки <b>DXF</b> и <b>SVG</b> у плоскости сохраняют линии разреза как 2D-чертёж в миллиметрах с настоящими окружностями и дугами (у плоскостей XY, YZ и XZ сохраняются мировые оси).</p>
+<p>Откройте вкладку <b>Сечение</b> правой панели и щёлкните грань: плоская грань задаёт секущую плоскость по ней, цилиндр режется по своей оси. Также можно добавить до трёх секущих плоскостей: параллельно XY, YZ или XZ, по выбранной плоской грани, через три указанные точки или перпендикулярно взгляду. Новая плоскость показывается полупрозрачной с двумя стрелками по нормали: тяните любую из них, чтобы двигать разрез через модель (<b>↕</b> возвращает стрелки, <b>⟳</b> меняет их на кольца поворота, Esc скрывает), либо введите смещение и углы. Заглушки закрашивают разрез (со штриховкой ANSI31, по желанию цветом детали), а к линиям разреза можно привязываться при измерениях. <b>Привязка только к разрезу</b> ограничивает привязку сечением. Кнопки <b>DXF</b> и <b>SVG</b> у плоскости сохраняют линии разреза как 2D-чертёж в миллиметрах с настоящими окружностями и дугами (у плоскостей XY, YZ и XZ сохраняются мировые оси).</p>
 <h4>Разнесённый вид, масса и экспорт</h4>
 <ul>
   <li><b>Разнесённый вид</b> раздвигает детали ползунком; <b>Переместить деталь</b> двигает одну деталь манипулятором.</li>
@@ -486,7 +487,7 @@ const RU: Tab[] = [
   <li><b>Вдавливание</b> (с версии 1.108.0): выберите целевое тело, затем вдавленные в него тела-инструменты. Инструменты вырезаются из целевого тела с учётом <b>зазора</b>, а стенка заданной <b>толщины</b> повторяет их форму с той стороны, куда они вдавлены, как у штампованной пластины. <b>Вырез</b> оставляет только углубление. Тела-инструменты остаются.</li>
   <li><b>Распознать отверстия</b> (с версии 1.116.0, Sweep ▾): круглые отверстия тела, сквозные или глухие с плоским или сверлёным дном, заполняются элементом <b>Удалить грань</b> и создаются заново как элементы <b>Отверстие</b>, по одному на грань и размер. Так у импортированного тела появляются отверстия, которые можно менять, двигать и удалять.</li>
   <li><b>Направляющие кривые лофта</b> (с версии 1.119.0): в панели лофта группа <b>Направляющие кривые</b> принимает открытые эскизы или кривые, касающиеся каждого профиля. Сечения лофта растут и сжимаются так, чтобы проходить через направляющие: одна направляющая масштабирует их равномерно, две и больше растягивают к каждой направляющей.</li>
-  <li><b>Проверка-исправление</b> (с версии 1.122.0, Sweep ▾): элемент, который проверяет все тела и исправляет их: грани, рёбра которых ближе допуска, сшиваются, ошибочные грани исправляются, замкнутые оболочки становятся телами. Флажок <b>Объединить грани, лежащие на одной поверхности</b> сливает разбитые грани. Панель показывает свободные рёбра, корректность и число тел до и после.</li>
+  <li><b>Проверка-исправление</b> (с версии 1.122.0, Элементы → Тела ▾): элемент, который проверяет все тела и исправляет их: грани, рёбра которых ближе допуска, сшиваются, ошибочные грани исправляются, замкнутые оболочки становятся телами. Флажок <b>Объединить грани, лежащие на одной поверхности</b> сливает разбитые грани. Панель показывает свободные рёбра, корректность и число тел до и после.</li>
   <li>Папка <b>Твёрдые тела</b> вверху дерева: у каждого тела показ/скрытие, цвет и удаление; двойной щелчок переименовывает. Скрытые тела пропадают из вида, но учитываются в массовых характеристиках.</li>
   <li><b>Вставить тело</b> (Sweep ▾): другая деталь MöbiusCAD или файл STEP, IGES или BREP добавляется в деталь как импортированный элемент и хранится в файле детали. <b>Проверить и исправить</b> сшивает грани, рёбра которых ближе допуска, и замыкает их в твёрдые тела; панель показывает свободные рёбра и корректность до и после.</li>
   <li><b>Масштаб</b> (Sweep ▾): масштабирует выбранные тела (все, если ничего не выбрано) относительно их центра масс или начала координат, одним коэффициентом или по осям.</li>
@@ -588,6 +589,7 @@ ${table([
   ["Q", "Вспомогательная геометрия: вкл. / выкл."],
   ["Enter / Esc", "ОК (выйти из эскиза) / отмена"],
   ["Enter (без активной команды)", "Повторить последнюю команду"],
+  ["Ctrl+K", "Поиск команды: введите часть названия и нажмите Enter"],
   ["Ctrl+Enter", "ОК и снова та же команда (📌 в панели — каждый раз)"],
   ["Правый щелчок (без перетаскивания) в команде", "Меню ОК / Отмена"],
   ["Ctrl+Z / Ctrl+Y", "Отменить / повторить"],

@@ -48,9 +48,11 @@ import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
-import { lang, onLangChange, t } from "../i18n";
+import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
+import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
+import { lang, onLangChange, t, withLang } from "../i18n";
 
 /** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
 type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
@@ -281,6 +283,7 @@ export class ModelController {
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
+    onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
       this.sizeArrow();
@@ -300,6 +303,8 @@ export class ModelController {
   get picking() { return this.mode.kind !== "none" || !!this.arrowDrag; }
   get editingSketch() { return this.mode.kind === "sketch"; }
   private get doc() { return this.store!.doc; }
+  /** The open part and its file name (null when no part is open). */
+  openPart() { return this.store ? { doc: this.store.doc, fileName: this.fileName } : null; }
 
   // ---------- opening and closing ----------
 
@@ -381,6 +386,7 @@ export class ModelController {
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
     this.renderEmpty();
+    this.renderQuick();
     this.vault = null;
     this.renderVaultBar();
     this.returnTo = null;
@@ -1582,6 +1588,7 @@ export class ModelController {
     if (mod && !e.shiftKey && k === "z") { stop(); this.undo(); return; }
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
+    if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
@@ -1807,6 +1814,54 @@ export class ModelController {
     if (fixed[c]) return t(fixed[c]);
     const hit = [...P3_TOOLS(), ...SURF_TOOLS()].find(x => x[0] === c);
     return hit ? hit[1] : c;
+  }
+
+  /** Commands Ctrl+K can run now: [id, label in the UI language, English label]. */
+  private searchable(): [string, string, string][] {
+    const m = this.mode;
+    if (m.kind === "sketch") return [["exit", t("Exit sketch"), "Exit sketch"]];
+    if (m.kind !== "none") return [];
+    const fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
+    const en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS()].map(x => [x[0] as string, x[1]]));
+    return [...fixed.map(([id, l]) => [id, t(l), l] as [string, string, string]), ...en.map(([id, l]) => [id, loc.get(id) ?? l, l] as [string, string, string])];
+  }
+
+  /** Command search (FR-UI-014, Ctrl+K): type part of a command's name, in English or Russian, and run it. */
+  commandSearch() {
+    document.getElementById("mc-cmdk")?.remove();
+    const all = this.searchable();
+    if (!all.length) { toast(t("Finish the current command first.")); return; }
+    const back = document.activeElement as HTMLElement | null;
+    const box = document.createElement("div");
+    box.id = "mc-cmdk";
+    box.className = "mc-cmdk";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", t("Command search"));
+    box.innerHTML = `<input type="search" role="combobox" aria-expanded="true" aria-controls="mc-cmdk-l" aria-autocomplete="list" placeholder="${esc(t("Type a command (Ctrl+K)"))}" aria-label="${esc(t("Command search"))}" /><ul id="mc-cmdk-l" role="listbox"></ul>`;
+    document.body.appendChild(box);
+    const inp = box.querySelector("input")!, list = box.querySelector("ul")!;
+    let shown: [string, string, string][] = [], cur = 0;
+    const close = () => { box.remove(); back?.focus?.(); };
+    const run = (id: string) => { close(); if (id === "import") this.importBodyFile(); else this.command(id); };
+    const draw = () => {
+      const q = inp.value.trim().toLowerCase();
+      shown = all.filter(([, l, e]) => !q || l.toLowerCase().includes(q) || e.toLowerCase().includes(q)).slice(0, 12);
+      cur = Math.min(cur, Math.max(0, shown.length - 1));
+      list.innerHTML = shown.length ? shown.map(([id, l], i) => `<li role="option" id="mc-cmdk-${i}" aria-selected="${i === cur}" data-id="${esc(id)}"><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span>${esc(l)}</li>`).join("")
+        : `<li class="muted" role="option" aria-disabled="true">${esc(t("No command matches."))}</li>`;
+      inp.setAttribute("aria-activedescendant", shown.length ? `mc-cmdk-${cur}` : "");
+      list.querySelectorAll<HTMLElement>("[data-id]").forEach(li => li.addEventListener("pointerdown", e => { e.preventDefault(); run(li.dataset.id!); }));
+    };
+    inp.addEventListener("input", () => { cur = 0; draw(); });
+    inp.addEventListener("keydown", e => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (shown.length) { cur = (cur + (e.key === "ArrowDown" ? 1 : -1) + shown.length) % shown.length; draw(); } }
+      else if (e.key === "Enter") { e.preventDefault(); if (shown[cur]) run(shown[cur][0]); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+    });
+    inp.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== inp) box.remove(); }, 0));
+    draw();
+    inp.focus();
   }
 
   /** OK / Cancel at the top of a right-click menu while a command runs (FR-UI-107). */
@@ -3194,11 +3249,79 @@ export class ModelController {
 
   private renderAll() { this.renderBar(); this.renderTree(); this.renderPanel(); }
 
+  /** Label and tooltip of a part command, for the command bar, its flyouts and Ctrl+K. */
+  private cmdInfo(id: string): [string, string] {
+    const base: Record<string, [string, string]> = {
+      sketch: [t("Sketch"), t("Sketch on a plane or a flat face")],
+      extrude: [t("Extrude"), t("Extruded boss: adds material from a sketch")],
+      cut: [t("Cut"), t("Extruded cut: removes material")],
+      revolve: [t("Revolve"), t("Revolve a sketch around a line")],
+      fillet: [t("Fillet"), t("Round edges")],
+      chamfer: [t("Chamfer"), t("Bevel edges")],
+      hole: [t("Hole"), t("Hole wizard: simple, counterbore, countersink and tapped holes at points on a face")],
+      thread: [t("Cosmetic thread"), t("Cosmetic thread: thread data on a round edge of a cylinder, drawn as dashed circles")],
+      shell: [t("Shell"), t("Shell: hollow the body, leaving picked faces open")],
+      draft: [t("Draft"), t("Draft: taper faces by an angle about a neutral plane")],
+      lpattern: [t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")],
+      cpattern: [t("Circular pattern"), t("Circular pattern: copies of features about an axis")],
+      mirror: [t("Mirror"), t("Mirror features, or the whole body, about a plane")],
+      spattern: [t("Sketch driven pattern"), t("Sketch driven pattern: a copy at each point of a sketch")],
+      tpattern: [t("Table driven pattern"), t("Table driven pattern: copies at X/Y offsets from a table")],
+      plane: [t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")],
+      axis: [t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")],
+      point: [t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")],
+      csys: [t("Coordinate system"), t("Coordinate system: an origin and X and Z directions, for measurements and export")],
+    };
+    if (base[id]) return base[id];
+    const hit = [...P3_TOOLS(), ...SURF_TOOLS(), ...WELD_TOOLS()].find(x => x[0] === id);
+    return hit ? [hit[1], hit[2]] : [id, id];
+  }
+
+  /** The command a running feature belongs to, to mark its button. */
+  private openCmd(d: Feature): string {
+    if ((d.type === "sweep" || d.type === "loft") && d.op === "cut") return `${d.type}cut`;
+    if (d.type === "extrude" && d.op === "cut") return "cut";
+    if (d.type === "spattern" && d.src === "table") return "tpattern";
+    return d.type;
+  }
+
+  /** Quick commands at the right of the tab strip (SolidWorks keeps them in the menu bar): filter, undo, save. */
+  private renderQuick() {
+    const q = $("#mc-quick");
+    if (!this.store) { q.hidden = true; q.innerHTML = ""; return; }
+    q.hidden = false;
+    const m = this.mode, busy = m.kind !== "none" && m.kind !== "sketch", sk = m.kind === "sketch";
+    const btn = (id: string, label: string, title: string, on = false, dis = false) =>
+      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
+    const canUndo = sk ? this.store.canUndo : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : !busy && this.store.canRedo;
+    q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
+      + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
+      + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
+      + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
+    q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
+    q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
+    q.querySelector<HTMLElement>('[data-fly="save"]')?.addEventListener("click", e => {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      this.showMenu([[t("Save as…"), () => void this.save(true)], [t("Snapshots…"), () => void this.showSnapshots()]], r.left - 40, r.bottom + 4,
+        () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="save"]')?.focus());
+    });
+  }
+
+  private wasSketch = false;
+  private inBar = false;
+
   private renderBar() {
     const bar = $("#mc-bar");
-    if (!this.store) { bar.hidden = true; $("#mc-confirm").hidden = true; return; }
+    if (!this.store) { bar.hidden = true; $("#mc-confirm").hidden = true; this.renderQuick(); return; }
     bar.hidden = false;
     const m = this.mode;
+    // Entering a sketch selects the Sketch tab; leaving it goes back to Features (FR-UI-013).
+    if ((m.kind === "sketch") !== this.wasSketch) {
+      this.wasSketch = m.kind === "sketch";
+      this.inBar = true;
+      selectCmTab(this.wasSketch ? "sketch" : "features");
+      this.inBar = false;
+    }
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
     if (m.kind !== "sketch") {
       $("#mc-status").textContent = m.kind === "plane" ? t(m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
@@ -3236,108 +3359,45 @@ export class ModelController {
       }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("undo", t("Undo"), this.undoTip(), false, !this.store.canUndo)}${btn("redo", t("Redo"), this.undoTip(true), false, !this.store.canRedo)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
-      const busy = m.kind !== "none";
-      html = `<div class="mc-g" role="group" aria-label="${esc(t("Features"))}">`
-        + btn("sketch", t("Sketch"), t("Sketch on a plane or a flat face"), m.kind === "plane")
-        + btn("extrude", t("Extrude"), t("Extruded boss: adds material from a sketch"), m.kind === "feature" && m.draft.type === "extrude" && m.draft.op === "boss")
-        + btn("cut", t("Cut"), t("Extruded cut: removes material"), m.kind === "feature" && m.draft.type === "extrude" && m.draft.op === "cut")
-        + btn("revolve", t("Revolve"), t("Revolve a sketch around a line"), m.kind === "feature" && m.draft.type === "revolve")
-        + btn("fillet", t("Fillet"), t("Round edges"), m.kind === "feature" && m.draft.type === "fillet")
-        + btn("chamfer", t("Chamfer"), t("Bevel edges"), m.kind === "feature" && m.draft.type === "chamfer")
-        + btn("hole", t("Hole"), t("Hole wizard: simple, counterbore, countersink and tapped holes at points on a face"), m.kind === "feature" && m.draft.type === "hole")
-        + btn("thread", t("Cosmetic thread"), t("Cosmetic thread: thread data on a round edge of a cylinder, drawn as dashed circles"), m.kind === "feature" && m.draft.type === "thread")
-        + btn("shell", t("Shell"), t("Shell: hollow the body, leaving picked faces open"), m.kind === "feature" && m.draft.type === "shell")
-        + btn("draft", t("Draft"), t("Draft: taper faces by an angle about a neutral plane"), m.kind === "feature" && m.draft.type === "draft")
-        + (() => {
-          // Sweep flyout (FRS 9.9): Sweep ▾ Cut-Sweep, Loft, Cut-Loft, Helix.
-          const open = m.kind === "feature" ? (m.draft.type === "sweep" || m.draft.type === "loft" ? `${m.draft.type}${m.draft.op === "cut" ? "cut" : ""}` : m.draft.type) : null;
-          const all = P3_TOOLS();
-          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("sweep")) ?? all[0];
-          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="sweep" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
-        })()
-        + (() => {
-          // Surface flyout (FRS 9.11): Extruded ▾ Planar, Offset, Knit, Thicken.
-          const open = m.kind === "feature" ? m.draft.type : null;
-          const all = SURF_TOOLS();
-          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("surf")) ?? all[0];
-          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="surf" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
-        })()
-        + (() => {
-          // Weldments flyout (FR-FT-121): Structural Member ▾ Trim/Extend, End Cap, Gusset, Fillet Bead, Cut List.
-          const open = m.kind === "feature" ? m.draft.type : null;
-          const all = WELD_TOOLS();
-          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("weld")) ?? all[0];
-          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="weld" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
-        })()
-        + (() => {
-          // Pattern flyout: Linear ▾ Circular, Mirror.
-          const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")],
-            ["spattern", t("Sketch driven pattern"), t("Sketch driven pattern: a copy at each point of a sketch")], ["tpattern", t("Table driven pattern"), t("Table driven pattern: copies at X/Y offsets from a table")]];
-          const open = m.kind === "feature" ? (m.draft.type === "spattern" && m.draft.src === "table" ? "tpattern" : m.draft.type) : null;
-          const cur = pats.find(r => r[0] === open) ?? pats.find(r => r[0] === this.flyLast.get("pattern")) ?? pats[0];
-          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="pattern" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
-        })()
-        + (() => {
-          // Reference geometry flyout: Plane ▾ Axis, Point.
-          const refs: [string, string, string][] = [["plane", t("Plane"), t("Reference plane: offset from a plane or face, or at an angle about an edge")], ["axis", t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")], ["point", t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")], ["csys", t("Coordinate system"), t("Coordinate system: an origin and X and Z directions, for measurements and export")]];
-          const open = m.kind === "feature" ? m.draft.type : null;
-          const cur = refs.find(r => r[0] === open) ?? refs.find(r => r[0] === this.flyLast.get("plane")) ?? refs[0];
-          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="plane" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
-        })()
-        + `</div><div class="mc-sep"></div><div class="mc-g">`
-        + btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices))
-        + `</div><div class="mc-sep"></div><div class="mc-g">`
-        + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, busy || !this.store.canUndo)}<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button></span>` + btn("redo", t("Redo"), this.undoTip(true), false, busy || !this.store.canRedo)
-        + `</div><div class="mc-sep"></div><div class="mc-g">`
-        + `<span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP"))
-        + `</div>`;
+      // Command manager tabs (FR-UI-010): Features, Sketch, Surfaces, Weldments; Evaluate is main.ts's pane.
+      const open = m.kind === "feature" ? this.openCmd(m.draft) : m.kind === "plane" ? "sketch" : null;
+      const one = (id: string) => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti, open === id); };
+      const fly = (key: string) => {
+        const ids = CM_FLY[key];
+        const cur = ids.find(id => id === open) ?? ids.find(id => id === this.flyLast.get(key)) ?? ids[0];
+        const [l, ti] = this.cmdInfo(cur);
+        return `<span class="mc-fly">${btn(cur, l, ti, open === cur)}<button class="mc-caret" data-fly="${key}" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(l)}">▾</button></span>`;
+      };
+      const group = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
+      const sep = `<div class="mc-sep"></div>`;
+      const tab = cmTab();
+      html = tab === "sketch" ? group(t("Sketch"), one("sketch") + one("sketch3d"))
+        + `<p class="cm-note muted">${esc(t("Pick a plane or a flat face, then Sketch; the sketch tools show here while you draw."))}</p>`
+        : tab === "surfaces" ? group(t("Surfaces"), SURF_TOOLS().map(([id]) => one(id)).join(""))
+        : tab === "weldments" ? group(t("Weldments"), WELD_TOOLS().map(([id]) => one(id)).join(""))
+        : group(t("Sketch"), one("sketch")) + sep
+          + group(t("Boss"), one("extrude") + one("revolve") + fly("sweep")) + sep
+          + group(t("Cut"), one("cut") + one("hole") + fly("sweepcut")) + sep
+          + group(t("Features"), one("fillet") + one("chamfer") + fly("pattern") + one("rib") + one("shell") + one("draft") + one("thread")) + sep
+          + group(t("Reference geometry"), fly("plane") + fly("curves")) + sep
+          + group(t("Bodies"), fly("bodies") + fly("direct"));
     }
     $("#mc-tools").innerHTML = html;
+    this.renderQuick();
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     $("#mc-tools").querySelectorAll<HTMLButtonElement>("[data-fly]").forEach(b => b.addEventListener("click", () => {
       const mm = this.mode;
-      if (b.dataset.fly === "pattern" && mm.kind !== "sketch") {
+      const key = b.dataset.fly!;
+      if (CM_FLY[key] && mm.kind !== "sketch") {
         const r = b.getBoundingClientRect();
-        this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")], ["spattern", t("Sketch driven pattern")], ["tpattern", t("Table driven pattern")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="pattern"]')?.focus());
-        return;
-      }
-      if (b.dataset.fly === "sweep" && mm.kind !== "sketch") {
-        const r = b.getBoundingClientRect();
-        this.showMenu(P3_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("sweep", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="sweep"]')?.focus());
-        return;
-      }
-      if (b.dataset.fly === "surf" && mm.kind !== "sketch") {
-        const r = b.getBoundingClientRect();
-        this.showMenu(SURF_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("surf", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="surf"]')?.focus());
-        return;
-      }
-      if (b.dataset.fly === "undo") { this.historyMenu(b); return; }
-      if (b.dataset.fly === "weld" && mm.kind !== "sketch") {
-        const r = b.getBoundingClientRect();
-        this.showMenu(WELD_TOOLS().map(([id, l]) => [l, () => { if (id !== "cutlist") this.flyLast.set("weld", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="weld"]')?.focus());
-        return;
-      }
-      if (b.dataset.fly === "save") {
-        const r = b.getBoundingClientRect();
-        this.showMenu([[t("Save as…"), () => void this.save(true)], [t("Snapshots…"), () => void this.showSnapshots()]], r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="save"]')?.focus());
-        return;
-      }
-      if (b.dataset.fly === "plane" && mm.kind !== "sketch") {
-        const r = b.getBoundingClientRect();
-        this.showMenu(([["plane", t("Plane")], ["axis", t("Axis")], ["point", t("Point")], ["csys", t("Coordinate system")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("plane", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
-          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="plane"]')?.focus());
+        this.showMenu(CM_FLY[key].map(id => [this.cmdInfo(id)[0], () => { if (id !== "cutlist") this.flyLast.set(key, id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${key}"]`)?.focus());
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline"], rect: ["rect", "crect", "polygon"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"] } as Record<string, SkTool[]>)[b.dataset.fly!];
+      const g = ({ line: ["line", "spline"], rect: ["rect", "crect", "polygon"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"] } as Record<string, SkTool[]>)[key];
       const label: Record<string, string> = { line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
@@ -3431,7 +3491,7 @@ export class ModelController {
       bar.className = "mc-filter";
       bar.setAttribute("role", "toolbar");
       bar.setAttribute("aria-label", t("Selection filter"));
-      $("#mc-tools").after(bar);
+      $("#mc-bar").prepend(bar);
       this.renderFilterBar();
     }
     this.renderBar();
@@ -4916,6 +4976,7 @@ export class ModelController {
       + this.danglingBox(ed)
       + this.dimNameBox(ed)
       + this.assistant(ed)
+      + this.checkBox(ed)
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
       + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
       + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
@@ -4952,8 +5013,31 @@ export class ModelController {
         catch (err) { toast(t((err as Error).message), true); }
       });
     }
+    pm.querySelector<HTMLSelectElement>("[data-a=chkuse]")?.addEventListener("change", e => { this.checkUse = (e.target as HTMLSelectElement).value as SketchUse; this.renderPanel(); });
+    pm.querySelector("[data-a=check]")?.addEventListener("click", () => {
+      this.checkMemo = { key: JSON.stringify(ed.sk.ents), use: this.checkUse, res: checkSketch(ed.sk, this.checkUse) };
+      this.renderPanel();
+      pm.querySelector<HTMLElement>("[data-a=check]")?.focus();
+    });
+    pm.querySelectorAll<HTMLElement>("[data-chk]").forEach(b => b.addEventListener("click", () => { ed.select(b.dataset.chk!.split(",")); this.renderPanel(); }));
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.ok());
     pm.querySelector("[data-a=cancel]")!.addEventListener("click", () => void this.cancel());
+  }
+
+  private checkUse: SketchUse = "region";
+  private checkMemo: { key: string; use: SketchUse; res: CheckResult } | null = null;
+
+  /** Check sketch for feature (FR-SK-073): pick what the sketch is for and list what stops it, each with Show. */
+  private checkBox(ed: SketchEditor) {
+    const m = this.checkMemo;
+    const res = m && m.use === this.checkUse && m.key === JSON.stringify(ed.sk.ents) ? m.res : null;
+    return `<div class="pm-sec pm-skchk"><h4>${esc(t("Check sketch for feature"))}</h4>`
+      + `<div class="pm-check-row"><select data-a="chkuse" aria-label="${esc(t("Feature"))}">${SKETCH_USES.map(([k, l]) => `<option value="${k}"${k === this.checkUse ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select>`
+      + `<button class="btn small" data-a="check">${esc(t("Check"))}</button></div>`
+      + (res ? `<p class="pm-check-r ${res.ok ? "ok" : "bad"}" role="status">${res.ok ? "✓" : "⚠"} ${esc(t(res.summary.message, res.summary.params))}</p>`
+        + (res.issues.length ? `<ul class="pm-rel-list pm-check-l">${res.issues.map(i => `<li><span>${esc(t(i.message, i.params))}</span>${i.ents.length ? `<button class="btn small" data-chk="${esc(i.ents.join(","))}">${esc(t("Show"))}</button>` : ""}</li>`).join("")}</ul>` : "")
+        : "")
+      + `</div>`;
   }
 
   /** Sketch pattern PropertyManager (FR-SK-038): values preview live, ✓ adds the instances. */
@@ -5585,6 +5669,17 @@ const sketchProfileOk = (s: SketchFeature) => !sketchProfile(s).error;
 const sketchOpenOk = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed; };
 
 /** The sweep flyout's commands (FRS 9.9). */
+/** Flyout buttons of the Features tab (FR-UI-011): related commands share one button that shows the last one used. */
+const CM_FLY: Record<string, string[]> = {
+  sweep: ["sweep", "loft"],
+  sweepcut: ["sweepcut", "loftcut"],
+  pattern: ["lpattern", "cpattern", "mirror", "spattern", "tpattern"],
+  plane: ["plane", "axis", "point", "csys"],
+  curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
+  bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
+  direct: ["moveface", "delface", "recognize"],
+};
+
 const P3_TOOLS = (): [string, string, string][] => [
   ["sweep", t("Sweep"), t("Swept boss: a profile (or a circle) along a path")],
   ["sweepcut", t("Cut-Sweep"), t("Swept cut: removes a profile moved along a path")],

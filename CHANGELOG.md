@@ -9,7 +9,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Check-Heal feature (FR-FT-131)** in Sweep ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
+- **Check-Heal feature (FR-FT-131)** in Features → Bodies ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
+
+## [1.121.0] - 2026-11-08
+
+### Added
+
+- **Command bar** (FRS 13.2, FR-UI-010 to FR-UI-013, FR-UI-117 to FR-UI-119): one tabbed bar under the header holds every 3D command, as in SolidWorks' CommandManager.
+  - A part shows the tabs **Features**, **Sketch**, **Surfaces**, **Weldments** and **Evaluate**. An assembly shows **Assembly** and **Evaluate**. A plain model shows **Evaluate**.
+  - The measuring tools, which had their own row in the header, are now on the **Evaluate** tab.
+  - Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab strip.
+  - Entering a sketch switches to the Sketch tab; leaving it goes back to Features.
+  - The bar switches to icons only when it is too narrow, and the arrow keys move between tabs.
+- **Make assembly from part** (New ▾): a new assembly with the open part as its first component, fixed at the origin, including unsaved changes.
+- **Ctrl+K command search** (FR-UI-014): type part of a command's name and press Enter to run it.
+- **Check sketch for feature** (FR-SK-073): the sketch panel checks the sketch for an extrude, revolve, loft or sweep profile, sweep path or rib, and points at open ends, overlaps, crossings and zero-length lines.
+- **Sizes typed while drawing**: while you draw a line, rectangle or circle, typing a number opens length or size boxes; Enter places the shape with driving dimensions.
+
+### Changed
+
+- The right panel's tabs (Measurements, Section, Display, Properties) moved from the header to the top of the right panel.
+- The part and assembly status lines keep their place below the view; the filter bar no longer shifts the view.
 
 ## [1.120.0] - 2026-11-08
 
@@ -1102,7 +1122,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.122.0...HEAD
-[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.122.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
+[1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
 [1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
