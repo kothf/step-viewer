@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
 
+## [1.241.0] - 2026-11-08
+
+### Fixed
+
+- **Offline start picks up new versions behind a CDN.** The page registers its service worker as `sw.js?v=<version>` and asks the browser to skip its HTTP cache for it. aerocat.tech's Cloudflare kept `sw.js` for a day, so visitors got the worker of an older release (1.169.0 while 1.219.0 was deployed), which precached that release's files. Every release now has its own worker URL.
+
 ## [1.240.0] - 2026-11-08
 
 ### Added
@@ -1595,7 +1601,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.245.0...HEAD
-[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.245.0
+[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
+[1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
