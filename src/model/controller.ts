@@ -5634,7 +5634,10 @@ export class ModelController {
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
       + (ed.tool === "chamfer" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="cd" value="${trimNum(ed.chamferDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
-      + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
+      + (ed.tool === "offset" ? `<label class="pm-field"><span>${esc(t("Distance"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="od" value="${trimNum(ed.offsetDist * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>`
+        + `<label class="chk pm-chk"><input type="checkbox" data-a="oboth"${ed.offsetBoth ? " checked" : ""} />${esc(t("Both sides"))}</label>`
+        + (ed.offsetBoth ? `<label class="pm-field"><span>${esc(t("Cap ends"))}</span><select data-a="ocap">${(["none", "arc", "line"] as const).map(k => `<option value="${k}"${ed.offsetCap === k ? " selected" : ""}>${esc(t(k === "none" ? "None" : k === "arc" ? "Arcs" : "Lines"))}</option>`).join("")}</select></label>` : "")
+        + `<label class="chk pm-chk"><input type="checkbox" data-a="olink"${ed.offsetLink ? " checked" : ""} />${esc(t("Follow the source (offset relations)"))}</label>` : "")
       + this.danglingBox(ed)
       + this.dimNameBox(ed)
       + this.assistant(ed)
@@ -5677,6 +5680,9 @@ export class ModelController {
         catch (err) { toast(t((err as Error).message), true); }
       });
     }
+    pm.querySelector<HTMLInputElement>("[data-a=oboth]")?.addEventListener("change", e => { ed.offsetBoth = (e.target as HTMLInputElement).checked; this.renderPanel(); });
+    pm.querySelector<HTMLSelectElement>("[data-a=ocap]")?.addEventListener("change", e => { ed.offsetCap = (e.target as HTMLSelectElement).value as typeof ed.offsetCap; });
+    pm.querySelector<HTMLInputElement>("[data-a=olink]")?.addEventListener("change", e => { ed.offsetLink = (e.target as HTMLInputElement).checked; });
     pm.querySelector<HTMLSelectElement>("[data-a=chkuse]")?.addEventListener("change", e => { this.checkUse = (e.target as HTMLSelectElement).value as SketchUse; this.renderPanel(); });
     pm.querySelector("[data-a=check]")?.addEventListener("click", () => {
       this.checkMemo = { key: JSON.stringify(ed.sk.ents), use: this.checkUse, res: checkSketch(ed.sk, this.checkUse) };
