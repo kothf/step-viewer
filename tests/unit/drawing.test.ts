@@ -248,3 +248,22 @@ test("GD&T, datums, surface finish, tables, GOST title block, dangling annotatio
   assert.ok(!out.prims.some(p => p.t === "p" && p.fill), "no triangle without the edge");
   assert.deepEqual(sheetNotes(sh).hits.map(h => h.id), ["t1"]);
 });
+
+test("assembly BOM: items in first-use order, pattern and sub-assembly instances counted; balloons numbered", async () => {
+  const { bomOf, bomCells, balloonPrims, compOfKey, onVisible } = await import("../../src/drawing/bom");
+  const part = (id: string, pn?: string) => ({ name: id, file: `${id}.mcadprt`, doc: { ...doc([]), id, props: pn ? { partNumber: pn } : {} } });
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  const top = { schema: 1 as const, kind: "assembly" as const, id: "a", name: "A", units: { length: "mm" as const, decimals: 2 }, parts: { plate: part("plate"), pin: part("pin", "PN-7"), sub: { ...part("sub"), asm: {} as never } },
+    components: [{ id: "c1", name: "plate<1>", part: "plate", tf: I }, { id: "c2", name: "pin<1>", part: "pin", tf: I }, { id: "c3", name: "sub<1>", part: "sub", tf: I }, { id: "c4", name: "pin<2>", part: "pin", tf: I, suppressed: true }] };
+  // Flattened: a pattern instance of the pin and two parts of the sub-assembly.
+  const flat = { ...top, components: [top.components[0], top.components[1], { id: "pt~c2~1", name: "pin<3>", part: "pin", tf: I }, { id: "c3/x", name: "x", part: "sub/x", tf: I }, { id: "c3/y", name: "y", part: "sub/y", tf: I }] };
+  const b = bomOf(top, flat);
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "sub", "", "1"]]);
+  assert.equal(b.itemOf("pt~c2~1"), 2);
+  assert.equal(b.itemOf("c3/y"), 3);
+  assert.equal(compOfKey("c3/y@f1:end|c3/y@f1:side0"), "c3/y");
+  const bp = balloonPrims([0, 20], [0, 0], "2");
+  assert.ok(bp.prims.some(p => p.t === "l") && bp.prims.some(p => p.t === "p" && p.fill) && bp.prims.some(p => p.t === "t" && p.s === "2"));
+  const proj = { vis: [{ k: "l" as const, c: "sharp" as never, p: [0, 0, 10, 0] as [number, number, number, number] }, { k: "a" as const, c: "sharp" as never, o: [20, 0] as [number, number], r: 5, a0: 0, a1: Math.PI }], hid: [], box: [0, -5, 25, 5] as [number, number, number, number], ms: 0 };
+  assert.ok(onVisible(proj, [5, 0.001], 0.01) && onVisible(proj, [20, 5], 0.01) && !onVisible(proj, [20, -5], 0.01));
+});

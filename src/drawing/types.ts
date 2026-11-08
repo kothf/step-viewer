@@ -2,6 +2,7 @@
 // model. Views store how they were made (orientation, or parent + side for a
 // projected view); their lines are computed by the drawing worker and never stored.
 import type { V3, ViewDir } from "../kernel/drawing";
+import type { AsmDoc } from "../asm/types";
 import type { PartDoc } from "../model/types";
 
 export type SheetSize = "A4" | "A3" | "A2" | "A1" | "A0" | "ANSI A" | "ANSI B" | "ANSI C" | "ANSI D" | "ANSI E" | "custom";
@@ -89,10 +90,16 @@ export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number,
 export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
 export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string }
-/** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), or its top-right one with `anchor: "tr"` (revision tables, so they grow to the left). */
-export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" }
+/** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), its top-right one with `anchor: "tr"` (revision tables grow to the left), or its bottom-right one with `anchor: "br"` (a BOM on the title block: header at the bottom, items upwards). A BOM's rows come from the assembly when drawn. */
+export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br" }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot;
+/**
+ * A balloon (FR-DRW-030) on a component of an assembly view: `ref` is an edge of it (its face names
+ * start with `<component id>@`), the number is that part's item in the BOM unless `txt` overrides it.
+ */
+export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot;
 
 export interface Sheet {
   id: string;
@@ -133,7 +140,9 @@ export interface DrawingDoc {
   sheets: Sheet[];
   props: DrawingProps;
   /** The model shown: a part document, or a STEP/IGES/BREP file kept in the drawing file. */
-  source: { kind: "part"; doc: PartDoc; name: string } | { kind: "file"; name: string };
+  source: { kind: "part"; doc: PartDoc; name: string } | { kind: "file"; name: string }
+    /** An assembly (FR-DRW-030): its document, and `flat` = with pattern instances and sub-assemblies' parts placed (what the kernel builds). */
+    | { kind: "asm"; doc: AsmDoc; flat: AsmDoc; name: string };
 }
 
 /** Model facts for the title block. */

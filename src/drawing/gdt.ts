@@ -124,11 +124,16 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
   const head = a.cols.map(c => cellLabel(c, label));
   const widths = head.map((c, i) => Math.max(12, tw(c, h) + 3, ...a.rows.map(r => tw(r[i] ?? "", h) + 3)));
   const W = widths.reduce((s, w) => s + w, 0);
-  let y = a.pos[1];
-  const x0 = a.anchor === "tr" ? a.pos[0] - W : a.pos[0];
+  const nRows = (a.title ? 1 : 0) + 1 + a.rows.length;
+  // Anchored at the bottom (a parts list on the title block): the header is at the bottom and items count upwards.
+  let y = a.anchor === "br" ? a.pos[1] + nRows * rh : a.pos[1];
+  const top = y;
+  const x0 = a.anchor === "tr" || a.anchor === "br" ? a.pos[0] - W : a.pos[0];
   const rows: { cells: string[]; bold?: boolean; span?: boolean }[] = [];
   if (a.title) rows.push({ cells: [cellLabel(a.title, label)], bold: true, span: true });
-  rows.push({ cells: head, bold: true }, ...a.rows.map(r => ({ cells: a.cols.map((_c, i) => r[i] ?? "") })));
+  const body = a.rows.map(r => ({ cells: a.cols.map((_c, i) => r[i] ?? "") }));
+  if (a.anchor === "br") rows.push(...body.reverse(), { cells: head, bold: true });
+  else rows.push({ cells: head, bold: true }, ...body);
   for (const r of rows) {
     const y0 = y - rh;
     out.push(L([x0, y0], [x0 + W, y0]), L([x0, y], [x0 + W, y]));
@@ -144,5 +149,5 @@ export function tablePrims(a: TableAnnot, label: (s: string, p?: Record<string, 
     out.push(L([x0, y0], [x0, y]), L([x0 + W, y0], [x0 + W, y]));
     y = y0;
   }
-  return { prims: out, box: [x0, y, x0 + W, a.pos[1]] };
+  return { prims: out, box: [x0, y, x0 + W, top] };
 }

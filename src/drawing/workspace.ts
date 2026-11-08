@@ -7,6 +7,8 @@ import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
+import type { AsmDoc } from "../asm/types";
+import { BOM_COLS, autoBalloons, bomOf, compOfKey, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -15,16 +17,18 @@ import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
-import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, type Fields } from "./sheet";
+import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
-import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import "./drawing.css";
 
 export interface DrawingModel {
   name: string;
   part?: PartDoc;
   file?: { name: string; bytes: Uint8Array };
+  /** An assembly (FR-DRW-030): its document, and with patterns and sub-assemblies expanded. */
+  asm?: { doc: AsmDoc; flat: AsmDoc };
   /** Title block facts from the model. */
   info: { title?: string; number?: string; revision?: string; author?: string; material?: string; density?: number };
 }
@@ -36,6 +40,8 @@ export interface DrawingHost {
   currentModel(): Promise<DrawingModel | null>;
   /** The part document with this id open in the modeller now, if any. */
   livePart(id: string): PartDoc | null;
+  /** The assembly with this id open now, if any (with patterns and sub-assemblies expanded). */
+  liveAsm?(id: string): { doc: AsmDoc; flat: AsmDoc } | null;
   /** Runs after every change of the part open in the modeller. */
   onPartChange(fn: () => void): void;
   /** Direction of the 3D camera (for "Current 3D view"). */
@@ -73,8 +79,10 @@ type AnnotMode =
   /** Datum feature: click an edge, then place the letter. */
   | { kind: "datum"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Surface finish: click an edge, then place the symbol (on the edge, or away from it with a leader). */
-  | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "hole", "note", "gtol", "datum", "surf"]);
+  | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
+  /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
+  | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
+const ANNOT_KINDS = new Set(["dim", "hole", "note", "gtol", "datum", "surf", "balloon"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -157,12 +165,12 @@ export class DrawingWorkspace {
   /** A new drawing of the model open now, with the standard 3 views. */
   async newFromModel() {
     const m = await this.host.currentModel();
-    if (!m) { toast(t("Open a part or a STEP, IGES or BREP model first."), true); return; }
+    if (!m) { toast(t("Open a part, an assembly or a STEP, IGES or BREP model first."), true); return; }
     const today = new Date().toISOString().slice(0, 10);
     const doc: DrawingDoc = {
       schema: 1, kind: "drawing", id: uid("dr_"), name: m.name.replace(/\.[^.]+$/, ""),
       sheets: [newSheet(1)], props: { date: today },
-      source: m.part ? { kind: "part", doc: m.part, name: m.name } : { kind: "file", name: m.file!.name },
+      source: m.part ? { kind: "part", doc: m.part, name: m.name } : m.asm ? { kind: "asm", doc: m.asm.doc, flat: m.asm.flat, name: m.name } : { kind: "file", name: m.file!.name },
     };
     this.info = m.info;
     this.load(doc, m.file?.bytes, "");
@@ -176,12 +184,15 @@ export class DrawingWorkspace {
       const { doc, model } = await unpackDrawing(buf);
       this.info = {};
       if (doc.source.kind === "part") this.info = partInfo(doc.source.doc);
+      else if (doc.source.kind === "asm") this.info = { title: doc.source.doc.name };
       this.load(doc, model, file.name);
       await this.loadModel();
     } catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); }
   }
 
   private info: DrawingModel["info"] = {};
+  /** The assembly's bill of materials (FR-DRW-030), for BOM tables and balloon numbers. */
+  private bom: Bom | null = null;
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.store = new DrawingStore(doc);
@@ -203,7 +214,8 @@ export class DrawingWorkspace {
     this.loading++;
     this.renderStatus();
     try {
-      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : { file: { name: src.name, bytes: this.model! } });
+      this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
+      this.bom = src.kind === "asm" ? bomOf(src.doc, src.flat) : null;
       this.stale = false;
       this.renderAll();
       return this.facts;
@@ -234,9 +246,11 @@ export class DrawingWorkspace {
 
   /** The modelled part changed: an associative drawing of it updates (FR-DRW-016). */
   private partChanged() {
-    if (!this.store || this.doc.source.kind !== "part") return;
-    const live = this.host.livePart(this.doc.source.doc.id);
-    if (!live || JSON.stringify(live) === JSON.stringify(this.doc.source.doc)) return;
+    if (!this.store) return;
+    const src = this.doc.source;
+    if (src.kind === "file") return;
+    if (src.kind === "part") { const live = this.host.livePart(src.doc.id); if (!live || JSON.stringify(live) === JSON.stringify(src.doc)) return; }
+    else { const live = this.host.liveAsm?.(src.doc.id); if (!live || JSON.stringify(live.flat) === JSON.stringify(src.flat)) return; }
     this.stale = true;
     this.renderStatus();
     if (!this.open) return;
@@ -245,7 +259,13 @@ export class DrawingWorkspace {
   }
 
   async updateFromModel() {
-    if (!this.store || this.doc.source.kind !== "part") return;
+    if (!this.store || this.doc.source.kind === "file") return;
+    if (this.doc.source.kind === "asm") {
+      const la = this.host.liveAsm?.(this.doc.source.doc.id);
+      if (la) this.store.change("Update from model", d => { if (d.source.kind === "asm") { d.source.doc = JSON.parse(JSON.stringify(la.doc)); d.source.flat = JSON.parse(JSON.stringify(la.flat)); } });
+      await this.loadModel();
+      return;
+    }
     const live = this.host.livePart(this.doc.source.doc.id);
     if (live) {
       this.store.change("Update from model", d => { if (d.source.kind === "part") d.source.doc = JSON.parse(JSON.stringify(live)); });
@@ -276,7 +296,7 @@ export class DrawingWorkspace {
           <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish and tables"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
+          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish, tables, balloons and the bill of materials"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
             <div class="drw-menu" role="menu" hidden>
               <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
               <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
@@ -286,6 +306,9 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
               <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
               <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
+              <button role="menuitem" data-an="balloon">${esc(t("Balloon"))}</button>
+              <button role="menuitem" data-an="auto">${esc(t("Auto balloon"))}</button>
+              <button role="menuitem" data-an="bom">${esc(t("Bill of materials"))}</button>
             </div></div>
           <span class="drw-sep"></span>
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
@@ -365,6 +388,7 @@ export class DrawingWorkspace {
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
+    else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
     else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
     else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
@@ -415,7 +439,7 @@ export class DrawingWorkspace {
       if (!proj) body += `<rect class="drw-pending" x="${r[0]}" y="${H - r[3]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
       html += `<g class="drw-view" data-v="${v.id}">${body}</g>`;
     }
-    const notes = sheetNotes(sh, (s, p) => t(s, p), this.ctx().dec);
+    const notes = sheetNotes(sh, (s, p) => t(s, p), this.ctx().dec, this.bom);
     html += `<g class="drw-notes">${svgBody(notes.prims, H)}</g>`;
     this.annotHits.push(...notes.hits);
     html += `<g class="drw-ovl"></g>`;
@@ -750,7 +774,7 @@ export class DrawingWorkspace {
 
   private ctx(): AnnotCtx {
     const f = this.facts;
-    return { topo: f?.topo ?? null, holes: f?.holes ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p) };
+    return { topo: f?.topo ?? null, holes: f?.holes ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bom };
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -772,23 +796,24 @@ export class DrawingWorkspace {
     const H = sheetSize(sh)[1];
     let prims: Prim[] = [];
     if (moved.view) { const v = findView(sh, moved.view), pl = this.placements.get(moved.view); if (v && pl) prims = viewAnnots({ ...sh, annots: [moved] }, v, pl, { ...this.ctx(), topo: this.ctx().topo && { ...this.ctx().topo!, cyls: [] } }).prims.filter(x => x.layer !== "CENTER"); }
-    else prims = sheetNotes({ ...sh, annots: [moved] }, (s, p) => t(s, p), this.ctx().dec).prims;
+    else prims = sheetNotes({ ...sh, annots: [moved] }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     const host = moved.view ? this.svg.querySelector(`.drw-view[data-v="${moved.view}"] .drw-annots`) : this.svg.querySelector(".drw-notes");
     if (!host) return;
     // Draw everything but the dragged one from the stored sheet, then the dragged one where it is now.
     let rest: Prim[];
     if (moved.view) { const v = findView(sh, moved.view)!, pl = this.placements.get(moved.view)!; rest = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, v, pl, this.ctx()).prims; }
-    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, (s, p) => t(s, p), this.ctx().dec).prims;
+    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, (s, p) => t(s, p), this.ctx().dec, this.bom).prims;
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
   private startAnnot(kind: AnnotMode["kind"]) {
     const free = kind === "note" || kind === "gtol" || kind === "surf";
+    if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
-    else if (kind === "datum" || kind === "surf") this.mode = { kind, view: null, ref: null, at: null };
+    else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
     else this.mode = { kind, view: null, leader: null, at: null };
     this.sel = null; this.selA = null;
     this.renderStatus(); this.renderProps(); this.renderOverlay();
@@ -900,6 +925,17 @@ export class DrawingWorkspace {
       if (!m.leader) row.sym = "flat";
       this.addAnnot({ id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) }, "Geometric tolerance");
       this.mode = { kind: "none" };
+    } else if (m.kind === "balloon") {
+      if (!m.ref) {
+        const pick = vid ? this.pickAt(vid, p) : null;
+        const e = pick?.e;
+        if (!e || !compOfKey(e.k)) { toast(t("Click an edge of a component.")); return; }
+        m.view = vid; m.ref = edgeRef(e, "e");
+        this.renderStatus(); this.renderOverlay(); return;
+      }
+      const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
+      this.addAnnot({ id: uid("a_"), t: "balloon", view: m.view!, ref: m.ref, pos: [round(pos[0]), round(pos[1])] }, "Balloon");
+      m.ref = null; m.view = null;
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) {
         const pick = vid && this.facts ? this.pickAt(vid, p) : null;
@@ -963,6 +999,27 @@ export class DrawingWorkspace {
     this.addAnnot(a, kind === "rev" ? "Revision table" : "General table");
   }
 
+  /** A BOM table (FR-DRW-030) on top of the title block, header at the bottom, items upwards; its rows follow the assembly. */
+  private insertBom() {
+    if (!this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    if ((this.sheet.annots ?? []).some(a => a.t === "table" && a.kind === "bom")) { toast(t("The sheet has a bill of materials already.")); return; }
+    const [bx, by] = titleBlockAt(this.sheet), [tw, th] = tbSize(this.sheet);
+    this.addAnnot({ id: uid("a_"), t: "table", kind: "bom", anchor: "br", pos: [bx + tw, by + th], cols: [...BOM_COLS], rows: [] }, "Bill of materials");
+  }
+
+  /** Auto balloon (FR-DRW-030): one balloon per BOM item in the selected view (or the first view), around it. */
+  private async autoBalloon() {
+    if (!this.bom || !this.facts) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
+    const v = this.sheet.views.find(x => x.id === this.sel) ?? this.sheet.views.find(x => x.kind !== "detail");
+    if (!v) { toast(t("Place a model view first."), true); return; }
+    const proj = await this.kernel.request(viewReq(this.sheet, v)).catch(() => null);
+    if (!proj || !this.facts) return;
+    const add = autoBalloons(this.sheet, v, this.facts.topo, projector(viewDir(this.sheet, v)).P, proj, viewScale(this.sheet, v), this.bom, () => uid("a_"));
+    if (!add.length) { toast(t("Every item already has a balloon in the view.")); return; }
+    this.store!.change("Auto balloon", d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(...add); });
+    toast(t("{n} balloon added|{n} balloons added", { n: add.length }), "success");
+  }
+
   /** What an annotation command shows before it is placed: the hovered entity, the picks and the preview. */
   private annotPreview(H: number): string {
     const m = this.mode;
@@ -993,6 +1050,12 @@ export class DrawingWorkspace {
         const pos = fromSheet(pl, at[0], at[1]);
         const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: this.facts?.topo.cyls ?? [] } }).prims.filter(x => x.layer !== "CENTER"), H, "currentColor")}</g>`;
+      }
+    } else if (m.kind === "balloon") {
+      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
+      else {
+        const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => x.layer !== "CENTER"), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
@@ -1092,6 +1155,20 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Production method"))}<input data-d="sm" value="${esc(a.method ?? "")}" translate="no"></label>
       </fieldset>${del}`;
     }
+    if (a.t === "balloon") {
+      const c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && this.bom ? this.bom.itemOf(c) : null;
+      const comp = c ? this.facts?.comps?.find(x => x.id === c)?.name ?? c : "";
+      return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
+        ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
+        <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
+      </fieldset>${del}`;
+    }
+    if (a.t === "table" && a.kind === "bom") {
+      const head = a.cols.map((c, j) => `<label class="drw-f">${esc(t("Column {n}", { n: j + 1 }))}<input data-d="th:${j}" value="${esc(cellLabel(c, t))}" translate="no"></label>`).join("");
+      return `<fieldset class="pm-group"><legend>${esc(t("Bill of materials"))}</legend>
+        <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>${head}
+      </fieldset>${del}`;
+    }
     if (a.t === "table") {
       const head = a.cols.map((c, j) => `<th><input data-d="th:${j}" value="${esc(cellLabel(c, t))}" aria-label="${esc(t("Column {n}", { n: j + 1 }))}" translate="no"></th>`).join("");
       const body = a.rows.map((r, i) => `<tr>${a.cols.map((_c, j) => `<td><input data-d="tc:${i}:${j}" value="${esc(r[j] ?? "")}" aria-label="${esc(t("Row {r}, column {c}", { r: i + 1, c: j + 1 }))}" translate="no"></td>`).join("")}</tr>`).join("");
@@ -1128,6 +1205,7 @@ export class DrawingWorkspace {
         else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
       } else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
       else if (a.t === "table") {
         // Headers and the title keep their English key while unchanged, so they follow the language.
@@ -1447,7 +1525,7 @@ export class DrawingWorkspace {
     if (b.dataset.an) {
       this.closeMenus();
       const an = b.dataset.an;
-      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else this.startAnnot(an as AnnotMode["kind"]);
+      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else if (an === "bom") this.insertBom(); else if (an === "auto") void this.autoBalloon(); else this.startAnnot(an as AnnotMode["kind"]);
       return;
     }
     if (b.dataset.grow) {

@@ -5,10 +5,13 @@ import { compile } from "../kernel/client";
 import type { Projection, Topo, V3, ViewDir } from "../kernel/drawing";
 import type { HoleInfo, ModelItem } from "./items";
 import type { PartDoc } from "../model/types";
+import type { AsmDoc } from "../asm/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey } from "./views";
 
-export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[] }
+/** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
+export interface CompInfo { id: string; part: string; name: string }
+export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; comps?: CompInfo[] }
 
 export class DrawingKernel {
   private worker: Worker | null = null;
@@ -57,11 +60,11 @@ export class DrawingKernel {
   }
 
   /** Loads the model; the projection cache starts over. */
-  load(src: { part?: PartDoc; file?: { name: string; bytes: Uint8Array } }): Promise<ModelFacts> {
+  load(src: { part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }): Promise<ModelFacts> {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes }));
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, comps: r.comps }));
     return this.loaded;
   }
 

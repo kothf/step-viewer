@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.71.0] - 2026-11-08
+
+### Added
+
+- **Assembly drawings** (FR-DRW-030): New drawing with an assembly open draws the assembly with exact hidden lines, every shown component placed; dimensions and annotations work on it as on a part, and the drawing follows the assembly when it changes.
+- **Bill of materials** (Annotate ▾): the parts list goes on top of the title block with the header at the bottom, one row per part or sub-assembly with its part number, description and quantity (pattern instances counted). Its rows come from the assembly, so they update with it; the column headings can be renamed.
+- **Balloons**: click an edge of a component, then place the balloon; it shows the part's item number from the BOM and keeps it when the assembly changes. **Auto balloon** numbers every part seen in the selected view, on its longest visible edge, spread around the view.
+
 ## [1.70.0] - 2026-11-08
 
 ### Added
@@ -678,7 +686,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.70.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.71.0...HEAD
+[1.71.0]: https://github.com/kothf/step-viewer/compare/v1.70.0...v1.71.0
 [1.70.0]: https://github.com/kothf/step-viewer/compare/v1.69.0...v1.70.0
 [1.69.0]: https://github.com/kothf/step-viewer/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/kothf/step-viewer/compare/v1.67.0...v1.68.0

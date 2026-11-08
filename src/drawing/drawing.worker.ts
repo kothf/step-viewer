@@ -3,13 +3,15 @@
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
 import { project, readShape, section, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
+import type { AsmDoc } from "../asm/types";
 import type { PartDoc } from "../model/types";
 import { modelItems } from "./items";
 
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
-  | { id: number; type: "load"; part?: PartDoc; file?: { name: string; bytes: Uint8Array } }
+  | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir }
   | { id: number; type: "section"; view: ViewDir; p: V3 };
 
@@ -37,6 +39,17 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         let mi: ReturnType<typeof modelItems> = { items: [], holes: [] };
         try { mi = modelItems(r.part, res.frames, res.sketches); } catch { /* no model items */ }
         extra = { topo: topology(oc, shape, res.body.names), ...mi };
+      } else if (r.asm) {
+        // An assembly (FR-DRW-030): the shown components placed into one compound; face names get
+        // the component id in front (`<comp>@<face>`) so an edge says which component it is on.
+        const { placed } = new Assembler(oc).evaluate({ ...r.asm, components: r.asm.components.filter(c => !c.hidden) });
+        if (!placed.length) throw new Error("The assembly has no components to draw.");
+        const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+        b.MakeCompound(comp);
+        const names: string[] = [], comps: { id: string; part: string; name: string }[] = [];
+        for (const pc of placed) { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name }); }
+        shape = comp;
+        extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
       } else if (r.file) { shape = readShape(oc, r.file.bytes, r.file.name); extra = { topo: topology(oc, shape), items: [], holes: [] }; }
       else throw new Error("Nothing to load");
       post({ id: r.id, ok: true, ...shapeInfo(oc, shape), ...extra });
