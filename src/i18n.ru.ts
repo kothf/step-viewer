@@ -2630,6 +2630,9 @@ export const RU: Record<string, string> = {
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
   // Motion studies (FR-FT-122)
+  "Appearance": "Внешний вид",
+  "Hidden": "Скрыт",
+  "Shown": "Показан",
   "Make an exploded view first (Explode).": "Сначала создайте вид с разнесением (Разнести).",
   "This browser cannot record video; save a GIF instead.": "Этот браузер не умеет записывать видео; сохраните GIF.",
   "Recording frame {i} of {n}…": "Запись кадра {i} из {n}…",

@@ -4832,6 +4832,26 @@ try {
     const exploded = await pos();
     await mp.evaluate(() => window.__sv.motion.seek(2.5));
     const cam1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray() }; });
+    // Appearance keys: pin 2 fades out over the study (half way at 2.5 s, hidden at 5 s); Alt+← moves the end key a frame.
+    const look = await mp.evaluate(async () => {
+      const m = window.__sv.motion, a = window.__sv.asm, id = a.doc.components[1].id, p = () => window.__sv.viewer.parts[a.shownIds.indexOf(id)];
+      const listed = [...document.querySelectorAll('#motion select[data-mo="add"] option')].some(o => o.value === `look:${id}`);
+      m.addTrack(`look:${id}`);
+      m.seek(2.5);
+      const half = { op: p().opacity, vis: p().visible, mat: p().material.transparent };
+      m.seek(5);
+      const end = { vis: p().visible };
+      const tr = m.study.tracks.find(k => k.kind === "look");
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true }));
+      const moved = m.study.tracks.find(k => k.kind === "look").keys.map(k => k.t);
+      const label = document.querySelector(`#motion [data-track="${tr.id}"] .mo-kind`)?.textContent;
+      m.deleteTrack(tr.id);
+      m.seek(5);
+      return { listed, half, end, moved, label, back: { op: p().opacity, vis: p().visible } };
+    });
     // Recording: a GIF of a 1 s study and a WebM video.
     const rec = await mp.evaluate(async () => {
       const m = window.__sv.motion;
@@ -4860,10 +4880,12 @@ try {
     const back = await pos();
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
-      && Math.abs(exploded.x - 50) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(exploded.x - 50) < 0.01
+      && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor, explode and orbit wizard, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
