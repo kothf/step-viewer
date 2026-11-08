@@ -154,6 +154,14 @@ export function mateCsv(dist: number[], angle: number[], fps: number): string {
   return ["t (s),distance (mm),angle (deg)", ...dist.map((d, i) => [r4(i / fps), r4(d), r4(angle[i] ?? 0)].join(","))].join("\n") + "\n";
 }
 
+/** What a proximity result can plot. */
+export const GAP_PLOTS: [TracePlot, string][] = [["dist", "Distance"], ["speed", "Rate of distance"]];
+
+/** One row per frame of a proximity result: time and the smallest distance (English headers, as every export). */
+export function gapCsv(dist: number[], fps: number): string {
+  return ["t (s),distance (mm)", ...dist.map((d, i) => [r4(i / fps), r4(d)].join(","))].join("\n") + "\n";
+}
+
 /** Rate of change (per second) of `v` at each sample: central differences inside, one-sided at the ends. */
 export function rates(v: number[], fps: number): number[] {
   return v.map((_, i) => {
