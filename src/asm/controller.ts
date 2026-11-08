@@ -19,7 +19,7 @@ import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } 
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
-import type { AsmFeatureStatus } from "../model/kernelClient";
+import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
@@ -84,6 +84,7 @@ export class AsmController {
   private moving: string | null = null;
   private building = false;
   private again = false;
+  private gen = 0;
   private first = true;
   private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef } | null = null;
   /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
@@ -243,6 +244,10 @@ export class AsmController {
     this.exploding = null;
     this.exploded = null;
     this.clearOverlay();
+    this.gen++;
+    this.building = false;
+    this.again = false;
+    $("#asm-busy").hidden = true;
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("asm");
     this.host.viewer.emptySize = 1;
@@ -293,6 +298,8 @@ export class AsmController {
     if (!this.doc) return;
     if (this.building) { this.again = true; return; }
     this.building = true;
+    // Closing or parking the assembly starts a new generation: a build still in flight then just ends.
+    const gen = this.gen;
     this.idle = (async () => {
       do {
         this.again = false;
@@ -302,6 +309,7 @@ export class AsmController {
         try {
           const ex = this.expand(doc);
           const r = await this.kernel.assembly(ex.doc);
+          if (gen !== this.gen) return;
           if (this.doc !== doc && this.again) continue;
           this.statuses = r.statuses;
           this.featStatus = r.features ?? [];
@@ -312,7 +320,10 @@ export class AsmController {
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
           this.applyOpacity();
-        } catch (err) { toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true); }
+        } catch (err) {
+          if (gen !== this.gen || (err as Error).message === STOPPED) return;
+          toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true);
+        }
       } while (this.again);
       $("#asm-busy").hidden = true;
       this.building = false;

@@ -59,6 +59,8 @@ import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, S
 import { isSheet } from "../sheetmetal/types";
 import { flatBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
+import { modelItems, type ModelItem } from "../drawing/items";
+import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 
@@ -96,6 +98,8 @@ export interface ModelHost {
   leaveOthers?(): void;
   /** A part was opened or made (document tabs). */
   opened?(label: string): void;
+  /** Names of the documents open in tabs, so a new part does not take one of them. */
+  openNames?(): string[];
   appVersion: string;
 }
 
@@ -375,7 +379,7 @@ export class ModelController {
   /** Starts a new, empty part. */
   newPart() {
     let n = 1;
-    const used = new Set(journalList().map(j => j.doc.name));
+    const used = new Set([...journalList().map(j => j.doc.name), ...(this.host.openNames?.() ?? [])]);
     while (used.has(`Part${n}`)) n++;
     this.load(newPart(`Part${n}`), "", null);
     this.warm();
@@ -483,6 +487,8 @@ export class ModelController {
     this.renderVaultBar();
     this.returnTo = null;
     this.renderReturnBar();
+    this.instant = null;
+    this.instantDoc = null;
     this.last = null;
     this.clearDecor();
     this.kernel.stop();
@@ -526,8 +532,10 @@ export class ModelController {
 
   /** The document as shown: with the open command's draft, rolled back while a sketch or a pick is open. */
   private displayDoc(): PartDoc {
-    const d: PartDoc = structuredClone(this.doc);
     const m = this.mode;
+    // A value typed in the Modify box of a feature dimension, rebuilt before it is accepted (FR-UI-115).
+    if (m.kind === "none" && this.instantDoc) return structuredClone(this.instantDoc);
+    const d: PartDoc = structuredClone(this.doc);
     if (m.kind === "sketch") {
       const i = d.features.findIndex(f => f.id === m.id);
       d.rollback = i + 1;
@@ -1655,7 +1663,7 @@ export class ModelController {
       if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { if (!this.edgeMenu(e)) this.commandMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
-      if (m.kind === "none") { const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
+      if (m.kind === "none") { if (e.detail < 2) this.hideInstant(); const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
       else if (m.kind === "plane") this.pickPlane(e);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
@@ -1708,6 +1716,7 @@ export class ModelController {
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
       if (onCanvas(e) && m.kind === "sketch" && m.editor.doubleClick()) e.stopPropagation();
+      else if (onCanvas(e) && m.kind === "none") this.showInstant(e.clientX, e.clientY);
     }, true);
     window.addEventListener("keydown", e => this.key(e), true);
     window.addEventListener("beforeunload", e => { if (this.store?.dirty) { journalSave(this.doc, this.fileName); e.preventDefault(); } });
@@ -1740,6 +1749,7 @@ export class ModelController {
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
+    if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
     const m = this.mode;
     // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
@@ -2771,6 +2781,7 @@ export class ModelController {
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
+    this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
       for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
@@ -3439,6 +3450,11 @@ export class ModelController {
 
   private placeCallouts() {
     const v = this.host.viewer;
+    $("#mc-layer").querySelectorAll<HTMLElement>(".mc-fdim").forEach(el => {
+      const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
+      el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
+    });
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
@@ -3622,6 +3638,141 @@ export class ModelController {
 
   /** Last pointer position over the view (where the shortcut bar opens). */
   private pointer: { x: number; y: number } | null = null;
+
+  /** The feature whose dimensions are shown on the model (FR-UI-115), and the document a Modify box previews. */
+  private instant: string | null = null;
+  private instantDoc: PartDoc | null = null;
+
+  /** The dimensions a feature shows on the model: its sketch's driving dimensions and its own depth. */
+  private instantItems(f: Feature): ModelItem[] {
+    if (!this.last) return [];
+    const sk = "sketch" in f && typeof f.sketch === "string" ? f.sketch : f.type === "sketch" ? f.id : null;
+    let items: ModelItem[] = [];
+    try { items = modelItems(this.doc, this.last.frames).items; } catch { return []; }
+    return items.filter(it => (sk && it.src.startsWith(`${sk}:`)) || it.src === `${f.id}:depth`);
+  }
+
+  /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in SolidWorks. */
+  showInstant(x: number, y: number) {
+    if (!this.store || !this.last || this.mode.kind !== "none") return;
+    const hit = this.host.edgeAt(x, y);
+    const faceId = hit?.edge ? hit.edge.faces[0] : hit?.faceId;
+    const id = faceId != null ? this.last.faceNames[faceId]?.split(":")[0] : undefined;
+    const f = id ? this.store.feature(id) : undefined;
+    if (!f || f.suppressed) { this.hideInstant(); return; }
+    this.hideShortcutBar();
+    if (!this.instantItems(f).length) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
+    this.instant = f.id;
+    this.selected = f.id;
+    this.renderTree();
+    this.drawDecor();
+  }
+
+  hideInstant() {
+    if (!this.instant) return;
+    this.instant = null;
+    this.drawDecor();
+  }
+
+  /** Draws the shown feature's dimensions: lines in the view and a value label on each. */
+  private drawInstant() {
+    const f = this.instant ? this.store?.feature(this.instant) : undefined;
+    if (!f || this.mode.kind !== "none") { if (this.mode.kind !== "none") this.instant = null; return; }
+    const dark = document.documentElement.dataset.theme === "dark";
+    const fu = UNITS[units.current].f, dec = units.decimals ?? this.doc.units.decimals;
+    const pos: number[] = [];
+    const layer = $("#mc-layer");
+    for (const it of this.instantItems(f)) {
+      const [a, b] = it.p;
+      let mid: V3;
+      if (it.k === "lin") {
+        // Along a direction: the dimension line runs from the first point along it, with a leg to the second.
+        let e = b;
+        if (it.dir) { const k = (b[0] - a[0]) * it.dir[0] + (b[1] - a[1]) * it.dir[1] + (b[2] - a[2]) * it.dir[2]; e = [a[0] + it.dir[0] * k, a[1] + it.dir[1] * k, a[2] + it.dir[2] * k]; pos.push(...e, ...b); }
+        pos.push(...a, ...e);
+        mid = [(a[0] + e[0]) / 2, (a[1] + e[1]) / 2, (a[2] + e[2]) / 2];
+      } else {
+        const o: V3 = it.k === "dia" ? [2 * a[0] - b[0], 2 * a[1] - b[1], 2 * a[2] - b[2]] : a;
+        pos.push(...o, ...b);
+        mid = b;
+      }
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "mc-fdim";
+      el.dataset.src = it.src;
+      el.dataset.at = JSON.stringify(mid);
+      el.setAttribute("translate", "no");
+      el.textContent = `${it.k === "rad" ? "R" : it.k === "dia" ? "Ø" : ""}${trimNum(it.value * fu, dec)}`;
+      el.title = t("{name}: click to change", { name: it.name });
+      el.addEventListener("click", ev => { ev.stopPropagation(); this.editInstant(it.src, el); });
+      layer.appendChild(el);
+    }
+    this.lines(pos, dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    this.placeCallouts();
+  }
+
+  /** Opens the Modify box on a shown feature dimension; ⟲ rebuilds with the typed value, ✓ keeps it as one undo step. */
+  private editInstant(src: string, el: HTMLElement) {
+    if (!this.store) return;
+    const [fid, key] = src.split(":");
+    const f = this.store.feature(fid);
+    if (!f) return;
+    const fu = UNITS[units.current].f;
+    let num: Num, title: string;
+    if (key === "depth" && f.type === "extrude") { num = f.depth; title = `${t("Depth")}@${f.name}`; }
+    else if (f.type === "sketch") {
+      const d = f.dims.find(x => x.id === key);
+      if (!d) return;
+      num = d.val;
+      title = `${d.name}@${f.name}`;
+    } else return;
+    const value = num.expr ?? trimNum(num.v * fu, 6);
+    // The document with the typed value, or an error.
+    const docWith = (text: string): PartDoc | string | null => {
+      let v: number;
+      try { v = evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
+      catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
+      if (!(v > 0)) return t("The value must be more than 0.");
+      const val: Num = isPlain(text) ? { v } : { v, expr: text.trim() };
+      if (Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
+      const d = structuredClone(this.doc);
+      const g = d.features.find(x => x.id === fid)!;
+      if (g.type === "extrude") g.depth = val;
+      else if (g.type === "sketch") {
+        g.dims.find(x => x.id === key)!.val = val;
+        if (solve(g).status !== "ok") return t("That value cannot be reached with the other relations and dimensions.");
+      }
+      return d;
+    };
+    const unpreview = () => { if (this.instantDoc) { this.instantDoc = null; void this.rebuild(); } };
+    el.classList.add("on");
+    const r = el.getBoundingClientRect();
+    new ModifyBox({
+      at: { x: r.right, y: r.top + r.height / 2 },
+      title,
+      value,
+      step: units.current === "in" ? 0.1 : 1,
+      preview: text => {
+        const d = docWith(text);
+        if (typeof d === "string") { toast(d, "error"); return; }
+        if (!d) { unpreview(); return; }
+        this.instantDoc = d;
+        void this.rebuild();
+      },
+      accept: text => {
+        el.classList.remove("on");
+        if (!this.store) return true;
+        const d = docWith(text);
+        if (typeof d === "string") { toast(d, "error"); unpreview(); return true; }
+        if (!d) { unpreview(); return true; }
+        this.instantDoc = null;
+        const g = d.features.find(x => x.id === fid)!;
+        this.store.change(`Change ${title}`, doc => { const i = doc.features.findIndex(x => x.id === fid); if (i >= 0) doc.features[i] = structuredClone(g); });
+        return true;
+      },
+      cancel: () => { el.classList.remove("on"); unpreview(); },
+    });
+  }
 
   /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
   showShortcutBar() {
