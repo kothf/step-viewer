@@ -678,6 +678,7 @@ export const RU: Record<string, string> = {
   "A face or edge this feature used is gone (reference lost).": "Грань или ребро, на которые опирался элемент, исчезли (ссылка потеряна).",
   "The geometry kernel stopped; it was restarted.": "Геометрическое ядро остановилось и было перезапущено.",
   "New part: click Sketch, pick a plane and draw a closed profile, then Extrude.": "Новая деталь: нажмите «Эскиз», выберите плоскость, нарисуйте замкнутый контур, затем «Вытягивание».",
+  "Pick a flat face or a plane: this one is curved.": "Выберите плоскую грань или плоскость: эта грань кривая.",
   "A sketch needs a flat face or a plane.": "Для эскиза нужна плоская грань или плоскость.",
   "Draw a sketch first.": "Сначала нарисуйте эскиз.",
   "There is no body yet.": "Тела ещё нет.",

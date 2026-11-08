@@ -617,7 +617,7 @@ export class ModelController {
     const name = this.last?.faceNames[faceId];
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
-    if (face.type !== "plane") { toast(t("A sketch needs a flat face or a plane."), true); return null; }
+    if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
     return { face: { name, hint: face.centroid } };
   }
 
@@ -4543,6 +4543,22 @@ export class ModelController {
         const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
         upd(() => {
+          // Head sizes still at their automatic values (the size's ISO table, or the custom defaults) follow
+          // a typed diameter: a Ø3.2 countersink kept the M6 head (Ø13.44) before.
+          if (f.type === "hole" && key === "diameter" && cur && cur.v > 0) {
+            const auto: HoleFeature = JSON.parse(JSON.stringify(f));
+            if (f.size) applyHoleSize(auto);
+            else {
+              const d0 = cur.v;
+              auto.cbDia = { v: Math.round(d0 * 17) / 10 }; auto.cbDepth = { v: d0 }; auto.csDia = { v: d0 * 2 }; auto.threadDepth = { v: d0 * 2 };
+              auto.cdDia = { v: Math.round(d0 * 17) / 10 }; auto.cdDepth = { v: d0 }; auto.slotLen = { v: Math.round(d0 * 20) / 10 };
+            }
+            const k = n.v / cur.v;
+            for (const h of ["cbDia", "cbDepth", "csDia", "threadDepth", "cdDia", "cdDepth", "slotLen"] as const) {
+              const x = f[h], a = auto[h];
+              if (x && a && !x.expr && Math.abs(x.v - a.v) < 1e-9) f[h] = { v: Math.round(x.v * k * 100) / 100 };
+            }
+          }
           (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
