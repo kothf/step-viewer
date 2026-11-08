@@ -2706,8 +2706,9 @@ try {
     // Right-click the top front edge: Select loop takes the four edges round its face.
     const [ex, ey] = await world([0, -15, 20]);
     await mp.mouse.click(ex, ey, { button: "right" });
-    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(1)");
+    // OK and Cancel come first (FR-UI-107), then the edge helpers.
+    const items = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(4)");
     const nLoop = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await idle();
     await mp.waitForTimeout(300);
@@ -2717,8 +2718,8 @@ try {
     // A point on the rim away from vertices and quadrant points (those snap as points, not the edge).
     const [hx, hy] = await world([-10 + 5 * Math.cos(-1.1), 5 * Math.sin(-1.1), 20]);
     await mp.mouse.click(hx, hy, { button: "right" });
-    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    const items2 = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].slice(2).map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(6)");
     const nSame = await mp.evaluate(() => window.__sv.model.mode().draft.edges.length);
     await mp.keyboard.press("Escape");
     check(items === "Select loop|Select tangency|Select straight edges of the same length" && nLoop === 4 && /same radius/.test(items2) && nSame === 8, `model 1.36: fillet edge helpers, select loop and same radius (${items}, ${nLoop}, ${items2}, ${nSame})`);
@@ -5801,6 +5802,88 @@ try {
     await np.keyboard.press("Escape");
     await np.click("#lang-btn");
     check(ru.includes("Сверху") && ru.includes("Предыдущий вид") && !/[A-Za-z]{3}/.test(ru), `navigation: the orientation picker is translated in Russian (${ru.slice(0, 60)})`);
+    await ctx.close();
+  }
+
+  // --- Commands (FRS 13.13: FR-UND-005, FR-UI-106/107/111): named undo and its list, Enter repeats, right-click OK/Cancel, pushpin ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const cp = await ctx.newPage();
+    cp.on("pageerror", e => errors.push(e.message));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await cp.goto(`${origin}/index.html?debug`);
+    await cp.waitForFunction(() => window.__sv);
+    await cp.click("#new-part");
+    await cp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await cp.waitForTimeout(150); await cp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    const rect = (id, x0, y0, x1, y1) => cp.evaluate(([id, x0, y0, x1, y1]) => window.__sv.model.store.change("Sketch", d => {
+      const P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: id === "s1" ? "Sketch1" : "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, x0, y0), P(2, x1, y0), P(3, x1, y1), P(4, x0, y1), { id: `${id}l1`, t: "line", a: `${id}p1`, b: `${id}p2` }, { id: `${id}l2`, t: "line", a: `${id}p2`, b: `${id}p3` }, { id: `${id}l3`, t: "line", a: `${id}p3`, b: `${id}p4` }, { id: `${id}l4`, t: "line", a: `${id}p4`, b: `${id}p1` }] });
+    }), [id, x0, y0, x1, y1]);
+    const mode = () => cp.evaluate(() => { const m = window.__sv.model.mode(); return m.kind === "feature" ? `feature:${m.draft.type}` : m.kind; });
+    const nf = () => cp.evaluate(() => window.__sv.model.store.doc.features.length);
+    await rect("s1", -20, -10, 20, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click("#mc-ok");
+    await settle();
+    const tip = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    check((await nf()) === 2 && /Extrude1/.test(tip), `commands: the Undo button names the step it undoes (${tip})`);
+    // Enter with no command running repeats the last one.
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(200);
+    const rep = await mode();
+    // Right-click without a drag while the command runs: OK and Cancel first.
+    const vb = await cp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width * 0.8, y: r.top + r.height * 0.8 }; });
+    await cp.mouse.click(vb.x, vb.y, { button: "right" });
+    await cp.waitForTimeout(100);
+    const menu = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button", { hasText: "Cancel" }).click();
+    await cp.waitForTimeout(150);
+    const afterCancel = await mode();
+    check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 2,
+      `commands: Enter repeats Extrude, a right-click offers OK / Cancel and Cancel closes it (${rep}, [${menu.join(", ")}], ${afterCancel})`);
+    // Undo ▾ lists the steps newest first; picking the second undoes both.
+    await cp.click('#mc-tools [data-fly="undo"]');
+    const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
+    await cp.locator("#mc-menu button").nth(1).click();
+    await settle();
+    const undone = await nf();
+    await cp.keyboard.press("Control+y"); await cp.keyboard.press("Control+y");
+    await settle();
+    check(list.length === 2 && /Extrude1/.test(list[0]) && undone === 0 && (await nf()) === 2, `commands: the Undo list names the steps and undoes back to the one picked ([${list.join(", ")}] → ${undone} features)`);
+    // Pushpin: OK makes the feature and opens the same command again.
+    await rect("s2", 30, -10, 50, 10);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.waitForTimeout(300);
+    const pinned = { n: await nf(), mode: await mode(), store: await cp.evaluate(() => localStorage.getItem("mc:pin")), on: await cp.evaluate(() => document.querySelector('#mc-pm [data-k="pin"]')?.getAttribute("aria-pressed")) };
+    await cp.click('#mc-pm [data-k="pin"]');
+    await cp.keyboard.press("Escape");
+    check(pinned.n === 4 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
+    // What's wrong: a fillet far too big fails; the list names it and a click selects it in the tree.
+    await cp.evaluate(() => window.__sv.model.store.change("Add Fillet1", d => { const ex = d.features.find(f => f.type === "extrude"); d.features.push({ id: "fbad", type: "fillet", name: "Fillet1", radius: { v: 500 }, edges: [{ faces: [`${ex.id}:end`, `${ex.id}:side:s1l1`], hint: [0, -10, 10] }] }); }));
+    await settle();
+    const wrongHead = await cp.evaluate(() => { const el = document.querySelector("#mc-errors"); return el.hidden ? "" : el.textContent; });
+    await cp.click("#mc-errors .mc-wrong-h");
+    const rows = await cp.evaluate(() => [...document.querySelectorAll("#mc-errors [data-wid]")].map(b => b.dataset.wid));
+    if (rows.length) await cp.click(`#mc-errors [data-wid="${rows[0]}"]`);
+    const sel = await cp.evaluate(() => document.querySelector("#mc-tree .ft-row.sel")?.dataset.id);
+    check(/What's wrong/.test(wrongHead) && rows.includes("fbad") && sel === rows[0], `commands: What's wrong lists the failing fillet and selects it (${wrongHead}; ${rows.join(",")}; ${sel})`);
+    await cp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Russian: the named Undo tooltip and the pushpin are translated.
+    await cp.click("#lang-btn");
+    const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    await cp.click("#lang-btn");
+    check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
     await ctx.close();
   }
 

@@ -96,6 +96,9 @@ export class DocStore {
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ""; }
   get redoLabel() { return this.redoStack.at(-1)?.label ?? ""; }
 
+  /** Names of the steps Undo / Redo would take, newest first (FR-UND-005). */
+  history(n = 20) { return { undo: this.undoStack.slice(-n).reverse().map(s => s.label), redo: this.redoStack.slice(-n).reverse().map(s => s.label) }; }
+
   undo() {
     const s = this.undoStack.pop();
     if (!s) return;

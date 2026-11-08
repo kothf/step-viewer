@@ -312,6 +312,9 @@ ${table([
   ["Ctrl+8", "Normal to the sketch or the selected face (again: the other side)"],
   ["Q", "Construction geometry on / off"],
   ["Enter / Esc", "OK (leave the sketch) / cancel"],
+  ["Enter (no command running)", "Repeat the last feature command"],
+  ["Ctrl+Enter", "OK and start the same command again (📌 in the panel does it every time)"],
+  ["Right-click (no drag) in a command", "OK / Cancel menu"],
   ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
   ["Ctrl+S", "Save the part"],
 ])}
@@ -560,6 +563,9 @@ ${table([
   ["Ctrl+8", "Перпендикулярно эскизу или выбранной грани (повторно: с другой стороны)"],
   ["Q", "Вспомогательная геометрия: вкл. / выкл."],
   ["Enter / Esc", "ОК (выйти из эскиза) / отмена"],
+  ["Enter (без активной команды)", "Повторить последнюю команду"],
+  ["Ctrl+Enter", "ОК и снова та же команда (📌 в панели — каждый раз)"],
+  ["Правый щелчок (без перетаскивания) в команде", "Меню ОК / Отмена"],
   ["Ctrl+Z / Ctrl+Y", "Отменить / повторить"],
   ["Ctrl+S", "Сохранить деталь"],
 ])}

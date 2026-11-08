@@ -2637,4 +2637,19 @@ export const RU: Record<string, string> = {
   "No previous view.": "Предыдущего вида нет.",
   "Select a face, an edge or a part first.": "Сначала выберите грань, ребро или деталь.",
   "Zoom to area: drag a box over the part of the view to fill the screen (Esc cancels).": "Увеличить область: обведите рамкой часть вида, которая должна заполнить экран (Esc — отмена).",
+  // Commands: undo list, repeat, pushpin, right-click OK (FR-UND-005, FR-UI-106/107/111)
+  "Add {name}": "Добавить: {name}",
+  "Edit {name}": "Изменить: {name}",
+  "Delete {name}": "Удалить: {name}",
+  "Undo: {what} (Ctrl+Z)": "Отменить: {what} (Ctrl+Z)",
+  "Redo: {what} (Ctrl+Y)": "Повторить: {what} (Ctrl+Y)",
+  "Nothing to undo.": "Отменять нечего.",
+  "Undo list": "Список отмены",
+  "Keep visible": "Не закрывать",
+  "Keep visible: OK starts the same command again (Ctrl+Enter does it once)": "Не закрывать: после ОК та же команда запускается снова (Ctrl+Enter — один раз)",
+  "Repeat: {name}": "Повтор: {name}",
+  // What's wrong (FR-HIS-022)
+  "{n} warning|{n} warnings": "{n} предупреждение|{n} предупреждения|{n} предупреждений",
+  "What's wrong": "Что не так",
+  "Click to select, double-click to edit": "Щелчок — выбрать, двойной щелчок — изменить",
 };

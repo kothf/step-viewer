@@ -48,7 +48,7 @@ import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
-import { onLangChange, t } from "../i18n";
+import { lang, onLangChange, t } from "../i18n";
 
 export interface ModelHost {
   viewer: Viewer;
@@ -790,7 +790,7 @@ export class ModelController {
   }
 
   /** ✓: keeps the sketch or the feature. */
-  ok() {
+  ok(repeat = false) {
     const m = this.mode;
     if (m.kind === "sketch") {
       const sk = this.store!.feature(m.id);
@@ -883,7 +883,36 @@ export class ModelController {
     this.selected = f.id;
     this.clearDecor();
     this.renderAll();
-    void this.rebuild();
+    // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
+    const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
+    void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
+  }
+
+  /** Undo/redo step names in the UI language; null when a name has no translation (FR-UND-005). */
+  private stepName(label: string): string | null {
+    const m = /^(Add|Edit|Delete) (.+)$/.exec(label);
+    if (m) return t(`${m[1]} {name}`, { name: featureLabel(m[2]) });
+    const tr = t(label);
+    return tr === label && lang() !== "en" ? null : tr;
+  }
+  private undoTip(redo = false) {
+    const s = this.store;
+    const label = s ? (redo ? s.redoLabel : s.undoLabel) : "";
+    const name = label ? this.stepName(label) : null;
+    return name ? t(redo ? "Redo: {what} (Ctrl+Y)" : "Undo: {what} (Ctrl+Z)", { what: name }) : t(redo ? "Redo (Ctrl+Y)" : "Undo (Ctrl+Z)");
+  }
+
+  /** The Undo ▾ list: the last steps by name; picking one undoes (or redoes) back to it. */
+  private historyMenu(at: HTMLElement) {
+    if (!this.store) return;
+    const h = this.store.history(20);
+    const items: ([string, () => void, string?] | null)[] = [];
+    h.undo.forEach((l, i) => items.push([this.stepName(l) ?? t("Step {n}", { n: i + 1 }), () => { for (let k = 0; k <= i; k++) this.undo(); }, "↶"]));
+    if (h.undo.length && h.redo.length) items.push(null);
+    h.redo.forEach((l, i) => items.push([this.stepName(l) ?? t("Step {n}", { n: i + 1 }), () => { for (let k = 0; k <= i; k++) this.redo(); }, "↷"]));
+    if (!items.length) { toast(t("Nothing to undo.")); return; }
+    const r = at.getBoundingClientRect();
+    this.showMenu(items, r.left - 40, r.bottom + 4, () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="undo"]')?.focus());
   }
 
   /** ✕: closes without changes (a sketch asks before throwing its edits away). */
@@ -1325,7 +1354,7 @@ export class ModelController {
       const d = this.down;
       this.down = null;
       // Not stopped either: the view controls must see the right button go up.
-      if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { this.edgeMenu(e); return; }
+      if (e.button === 2 && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 4) { if (!this.edgeMenu(e)) this.commandMenu(e); return; }
       if (e.button !== 0 || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
       // Not stopped: the orbit controls must see the button go up. Smart measure skips these clicks (`picking`).
       if (m.kind === "none") { const at = { x: e.clientX, y: e.clientY }, alt = e.altKey; setTimeout(() => this.showContextBar(at, alt), 0); }
@@ -1398,6 +1427,8 @@ export class ModelController {
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
+    // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
+    if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
@@ -1423,6 +1454,8 @@ export class ModelController {
       return;
     }
     const inTree = !!tg.closest?.("#tab-features");
+    // Enter with no command running repeats the last feature command (FR-UI-111).
+    if (k === "enter" && !inTree && !e.shiftKey && this.lastCmd && !tg.matches?.("button, a, summary, [role=treeitem], [role=tab], [role=menuitem]")) { stop(); toast(t("Repeat: {name}", { name: this.cmdLabel(this.lastCmd) })); this.command(this.lastCmd); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
@@ -1583,10 +1616,34 @@ export class ModelController {
     const round = (ed.type === "circle" || ed.type === "arc") && !!ed.radius && !ed.ellipse;
     const back = () => this.host.viewer.renderer.domElement.focus();
     this.showMenu([
+      ...this.okItems(),
       [t("Select loop"), () => this.addEdges(edgeLoop(data.edges, ed, face))],
       [t("Select tangency"), () => this.addEdges(tangentChain(data.edges, ed))],
       [round ? t("Select round edges of the same radius") : t("Select straight edges of the same length"), () => this.addEdges(sameEdges(data.edges, ed))],
     ], e.clientX, e.clientY, back);
+    return true;
+  }
+
+  /** A command's name as the toolbar shows it. */
+  private cmdLabel(c: string) {
+    const fixed: Record<string, string> = { extrude: "Extrude", cut: "Cut", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "Linear pattern", cpattern: "Circular pattern", hole: "Hole", thread: "Thread", sketch: "Sketch" };
+    if (fixed[c]) return t(fixed[c]);
+    const hit = [...P3_TOOLS(), ...SURF_TOOLS()].find(x => x[0] === c);
+    return hit ? hit[1] : c;
+  }
+
+  /** OK / Cancel at the top of a right-click menu while a command runs (FR-UI-107). */
+  private okItems(): ([string, () => void, string?] | null)[] {
+    return [[t("OK"), () => this.ok(), "✓"], [t("Cancel"), () => void this.cancel(), "✕"], null];
+  }
+
+  /** Right-click without a drag while a feature or plane pick runs: OK and Cancel. */
+  private commandMenu(e: MouseEvent) {
+    const m = this.mode;
+    if (m.kind !== "feature" && m.kind !== "plane") return false;
+    const items = this.okItems();
+    items.pop();
+    this.showMenu(items, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
     return true;
   }
 
@@ -2881,7 +2938,7 @@ export class ModelController {
       }).join("")}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("cons", t("Construction"), t("Construction geometry on/off for the selection (Q)"))}${btn("skmirror", t("Mirror"), t("Mirror entities: select them and a line to mirror about, then click"))}${btn("skdxf", t("DXF"), t("Import a DXF drawing into the sketch"))}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("sklpat", t("Linear pattern"), t("Linear sketch pattern: select entities, then set count and spacing"))}${btn("skcpat", t("Circular pattern"), t("Circular sketch pattern: select entities (and a centre point), then set count and angle"))}${btn("skmove", t("Move"), t("Move or copy entities by a distance"))}${btn("skrot", t("Rotate"), t("Rotate entities about a point"))}${btn("skscale", t("Scale"), t("Scale entities about a point"))}</div>`
-        + `<div class="mc-sep"></div><div class="mc-g">${btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, !this.store.canUndo)}${btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, !this.store.canRedo)}</div>`
+        + `<div class="mc-sep"></div><div class="mc-g">${btn("undo", t("Undo"), this.undoTip(), false, !this.store.canUndo)}${btn("redo", t("Redo"), this.undoTip(true), false, !this.store.canRedo)}</div>`
         + `<div class="mc-sep"></div><div class="mc-g">${btn("exit", t("Exit sketch"), t("Exit sketch (Enter)"))}</div>`;
     } else {
       const busy = m.kind !== "none";
@@ -2927,7 +2984,7 @@ export class ModelController {
         + `</div><div class="mc-sep"></div><div class="mc-g">`
         + btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices))
         + `</div><div class="mc-sep"></div><div class="mc-g">`
-        + btn("undo", t("Undo"), t("Undo (Ctrl+Z)"), false, busy || !this.store.canUndo) + btn("redo", t("Redo"), t("Redo (Ctrl+Y)"), false, busy || !this.store.canRedo)
+        + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, busy || !this.store.canUndo)}<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button></span>` + btn("redo", t("Redo"), this.undoTip(true), false, busy || !this.store.canRedo)
         + `</div><div class="mc-sep"></div><div class="mc-g">`
         + `<span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP"))
         + `</div>`;
@@ -2954,6 +3011,7 @@ export class ModelController {
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="surf"]')?.focus());
         return;
       }
+      if (b.dataset.fly === "undo") { this.historyMenu(b); return; }
       if (b.dataset.fly === "save") {
         const r = b.getBoundingClientRect();
         this.showMenu([[t("Save as…"), () => void this.save(true)], [t("Snapshots…"), () => void this.showSnapshots()]], r.left - 40, r.bottom + 4,
@@ -3144,6 +3202,11 @@ export class ModelController {
 
   /** The tool each sketch flyout shows (the last one picked from it). */
   private flyLast = new Map<string, string>();
+  /** The last feature command (Enter repeats it, FR-UI-111) and the one whose panel is open. */
+  private lastCmd: string | null = null;
+  private activeCmd: string | null = null;
+  /** Keep visible pushpin (FR-UI-106): OK opens the same command again. */
+  private pinned = (() => { try { return localStorage.getItem("mc:pin") === "1"; } catch { return false; } })();
 
   private command(c: string) {
     const m = this.mode;
@@ -3157,7 +3220,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3178,16 +3241,38 @@ export class ModelController {
 
   private renderStatus() {
     const st = this.last?.statuses ?? [];
-    const bad = st.filter(s => !s.ok);
-    const el = $("#mc-errors");
-    el.hidden = !bad.length;
-    el.textContent = bad.length ? t("{n} feature with errors|{n} features with errors", { n: bad.length }) : "";
+    this.renderWhatsWrong(st);
     const p = this.last?.props;
     const stats = $("#st-stats");
     if (this.store && this.mode.kind !== "sketch") {
       const f = this.doc.features.length;
       stats.textContent = [t("{n} feature|{n} features", { n: f }), p ? `V ${trimNum(p.volume * UNITS[units.current].f ** 3, 3)} ${units.current}³` : t("no body"), `${t("rebuild")} ${Math.round(this.rebuildMs)} ms`].join(" · ");
     }
+  }
+
+  /** Opened What's wrong list (view state). */
+  private wrongOpen = false;
+
+  /**
+   * What's wrong (FR-HIS-022): above the tree, the count of features with errors and warnings; opening it
+   * lists each with its message, and a click selects the feature (double click edits it).
+   */
+  private renderWhatsWrong(st: FeatureStatus[]) {
+    const el = $("#mc-errors");
+    const items = st.filter(s => !s.ok || s.code === "warning").map(s => ({ s, f: this.store?.feature(s.id) })).filter(x => x.f);
+    const nBad = items.filter(x => !x.s.ok).length, nWarn = items.length - nBad;
+    el.hidden = !items.length;
+    if (!items.length) { el.innerHTML = ""; this.wrongOpen = false; return; }
+    const head = [nBad ? t("{n} feature with errors|{n} features with errors", { n: nBad }) : "", nWarn ? t("{n} warning|{n} warnings", { n: nWarn }) : ""].filter(Boolean).join(", ");
+    el.className = `pm-err pad mc-wrong${nBad ? "" : " warn"}`;
+    el.innerHTML = `<button type="button" class="mc-wrong-h" aria-expanded="${this.wrongOpen}">${esc(head)} · ${esc(t("What's wrong"))} ${this.wrongOpen ? "▴" : "▾"}</button>`
+      + (this.wrongOpen ? `<ul class="mc-wrong-l">${items.map(({ s, f }) => `<li><button type="button" data-wid="${esc(f!.id)}" class="${s.ok ? "warn" : "bad"}" title="${esc(t("Click to select, double-click to edit"))}"><b>${esc(featureLabel(f!.name))}</b>: ${esc(statusText(s))}</button></li>`).join("")}</ul>` : "");
+    el.querySelector(".mc-wrong-h")!.addEventListener("click", () => { this.wrongOpen = !this.wrongOpen; this.renderWhatsWrong(this.last?.statuses ?? []); });
+    el.querySelectorAll<HTMLElement>("[data-wid]").forEach(b => {
+      const id = b.dataset.wid!;
+      b.addEventListener("click", () => { this.selected = id; this.renderTree(); this.drawDecor(); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }); });
+      b.addEventListener("dblclick", () => { if (this.mode.kind === "none") this.editFeature(id); });
+    });
   }
 
   private renderTree() {
@@ -3860,7 +3945,7 @@ export class ModelController {
       const focus = document.activeElement === inp;
       if (focus || inp.value !== inp.defaultValue) typing.set(key, { value: inp.value, focus, a: inp.selectionStart, b: inp.selectionEnd });
     });
-    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(title)}</h3><span class="pm-okc"><button class="pm-ok" data-k="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-k="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(title)}</h3><span class="pm-okc"><button class="pm-pin${this.pinned ? " on" : ""}" data-k="pin" aria-pressed="${this.pinned}" title="${esc(t("Keep visible: OK starts the same command again (Ctrl+Enter does it once)"))}" aria-label="${esc(t("Keep visible"))}">📌</button><button class="pm-ok" data-k="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button><button class="pm-cancel" data-k="cancel" title="${esc(t("Cancel (Esc)"))}" aria-label="${esc(t("Cancel (Esc)"))}">✕</button></span></div>`
       + err + `<p class="pm-help muted">${esc(m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels."))}</p>`
       + name + body;
     typing.forEach((st, key) => {
@@ -4182,6 +4267,13 @@ export class ModelController {
       });
     });
     pm.querySelector("[data-k=ok]")!.addEventListener("click", () => this.ok());
+    pm.querySelector("[data-k=pin]")?.addEventListener("click", e => {
+      this.pinned = !this.pinned;
+      try { localStorage.setItem("mc:pin", this.pinned ? "1" : "0"); } catch { /* storage blocked: this page only */ }
+      const b = e.currentTarget as HTMLElement;
+      b.classList.toggle("on", this.pinned);
+      b.setAttribute("aria-pressed", String(this.pinned));
+    });
     pm.querySelector("[data-k=cancel]")!.addEventListener("click", () => void this.cancel());
   }
 
