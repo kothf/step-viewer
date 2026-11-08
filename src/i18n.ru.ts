@@ -2033,6 +2033,8 @@ export const RU: Record<string, string> = {
   "Stop playback": "Остановить воспроизведение",
   "Pause playback where the value goes out of range": "Приостановить воспроизведение, когда значение выходит из диапазона",
   "Sensor tripped at {t} s": "Датчик сработал на {t} с",
+  "Interference at {t} s": "Пересечение на {t} с",
+  "Pause playback where an interference starts": "Приостановить воспроизведение там, где начинается пересечение",
   "Hidden components are left out.": "Скрытые компоненты не учитываются.",
   "Item": "Поз.",
   "Mass (kg)": "Масса (кг)",
