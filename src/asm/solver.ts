@@ -301,6 +301,8 @@ export function solve(inp: SolveInput): SolveResult {
   const bad: string[] = [];
   if (!ok) for (const l of live) if (resOf(l, tfs).some(v => Math.abs(v) > tol * 10)) bad.push(l.m.id);
   if (!ok && !bad.length) ok = true;
+  // Geometry fitted to a tessellation (mesh imports, no kernel) is off by ~1e-5: a solve that stalls that close is solved.
+  if (!ok && r.every(v => Math.abs(v) < 1e-5 * L)) { ok = true; bad.length = 0; }
   const dof: Record<string, number> = {};
   for (const c of comps) dof[c.id] = c.fixed ? 0 : 6;
   if (ok && n) {

@@ -640,14 +640,18 @@ export class SketchEditor {
   }
 
   private drawClick(raw: V2, e: { detail: number }, exact?: { hv: "horizontal" | "vertical" | null; dims: (made: SkEnt[]) => SkDim[] }) {
-    const s = exact ? { p: raw, id: null, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
+    // A typed end that lands on an existing point (within 0.001 mm: typed angles are rounded) joins it, so a
+    // typed chain closes on its start, as when clicked.
+    const joinTol = Math.min(1e-3, this.px(raw));
+    const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= joinTol)?.id ?? (Math.hypot(raw[0], raw[1]) <= joinTol ? ORIGIN : null) : null;
+    const s = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
     const before = exact ? new Set(this.sk.ents.map(x => x.id)) : null;
     const finish = (label: string) => {
       this.sk.rels.push(...rels);
-      if (exact && before) this.addTypedDims(exact.dims(this.sk.ents.filter(x => !before.has(x.id))));
+      if (exact && before) { const made = this.sk.ents.filter(x => !before.has(x.id)); this.addTypedDims(exact.dims(made), made); }
       this.commit(label);
     };
     if (this.tool === "eqn") return;
@@ -664,7 +668,7 @@ export class SketchEditor {
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
       finish("Add line");
       // Chain on from the end, unless the loop closed on an existing point.
-      const closed = !!s.id && s.id !== ORIGIN && d.ids.length > 0;
+      const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN) && d.ids.length > 0;
       if (closed || e.detail >= 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; }
       else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; }
       this.render();
@@ -1383,12 +1387,35 @@ export class SketchEditor {
 
   // ---------- sketch fillet (FR-SK-033) ----------
 
+  /**
+   * Before a corner is rounded or chamfered: a length dimension on either line becomes the distance from the
+   * corner to the line's other end, so the sizes keep meaning the sharp corner (SolidWorks' virtual sharp).
+   */
+  private keepSharpDims(V: string, lines: (SkEnt & { t: "line" })[]) {
+    for (const d of this.sk.dims) {
+      if (d.e.length !== 1 || (d.t !== "distance" && d.t !== "hdistance" && d.t !== "vdistance")) continue;
+      const l = lines.find(x => x.id === d.e[0]);
+      if (l) d.e = [V, l.a === V ? l.b : l.a];
+    }
+  }
+
+  /**
+   * After the corner is cut: a corner point that dimensions, relations or construction lines still use stays as
+   * a virtual sharp where the two lines meet; otherwise it goes.
+   */
+  private settleCorner(V: string, lines: (SkEnt & { t: "line" })[]) {
+    const used = this.sk.dims.some(d => d.e.includes(V)) || this.sk.rels.some(r => r.e.includes(V)) || this.sk.ents.some(o => refPts(o).includes(V));
+    if (used) this.sk.rels.push({ id: uid("r"), t: "intersection", e: [V, lines[0].id, lines[1].id] });
+    else this.dropLoosePoints(new Set([V]));
+  }
+
   private filletAt(p: V2) {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
     const V = h.id;
-    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
-    const curves = this.sk.ents.filter(e => (e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V)));
+    // Construction lines at the corner (a centre rectangle's diagonals) stay on the sharp corner, as in SolidWorks.
+    const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    const curves = this.sk.ents.filter(e => !("cons" in e && e.cons) && ((e.t === "arc" && (e.a === V || e.b === V)) || (e.t === "line" && (e.a === V || e.b === V))));
     if (lines.length !== 2 || curves.length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
     const v = this.pt(V);
     const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
@@ -1403,6 +1430,7 @@ export class SketchEditor {
     const T = u.map(w => [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2);
     const bis = norm2([u[0][0] + u[1][0], u[0][1] + u[1][1]]);
     const C: V2 = [v[0] + bis[0] * (r / Math.sin(half)), v[1] + bis[1] * (r / Math.sin(half))];
+    this.keepSharpDims(V, lines);
     const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
     lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
     const cId = uid("p");
@@ -1411,8 +1439,8 @@ export class SketchEditor {
     const arc = uid("a");
     this.sk.ents.push({ id: arc, t: "arc", c: cId, a: ccw ? tIds[0] : tIds[1], b: ccw ? tIds[1] : tIds[0] });
     this.sk.rels.push({ id: uid("r"), t: "tangent", e: [lines[0].id, arc] }, { id: uid("r"), t: "tangent", e: [lines[1].id, arc] });
-    // The corner point goes when nothing else uses it (its relations and dimensions with it).
-    this.dropLoosePoints(new Set([V]));
+    // The corner point goes when nothing else uses it; else it stays as a virtual sharp.
+    this.settleCorner(V, lines);
     const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: "radius", e: [arc], val: { v: r }, pos: [C[0] + (v[0] - C[0]) * 1.6, C[1] + (v[1] - C[1]) * 1.6] };
     const res = tryAdd(this.sk, { dim });
     if (res.ok && !res.redundant) { this.sk = res.sketch; this.info = res.result; }
@@ -1568,18 +1596,19 @@ export class SketchEditor {
     const h = this.hits(p, { curves: false }).find(x => x.kind === "point");
     if (!h) { this.host.toast(t("Click a corner where two lines meet.")); return; }
     const V = h.id;
-    const lines = this.sk.ents.filter(e => e.t === "line" && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
-    if (lines.length !== 2 || this.usersOf(V).length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
+    const lines = this.sk.ents.filter(e => e.t === "line" && !e.cons && (e.a === V || e.b === V)) as (SkEnt & { t: "line" })[];
+    if (lines.length !== 2 || this.usersOf(V).filter(o => !("cons" in o && o.cons)).length !== 2) { this.host.toast(t("Click a corner where two lines meet."), "warn"); return; }
     const v = this.pt(V), dist = this.chamferDist;
     const far = lines.map(l => this.pt(l.a === V ? l.b : l.a));
     const len = far.map(q => Math.hypot(q[0] - v[0], q[1] - v[1]));
     if (Math.abs(cross2(norm2(sub2(far[0], v)), norm2(sub2(far[1], v)))) < 1e-9) { this.host.toast(t("The lines are in line: there is no corner to round."), "warn"); return; }
     if (dist >= len[0] - 1e-9 || dist >= len[1] - 1e-9) { this.host.toast(t("The distance is too large for these lines."), "error"); return; }
     const T = far.map(q => { const w = norm2(sub2(q, v)); return [v[0] + w[0] * dist, v[1] + w[1] * dist] as V2; });
+    this.keepSharpDims(V, lines);
     const tIds = T.map(q => { const id = uid("p"); this.sk.ents.push({ id, t: "point", x: q[0], y: q[1] }); return id; });
     lines.forEach((l, i) => { if (l.a === V) l.a = tIds[i]; else l.b = tIds[i]; });
     this.sk.ents.push({ id: uid("l"), t: "line", a: tIds[0], b: tIds[1] });
-    this.dropLoosePoints(new Set([V]));
+    this.settleCorner(V, lines);
     this.commit("Sketch chamfer");
     this.render();
   }
@@ -2204,9 +2233,26 @@ export class SketchEditor {
   }
 
   /** Typed sizes become driving dimensions where they add information (no toast when they do not). */
-  private addTypedDims(dims: SkDim[]) {
+  private addTypedDims(dims: SkDim[], made: SkEnt[] = []) {
+    // The new entities' centre: each label goes beside its line on the far side from it (not at the origin,
+    // where a label without a place would sit and hide the origin from the next click).
+    const pts = made.filter((x): x is SkEnt & { t: "point" } => x.t === "point").map(x => [x.x, x.y] as V2);
+    const centre: V2 = pts.length ? [pts.reduce((a, q) => a + q[0], 0) / pts.length, pts.reduce((a, q) => a + q[1], 0) / pts.length] : [0, 0];
     for (const dim of dims) {
       dim.name = this.nextDimName();
+      if (!dim.pos) {
+        const ent = this.ent(dim.e[0]);
+        if (ent?.t === "line") {
+          const a = this.pt(ent.a), b = this.pt(ent.b), mid: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          let n = norm2([a[1] - b[1], b[0] - a[0]]);
+          if (dot2(n, sub2(mid, centre)) < 0) n = [-n[0], -n[1]];
+          const off = this.px(mid) * 28;
+          dim.pos = [mid[0] + n[0] * off, mid[1] + n[1] * off];
+        } else if (ent?.t === "circle") {
+          const c = this.pt(ent.c), k = ent.r + this.px(c) * 24;
+          dim.pos = [c[0] + k * Math.SQRT1_2, c[1] + k * Math.SQRT1_2];
+        }
+      }
       const r = tryAdd(this.sk, { dim });
       if (!r.ok || r.redundant) continue;
       this.sk = r.sketch;
