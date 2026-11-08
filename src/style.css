@@ -746,6 +746,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .pm-pts th { font-weight: 500; text-align: left; padding: 0 4px 2px 0; }
 .pm-pts td { padding: 1px 4px 1px 0; }
 .pm-pts .pm-n { width: 100%; min-width: 44px; }
+.pm-pts tr.on th, .pm-dims .link.on { color: #b45309; font-weight: 600; }
 :root:not([data-theme="dark"]) .ft-row.sel.bad .ft-name { color: #a61b1b; }
 /* PropertyManager-style feature panel (1.19.3) */
 .pm-top { display: flex; align-items: center; gap: 8px; }

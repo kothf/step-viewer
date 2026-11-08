@@ -406,6 +406,28 @@ export interface CurveFeature {
   hidden?: boolean;
 }
 
+/** A 3D sketch point (FR-SK-080), part coordinates in mm. */
+export interface Sk3Point { id: string; p: V3; fixed?: boolean }
+/** A 3D sketch line (two points) or spline (two or more points, the C2 interpolant). */
+export interface Sk3Seg { id: string; t: "line" | "spline"; pts: string[] }
+/** 3D sketch relations: a line along an axis or parallel to a standard plane, two lines parallel/perpendicular/equal, two points coincident. */
+export interface Sk3Rel { id: string; t: "alongX" | "alongY" | "alongZ" | "parallelPlane" | "parallel" | "perpendicular" | "equal" | "coincident"; e: string[]; plane?: "XY" | "YZ" | "ZX" }
+/** 3D sketch dimensions: a line's length or the distance between two points. */
+export interface Sk3Dim { id: string; t: "length" | "distance"; e: string[]; val: Num }
+
+/**
+ * 3D sketch (FR-SK-080): points, lines and splines in space with relations and dimensions. The
+ * document keeps solved positions. One chain of segments is a sweep path (`{ curve: id }`).
+ */
+export interface Sketch3dFeature {
+  id: string; type: "sketch3d"; name: string; suppressed?: boolean;
+  pts: Sk3Point[];
+  segs: Sk3Seg[];
+  rels: Sk3Rel[];
+  dims: Sk3Dim[];
+  hidden?: boolean;
+}
+
 /** Swept surface (FR-FT-100): a sketch's chain of curves, open or closed, moved along a path into an open surface. */
 export interface SweepSurfFeature {
   id: string; type: "sweepsurf"; name: string; suppressed?: boolean;
@@ -626,7 +648,7 @@ export interface ExtendSurfFeature {
 
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
-  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature
+  | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature;
 export type FeatureType = Feature["type"];

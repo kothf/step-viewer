@@ -2558,7 +2558,28 @@ export const RU: Record<string, string> = {
   "{n} point read|{n} points read": "Прочитана {n} точка|Прочитаны {n} точки|Прочитано {n} точек",
   "Curve": "Кривая",
   "Surface-Sweep": "Поверхность-Сдвиг",
-  // 1.83.0: linked assembly components in the vault.
+  // 1.83.0: 3D sketch (FR-SK-080).
+  "3D Sketch": "3D-эскиз",
+  "3DSketch": "3D-эскиз",
+  "3D sketch: lines and splines in space, for sweep paths": "3D-эскиз: отрезки и сплайны в пространстве, для траекторий сдвига",
+  "A 3D sketch path must be one chain of lines and splines.": "Траектория из 3D-эскиза должна быть одной цепочкой отрезков и сплайнов.",
+  "Along X": "Вдоль X",
+  "Along Y": "Вдоль Y",
+  "Along Z": "Вдоль Z",
+  "Click to place points; each click draws to the last one. Points land on model vertices and faces, else on the sketch plane through the last point. Tab turns the plane, Esc ends the chain.": "Щёлкайте, чтобы ставить точки; каждый щелчок соединяется с предыдущей точкой. Точки попадают на вершины и грани модели, иначе на плоскость эскиза через последнюю точку. Tab меняет плоскость, Esc завершает цепочку.",
+  "Draw at least one line or spline.": "Нарисуйте хотя бы один отрезок или сплайн.",
+  "End chain": "Завершить цепочку",
+  "Fixed": "Зафиксирована",
+  "Lines and splines": "Отрезки и сплайны",
+  "Parallel to {p}": "Параллельно {p}",
+  "Select a line, two lines or two points (in the view or above) to add relations and dimensions.": "Выберите отрезок, два отрезка или две точки (в окне или выше), чтобы добавить взаимосвязи и размеры.",
+  "Spline {n}": "Сплайн {n}",
+  "The 3D sketch has no lines or splines.": "В 3D-эскизе нет отрезков и сплайнов.",
+  "The relations and dimensions conflict.": "Взаимосвязи и размеры противоречат друг другу.",
+  "The relations and dimensions conflict; the change was undone.": "Взаимосвязи и размеры противоречат друг другу; изменение отменено.",
+  "Unfix": "Освободить",
+  "{n} degree of freedom left|{n} degrees of freedom left": "Осталась {n} степень свободы|Осталось {n} степени свободы|Осталось {n} степеней свободы",
+  // 1.84.0: linked assembly components in the vault.
   "Linked components with newer versions in the vault:": "Связанные компоненты, у которых в хранилище есть более новые версии:",
   "Update links": "Обновить связи",
   "Check the assembly out to update its links.": "Извлеките сборку, чтобы обновить её связи.",
@@ -2566,7 +2587,7 @@ export const RU: Record<string, string> = {
   "The links are up to date.": "Связи актуальны.",
   "linked": "связан",
   "v{n} in the vault": "в хранилище v{n}",
-  // 1.83.0: crop and break views (FR-DRW-015).
+  // 1.84.0: crop and break views (FR-DRW-015).
   "Select a view first.": "Сначала выберите вид.",
   "Crop view": "Обрезка вида",
   "Break view": "Разрыв вида",

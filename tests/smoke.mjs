@@ -5382,6 +5382,79 @@ try {
     await ctx.close();
   }
 
+  // --- 1.83: 3D sketch (FR-SK-080): click lines in space, Tab to turn the plane, relations and dimensions, then a sweep along it ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("3D Sketch")');
+    await settle();
+    // Screen position of a world point.
+    const scr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const V = v.camera.position.constructor; const q = new V(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, p);
+    const hasThree = true;
+    const s0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, tool: document.querySelector('#mc-pm [data-s3t="line"]')?.getAttribute("aria-pressed") }));
+    // Three clicks: the origin, then roughly 40 along X on XY; Tab to YZ, then roughly 30 up.
+    const clickAt = async p => { const [x, y] = await scr(p); await mp.mouse.click(x, y); await settle(); };
+    if (hasThree) {
+      await clickAt([0, 0, 0]);
+      await clickAt([40, 2, 0]);
+      await mp.keyboard.press("Tab");
+      await clickAt([40, 0, 30]);
+    }
+    const drawn = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { pts: d.pts.map(p => p.p), segs: d.segs.length, plane: document.querySelector("#mc-pm [data-s3p]")?.value }; });
+    // Fix the first point; line 1: Along X and a 50 length; line 2: Along Z.
+    const pmClick = sel => mp.click(`#mc-pm ${sel}`);
+    await mp.keyboard.press("Escape");
+    await mp.keyboard.press("Escape");
+    await settle();
+    const segIds = await mp.evaluate(() => window.__sv.model.mode().draft.segs.map(s => s.id));
+    const ptIds = await mp.evaluate(() => window.__sv.model.mode().draft.pts.map(s => s.id));
+    await pmClick(`[data-s3sel="${ptIds[0]}"]`); await pmClick('[data-s3r="fix"]'); await pmClick(`[data-s3sel="${ptIds[0]}"]`);
+    await pmClick(`[data-s3sel="${segIds[0]}"]`); await pmClick('[data-s3r="alongX"]'); await pmClick('[data-s3r="dim:length"]'); await pmClick(`[data-s3sel="${segIds[0]}"]`);
+    await pmClick(`[data-s3sel="${segIds[1]}"]`); await pmClick('[data-s3r="alongZ"]'); await pmClick(`[data-s3sel="${segIds[1]}"]`);
+    const dimIn = mp.locator("#mc-pm input[data-s3dim]").first();
+    await dimIn.fill("50"); await dimIn.press("Enter");
+    await settle();
+    const solved = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { pts: d.pts.map(p => p.p.map(c => Math.round(c * 1000) / 1000)), rels: d.rels.map(r => r.t), status: document.querySelector("#mc-pm [data-s3status]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    // Sweep with a Ø4 circular profile along the 3D sketch: the path is picked by default.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Sweep")');
+    await settle();
+    const swPath = await mp.evaluate(() => window.__sv.model.mode().draft?.path);
+    await mp.fill('#mc-pm input[data-num="circular"]', "4");
+    await mp.press('#mc-pm input[data-num="circular"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const after = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
+    const leg2 = solved.pts[2] ? Math.hypot(solved.pts[2][0] - solved.pts[1][0], solved.pts[2][1] - solved.pts[1][1], solved.pts[2][2] - solved.pts[1][2]) : 0;
+    check(hasThree && s0.title === "3D Sketch" && s0.tool === "true" && drawn.segs === 2 && drawn.plane === "YZ" && Math.abs(drawn.pts[2][0] - 40) < 1e-6
+      && JSON.stringify(solved.pts.slice(0, 2)) === "[[0,0,0],[50,0,0]]" && Math.abs(solved.pts[2][0] - 50) < 1e-6 && Math.abs(solved.pts[2][1]) < 1e-6 && /alongX,alongZ/.test(solved.rels.join(",")) && /1/.test(solved.status ?? ""),
+      `model 1.83: 3D Sketch drawn by clicking in space, Tab turns the plane, relations and a dimension solve it (FR-SK-080) (${JSON.stringify({ hasThree, s0, drawn, solved })})`);
+    check(swPath?.curve && !after.bad && Math.abs(after.v - Math.PI * 4 * (50 + leg2)) / (Math.PI * 4 * (50 + leg2)) < 1e-3 && /3DSketch1,Sweep1$/.test(after.names),
+      `model 1.83: Sweep along the 3D sketch (${JSON.stringify({ swPath, after, leg2 })})`);
+    // In Russian: the 3D sketch panel.
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "sketch3d").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm th")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "3D-эскиз" && !/[A-Za-z]{3}/.test(ru.text.replace(/Enter|Esc|Tab/g, "")), `model 1.83: 3D sketch panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

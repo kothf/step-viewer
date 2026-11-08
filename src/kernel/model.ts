@@ -11,10 +11,11 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
+import { chain3d } from "../sketch/sketch3d";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 
@@ -1250,6 +1251,7 @@ export class Modeller {
       ad.D1(ad.FirstParameter(), p0, v0);
       mk.SetMode_2(new oc.gp_Ax2_3(p0, this.D(unit(this.xyz(v0)))));
     } else mk.SetMode_1(!!f.path && "helix" in f.path);
+    mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
     // The wire's edges are copies: match them back to the sketch curves by position for the names.
     const wire = mw.Wire();
     const wedges = this.sub(wire, "EDGE");
@@ -1757,6 +1759,7 @@ export class Modeller {
     if ("helix" in path || "curve" in path) {
       const c = this.curves.get("helix" in path ? path.helix : path.curve);
       if (!c) throw new FeatureError("E-FT-PARENT", "helix" in path ? "The helix is missing or has an error." : "The curve is missing or has an error.");
+      if (!c.wire) throw new FeatureError("E-SWP-PATH", "A 3D sketch path must be one chain of lines and splines.");
       return c.wire;
     }
     const { sk, frame } = this.sketchOf(path.sketch, doc, body, frames, "a path sketch");
@@ -1766,6 +1769,24 @@ export class Modeller {
     for (const sg of p.segs) mk.Add_1(this.segEdge(sg, frame));
     if (!mk.IsDone()) throw new FeatureError("E-SWP-PATH", "The path's curves do not join end to end.");
     return mk.Wire();
+  }
+
+  /** 3D sketch (FR-SK-080): its lines and splines as one wire when they form a chain (a sweep path); drawn from the document. */
+  private sketch3d(f: Sketch3dFeature): Curve {
+    const oc = this.oc;
+    if (!f.segs.some(s => s.pts.length >= 2)) throw new FeatureError("E-3D-EMPTY", "The 3D sketch has no lines or splines.");
+    const ch = chain3d(f);
+    if ("error" in ch) return { wire: null, pts: [] };
+    const P = (id: string): V3 => f.pts.find(p => p.id === id)?.p ?? [0, 0, 0];
+    const mk = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const ids of ch.order) {
+      const q = ids.map(P);
+      const seg = f.segs.find(s => s.pts.length === ids.length && (s.pts.every((x, i) => x === ids[i]) || s.pts.every((x, i) => x === ids[ids.length - 1 - i])));
+      const e = seg?.t === "spline" && q.length > 2 ? this.bezierEdge(splineBezierN(q)) : new oc.BRepBuilderAPI_MakeEdge_3(this.P(q[0]), this.P(q[q.length - 1])).Edge();
+      mk.Add_1(e);
+    }
+    if (!mk.IsDone()) return { wire: null, pts: [] };
+    return { wire: mk.Wire(), pts: [] };
   }
 
   /** Points along a wire, in order, for drawing it. */
@@ -1854,6 +1875,8 @@ export class Modeller {
         const t0 = unit(this.xyz(v0));
         mk.SetMode_2(new oc.gp_Ax2_3(p0, this.D(t0)));
       } else mk.SetMode_1(helixPath);
+      // Sharp corners (3D sketch and composite paths) get mitred, not stretched.
+      mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
       mk.Add_1(w, false, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
@@ -2544,6 +2567,7 @@ export class Modeller {
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
+          else if (f.type === "sketch3d") this.curves.set(f.id, this.sketch3d(f));
           else if (f.type === "curve") this.curves.set(f.id, this.curve(f, doc, body, sheets, frames));
           else if (f.type === "sweepsurf") sheets = this.sweepSurf(f, doc, body, sheets, frames);
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);

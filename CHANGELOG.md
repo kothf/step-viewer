@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.83.0] - 2026-11-08
+## [1.84.0] - 2026-11-08
 
 ### Added
 
@@ -14,6 +14,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - The selected assembly lists its outdated links. **Update links** on the checked-out assembly brings them to the latest versions; check it in to keep them.
   - Opening an assembly with its latest components updates the link hashes too, and renaming a part rewrites the link path.
 - **Crop view and break view** in drawings (FR-DRW-015): select a view for **Crop** (click two corners; only what is inside stays) or a **Vertical / Horizontal break** (click the two ends of the part to leave out). The view closes up to a 6 mm gap with zig-zag break lines. Dimensions and annotations stay on their geometry and keep their true values. **Remove crop** and **Remove breaks** undo them.
+
+## [1.83.0] - 2026-11-08
+
+### Added
+
+- **3D Sketch** (FR-SK-080) in Sweep ▾:
+  - Click to place points in space. Each click draws a line, or a spline with the Spline tool, from the last point.
+  - Points land on model vertices and faces. Otherwise they go on the sketch plane (XY, YZ or ZX) through the last point. Tab turns the plane and Esc ends the chain.
+  - The panel lists the points, which you can edit or fix, and the lines and splines.
+  - Select lines or points in the view or the panel to add relations: along X/Y/Z, parallel to a plane, parallel, perpendicular, equal and coincident. You can also add length and distance dimensions, which take expressions.
+  - A least-squares solver keeps everything satisfied and says how many degrees of freedom are left. A change that conflicts is undone.
+  - One chain of lines and splines is a **Sweep** or **Swept Surface** path.
+
+### Changed
+
+- Sweeps mitre sharp corners of their path instead of stretching the profile round them.
 
 ## [1.82.0] - 2026-11-08
 
@@ -824,7 +840,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.83.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.84.0...HEAD
+[1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0
 [1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0
 [1.82.0]: https://github.com/kothf/step-viewer/compare/v1.81.0...v1.82.0
 [1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0
