@@ -174,7 +174,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length"))
       + group(t("Face set 1"), box("wf1", t("Faces"), faces(f.faces1.length)) + (f.faces1.length ? `<button class="btn small" data-k="wclear" data-wlist="faces1">${esc(t("Clear faces"))}</button>` : ""))
       + group(t("Face set 2"), box("wf2", t("Faces"), faces(f.faces2.length)) + (f.faces2.length ? `<button class="btn small" data-k="wclear" data-wlist="faces2">${esc(t("Clear faces"))}</button>` : "")
-        + help(t("Click flat faces: the bead runs along the straight edges where set 1 meets set 2."))),
+        + help(t("Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2."))),
   };
 }
 
@@ -254,7 +254,7 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
     if (!flat) { toast(t("Pick a flat face.")); return focus; }
     if ((focus ?? "wf1") === "wf1") { f.face1 = fr; next = "wf2"; } else f.face2 = fr;
   } else {
-    if (!flat) { toast(t("Pick a flat face.")); return focus; }
+    if (!flat && ctx.faceType(hit.faceId) !== "cylinder") { toast(t("Pick a flat or cylindrical face.")); return focus; }
     toggle((focus ?? "wf1") === "wf1" ? f.faces1 : f.faces2);
   }
   return next;

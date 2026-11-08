@@ -466,44 +466,70 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
 }
 
 /** Fillet weld beads: a triangular bead of leg `size` along every line where a face of set 1 meets a face of set 2. */
-export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, frames: Record<string, Frame>): Named {
+export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _frames: Record<string, Frame>): Named {
   const oc = h.oc;
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.faces1.length || !f.faces2.length) throw new FeatureError("E-WLD-BEAD", "Pick the faces of set 1 and set 2: the bead runs where they meet.");
   const sz = f.size.v;
   const beads: Named[] = [];
   let skipped = 0;
+  const S = oc.GeomAbs_SurfaceType;
+  /** Outward normal of a flat or cylindrical face at a point on it (null for other surfaces). */
+  const normalAt = (face: any, p: V3): V3 | null => {
+    const ad = new oc.BRepAdaptor_Surface_2(face, true);
+    let n: V3;
+    if (ad.GetType() === S.GeomAbs_Plane) { const d = ad.Plane().Axis().Direction(); n = [d.X(), d.Y(), d.Z()]; }
+    else if (ad.GetType() === S.GeomAbs_Cylinder) {
+      const ax = ad.Cylinder().Axis(), c = ax.Location(), d = ax.Direction();
+      const a: V3 = [d.X(), d.Y(), d.Z()], q = sub(p, [c.X(), c.Y(), c.Z()]);
+      n = unit(sub(q, mul(a, dot(q, a))));
+      // The surface's own normal points away from the axis on a right-handed frame, towards it on a left-handed one.
+      if (!ad.Cylinder().Position().Direct()) n = mul(n, -1);
+    } else return null;
+    return face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? mul(n, -1) : n;
+  };
+  const tri = (p: V3, ua: V3, ub: V3) => {
+    const mk = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const q of [p, add(p, mul(ua, sz)), add(p, mul(ub, sz))]) mk.Add_1(new oc.gp_Pnt_3(q[0], q[1], q[2]));
+    mk.Close();
+    return new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+  };
+  const push = (mk: any) => {
+    let shape = mk.Shape();
+    if (h.volume(shape) < 0) shape = shape.Reversed();
+    const faces = h.sub(shape, "FACE"), k = beads.length;
+    const caps = [...h.sub(mk.FirstShape(), "FACE"), ...h.sub(mk.LastShape(), "FACE")];
+    beads.push({ shape, faces, names: faces.map((x, i) => caps.some(c => c.IsSame(x)) ? `${f.id}:b${k}:cap` : `${f.id}:b${k}:side:${i}`) });
+  };
   for (const r1 of f.faces1) for (const r2 of f.faces2) {
     const fa = h.resolveFace(prev, r1), fb = h.resolveFace(prev, r2);
-    const flat = (x: any) => new oc.BRepAdaptor_Surface_2(x, true).GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Plane;
-    if (!flat(fa) || !flat(fb)) { skipped++; continue; }
-    const A = h.planeFrame({ face: r1 }, prev, frames), B = h.planeFrame({ face: r2 }, prev, frames);
-    if (len(cross(A.n, B.n)) < 1e-6) continue;
     const sec = new oc.BRepAlgoAPI_Section_3(fa, fb, true);
     if (!sec.IsDone()) continue;
     for (const e of h.sub(sec.Shape(), "EDGE")) {
       const ad = new oc.BRepAdaptor_Curve_2(e);
-      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) { skipped++; continue; }
-      const q0 = ad.Value(ad.FirstParameter()), q1 = ad.Value(ad.LastParameter());
-      const p0: V3 = [q0.X(), q0.Y(), q0.Z()], p1: V3 = [q1.X(), q1.Y(), q1.Z()];
-      if (d3(p0, p1) < 1e-6) continue;
-      const tdir = unit(sub(p1, p0));
-      const inPlane = (v: V3, n: V3) => unit(sub(sub(v, mul(n, dot(v, n))), mul(tdir, dot(v, tdir))));
-      const ua = inPlane(B.n, A.n), ub = inPlane(A.n, B.n);
-      const tri = [p0, add(p0, mul(ua, sz)), add(p0, mul(ub, sz))];
-      const mk = new oc.BRepBuilderAPI_MakePolygon_1();
-      for (const p of tri) mk.Add_1(new oc.gp_Pnt_3(p[0], p[1], p[2]));
-      mk.Close();
-      const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
-      const dv = sub(p1, p0);
-      let shape = new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(dv[0], dv[1], dv[2]), false, true).Shape();
-      if (h.volume(shape) < 0) shape = shape.Reversed();
-      const faces = h.sub(shape, "FACE"), k = beads.length;
-      beads.push({ shape, faces, names: faces.map((_x, i) => `${f.id}:b${k}:side:${i}`) });
+      const ty = ad.GetType(), t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+      const q0 = ad.Value(t0), p0: V3 = [q0.X(), q0.Y(), q0.Z()];
+      const pt = new oc.gp_Pnt_1(), tv = new oc.gp_Vec_1();
+      ad.D1(t0, pt, tv);
+      const tdir = unit([tv.X(), tv.Y(), tv.Z()]);
+      const na = normalAt(fa, p0), nb = normalAt(fb, p0);
+      if (!na || !nb || len(cross(na, nb)) < 1e-6) { skipped++; continue; }
+      // Legs: along each face, square to the edge, towards the side the other face looks at.
+      const inFace = (v: V3, n: V3) => unit(sub(sub(v, mul(n, dot(v, n))), mul(tdir, dot(v, tdir))));
+      const face = tri(p0, inFace(nb, na), inFace(na, nb));
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) {
+        const q1 = ad.Value(t1), dv = sub([q1.X(), q1.Y(), q1.Z()], p0);
+        if (len(dv) < 1e-6) continue;
+        push(new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(dv[0], dv[1], dv[2]), false, true));
+      } else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+        // Round the circle's axis: a tube standing on a plate, or the round corners of a hollow section.
+        const ax = ad.Circle().Axis();
+        push(new oc.BRepPrimAPI_MakeRevol_1(face, ax, t1 - t0, true));
+      } else skipped++;
     }
   }
-  if (skipped) h.warning = "Weld beads run along straight edges between flat faces; curved ones were skipped.";
-  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along a straight edge.");
+  if (skipped) h.warning = "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.";
+  if (!beads.length) throw new FeatureError("E-WLD-BEAD", "The faces of the two sets do not meet along a straight or round edge.");
   return h.compoundOf([...h.bodyList(prev), ...beads]);
 }
 
@@ -555,7 +581,12 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         const desc = profileName(owner.profile, owner.size);
         put(`m|${desc}|${r1(length)}|${lo}|${hi}`, { kind: "member", desc, length: r1(length), angle1: lo, angle2: hi, volume }, key);
       } else if (owner.type === "weldbead") {
-        const length = volume / (owner.size.v * owner.size.v / 2);
+        // The root: the shortest edge along the bead (edges of the end caps left out).
+        const caps = part.faces.filter((_x, i) => part.names[i].endsWith(":cap"));
+        const capEdges = caps.flatMap(c => h.sub(c, "EDGE"));
+        const rails = h.sub(part.shape, "EDGE").filter(e => !capEdges.some(c => c.IsSame(e)));
+        const elen = (e: any) => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.LinearProperties(e, p, false, false); return p.Mass(); };
+        const length = rails.length ? Math.min(...rails.map(elen)) : volume / (owner.size.v * owner.size.v / 2);
         put(`b|${owner.size.v}`, { kind: "bead", desc: `${owner.size.v}`, length: 0, volume: 0 }, key);
         const r = rows.get(`b|${owner.size.v}`)!;
         r.length = r1((r.length ?? 0) + length);

@@ -116,5 +116,23 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   near(rw.volume - rg.volume, 8 * 28, 1e-4);
 });
 
+test("fillet bead round a tube standing on a plate (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const sk = poly("s", [[-100, -100], [100, -100], [100, 100], [-100, 100]], true);
+  const plate: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const k: Sketch3dFeature = { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "chs", size: "48.3x3.2", segs: [{ sketch: "k", ent: "post" }], corner: "none" };
+  const base = run(m, doc([sk, plate, k, mem]));
+  const outer = base.body!.names.filter((n, i) => n.startsWith("m:post:side:") && Math.hypot(...centroid(m, base.body!.faces[i]).slice(0, 2) as [number, number]) > 14.5);
+  assert.equal(outer.length, 2);
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: outer.map(name => ({ name })), size: { v: 5 } };
+  const r = run(m, doc([sk, plate, k, mem, bead]));
+  const b = r.cut.find(c => c.kind === "bead")!;
+  const R = 48.3 / 2;
+  near(b.length!, 2 * Math.PI * R, 1e-3);
+  // Pappus: the triangle's area times the path of its centroid (R + s/3 from the axis).
+  near(r.volume - base.volume, 12.5 * 2 * Math.PI * (R + 5 / 3), 1e-3);
+});
+
 function centroid(m: Modeller, face: unknown) { return (m as unknown as { centroid(f: unknown): [number, number, number] }).centroid(face); }
 function centroidX(m: Modeller, face: unknown) { return centroid(m, face)[0]; }
