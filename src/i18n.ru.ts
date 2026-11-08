@@ -2974,6 +2974,8 @@ export const RU: Record<string, string> = {
   "Intermittent fillet weld, leg {s}, {l} every {e}": "Прерывистый угловой шов, катет {s}, {l} с шагом {e}",
   "Staggered fillet weld, leg {s}, {l} every {e}": "Шахматный угловой шов, катет {s}, {l} с шагом {e}",
   "Intermittent weld": "Прерывистый шов",
+  "Show weld symbol": "Показывать обозначение шва",
+  "Weld symbol: click to edit the bead": "Обозначение шва: щелчок открывает шов для правки",
   "Weld length": "Длина шва",
   "Staggered": "В шахматном порядке",
   "Welds of this length every pitch, centre to centre, from the start of each run of edges. Staggered starts every other run half a pitch on.": "Швы этой длины через каждый шаг (между центрами) от начала каждой цепочки рёбер. В шахматном порядке каждая вторая цепочка начинается на полшага дальше.",
@@ -3462,4 +3464,7 @@ export const RU: Record<string, string> = {
   "Rho must be between 0 and 1.": "Rho должно быть между 0 и 1.",
   "The range is empty.": "Диапазон пуст.",
   "The equation has no value somewhere in its range.": "Уравнение не имеет значения в части диапазона.",
+  "Style spline": "Сплайн по контрольным точкам",
+  "Style spline: click its control points; double-click ends it": "Сплайн по контрольным точкам: щёлкайте его контрольные точки; двойной щелчок завершает его",
+  "Click the control points; the curve follows them without passing through. Double-click ends it": "Щёлкайте контрольные точки; кривая следует за ними, не проходя через них. Двойной щелчок завершает её",
 };

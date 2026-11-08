@@ -427,6 +427,15 @@ export class Modeller {
       knots.SetValue(1, 0); knots.SetValue(2, 1); mults.SetValue(1, 3); mults.SetValue(2, 3);
       const curve = new oc.Geom_BSplineCurve_2(poles, wts, knots, mults, 2, false, false);
       e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+    } else if (s.kind === "spline" && s.bs) {
+      // A style spline (FR-SK-019 P5): its clamped B-spline as it is.
+      const { poles: P, knots: K, mults: M, deg } = s.bs;
+      const poles = new oc.TColgp_Array1OfPnt_2(1, P.length);
+      P.forEach((q, i) => poles.SetValue(i + 1, this.P(this.w(frame, q, off))));
+      const knots = new oc.TColStd_Array1OfReal_2(1, K.length), mults = new oc.TColStd_Array1OfInteger_2(1, K.length);
+      K.forEach((u, i) => { knots.SetValue(i + 1, u); mults.SetValue(i + 1, M[i]); });
+      const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, deg, false);
+      e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
     } else if (s.kind === "spline") {
       e = this.bezierEdge(s.bz.map(q => this.w(frame, q, off)));
     } else if (s.kind === "ellipse" || s.kind === "earc") {
