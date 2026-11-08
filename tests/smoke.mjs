@@ -3079,7 +3079,7 @@ try {
     check(lfly === "Line|Spline|Style spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
       `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
     check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
-    // 1.162: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
+    // 1.164: a style spline (FR-SK-019 P5) from the Line flyout: four control points, the last clicked again ends it.
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-fly="line"]');
     await mp.click("#mc-menu button:nth-child(3)");
@@ -3087,7 +3087,7 @@ try {
     for (const q of [[12, -15], [17, -9], [24, -15], [30, -9], [30, -9]]) await click(q);
     const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
     check(sTool === "sspline" && sty && sty.n === 4 && !sty.closed && sty.ends === "12,-15 30,-9" && sty.ok === "ok",
-      `model 1.162: style spline from four control points (${sTool}, ${JSON.stringify(sty)})`);
+      `model 1.164: style spline from four control points (${sTool}, ${JSON.stringify(sty)})`);
     await ctx.close();
   }
 
@@ -7881,6 +7881,16 @@ try {
     await settle();
     const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
     check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    // Intermittent bead from the panel: the defaults (50 every 100) round the 149.7 mm loop give welds at 0 and 100.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInter"]');
+    await settle();
+    const ifs = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm [data-num="inter.len"], #mc-pm [data-num="inter.pitch"], #mc-pm input[data-k="wStagger"]')].length);
+    await mp.click("#mc-ok");
+    await settle();
+    const ib = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.length, c.inter]) }; });
+    check(ifs === 3 && !ib.bad && ib.beads.length === 1 && Math.abs(ib.beads[0][0] - (50 + 4 * 28 + 12 * Math.PI - 100)) < 0.2 && JSON.stringify(ib.beads[0][1]) === "[50,100]", `weldments: intermittent fillet bead (${JSON.stringify({ ifs, ib })})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
