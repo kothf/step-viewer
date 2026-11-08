@@ -5,6 +5,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.78.0] - 2026-11-08
+
+### Added
+
+- **Surface analyses** (FR-MEA-005) under **Display → Analysis**:
+  - **Draft**: colours the model by its draft against a pull direction (an axis or the selected flat face). Green has at least the minimum draft, yellow too little, red faces the other way.
+  - **Zebra stripes**: stripes reflected off the surfaces; where they run on smoothly across an edge, the faces are tangent.
+  - **Curvature**: blue for flat, through to red for the tightest curves, with the smallest radius on the scale.
+  - **Thickness**: a ray into the material from every point finds the opposite wall. Red is thinner than the minimum wall you set.
+  - **Undercut**: points that a two-part mould could not release along the pull direction are red.
+
+  A panel in the view sets the direction and limits and gives each colour's share of the area.
+- **View palette** in drawings (FR-UI-072): the model's seven standard views, drawn small beside the sheet. Drag one onto the sheet, or click it and then the sheet.
+
 ## [1.77.0] - 2026-11-08
 
 ### Added
@@ -751,7 +765,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.77.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.78.0...HEAD
+[1.78.0]: https://github.com/kothf/step-viewer/compare/v1.77.0...v1.78.0
 [1.77.0]: https://github.com/kothf/step-viewer/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/kothf/step-viewer/compare/v1.75.0...v1.76.0
 [1.75.0]: https://github.com/kothf/step-viewer/compare/v1.74.0...v1.75.0

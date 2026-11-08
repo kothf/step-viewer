@@ -296,6 +296,9 @@ export class Viewer {
     p.edgeMaterial.transparent = xray;
     m.needsUpdate = true;
     p.edgeMaterial.needsUpdate = true;
+    // A surface analysis wears its own material: keep it clipped like the part's.
+    const am = p.mesh.material;
+    if (am !== m) { am.clippingPlanes = this.clipPlanes; am.needsUpdate = true; }
   }
 
   setEdgeColor(c: THREE.ColorRepresentation) {
