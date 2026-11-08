@@ -7,7 +7,8 @@ import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kerne
 import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem } from "./items";
 import type { Prim } from "./prims";
-import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, Tol } from "./types";
+import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
+import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { viewDir } from "./views";
 
 type P2 = [number, number];
@@ -188,7 +189,8 @@ export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
 
 // ---------- drawing ----------
 
-export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number] }[] }
+/** `dangling`: annotations whose model edge is gone (FR-DRW-026); the workspace shows them in the warning colour. */
+export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number] }[]; dangling: string[] }
 
 const thin = (a: P2, b: P2): Prim => ({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "thin", layer: "ANNOT" });
 const add2 = (a: P2, b: P2, s = 1): P2 => [a[0] + b[0] * s, a[1] + b[1] * s];
@@ -331,7 +333,7 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
-  const out: AnnotOut = { prims: [], hits: [] };
+  const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
   for (const a of sheet.annots ?? []) {
@@ -342,26 +344,66 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const it = a.src ? ctx.items.find(i => i.src === a.src) : undefined;
       const g = dimGeo(it ? { ...a, refs: [{ pt: it.p[0] }, { pt: it.p[1] }] } : a, P, ctx.topo);
       if (g) r = dimPrims(a, g, pl, ctx.dec);
-      else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; }
+      else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); }
     } else if (a.t === "hole") {
       const e = refEdge(a.ref, ctx.topo);
       if (e && e.t === "c") r = holePrims(a, e, P, pl, ctx);
-    } else {
+      else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; out.dangling.push(a.id); }
+    } else if (a.t === "note") {
       const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
       r = notePrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null);
+    } else if (a.t === "gtol") {
+      const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
+      r = gtolPrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null, ctx.dec);
+    } else if (a.t === "datum") {
+      const f = edgeFoot(a.ref, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1]));
+      r = datumPrims(a, f?.at ?? null, f?.d ?? [1, 0], toSheet(pl, a.pos[0], a.pos[1]));
+      if (!f) out.dangling.push(a.id);
+    } else if (a.t === "surf") {
+      const T = toSheet(pl, a.pos[0], a.pos[1]);
+      const f = a.ref ? edgeFoot(a.ref, ctx.topo, P, pl, T) : null;
+      r = surfOn(a, T, f, ctx.dec);
+      if (a.ref && !f) out.dangling.push(a.id);
     }
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }
   return out;
 }
 
-/** Notes on the sheet itself (not on a view). */
-export function sheetNotes(sheet: Sheet): AnnotOut {
-  const out: AnnotOut = { prims: [], hits: [] };
+/** The point of a referenced edge nearest to `T` on the sheet, and the edge's direction there. */
+export function edgeFoot(ref: GeoRef, topo: Topo | null, P: (p: V3) => P2, pl: Placement, T: P2): { at: P2; d: P2 } | null {
+  const e = refEdge(ref, topo);
+  if (!e) { if ("pt" in ref) { const p = toSheet(pl, ...P(ref.pt)); return { at: p, d: [1, 0] }; } return null; }
+  const A = toSheet(pl, ...P(e.a)), B = toSheet(pl, ...P(e.b));
+  if (e.t === "l" && d2(A, B) > 1e-6) {
+    const d = unit2([B[0] - A[0], B[1] - A[1]]), k = Math.max(0, Math.min(d2(A, B), (T[0] - A[0]) * d[0] + (T[1] - A[1]) * d[1]));
+    return { at: add2(A, d, k), d };
+  }
+  if (e.t === "c" && e.c && e.r) {
+    // A circle seen end-on: the point towards T; seen edge-on it projects to a line through A and B.
+    const C = toSheet(pl, ...P(e.c)), m = toSheet(pl, ...P(e.m));
+    if (d2(C, m) > e.r * pl.s * 0.5) { const u = unit2([T[0] - C[0], T[1] - C[1]]); return { at: add2(C, u, e.r * pl.s), d: [-u[1], u[0]] }; }
+  }
+  const M = toSheet(pl, ...P(e.m));
+  return { at: M, d: unit2([B[0] - A[0], B[1] - A[1]]) };
+}
+
+/** A surface finish symbol: on the edge when `pos` is close to it, else at `pos` with a leader to the edge. */
+function surfOn(a: SurfAnnot, T: P2, f: { at: P2; d: P2 } | null, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
+  if (!f || d2(f.at, T) < 2) return surfPrims(a, f ? f.at : T, dec);
+  const r = surfPrims(a, T, dec), u = unit2([f.at[0] - T[0], f.at[1] - T[1]]);
+  r.prims.push(thin(T, f.at), arrowHead(f.at[0], f.at[1], u[0], u[1], ARROW, 1));
+  return r;
+}
+
+/** Notes, free tolerance frames, surface symbols and tables on the sheet itself (not on a view). */
+export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = "."): AnnotOut {
+  const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   for (const a of sheet.annots ?? []) {
-    if (a.t !== "note" || a.view) continue;
-    const r = notePrims(a, a.pos, null);
-    out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box });
+    if (a.view) continue;
+    const r = a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
+      : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a, label) : null;
+    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }
   return out;
 }

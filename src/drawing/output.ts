@@ -40,6 +40,55 @@ export function sheetSvg(prims: Prim[], W: number, H: number): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}mm" height="${f(H)}mm" viewBox="0 0 ${f(W)} ${f(H)}" font-family="${FONT.replace(/'/g, "")}" stroke-linecap="round">\n<rect width="${f(W)}" height="${f(H)}" fill="#fff"/>\n${svgBody(prims, H)}\n</svg>\n`;
 }
 
+/**
+ * A sheet as a PNG at `dpi` (FR-DRW-031), white background. The SVG carries the DejaVu font as a
+ * data URI so the text renders the same as on screen and in the PDF. Very large sheets drop to
+ * the dpi that keeps the image under ~120 megapixels (browser canvas limits); `dpi` in the result says which.
+ */
+export async function sheetPng(prims: Prim[], W: number, H: number, font: ArrayBuffer, dpi = 300): Promise<{ blob: Blob; dpi: number }> {
+  const maxPx = 120e6, px = (d: number) => (W / 25.4 * d) * (H / 25.4 * d);
+  while (dpi > 72 && px(dpi) > maxPx) dpi -= 25;
+  const w = Math.round(W / 25.4 * dpi), h = Math.round(H / 25.4 * dpi);
+  let bin = "";
+  const u8 = new Uint8Array(font);
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  const face = `<style>@font-face{font-family:"DejaVu Sans";src:url(data:font/ttf;base64,${btoa(bin)}) format("truetype");}</style>`;
+  const svg = sheetSvg(prims, W, H).replace(/width="[^"]+mm" height="[^"]+mm"/, `width="${w}" height="${h}"`).replace('stroke-linecap="round">', `stroke-linecap="round">${face}`);
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    await new Promise<void>((ok, bad) => { img.onload = () => ok(); img.onerror = () => bad(new Error("SVG")); img.src = url; });
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const g = cv.getContext("2d");
+    if (!g) throw new Error("canvas");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+    g.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>(ok => cv.toBlob(ok, "image/png"));
+    if (!blob) throw new Error("PNG");
+    return { blob: await withDpi(blob, dpi), dpi };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+/** Writes a pHYs chunk (pixels per metre) after IHDR so viewers and printers know the resolution. */
+async function withDpi(png: Blob, dpi: number): Promise<Blob> {
+  const b = new Uint8Array(await png.arrayBuffer());
+  const ppm = Math.round(dpi / 0.0254), chunk = new Uint8Array(21), dv = new DataView(chunk.buffer);
+  dv.setUint32(0, 9); chunk.set([0x70, 0x48, 0x59, 0x73], 4); dv.setUint32(8, ppm); dv.setUint32(12, ppm); chunk[16] = 1;
+  dv.setUint32(17, crc32(chunk.subarray(4, 17)));
+  const at = 8 + 25; // signature + IHDR (4 len + 4 type + 13 data + 4 crc)
+  const out = new Uint8Array(b.length + 21);
+  out.set(b.subarray(0, at)); out.set(chunk, at); out.set(b.subarray(at), at + 21);
+  return new Blob([out], { type: "image/png" });
+}
+
+function crc32(d: Uint8Array): number {
+  let c = ~0;
+  for (let i = 0; i < d.length; i++) { c ^= d[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1)); }
+  return ~c >>> 0;
+}
+
 // ---------- DXF ----------
 
 const LTYPES: Record<string, { desc: string; pat: number[] }> = {

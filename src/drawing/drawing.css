@@ -63,3 +63,13 @@
 .drw-edge.on { stroke: #2563eb; }
 circle.drw-edge { fill: none; }
 .drw-tolseg button { padding: 2px 6px; }
+
+/* Annotations whose model edge is gone (FR-DRW-026). */
+.drw-dangle { fill: rgba(217, 119, 6, .12); stroke: #d97706; stroke-width: .6; vector-effect: non-scaling-stroke; }
+.drw-chk { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0; }
+.drw-datums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.drw-datums .drw-f { font-size: 11px; }
+.drw-tbl { overflow-x: auto; margin: 4px 0; }
+.drw-tbl table { border-collapse: collapse; }
+.drw-tbl input { width: 84px; font: inherit; font-size: 12px; padding: 2px 4px; }
+.drw-tbl th input { font-weight: 600; }

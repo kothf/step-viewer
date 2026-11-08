@@ -241,7 +241,7 @@ export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<stri
     boxes.push({ id: v.id, x0: r[0], y0: r[1], x1: r[2], y1: r[3], ready: !!proj });
     prims.push(...viewBody(sheet, v, proj, pl, label, ctx));
   }
-  prims.push(...sheetNotes(sheet).prims);
+  prims.push(...sheetNotes(sheet, label, ctx?.dec).prims);
   return { prims, boxes };
 }
 
