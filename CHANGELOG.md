@@ -9,10 +9,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
+- Chamfer and shell options from FRS Appendix G (FR-FT-041, FR-FT-060):
+  - **Offset face chamfer.** Both faces move in by the distance, and the chamfer runs where they meet, so it stays even where the faces are not square.
+  - **Vertex chamfer.** Click an edge next to a corner of three straight edges, and the corner is cut off at three distances along its edges.
+  - **Multi-thickness shell.** Flat faces picked under Multi-thickness settings get walls of their own thickness, thicker or thinner than the shell.
+- Holes and end conditions from FRS Appendix G (FR-FT-050, FR-FT-012):
+  - **New hole types.** Clearance, Counterdrill (a larger drill to a depth with a 118° cone at its bottom) and Slot (length and angle in the face, rounded ends).
+  - **Hole end conditions.** Up to next goes through the first wall the hole meets. Up to face or plane stops at a picked plane or flat face.
+  - **Extrude Up to body.** Pick any face of another body, and the extrude stops where it meets that body.
 - Pattern options from FRS Appendix G (FR-FT-070, FR-FT-071, FR-FT-072, FR-FT-073):
   - **Copy faces or bodies.** Linear pattern, Circular pattern and Mirror can copy faces instead of features. Click all the faces of a boss or a cut, and each copy adds or removes the same shape. They can also copy bodies, and each copy becomes a new body. Mirror's **Merge solids** joins each mirrored body to its original.
   - **Sketch driven pattern** (pattern ▾): a copy at each free point of a sketch, moved from the seed's centroid or a picked reference point.
   - **Table driven pattern** (pattern ▾): copies moved by X, Y offsets typed one row per copy, along the part's axes or a coordinate system.
+
 ## [1.96.0] - 2026-11-08
 
 ### Added

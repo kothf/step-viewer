@@ -5716,6 +5716,132 @@ try {
     await ctx.close();
   }
 
+  // --- 1.97: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const toPage = p => mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, p);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="chamfer"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="mode"]', "vertex");
+    await settle();
+    for (const k of ["distance", "distance2", "distance3"]) {
+      await mp.fill(`#mc-pm input[data-num="${k}"]`, "5");
+      await mp.press(`#mc-pm input[data-num="${k}"]`, "Enter");
+      await settle();
+    }
+    // Click on the top front edge 3 mm from the corner (50, −30, 20): that corner is picked.
+    const [cx, cy] = await toPage([47, -30, 20]);
+    await mp.mouse.move(cx, cy); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await settle();
+    const vd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { mode: f.mode, n: f.vertices?.length ?? 0, at: f.vertices?.[0]?.at, d3: !!document.querySelector('#mc-pm input[data-num="distance3"]'), items: document.querySelector("#mc-pm .pm-count")?.textContent }; });
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked, #mc-pm .pm-count")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const v1 = await state();
+    check(vd.mode === "vertex" && vd.n === 1 && vd.d3 && Math.abs(v1.v - (120000 - 125 / 6)) < 0.1 && !v1.bad,
+      `model 1.97: vertex chamfer on a clicked corner, 5 mm each way (FR-FT-041) (${JSON.stringify({ vd, v1 })})`);
+    check(/Расстояние 3/.test(ru) && /Вершина/.test(ru) && !/Distance 3|Click near a corner/.test(ru), `model 1.97: vertex chamfer panel in Russian (${ru.slice(0, 300)})`);
+    // Shell 2 mm open at the top (on the plain block); the +X wall gets 5 mm typed in the multi-thickness list.
+    await mp.evaluate(() => window.__sv.model.store.change("Drop chamfer", d => { d.features.pop(); }));
+    await settle();
+    await mp.click('#mc-tools [data-c="shell"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.faces = [{ name: "eb:end" }]; f.thickness = { v: 2 }; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.click('#mc-pm [data-focus="mthick"]');
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.multi = [{ name: "eb:side:bl2", t: 4 }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-mt="0"]', "5");
+    await mp.press('#mc-pm input[data-mt="0"]', "Enter");
+    await settle();
+    const sd = await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; return { focus: m.mode().focus, multi: f.multi }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const v2 = await state();
+    check(sd.focus === "mthick" && sd.multi?.[0]?.t === 5 && Math.abs(v2.v - (120000 - 93 * 56 * 18)) < 1 && !v2.bad,
+      `model 1.97: multi-thickness shell, one wall 5 mm (FR-FT-060) (${JSON.stringify({ sd, v2, want: 120000 - 93 * 56 * 18 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.96: slot hole up to next, extrude up to body (FR-FT-050, FR-FT-012) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round((l.props?.volume ?? 0) * 10) / 10, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-c="hole"]');
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.plane = { face: { name: "eb:end" } }; f.pts = [[0, 0]]; m.mode().focus = "pts"; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="kind"]', "slot");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="end"]', "next");
+    await settle();
+    const hd = await mp.evaluate(() => { const f = window.__sv.model.mode().draft; return { d: f.diameter.v, L: f.slotLen?.v, kind: f.kind, end: f.end, fields: !!document.querySelector('#mc-pm input[data-num="slotLen"]') }; });
+    const h1 = await state();
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm .pm-help, #mc-pm label > span, #mc-pm option:checked")].map(e => e.textContent).join("|"));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const h2 = await state();
+    const r = hd.d / 2, want = 120000 - 20 * (Math.PI * r * r + 2 * r * (hd.L ?? 0));
+    check(hd.kind === "slot" && hd.end === "next" && hd.fields && hd.L > 0 && Math.abs(h1.v - want) < 1 && Math.abs(h2.v - want) < 1 && !h2.bad,
+      `model 1.96: slot hole up to next goes through the block (FR-FT-050) (${JSON.stringify({ hd, h1, h2, want })})`);
+    check(/Длина паза/.test(ru) && /До следующей|До след/.test(ru) && !/Slot length|Up to next/.test(ru), `model 1.96: hole panel in Russian (${ru.slice(0, 300)})`);
+    // Up to body: a Ø10 post grows from the block's top to a separate block 30 mm above.
+    await mp.evaluate(() => window.__sv.model.store.change("Lid and post", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "pl", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "s2", type: "sketch", name: "Sketch2", plane: { plane: "pl" }, rels: [], dims: [], ents: [P("s1", 10, -10), P("s2", 30, -10), P("s3", 30, 10), P("s4", 10, 10), Ln("sa", "s1", "s2"), Ln("sb", "s2", "s3"), Ln("sc", "s3", "s4"), Ln("sd", "s4", "s1")] },
+        { id: "e2", type: "extrude", name: "Boss-Extrude2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, merge: false },
+        { id: "c", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", 20, 0), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "e3", type: "extrude", name: "Boss-Extrude3", sketch: "c", op: "boss", end: "body", depth: { v: 1 }, upToBody: { name: "e2:start" } });
+    }));
+    await settle();
+    const ub = await state();
+    check(Math.abs(ub.v - (h2.v + 4000 + Math.PI * 25 * 30)) < 1 && !ub.bad, `model 1.96: extrude up to body stops at the other body (FR-FT-012) (${JSON.stringify({ ub, before: h2.v })})`);
+    await ctx.close();
+  }
+
   // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

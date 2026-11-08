@@ -88,7 +88,7 @@ export interface EdgeRef { faces: [string, string]; hint?: V3 }
 
 // ---------- features ----------
 
-export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2" | "next" | "vertex";
+export type EndKind = "blind" | "through" | "mid" | "upto" | "offset" | "through2" | "next" | "vertex" | "body";
 
 /** A vertex (FR-FT-012/013): the end of an edge nearer `at`, or a reference point feature. */
 export type VertexRef = { edge: EdgeRef; at: V3 } | { point: string };
@@ -113,6 +113,8 @@ export interface ExtrudeFeature {
   reverseOffset?: boolean;
   /** Up to vertex: the extrusion ends level with this vertex. */
   upToVertex?: VertexRef;
+  /** Up to body (FR-FT-012): any face of the solid the extrusion stops at. */
+  upToBody?: FaceRef;
   /** Start from (FR-FT-013): absent is the sketch plane. */
   start?: "offset" | "surface" | "vertex";
   /** Start from Offset: the distance from the sketch plane (along its normal; reversed the other way). */
@@ -176,9 +178,17 @@ export interface ChamferFeature {
   id: string; type: "chamfer"; name: string; suppressed?: boolean;
   distance: Num;
   edges: EdgeRef[];
-  /** Equal distances (default), two distances, or distance and angle. */
-  mode?: "equal" | "two" | "angle";
+  /**
+   * Equal distances (default), two distances, distance and angle, offset face (FR-FT-041: `distance`
+   * is how far the two faces move in; their intersection sets the chamfer), or vertex (three distances
+   * along the three straight edges at each picked corner).
+   */
+  mode?: "equal" | "two" | "angle" | "offset" | "vertex";
   distance2?: Num;
+  /** Vertex chamfer: the third distance. Distances go to the clicked edge first, then the others in name order. */
+  distance3?: Num;
+  /** Vertex chamfer: the corners. */
+  vertices?: VertexRef[];
   angle?: Num;
   /** Measure the first distance on the edge's other face. */
   flip?: boolean;
@@ -243,6 +253,8 @@ export interface ShellFeature {
   faces: FaceRef[];
   /** Grow the wall outward instead of inward. */
   outward?: boolean;
+  /** Multi-thickness (FR-FT-060): flat faces whose wall gets its own thickness `t` (mm). */
+  multi?: (FaceRef & { t: number })[];
 }
 
 /** Delete face (FR-FT-101): removes the picked faces and heals the gap from the faces around them (defeaturing). */
@@ -373,13 +385,23 @@ export interface HoleFeature {
   plane?: PlaneRef;
   /** Hole centres in the plane's frame (x, y). */
   pts: [number, number][];
-  kind: "simple" | "cbore" | "csink" | "tapped" | "insert";
+  /** clear = ISO 273 clearance hole for the size and fit; cdrill = counterdrilled; slot = an obround of `slotLen`. */
+  kind: "simple" | "cbore" | "csink" | "tapped" | "insert" | "clear" | "cdrill" | "slot";
   /** ISO size ("M6") the values were taken from; absent for a custom hole. */
   size?: string;
   fit?: "close" | "normal" | "loose";
   diameter: Num;
-  end: "blind" | "through";
+  /** upto: to a face or plane (`upTo`); next: until the hole leaves the material. */
+  end: "blind" | "through" | "upto" | "next";
   depth: Num;
+  upTo?: PlaneRef;
+  /** Counterdrill: diameter, depth and the angle of its conical bottom. */
+  cdDia?: Num;
+  cdDepth?: Num;
+  cdAngle?: Num;
+  /** Slot: centre-to-centre length and its angle from the plane's X axis. */
+  slotLen?: Num;
+  slotAngle?: Num;
   /** Flat bottom instead of a 118° drill point. */
   flat?: boolean;
   cbDia?: Num;

@@ -1240,3 +1240,63 @@ test("Patterns of faces and bodies, sketch- and table-driven patterns (FR-FT-070
   r = run(m, doc([...base, { id: "tp", type: "spattern", name: "TablePattern1", features: ["eh"], src: "table", table: [{ x: { v: 0 }, y: { v: 0 } }, { x: { v: 20 }, y: { v: 0 } }, { x: { v: 40 }, y: { v: -10 } }] } as Feature]));
   close(r.props!.volume, v0 - 2 * hole, 1e-5);
 });
+
+test("Up to body; counterdrilled, slot holes; hole up to face and up to next (FR-FT-012, FR-FT-050)", async () => {
+  const m = new Modeller(await occ());
+  // A 100 × 60 × 20 block, and a 20 × 20 × 10 block floating 30 mm above it as its own body.
+  const base: Feature[] = [rect("s1", 0, 0, 100, 60), { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } }];
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } } as Feature;
+  const lid: Feature[] = [pl, rect("s2", 0, 0, 20, 20, { plane: "p1" }), { id: "f2", type: "extrude", name: "E2", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 }, merge: false } as Feature];
+  // Up to body: a Ø10 boss on the block's top grows until it meets the floating block (30 mm).
+  const post: Feature[] = [{ id: "c", type: "sketch", name: "c", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "ck", t: "circle", c: "c0", r: 5 }] },
+    { id: "f3", type: "extrude", name: "E3", sketch: "c", op: "boss", end: "body", depth: { v: 1 }, upToBody: { name: "f2:start" } } as Feature];
+  let r = run(m, doc([...base, ...lid, ...post]));
+  close(r.props!.volume, 120000 + 4000 + Math.PI * 25 * 30, 1e-6);
+  const top = { face: { name: "f1:end" } };
+  const h = (o: object): Feature => ({ id: "h1", type: "hole", name: "Hole1", plane: top, pts: [[0, 0]], kind: "simple", diameter: { v: 6 }, end: "blind", depth: { v: 10 }, flat: true, ...o } as Feature);
+  // Counterdrill Ø12 × 4 with a 90° bottom (3 mm high cone frustum) over a Ø6 × 15 flat hole.
+  r = run(m, doc([...base, h({ kind: "cdrill", cdDia: { v: 12 }, cdDepth: { v: 4 }, cdAngle: { v: Math.PI / 2 }, depth: { v: 15 } })]));
+  const cone = (Math.PI * 3 / 3) * (36 + 18 + 9);
+  close(r.props!.volume, 120000 - (Math.PI * 36 * 4 + cone + Math.PI * 9 * 8), 1e-6);
+  // Slot: two Ø6 ends 20 mm apart, 10 deep with a flat bottom: 10 × (π·9 + 6·20).
+  r = run(m, doc([...base, h({ kind: "slot", slotLen: { v: 20 } })]));
+  close(r.props!.volume, 120000 - 10 * (Math.PI * 9 + 120), 1e-6);
+  assert.ok(r.body!.faces.length <= 6 + 5, `slot faces merged: ${r.body!.faces.length}`);
+  // Up to face: a plane 8 mm below the top (z = 12).
+  const p8: Feature = { id: "p8", type: "plane", name: "Plane8", base: { std: "XY" }, mode: "offset", offset: { v: 12 } } as Feature;
+  r = run(m, doc([...base, p8, h({ end: "upto", upTo: { plane: "p8" } })]));
+  close(r.props!.volume, 120000 - Math.PI * 9 * 8, 1e-6);
+  // Up to next: through the 20 mm block, no drill point.
+  r = run(m, doc([...base, h({ end: "next" })]));
+  close(r.props!.volume, 120000 - Math.PI * 9 * 20, 1e-6);
+});
+
+test("vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060)", async () => {
+  const m = new Modeller(await occ());
+  const s = rect("s", 0, 0, 40, 20);
+  const ex: Feature = { id: "e", type: "extrude", name: "E", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const edge = { faces: ["e:end", "e:side:sl1"] as [string, string] };
+  // Offset face 3 on a square edge: both faces move in 3, so the chamfer is 3 × 3.
+  let r = run(m, doc([s, ex, { id: "c", type: "chamfer", name: "C", distance: { v: 3 }, mode: "offset", edges: [edge] } as Feature]));
+  close(r.props!.volume, 8000 - 4.5 * 40, 1e-6);
+  // Vertex chamfer 2 / 3 / 4 at the corner (−20, −10, 10): a tetrahedron 2·3·4 / 6 comes off.
+  const vc: Feature = { id: "c", type: "chamfer", name: "C", distance: { v: 2 }, distance2: { v: 3 }, distance3: { v: 4 }, mode: "vertex", edges: [], vertices: [{ edge, at: [-20, -10, 10] }] };
+  r = run(m, doc([s, ex, vc]));
+  close(r.props!.volume, 8000 - 4, 1e-6);
+  assert.equal(r.body!.faces.length, 7);
+  assert.ok(r.body!.names.includes("c:vertex:0"), r.body!.names.join());
+  // Equal 2 at two corners.
+  r = run(m, doc([s, ex, { ...vc, distance2: undefined, distance3: undefined, vertices: [{ edge, at: [-20, -10, 10] }, { edge, at: [20, -10, 10] }] } as Feature]));
+  close(r.props!.volume, 8000 - 2 * 8 / 6, 1e-6);
+
+  // Shell 2 mm open at the top, the +X wall 5 mm and the −X wall 1 mm: the cavity is 94 × 56 × 18.
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const e1: Feature = { id: "f1", type: "extrude", name: "E1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const sh: Feature = { id: "f2", type: "shell", name: "Shell1", thickness: { v: 2 }, faces: [{ name: "f1:end" }], multi: [{ name: "f1:side:s1l2", t: 5 }, { name: "f1:side:s1l4", t: 1 }] };
+  r = run(m, doc([s1, e1, sh]));
+  close(r.props!.volume, 120000 - 94 * 56 * 18, 1e-6);
+  assert.ok(r.body!.names.includes("f2:off:f1:side:s1l2"), r.body!.names.join());
+  // A removed face cannot have its own thickness.
+  const bad = m.evaluate(doc([s1, e1, { ...sh, multi: [{ name: "f1:end", t: 3 }] } as Feature]));
+  assert.equal(bad.statuses[2].ok, false);
+});

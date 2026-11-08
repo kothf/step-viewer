@@ -132,6 +132,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "extrude") {
     const vtx = (v: VertexRef | undefined) => { if (v) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); } };
     if (f.end === "vertex") vtx(f.upToVertex);
+    if (f.end === "body" && f.upToBody) faces.push(f.upToBody.name);
     if (f.start === "surface") plane(f.startRef);
     if (f.start === "vertex") vtx(f.startVertex);
   }
@@ -142,6 +143,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);
   if (f.type === "csys" && f.origin) { if ("point" in f.origin) features.push(f.origin.point); else faces.push(...f.origin.edge.faces); }
   if (f.type === "fillet" || f.type === "chamfer") for (const e of f.edges) faces.push(...e.faces);
+  if (f.type === "chamfer") for (const v of f.vertices ?? []) { if ("point" in v) features.push(v.point); else faces.push(...v.edge.faces); }
+  if (f.type === "shell") faces.push(...(f.multi ?? []).map(x => x.name));
   if (f.type === "fillet") for (const x of [...(f.faces1 ?? []), ...(f.faces2 ?? []), ...(f.center ?? [])]) faces.push(x.name);
   const line = (l: LineRef | undefined) => {
     if (!l) return;
@@ -151,7 +154,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   };
   if (f.type === "csys") { line(f.x); line(f.z); }
   if (f.type === "moveface") line(f.axis);
-  if (f.type === "hole") plane(f.plane);
+  if (f.type === "hole") { plane(f.plane); if (f.end === "upto") plane(f.upTo); }
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
   if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
