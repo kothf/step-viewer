@@ -5,6 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.155.0] - 2026-11-08
+
+### Added
+
+- **Hole position table**: the Hole panel lists every hole centre with typed X/Y positions. On a face square to a world axis the columns are the two world axes in that face, so typed positions match the drawing.
+
+### Fixed
+
+Found while modelling the Leuenberger steam engine through the UI only:
+
+- Assemblies: placed parts never got exact geometry (their faces lost the face type when moved), so axes and radii came from the mesh and valid mates were refused as "over-defined". Parts now get exact faces again, and a solve that stalls within 1e-5 of the model size (mesh-only components) counts as solved.
+- Revolve accepts a profile line lying on the axis as the axis, as SolidWorks does.
+- Hole: counterbore, countersink and counterdrill sizes still at their automatic values follow a typed diameter (a Ø3.2 countersink kept the M6 head). Clicking a curved face says "Pick a flat face or a plane: this one is curved."
+- Sketcher: a typed line chain ending on the sketch origin joins it; typed sizes place dimensions clear of the geometry; sketch fillets work on construction corners and virtual sharps; tangency at a shared end counts once, so a fully dimensioned slot shows 0 DOF.
+- The arrow keys turn the view while a command button has focus (they did nothing after clicking Mate or Insert).
+
 ## [1.152.0] - 2026-11-08
 
 ### Added
@@ -1273,7 +1289,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.152.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.155.0...HEAD
+[1.155.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.155.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
 [1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
 [1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0

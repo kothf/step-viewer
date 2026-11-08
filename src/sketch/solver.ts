@@ -227,14 +227,6 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
         return [term([a, b, c, rr], x => Math.abs(lineDist(c(x), a(x), b(x))) - rr(x))];
       }
       const c1 = center(sys, ents, r.e[0]), r1 = R(sys, ents, r.e[0]), c2 = center(sys, ents, r.e[1]), r2 = R(sys, ents, r.e[1]);
-      // Arcs joined end to end: the radii to the shared end lie on one line. (The distance form has a zero
-      // gradient there, so the solver could not count the relation.)
-      const e0 = ents.get(r.e[0]), e1 = ents.get(r.e[1]);
-      const shared = e0?.t === "arc" && e1?.t === "arc" ? [e0.a, e0.b].find(q => q === e1.a || q === e1.b) : undefined;
-      if (shared) {
-        const S = P(sys, shared);
-        return [term([c1, c2, S], x => { const u = sub(S(x), c1(x)), v = sub(S(x), c2(x)); return cross(u, v) / (nrm(u) * nrm(v) || 1); })];
-      }
       return [term([c1, r1, c2, r2], x => dist(c1(x), c2(x)) - (r.inner ? Math.abs(r1(x) - r2(x)) : r1(x) + r2(x)))];
     }
     case "concentric": {
