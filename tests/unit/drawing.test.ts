@@ -658,3 +658,14 @@ test("DXF 2000: handles, owners, model space records, LWPOLYLINE, Unicode text (
   assert.ok(d.includes("LWPOLYLINE") && d.includes("*Model_Space") && d.includes("ACAD_GROUP"));
   assert.ok(d.includes("\\U+041C\\U+0430") && d.includes("\\U+00D8") && !/[^\x00-\x7f]/.test(d));
 });
+
+test("note property links: $PRP:\"name\" takes the title block field, SolidWorks names too (FR-DRW-023)", async () => {
+  const { expandProps, useProps, notePrims } = await import("../../src/drawing/annot");
+  const props = { material: "Steel", mass: "1.25 kg", number: "MC-001", scale: "2:1", title: "Plate" };
+  assert.equal(expandProps('MATERIAL: $PRP:"Material"', props), "MATERIAL: Steel");
+  assert.equal(expandProps('$PRP:"Weight" / $PRP:"PartNo" / $PRPSHEET:"SW-Sheet Scale" / $PRP:"Description"', props), "1.25 kg / MC-001 / 2:1 / Plate");
+  assert.equal(expandProps('$PRP:"Nope"', props), '$PRP:"Nope"');
+  useProps({ material: "Brass" });
+  const r = notePrims({ id: "n", t: "note", pos: [0, 0], text: 'M: $PRP:"material"' }, [0, 0], null);
+  assert.equal((r.prims[0] as any).s, "M: Brass");
+});

@@ -3765,6 +3765,15 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
+    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.waitForTimeout(150);
+    tx = await texts();
+    const scaleNote = tx.find(s => s.startsWith("SCALE "));
+    check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');

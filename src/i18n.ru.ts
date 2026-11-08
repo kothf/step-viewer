@@ -3521,4 +3521,5 @@ export const RU: Record<string, string> = {
   "Click at least three corners that enclose an area.": "Щёлкните хотя бы три угла, ограничивающих область.",
   "PDF (this sheet)": "PDF (этот лист)",
   "DXF 2000 (this sheet)": "DXF 2000 (этот лист)",
+  "Link to property": "Ссылка на свойство",
 };
