@@ -6811,7 +6811,9 @@ try {
     });
     check(/Length/.test(typedLab) && typed.lens[0] === 25 && typed.lens.length === 5 && typed.lens.slice(1).sort().join() === "20,20,40,40" && typed.dims.join() === "20,25,40" && typed.horiz >= 3,
       `commands: sizes typed while drawing place a 25 mm horizontal line and a 40 × 20 rectangle with dimensions (${typedLab}; ${JSON.stringify(typed)})`);
-    await cp.evaluate(() => window.__sv.modeller.cancel());
+    // Leaving the changed sketch asks first; don't await cancel() (it waits for the answer), answer Discard.
+    await cp.evaluate(() => { void window.__sv.modeller.cancel(); });
+    await cp.click("#confirm[open] [data-a=ok]");
     await cp.waitForFunction(() => window.__sv.model.mode().kind === "none");
     await cp.evaluate(() => window.__sv.model.store.undo());
     await settle();
