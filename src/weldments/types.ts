@@ -106,6 +106,8 @@ export interface WeldBeadFeature {
   tangent?: boolean;
   /** Intermittent weld: welds of length `len` every `pitch` (centre to centre) along each chain of edges; `stagger` starts every other chain half a pitch on. */
   inter?: { len: Num; pitch: Num; stagger?: boolean };
+  /** false hides the weld symbol in the view. */
+  symbol?: false;
 }
 
 export type WeldFeature = MemberFeature | TrimExtendFeature | EndCapFeature | GussetFeature | WeldBeadFeature;

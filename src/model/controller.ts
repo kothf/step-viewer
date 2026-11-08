@@ -54,7 +54,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet } from "../sheetmetal/types";
@@ -2809,6 +2809,7 @@ export class ModelController {
     this.drawPlanes(picksPlanes);
     this.drawHoles();
     this.drawThreads();
+    this.drawWeldSymbols();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
@@ -2882,6 +2883,31 @@ export class ModelController {
   }
 
   /** Cosmetic threads (FR-FT-054): dashed circles at both ends and four lines along the cylinder. */
+  /** Weld symbols (FR-FT-121): a one-line ISO 2553 callout on every fillet bead's weld face; a click edits the bead. */
+  private drawWeldSymbols() {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return;
+    const m = this.mode, draft = m.kind === "feature" && m.draft.type === "weldbead" ? m.draft : null;
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const ok = new Set((this.last?.statuses ?? []).filter(s => s.ok).map(s => s.id));
+    for (const { id, text } of weldSymbols(this.doc.features.slice(0, end), draft, ok)) {
+      // The weld face of its first piece (any of its faces when that one is gone).
+      let i = names.findIndex(n => n.startsWith(`${id}:`) && n.endsWith(":face"));
+      if (i < 0) i = names.findIndex(n => n.startsWith(`${id}:`));
+      const fi = i >= 0 ? data.faces[i] : undefined;
+      if (!fi) continue;
+      const label = document.createElement("button");
+      label.className = "mc-handle mc-callout wld-sym";
+      label.dataset.weld = id;
+      label.textContent = text;
+      label.title = t("Weld symbol: click to edit the bead");
+      label.dataset.at = JSON.stringify(fi.center);
+      label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
   private drawThreads() {
     const m = this.mode;
     const end = this.doc.rollback ?? this.doc.features.length;

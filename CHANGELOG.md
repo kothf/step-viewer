@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.166.0] - 2026-11-08
+## [1.167.0] - 2026-11-08
 
 ### Added
 
 - **Perimeter circle (FR-SK-014)**: the Circle ▾ menu adds Perimeter circle, as in SolidWorks. Click three points or curves: the circle passes through the points and touches the lines, circles and arcs you click, with tangent relations, so three sides of a triangle give its inscribed circle (or an outside one, depending on where you click). The preview follows the pointer before the third click.
+
+## [1.166.0] - 2026-11-08
+
+### Added
+
+- **Weld symbols on fillet beads (FR-FT-121).** Every fillet bead shows its weld symbol in the 3D view, in ISO 2553 short form: the fillet triangle, the leg size (z4), and for intermittent welds the weld length, Z when staggered and the pitch in brackets (◺ z4 50 Z (100)). Clicking the symbol opens the bead for editing; **Show weld symbol** in the bead's panel hides it.
 
 ## [1.164.0] - 2026-11-08
 
@@ -1338,7 +1344,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.166.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.167.0...HEAD
+[1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0
 [1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
 [1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0
 [1.163.0]: https://github.com/kothf/step-viewer/compare/v1.161.0...v1.163.0
