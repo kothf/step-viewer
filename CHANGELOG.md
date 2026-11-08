@@ -5,12 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.249.0] - 2026-11-08
+## [1.251.0] - 2026-11-08
 
 ### Added
 
 - **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in SolidWorks; **Automatic relations** in the sketch panel turns them off.
 - **Relation glyphs (FR-SK-053)**: hovering a relation glyph lights up the entities it ties, and **Show relations** in the sketch panel hides the glyphs (a relation selected in the list still shows its own).
+
+## [1.250.0] - 2026-11-08
+
+### Added
+
+- **Flat pattern views in drawings (FR-FT-120)**: a sheet metal part's drawing now offers a Flat pattern tile in the View palette, and Flat pattern in a model view's Configuration list. The view shows the unfolded part, with each bend line drawn as a centre line and a bend note along it ("UP 90° R2", in the sheet's language), as SolidWorks does. Either can be turned off in the view's properties.
 
 ## [1.248.0] - 2026-11-08
 
@@ -1618,8 +1624,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.249.0...HEAD
-[1.249.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.249.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.251.0...HEAD
+[1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
+[1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
 [1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
 [1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
 [1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0

@@ -4,6 +4,9 @@ import { viewAxes, type V3, type ViewDir } from "../kernel/drawing";
 import type { DrawingView, Orient, Projection, Sheet } from "./types";
 
 /** Named orientations, Z up like the 3D view (front looks along +Y). */
+/** The configuration name a drawing view uses for a sheet metal part's flat pattern (FR-FT-120); the flat lies on XY, top face up. */
+export const FLAT_CONFIG = "@flat";
+
 export const ORIENTS: Record<Exclude<Orient, "current">, ViewDir> = {
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
   back: { dir: [0, 1, 0], up: [0, 0, 1] },
