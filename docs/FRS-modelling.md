@@ -1603,8 +1603,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
 | Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
 | Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
-| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | Plain value input (Enter/Esc) | Weaker |
-| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | Double-click opens Edit feature; no feature dimensions on the model | Weaker |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | No | New |
 | Typing a number while drawing | FR-UI-052 | No | Weaker |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
