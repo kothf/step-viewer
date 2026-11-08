@@ -53,11 +53,13 @@ export type RelKind =
   /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
   | "intersection"
   /** Equal curvature (G2) where a spline meets a line, arc or spline at a shared end; includes tangency (FR-SK-051). */
-  | "curvature";
+  | "curvature"
+  /** Pierce (FR-SK-051): the point sits where the model edge `ext` crosses the sketch plane, e = [point]. */
+  | "pierce";
 
 export interface SkRel {
   id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
-  /** "On edge" (fix only, FR-SK-064): the model edge a converted curve follows on every rebuild. */
+  /** "On edge" (fix, FR-SK-064): the model edge a converted curve follows on every rebuild; pierce: the edge crossing the plane. */
   ext?: EdgeRef;
   /** Set by the rebuild when `ext` no longer resolves: the curve keeps its place, shown as dangling. */
   dangling?: boolean;
