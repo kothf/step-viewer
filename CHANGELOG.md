@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.229.0] - 2026-11-08
+
+### Fixed
+
+- The 3D view no longer stays blank after the graphics card resets (a lost WebGL context, which can happen while switching between heavy document tabs). The view and the view cube draw again as soon as the browser gives the context back, with the lighting rebuilt; if it does not come back, a message says to save and reload instead of leaving an empty view with only the X/Y/Z labels.
+- A part opened after a STEP file in another tab no longer shows that STEP file's header (protocol, author, CAD system) in Properties.
+
 ## [1.226.0] - 2026-11-08
 
 ### Added
@@ -1531,7 +1538,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.226.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.229.0...HEAD
+[1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0
 [1.226.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.226.0
 [1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
 [1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
