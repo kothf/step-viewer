@@ -1453,3 +1453,39 @@ test("loft guide curves: sections stretch to pass through the guides (FR-FT-082)
   const off = m.evaluate(doc([a, pl, b, { ...g1, pts: [[6, 0, 0], [8, 0, 20], [5, 0, 40]] } as Feature, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["a", "b"], guides: [{ curve: "g1" }] } as Feature]));
   assert.equal(off.statuses.find(s => s.id === "l")?.code, "E-LOFT-GUIDE");
 });
+
+test("check and heal feature: a gap sewn shut, split faces merged, names kept (FR-FT-131)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  // The gap cube from the import test, read without healing, then healed by the feature.
+  const P = (x: number, y: number, z: number) => new oc.gp_Pnt_3(x, y, z);
+  const quad = (a: number[][]) => new oc.BRepBuilderAPI_MakeFace_15(new oc.BRepBuilderAPI_MakePolygon_4(P(a[0][0], a[0][1], a[0][2]), P(a[1][0], a[1][1], a[1][2]), P(a[2][0], a[2][1], a[2][2]), P(a[3][0], a[3][1], a[3][2]), true).Wire(), true).Face();
+  const z1 = 10.02;
+  const quads = [
+    [[0, 0, 0], [0, 10, 0], [10, 10, 0], [10, 0, 0]], [[0, 0, z1], [10, 0, z1], [10, 10, z1], [0, 10, z1]],
+    [[0, 0, 0], [10, 0, 0], [10, 0, 10], [0, 0, 10]], [[0, 10, 0], [0, 10, 10], [10, 10, 10], [10, 10, 0]],
+    [[0, 0, 0], [0, 0, 10], [0, 10, 10], [0, 10, 0]], [[10, 0, 0], [10, 10, 0], [10, 10, 10], [10, 0, 10]],
+  ];
+  const comp = new oc.TopoDS_Compound(), b = new oc.BRep_Builder();
+  b.MakeCompound(comp);
+  for (const q of quads) b.Add(comp, quad(q));
+  oc.BRepTools.Write_4(comp, "/gap2.brep", false, false, oc.TopTools_FormatVersion.TopTools_FormatVersion_CURRENT, new oc.Message_ProgressRange_1());
+  const brep = oc.FS.readFile("/gap2.brep", { encoding: "utf8" });
+  const imp: Feature = { id: "i", type: "import", name: "Imported1", file: "gap.brep", brep };
+  const heal: Feature = { id: "h", type: "heal", name: "Check-Heal1", tol: { v: 0.1 } } as Feature;
+  const r = m.evaluate(doc([imp, heal]));
+  const st = r.statuses.find(s => s.id === "h")!;
+  assert.match(st.warning ?? "", /^Check and heal: [1-9]\d* free edges before, 0 after; (valid|not valid) before, valid after; 1 solid bodies\.$/);
+  close(m.props(r.body!).volume, 1000, 0.01);
+  assert.deepEqual([...r.body!.names].sort(), ["i:f0", "i:f1", "i:f2", "i:f3", "i:f4", "i:f5"]);
+  // Two blocks side by side leave the top split in two; Merge faces makes it one, named after the larger.
+  const a = rect("a", 5, 5, 10, 10), c = rect("c", 15, 5, 10, 10);
+  const feats: Feature[] = [a, { id: "ea", type: "extrude", name: "E1", sketch: "a", op: "boss", end: "blind", depth: { v: 5 } } as Feature,
+    c, { id: "ec", type: "extrude", name: "E2", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } } as Feature];
+  const split = run(m, doc(feats));
+  const merged = run(m, doc([...feats, { id: "h", type: "heal", name: "Check-Heal1", tol: { v: 0.01 }, unify: true } as Feature]));
+  assert.ok(merged.body!.faces.length < split.body!.faces.length, `${split.body!.faces.length} → ${merged.body!.faces.length}`);
+  assert.equal(merged.body!.faces.length, 6);
+  close(merged.props!.volume, split.props!.volume, 1e-9);
+  assert.ok(merged.body!.names.includes("ea:end") || merged.body!.names.includes("ec:end"), merged.body!.names.join());
+});
