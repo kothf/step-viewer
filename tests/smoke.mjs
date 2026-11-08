@@ -8558,6 +8558,51 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const st = (depth, w) => ({ nums: { "s1/dim/d1": { v: w }, "s1/dim/d2": { v: 60 }, "f1/depth": { v: depth } }, ints: {}, suppressed: [], vars: {}, material: null, ids: ["s1", "f1"] });
+    const part = { schema: 1, kind: "part", id: "d_drwcfg", name: "Block", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [{ id: "r1", t: "horizontal", e: ["l1"] }, { id: "r2", t: "horizontal", e: ["l3"] }, { id: "r3", t: "vertical", e: ["l2"] }, { id: "r4", t: "vertical", e: ["l4"] }], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }],
+        dims: [{ id: "d1", name: "D1", t: "hdistance", e: ["p1", "p2"], val: { v: 100 } }, { id: "d2", name: "D2", t: "vdistance", e: ["p2", "p3"], val: { v: 60 } }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ], configs: [{ name: "Default", state: st(20, 100) }, { name: "Tall", state: st(50, 80) }], config: "Default" };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Block.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const boxes = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => { const p = window.__sv.drw.placement(v.id); return { id: v.id, root: !v.parent, w: (p.box[2] - p.box[0]) / p.s, h: (p.box[3] - p.box[1]) / p.s, x: v.x, y: v.y, cfg: v.config ?? null }; }));
+    const b0 = await boxes(), front = b0.find(v => v.root);
+    const [fx, fy] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [front.x, front.y]);
+    await dp.mouse.click(fx, fy);
+    await dp.waitForSelector('#drw .drw-props [data-v="cfg"]');
+    const opts = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')].map(o => o.textContent));
+    await dp.selectOption('#drw .drw-props [data-v="cfg"]', "Tall");
+    await dp.waitForTimeout(200);
+    await ready();
+    const b1 = await boxes(), f1 = b1.find(v => v.root), kids = b1.filter(v => !v.root);
+    check(opts.join("|") === "Active (Default)|Default|Tall" && Math.abs(front.h - 20) < 0.6 && Math.abs(f1.h - 50) < 0.6 && Math.abs(f1.w - 80) < 0.6 && f1.cfg === "Tall"
+      && kids.some(k => Math.abs(k.w - 80) < 0.6) && kids.some(k => Math.abs(k.h - 50) < 0.6),
+      `drawing: a model view shows another configuration and its projected views follow (${JSON.stringify({ opts, before: b0, after: b1 })})`);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(300);
+    const ru = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')][0]?.textContent);
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ru === "Активная (Default)", `drawing: configuration list in Russian (${ru})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

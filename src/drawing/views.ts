@@ -190,10 +190,24 @@ export function alignedLegs(path: number[]): { c: [number, number]; d1: [number,
 }
 
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; key: string } {
+export type ViewReq = { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; key: string };
+
+/** The part configuration a view shows (FR-DRW-010): its own, else its parent's up to the model view; absent = the active one. */
+export function viewConfig(sheet: Sheet, v: DrawingView, depth = 0): string | undefined {
+  if (v.config) return v.config;
+  const p = v.parent && depth < 20 ? findView(sheet, v.parent) : undefined;
+  return p ? viewConfig(sheet, p, depth + 1) : undefined;
+}
+
+export function viewReq(sheet: Sheet, v: DrawingView): ViewReq {
+  const r = rawReq(sheet, v), cfg = viewConfig(sheet, v);
+  return cfg ? { ...r, cfg, key: `${r.key}|cfg|${cfg}` } : r;
+}
+
+function rawReq(sheet: Sheet, v: DrawingView, depth = 0): ViewReq {
   if (v.kind === "detail" && v.parent && depth < 20) {
     const p = findView(sheet, v.parent);
-    if (p) { const r = viewReq(sheet, p, depth + 1); return isShaded(v) && !r.p && !r.shade ? { ...r, shade: true, key: `${r.key}|sh` } : r; }
+    if (p) { const r = rawReq(sheet, p, depth + 1); return isShaded(v) && !r.p && !r.shade ? { ...r, shade: true, key: `${r.key}|sh` } : r; }
   }
   const view = viewDir(sheet, v);
   if (v.kind === "section" && v.parent && v.line) {
