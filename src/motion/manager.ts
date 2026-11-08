@@ -16,7 +16,7 @@ import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
-import { MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { GAP_PLOTS, gapCsv, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -62,6 +62,8 @@ export class MotionManager {
   private tracePts = new Map<string, V3[]>();
   /** Mate value results: distance and angle per frame. */
   private mateVals = new Map<string, { dist: number[]; angle: number[] }>();
+  /** Proximity results: the smallest distance per frame. */
+  private gapVals = new Map<string, number[]>();
   /** Each sensor's out-of-range bands for its timeline lane (made when the traces are solved). */
   private alertHtml = new Map<string, string>();
   /** Each trace's component angle (degrees from the first frame) per frame (by trace id). */
@@ -477,7 +479,7 @@ export class MotionManager {
   /** Draws the paths (solving every frame once when the study or the traces change) and moves the markers to frame `i`. */
   private syncTraces(i: number) {
     const tr = this.traces, g = this.traceGroup;
-    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); this.mateVals.clear(); return; }
+    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); this.mateVals.clear(); this.gapVals.clear(); return; }
     const s = this.study, n = frameCount(s);
     const key = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off), tr]);
     if (key !== this.traceKey) {
@@ -486,6 +488,7 @@ export class MotionManager {
       this.tracePts.clear();
       this.traceAng.clear();
       this.mateVals.clear();
+      this.gapVals.clear();
       for (const c of [...g.children]) {
         c.removeFromParent();
         c.traverse(o => { const m = o as THREE.Line; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); });
@@ -493,7 +496,18 @@ export class MotionManager {
       const all: Record<string, Tf>[] = [];
       for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
       const mates = new Map((this.asm.doc?.mates ?? []).map(m => [m.id, m]));
+      // Proximity: pose every frame and measure the gap between the two components, then show frame i again.
+      const gaps = tr.filter(x => x.gap);
+      if (gaps.length) {
+        for (const x of gaps) this.gapVals.set(x.id, []);
+        for (let k = 0; k < n; k++) {
+          this.asm.motionShow(all[k], frameAt(s, k / s.fps, mates).explode);
+          for (const x of gaps) this.gapVals.get(x.id)!.push(this.asm.motionGap(x.gap![0], x.gap![1]));
+        }
+        this.asm.motionShow(this.tfsAt(i), frameAt(s, i / s.fps, mates).explode);
+      }
       for (const x of tr) {
+        if (x.gap) continue;
         if (x.mate) {
           const m = mates.get(x.mate), ga = m && this.asm.localGeo(m.a), gb = m && this.asm.localGeo(m.b);
           this.mateVals.set(x.id, m && ga && gb ? mateMeasures(all, m.a.comp, m.b.comp, ga, gb) : { dist: [], angle: [] });
@@ -562,6 +576,7 @@ export class MotionManager {
   /** The plotted quantity of a trace or mate value result at every frame (as its plot shows it). */
   private seriesOf(x: TracePath): number[] {
     const q = (x.plot ?? "dist") as TracePlot, fps = this.study.fps;
+    if (x.gap) { const v = this.gapVals.get(x.id) ?? []; return q === "speed" ? rates(v, fps) : v; }
     if (x.mate) {
       const mv = this.mateVals.get(x.id);
       if (!mv?.dist.length) return [];
@@ -598,6 +613,7 @@ export class MotionManager {
   }
 
   private plotBody(x: TracePath, i: number): string {
+    if (x.gap) return this.gapPlotHtml(x, i);
     if (x.mate) return this.matePlotHtml(x, i);
     const pts = this.tracePts.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
     if (!pts.length) return "";
@@ -608,6 +624,34 @@ export class MotionManager {
       : t("At {t} s: X {x}, Y {y}, Z {z} mm; speed {v} mm/s", { t: fmt(j / s.fps), x: fmt(p[0]), y: fmt(p[1]), z: fmt(p[2]), v: fmt(speeds(pts, s.fps)[j]) })
         + (q === "accel" ? " " + t("acceleration {a} mm/s²", { a: fmt(accels(pts, s.fps)[j]) }) : "");
     return plotSvg(vals, s.fps, this.time, unit, x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
+  }
+
+  private gapPlotHtml(x: TracePath, i: number): string {
+    const v = this.gapVals.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
+    if (!v.length || v.some(d => !Number.isFinite(d))) return `<span class="muted">${esc(t("The components are not shown."))}</span>`;
+    const j = Math.min(v.length - 1, Math.max(0, i)), r = rates(v, s.fps);
+    const label = t(GAP_PLOTS.find(([k]) => k === q)?.[1] ?? "Distance");
+    const read = t("At {t} s: distance {d} mm ({v} mm/s)", { t: fmt(j / s.fps), d: fmt(v[j]), v: fmt(r[j]) });
+    return plotSvg(q === "speed" ? r : v, s.fps, this.time, t(plotUnit(q)), x.color, esc(label)) + `<span class="mo-tread muted">${esc(read)}</span>`;
+  }
+
+  /** A proximity result's smallest distance (mm) per frame, every frame solved. */
+  gapValues(id: string): number[] {
+    this.tracePath(id);
+    return this.gapVals.get(id) ?? [];
+  }
+
+  /** Adds a proximity result between two top-level components (the first two shown; the panel changes them). */
+  addGap(a?: string, b?: string) {
+    const comps = (this.asm.doc?.components ?? []).filter(c => !c.suppressed);
+    a ??= comps[0]?.id; b ??= comps.find(c => c.id !== a)?.id;
+    if (!a || !b) { toast(t("A proximity result needs two components.")); return; }
+    const id = uid("tr_"), color = TRACE_COLORS[this.traces.length % TRACE_COLORS.length];
+    this.edit(st => { (st.traces ??= []).push({ id, comp: "", gap: [a!, b!], p: [0, 0, 0], color }); });
+    this.sel = null;
+    this.selTrace = id;
+    this.render();
+    this.showAt(this.time);
   }
 
   private matePlotHtml(x: TracePath, i: number): string {
@@ -621,6 +665,18 @@ export class MotionManager {
   }
 
   private traceProps(x: TracePath): string {
+    if (x.gap) {
+      const i = Math.round(this.time * this.study.fps), comps = (this.asm.doc?.components ?? []).filter(c => !c.suppressed);
+      const sel = (k: "ga" | "gb", l: string, v: string) => `<label class="mo-f"><span>${esc(t(l))}</span><select data-tr="${k}">`
+        + comps.map(c => `<option value="${esc(c.id)}" translate="no"${c.id === v ? " selected" : ""}>${esc(c.name)}</option>`).join("") + `</select></label>`;
+      return sel("ga", "Component 1", x.gap[0]) + sel("gb", "Component 2", x.gap[1])
+        + `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${GAP_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+        + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
+        + this.alertFields(x)
+        + `<button class="btn small" data-tr="csv" title="${esc(t("Save the distances as CSV (time, distance)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
+        + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
+    }
     if (x.mate) {
       const i = Math.round(this.time * this.study.fps);
       return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${MATE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
@@ -862,6 +918,7 @@ export class MotionManager {
       ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
       ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`]),
       `<option value="trace:">${esc(t("Trace path…"))}</option>`,
+      ...(doc.components.filter(c => !c.suppressed).length > 1 ? [`<option value="gap:">${esc(t("Proximity"))}</option>`] : []),
       ...(doc.mates ?? []).filter(m => !m.suppressed).map(m => `<option value="mplot:${esc(m.id)}" translate="no">${esc(t("Mate value"))}: ${esc(m.name)}</option>`)].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
     const shown = s.duration / this.zoom;
@@ -874,6 +931,11 @@ export class MotionManager {
       return `<div class="mo-name${sel ? " sel" : ""}${k.off ? " off" : ""}" data-track="${esc(k.id)}"><span class="mo-ico" aria-hidden="true">${l.icon}</span><span class="mo-kind">${esc(l.kind)}</span>${l.name ? `<span class="mo-tn" translate="no">${esc(l.name)}</span>` : ""}`
         + `<span class="mo-acts"><input type="checkbox" data-on="${esc(k.id)}"${k.off ? "" : " checked"} title="${esc(t("Track on"))}" aria-label="${esc(t("Track on"))}" />${ib(`del:${k.id}`, "✕", t("Delete track"))}</span></div>`;
     }).join("") + this.traces.map(x => {
+      if (x.gap) {
+        const nm = (id: string) => doc.components.find(k => k.id === id)?.name ?? "?";
+        return `<div class="mo-name mo-trace${this.selTrace === x.id ? " sel" : ""}" data-trace="${esc(x.id)}"><span class="mo-ico" aria-hidden="true" style="color:${esc(x.color)}">↔</span><span class="mo-kind">${esc(t("Proximity"))}</span><span class="mo-tn" translate="no">${esc(nm(x.gap[0]))} ↔ ${esc(nm(x.gap[1]))}</span>`
+          + `<span class="mo-acts">${ib(`tdel:${x.id}`, "✕", t("Delete result"))}</span></div>`;
+      }
       if (x.mate) {
         const m = (doc.mates ?? []).find(k => k.id === x.mate);
         return `<div class="mo-name mo-trace${this.selTrace === x.id ? " sel" : ""}" data-trace="${esc(x.id)}"><span class="mo-ico" aria-hidden="true" style="color:${esc(x.color)}">∿</span><span class="mo-kind">${esc(t("Mate value"))}</span><span class="mo-tn" translate="no">${esc(m?.name ?? "?")}</span>`
@@ -1053,12 +1115,16 @@ export class MotionManager {
     on("input[data-mo=clashstop]", "change", (_e, el) => { this.clashStop = (el as HTMLInputElement).checked; });
     on("button[data-clt]", "click", (_e, el) => this.seek(Number(el.dataset.clt)));
     on("select[data-mo=study]", "change", (_e, el) => { this.stop(); this.studyId = (el as HTMLSelectElement).value; this.sel = null; this.render(); this.showAt(0); });
-    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v.startsWith("mplot:")) this.addMatePlot(v.slice(6)); else if (v) this.addTrack(v); });
+    on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v.startsWith("mplot:")) this.addMatePlot(v.slice(6)); else if (v === "gap:") this.addGap(); else if (v) this.addTrack(v); });
     on(".mo-name[data-trace]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = null; this.selTrace = el.dataset.trace!; this.render(); this.showAt(this.time); });
     on("input[data-ton]", "change", (_e, el) => { const v = (el as HTMLInputElement).checked; this.setTrace(el.dataset.ton!, x => { if (v) delete x.off; else x.off = true; }); });
     on("select[data-tr=plot]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value as TracePlot; this.setTrace(this.selTrace!, x => { if (v === "dist") delete x.plot; else x.plot = v; }); });
     on("select[data-tr=rel]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; this.setTrace(this.selTrace!, x => { if (v) x.rel = v; else delete x.rel; }); });
     on("input[data-tr=color]", "change", (_e, el) => { const v = (el as HTMLInputElement).value; this.setTrace(this.selTrace!, x => { x.color = v; }); });
+    on("select[data-tr=ga], select[data-tr=gb]", "change", (_e, el) => {
+      const v = (el as HTMLSelectElement).value, k = el.dataset.tr === "ga" ? 0 : 1;
+      this.setTrace(this.selTrace!, x => { if (x.gap) x.gap[k] = v; });
+    });
     on("input[data-tr=amin], input[data-tr=amax]", "change", (_e, el) => {
       const raw = (el as HTMLInputElement).value.trim(), v = num(raw), k = el.dataset.tr === "amin" ? "min" : "max";
       if (raw && !Number.isFinite(v)) { el.setAttribute("aria-invalid", "true"); return; }
@@ -1071,7 +1137,8 @@ export class MotionManager {
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
-      if (x?.mate) { const mv = this.mateValues(x.id); download(new Blob([mateCsv(mv.dist, mv.angle, this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-mate.csv`); }
+      if (x?.gap) download(new Blob([gapCsv(this.gapValues(x.id), this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-proximity.csv`);
+      else if (x?.mate) { const mv = this.mateValues(x.id); download(new Blob([mateCsv(mv.dist, mv.angle, this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-mate.csv`); }
       else if (x) download(new Blob([traceCsv(this.tracePath(x.id), this.study.fps, this.traceAngle(x.id))], { type: "text/csv" }), `${this.fileBase()}-trace.csv`);
     });
     on("select[data-mo=mode]", "change", (_e, el) => this.edit(st => { st.play = (el as HTMLSelectElement).value as MotionStudy["play"]; }));

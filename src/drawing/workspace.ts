@@ -20,8 +20,9 @@ import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
+import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { fitLimits, splitFit } from "./iso286";
 import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
@@ -103,13 +104,15 @@ type AnnotMode =
   | { kind: "cloud"; view: null; pts: Pt[]; at: Pt | null }
   /** Geometric tolerance (FR-DRW-023): optionally click an edge for the leader, then place the frame. */
   | { kind: "gtol"; view: string | null; leader: GeoRef | null; circle?: boolean; at: Pt | null }
+  /** Weld symbol (ISO 2553): optionally click the joint's edge for the arrow, then place the knee. */
+  | { kind: "weld"; view: string | null; leader: GeoRef | null; at: Pt | null }
   /** Datum feature: click an edge, then place the letter. */
   | { kind: "datum"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Surface finish: click an edge, then place the symbol (on the edge, or away from it with a leader). */
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -120,7 +123,7 @@ const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-h
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
   ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
-  ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+  ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
 const ICON = {
@@ -392,6 +395,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
               <button role="menuitem" data-an="cline">${esc(t("Centerline"))}</button>
               <button role="menuitem" data-an="cmark">${esc(t("Center mark"))}</button>
+              <button role="menuitem" data-an="weld">${esc(t("Weld symbol"))}</button>
               <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
               <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
               <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
@@ -503,6 +507,7 @@ export class DrawingWorkspace {
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
+    else if (m.kind === "weld") s = m.leader ? t("Click where the weld symbol goes.") : t("Click the edge of the joint for the arrow, or where the weld symbol goes.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
     else if (m.kind === "balloon") s = m.ref ? t("Click where the balloon goes.") : t("Click an edge of a component.");
@@ -1035,7 +1040,7 @@ export class DrawingWorkspace {
   }
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark", how: "chain" | "base" | "ord" = "chain") {
-    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud";
+    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
@@ -1218,6 +1223,15 @@ export class DrawingWorkspace {
         this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: edgeRef(m.e, "e"), pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
         this.mode = { kind: "none" };
       }
+    } else if (m.kind === "weld") {
+      if (!m.leader && vid && this.facts) {
+        const pick = this.pickAt(vid, p);
+        if (pick) { m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; this.renderStatus(); this.renderOverlay(); return; }
+      }
+      const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
+      const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
+      this.addAnnot({ id: uid("a_"), t: "weld", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}), arrow: { sym: "fillet", size: "a4" } }, "Weld symbol");
+      this.mode = { kind: "none" };
     } else if (m.kind === "gtol") {
       if (!m.leader && vid && this.facts) {
         const pick = this.pickAt(vid, p);
@@ -1428,6 +1442,12 @@ export class DrawingWorkspace {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
+    } else if (m.kind === "weld") {
+      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      else {
+        const pa: Annot = { id: "_pw", t: "weld", view: vid, pos: fromSheet(pl, at[0], at[1]), leader: m.leader, arrow: { sym: "fillet", size: "a4" } };
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+      }
     } else if (m.kind === "datum" || m.kind === "surf") {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
       else {
@@ -1560,6 +1580,18 @@ export class DrawingWorkspace {
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    if (a.t === "weld") {
+      const side = (k: "a" | "o", w: WeldSide | undefined, label: string) => `<fieldset class="pm-group"><legend>${esc(t(label))}</legend>
+        <label class="drw-f">${esc(t("Symbol"))}<select data-d="w${k}sym"><option value="">${esc(t("None"))}</option>${WELD_SYMS.map(y => `<option value="${y}" ${w?.sym === y ? "selected" : ""}>${esc(t(WELD_SYM_NAMES[y]))}</option>`).join("")}</select></label>
+        ${w ? `<label class="drw-f">${esc(t("Size"))}<input data-d="w${k}size" value="${esc(w.size ?? "")}" translate="no" placeholder="a4"></label>
+        <label class="drw-f">${esc(t("Length"))}<input data-d="w${k}len" value="${esc(w.len ?? "")}" translate="no" placeholder="100"></label>` : ""}
+      </fieldset>`;
+      return side("a", a.arrow, "Arrow side") + side("o", a.other, "Other side") + `<fieldset class="pm-group"><legend>${esc(t("Weld symbol"))}</legend>
+        <label class="drw-chk"><input type="checkbox" data-d="waround" ${a.around ? "checked" : ""}> ${esc(t("All around"))}</label>
+        <label class="drw-chk"><input type="checkbox" data-d="wfield" ${a.field ? "checked" : ""}> ${esc(t("Field weld"))}</label>
+        <label class="drw-f">${esc(t("Tail note"))}<input data-d="wtail" value="${esc(a.tail ?? "")}" placeholder="111 ISO 5817-B"></label>
+      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    }
     if (a.t === "cline") {
       return `<fieldset class="pm-group"><legend>${esc(t(a.k === "mark" ? "Center mark" : "Centerline"))}</legend>
         <label class="drw-f">${esc(t("Extension (mm)"))}<input data-d="cext" inputmode="decimal" value="${a.ext ?? 2}"></label>
@@ -1659,6 +1691,15 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
+      else if (a.t === "weld") {
+        const m = /^w([ao])(sym|size|len)$/.exec(k);
+        if (m) {
+          const key = m[1] === "a" ? "arrow" : "other", cur = a[key];
+          if (m[2] === "sym") { if (val) a[key] = { ...(cur ?? {}), sym: val as WeldSym }; else delete a[key]; }
+          else if (cur) { const f = m[2] as "size" | "len"; if (val.trim()) cur[f] = val.trim(); else delete cur[f]; }
+        } else if (k === "waround" || k === "wfield") { const f = k === "waround" ? "around" : "field"; if ((el as HTMLInputElement).checked) a[f] = true; else delete a[f]; }
+        else if (k === "wtail") { if (val.trim()) a.tail = val.trim(); else delete a.tail; }
+      }
       else if (a.t === "cline" && k === "cext") { const v = num(val); if (v != null && v >= 0 && v <= 50) a.ext = v; }
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }

@@ -5,12 +5,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.243.0] - 2026-11-08
+## [1.249.0] - 2026-11-08
 
 ### Added
 
 - **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in SolidWorks; **Automatic relations** in the sketch panel turns them off.
 - **Relation glyphs (FR-SK-053)**: hovering a relation glyph lights up the entities it ties, and **Show relations** in the sketch panel hides the glyphs (a relation selected in the list still shows its own).
+
+## [1.248.0] - 2026-11-08
+
+### Added
+
+- Weld symbols on drawings (ISO 2553 system A, FR-DRW-023, SolidWorks' Weld Symbol): Annotation → **Weld symbol** points an arrow at the joint you click (or stands alone) and draws the reference line. The panel sets the arrow-side and other-side welds (fillet, square butt, single V, single bevel, plug, spot) with their size and length, all around, field weld and a tail note; a weld on the other side alone adds the dashed identification line, and a symmetric weld sits across the line. The symbols are drawn from lines, so PDF, SVG and DXF show them the same, and the symbol follows the model like the other annotations.
+
+## [1.247.0] - 2026-11-08
+
+### Added
+
+- **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+## [1.245.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
+
+## [1.241.0] - 2026-11-08
+
+### Fixed
+
+- **Offline start picks up new versions behind a CDN.** The page registers its service worker as `sw.js?v=<version>` and asks the browser to skip its HTTP cache for it. aerocat.tech's Cloudflare kept `sw.js` for a day, so visitors got the worker of an older release (1.169.0 while 1.219.0 was deployed), which precached that release's files. Every release now has its own worker URL.
 
 ## [1.240.0] - 2026-11-08
 
@@ -1595,8 +1618,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.243.0...HEAD
-[1.243.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.243.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.249.0...HEAD
+[1.249.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.249.0
+[1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
+[1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
+[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
+[1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
