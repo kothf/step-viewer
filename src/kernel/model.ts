@@ -1719,6 +1719,7 @@ export class Modeller {
     const cp = sk.ents.find(e => e.id === circ.c);
     if (!cp || cp.t !== "point") throw new FeatureError("E-HLX-CIRCLE", "A helix starts from a circle in its sketch.");
     const r = circ.r;
+    if (f.vpitch?.length) return this.helixVariable(f, frame, this.w(frame, [cp.x, cp.y]));
     let P = f.pitch.v, N = f.revs.v, H = f.height.v;
     if (f.mode === "pitchRev") H = P * N;
     else if (f.mode === "heightRev") P = H / N;
@@ -1750,6 +1751,136 @@ export class Modeller {
       pts.push(add(add(c, mul(dir, z)), add(mul(xd, rr * Math.cos(th)), mul(yd, rr * Math.sin(th)))));
     }
     return { wire, pts };
+  }
+
+  /**
+   * Variable pitch helix (FR-FT-083, P5): pitch and diameter run linearly between the rows' heights;
+   * the turn angle is the integral of 2π/pitch over the height. One C2 spline edge through points
+   * every 10°, which is close enough for sweeps (and keeps Frenet frames smooth).
+   */
+  private helixVariable(f: HelixFeature, frame: Frame, c: V3): Curve {
+    const rows = f.vpitch!.map(q => ({ h: q.h.v, p: q.p.v, d: q.d.v }));
+    if (rows.length < 2) throw new FeatureError("E-HLX-VALUES", "A variable pitch helix needs two or more rows.");
+    rows[0].h = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (!(rows[i].p > 1e-6 && rows[i].d > 1e-6)) throw new FeatureError("E-HLX-VALUES", "Every row's pitch and diameter must be more than 0.");
+      if (i && !(rows[i].h > rows[i - 1].h + 1e-9)) throw new FeatureError("E-HLX-ROWS", "Each row's height must be more than the row above.");
+    }
+    const dir = mul(frame.n, f.reverse ? -1 : 1);
+    const s0 = f.start?.v ?? 0;
+    const xd = unit(add(mul(frame.x, Math.cos(s0)), mul(frame.y, Math.sin(s0))));
+    const yd = cross(dir, xd);
+    const sg = f.cw ? -1 : 1;
+    // Angle at each height, by the exact integral of 1/(p0 + k·z) on each segment.
+    const at = (z: number) => {
+      let th = 0;
+      for (let i = 0; i + 1 < rows.length; i++) {
+        const a = rows[i], b = rows[i + 1], dz = Math.min(z, b.h) - a.h;
+        if (dz <= 0) break;
+        const k = (b.p - a.p) / (b.h - a.h);
+        th += Math.abs(k) < 1e-12 ? dz / a.p : Math.log((a.p + k * dz) / a.p) / k;
+      }
+      return 2 * Math.PI * th;
+    };
+    const rad = (z: number) => {
+      for (let i = 0; i + 1 < rows.length; i++) if (z <= rows[i + 1].h) return (rows[i].d + ((rows[i + 1].d - rows[i].d) * (z - rows[i].h)) / (rows[i + 1].h - rows[i].h)) / 2;
+      return rows[rows.length - 1].d / 2;
+    };
+    const H = rows[rows.length - 1].h, turns = at(H) / (2 * Math.PI);
+    if (turns > 2000) throw new FeatureError("E-HLX-VALUES", "A helix can have at most 2000 revolutions.");
+    // Points every 10° of turn: invert the angle by bisection on each step.
+    const n = Math.max(8, Math.min(20000, Math.ceil(turns * 36)));
+    const zs: number[] = [0];
+    for (let k = 1; k < n; k++) {
+      const want = (at(H) * k) / n;
+      let lo = zs[k - 1], hi = H;
+      for (let it = 0; it < 50; it++) { const m = (lo + hi) / 2; if (at(m) < want) lo = m; else hi = m; }
+      zs.push((lo + hi) / 2);
+    }
+    zs.push(H);
+    const pts: V3[] = zs.map(z => {
+      const th = sg * at(z), rr = rad(z);
+      return add(add(c, mul(dir, z)), add(mul(xd, rr * Math.cos(th)), mul(yd, rr * Math.sin(th))));
+    });
+    const wire = new this.oc.BRepBuilderAPI_MakeWire_2(this.bezierEdge(splineBezierN(pts))).Wire();
+    return { wire, pts };
+  }
+
+  /**
+   * Auxiliary spine for a twisted sweep: points beside the path, turned about it by `twist` in
+   * proportion to the length run, on rotation-minimising frames (double reflection). Each point lies
+   * in the plane square to the path, which is how MakePipeShell matches them without curvilinear
+   * equivalence.
+   */
+  private twistSpine(spine: any, twist: number): any {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+    const t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+    const n = Math.max(24, Math.min(600, Math.ceil(Math.abs(twist) / (Math.PI / 18)) + 24 * this.sub(spine, "EDGE").length));
+    const P: V3[] = [], T: V3[] = [];
+    for (let k = 0; k <= n; k++) {
+      const p = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+      ad.D1(t0 + ((t1 - t0) * k) / n, p, v);
+      P.push(this.xyz(p)); T.push(unit(this.xyz(v)));
+    }
+    const len: number[] = [0];
+    for (let k = 1; k <= n; k++) len.push(len[k - 1] + d3(P[k], P[k - 1]));
+    const L = len[n] || 1, off = 0.1 * L + 1;
+    // A start normal square to the tangent.
+    const a: V3 = Math.abs(T[0][0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    let r = unit(cross(cross(T[0], a), T[0]));
+    const aux: V3[] = [];
+    for (let k = 0; k <= n; k++) {
+      if (k) {
+        const v1 = sub3(P[k], P[k - 1]), c1 = dot(v1, v1);
+        if (c1 > 1e-18) {
+          const rL = sub3(r, mul(v1, (2 / c1) * dot(v1, r))), tL = sub3(T[k - 1], mul(v1, (2 / c1) * dot(v1, T[k - 1])));
+          const v2 = sub3(T[k], tL), c2 = dot(v2, v2);
+          r = unit(c2 > 1e-18 ? sub3(rL, mul(v2, (2 / c2) * dot(v2, rL))) : rL);
+        }
+      }
+      const th = (twist * len[k]) / L;
+      const b = cross(T[k], r);
+      aux.push(add(P[k], mul(add(mul(r, Math.cos(th)), mul(b, Math.sin(th))), off)));
+    }
+    return new oc.BRepBuilderAPI_MakeWire_2(this.bezierEdge(splineBezierN(aux))).Wire();
+  }
+
+  /**
+   * Scale law for a guided sweep: the guide's distance from the path, in planes square to the path,
+   * over its distance at the start. The guide must start off the path (on the profile's edge).
+   */
+  private guideLaw(spine: any, guide: any): any {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_CompCurve_2(spine, false), ag = new oc.BRepAdaptor_CompCurve_2(guide, false);
+    const t0 = ad.FirstParameter(), t1 = ad.LastParameter(), g0 = ag.FirstParameter(), g1 = ag.LastParameter();
+    const m = Math.max(200, 80 * this.sub(guide, "EDGE").length);
+    const G: V3[] = [];
+    for (let k = 0; k <= m; k++) G.push(this.xyz(ag.Value(g0 + ((g1 - g0) * k) / m)));
+    const n = Math.max(16, Math.min(200, 16 * this.sub(spine, "EDGE").length));
+    const vals: [number, number][] = [];
+    let j = 0;
+    for (let k = 0; k <= n; k++) {
+      const t = t0 + ((t1 - t0) * k) / n, p = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+      ad.D1(t, p, v);
+      const P = this.xyz(p), T = unit(this.xyz(v));
+      // The guide's crossing of the plane square to the path, searched onward from the last one.
+      let hit: V3 | null = null;
+      for (let i = Math.max(0, j - 2); i < m && !hit; i++) {
+        const a = dot(sub3(G[i], P), T), b = dot(sub3(G[i + 1], P), T);
+        if ((a <= 0 && b >= 0) || (a >= 0 && b <= 0)) { const u = Math.abs(a - b) < 1e-15 ? 0 : a / (a - b); hit = add(G[i], mul(sub3(G[i + 1], G[i]), u)); j = i; }
+      }
+      if (!hit) hit = k === 0 ? G[0] : G[m];
+      vals.push([t, d3(hit, P)]);
+    }
+    const d0 = vals[0][1];
+    if (!(d0 > 1e-6)) throw new FeatureError("E-SWP-GUIDE", "The guide curve must start on the profile's edge, away from the path.");
+    if (vals.some(([, d]) => !(d > 1e-6))) throw new FeatureError("E-SWP-GUIDE", "The guide curve meets the path: the profile would shrink to nothing.");
+    const arr = new oc.TColgp_Array1OfPnt2d_2(1, vals.length);
+    vals.forEach(([t, d], i) => arr.SetValue(i + 1, new oc.gp_Pnt2d_3(t, d / d0)));
+    const li = new oc.Law_Interpol();
+    li.Set_1(arr, false);
+    return new oc.Handle_Law_Function_2(li);
   }
 
   /** The wire of a sweep path: a helix or curve feature, or a sketch's chain of curves. */
@@ -1865,9 +1996,17 @@ export class Modeller {
     const oc = this.oc;
     const spine = this.pathWire(f.path, doc, prev, frames);
     const helixPath = !!f.path && "helix" in f.path;
+    const guide = f.guide ? this.pathWire(f.guide, doc, prev, frames) : null;
+    const twist = !guide && f.orient !== "normal" && f.twist && Math.abs(f.twist.v) > 1e-9 ? this.twistSpine(spine, f.twist.v) : null;
+    const law = guide ? this.guideLaw(spine, guide) : null;
     const pipe = (w: any, edgeEnt: [any, string][]): Named => {
       const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
-      if (f.orient === "normal") {
+      if (guide) {
+        // Guide curve: the guide turns the profile (as an auxiliary spine) and a scale law keeps it touching.
+        mk.SetMode_5(guide, false, oc.BRepFill_TypeOfContact.BRepFill_NoContact);
+      } else if (twist) {
+        mk.SetMode_5(twist, false, oc.BRepFill_TypeOfContact.BRepFill_NoContact);
+      } else if (f.orient === "normal") {
         // Keep normal constant: the profile keeps its start orientation all along.
         const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
         const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1();
@@ -1877,7 +2016,7 @@ export class Modeller {
       } else mk.SetMode_1(helixPath);
       // Sharp corners (3D sketch and composite paths) get mitred, not stretched.
       mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
-      mk.Add_1(w, false, false);
+      if (law) mk.SetLaw_1(w, law, false, false); else mk.Add_1(w, false, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
       if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");
@@ -1913,6 +2052,7 @@ export class Modeller {
   private loft(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     if (f.profiles.length < 2) throw new FeatureError("E-LOFT-PROFILES", "Pick two or more profile sketches.");
+    if (f.centerline) return this.loftAlong(f, doc, prev, frames);
     const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
     let firstEdges: [any, string][] = [];
     const wires: any[] = [];
@@ -1946,6 +2086,31 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /**
+   * Loft with a centreline (FR-FT-082, P5): MakePipeShell along the centreline through every
+   * profile in order, so the loft follows the path between them.
+   */
+  private loftAlong(f: LoftFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const spine = this.pathWire(f.centerline, doc, prev, frames);
+    const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
+    mk.SetMode_1(false);
+    let firstEdges: [any, string][] = [];
+    f.profiles.forEach((id, k) => {
+      const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
+      const { faces, edgeEnt } = this.profileFaces(sk, frame);
+      if (faces.length !== 1) throw new FeatureError("E-LOFT-PROFILE", "Each loft profile must be one closed region.");
+      if (k === 0) firstEdges = edgeEnt;
+      mk.Add_1(oc.BRepTools.OuterWire(faces[0]), false, false);
+    });
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles sit across the centreline, in its order?");
+    if (!mk.MakeSolid()) throw new FeatureError("E-LOFT-FAIL", "The loft did not close into a solid.");
+    let shape = mk.Shape();
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    return this.applyTool(f, [this.nameSweep(mk, f.id, firstEdges, shape)], prev);
   }
 
   /**

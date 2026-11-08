@@ -3877,16 +3877,16 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper")) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || /^vpitch\.0\.h$/.test(key))) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
-        // "thin.t" and "draft.angle" live one level down.
-        const [k0, k1] = key.split(".");
-        const host = (k1 ? (f as unknown as Record<string, Record<string, Num>>)[k0] : f) as unknown as Record<string, Num | undefined>;
-        const cur = host?.[k1 ?? k0];
+        // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
+        const path = key.split("."), last = path.pop()!;
+        const host = path.reduce<Record<string, unknown> | undefined>((o, p) => o?.[p] as Record<string, unknown> | undefined, f as unknown as Record<string, unknown>) as Record<string, Num | undefined> | undefined;
+        const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
         upd(() => {
-          (host as Record<string, Num>)[k1 ?? k0] = n;
+          (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
           if (f.type === "thread" && key === "diameter") { delete f.size; delete f.pitch; }
@@ -3992,16 +3992,28 @@ export class ModelController {
           }, true);
           return;
         }
-        if (f.type === "helix" && (k === "taperOn" || k === "mode" || k === "hsketch")) {
+        if (f.type === "helix" && (k === "taperOn" || k === "mode" || k === "hsketch" || k === "vpitchOn")) {
           upd(() => {
+            if (k === "vpitchOn") {
+              if (!val) delete f.vpitch;
+              else {
+                // Start from the plain helix: its pitch at the bottom and top, the circle's diameter.
+                const sk = sketches.find(s => s.id === f.sketch), c = sk?.ents.find(e => e.t === "circle") as { r: number } | undefined;
+                const P = f.mode === "heightRev" ? f.height.v / f.revs.v : f.pitch.v, H = f.mode === "pitchRev" ? f.pitch.v * f.revs.v : f.height.v, d = 2 * (c?.r ?? 10);
+                f.vpitch = [{ h: { v: 0 }, p: { v: P }, d: { v: d } }, { h: { v: H }, p: { v: P }, d: { v: d } }];
+              }
+            }
             if (k === "taperOn") { if (val) f.taper = { v: (5 * Math.PI) / 180 }; else delete f.taper; }
             if (k === "mode") f.mode = val as HelixFeature["mode"];
             if (k === "hsketch") f.sketch = String(val);
           }, true);
           return;
         }
-        if (f.type === "sweep" && (k === "profileKind" || k === "swProfile" || k === "swPath" || k === "orient")) {
+        if (f.type === "sweep" && (k === "profileKind" || k === "swProfile" || k === "swPath" || k === "orient" || k === "swGuide" || k === "twistOn")) {
           upd(() => {
+            if (k === "swGuide") { const p = pathOf(String(val)); if (p) { f.guide = p; delete f.twist; delete f.orient; } else delete f.guide; }
+            if (k === "twistOn") { if (val) f.twist = { v: Math.PI / 2 }; else delete f.twist; }
+            if (k === "orient" && val === "normal") delete f.twist;
             if (k === "profileKind") { if (val === "circular") { f.circular ??= { v: 2 }; delete f.profile; } else { delete f.circular; f.profile = sketches.find(s => sketchProfileOk(s))?.id; if (!f.profile) delete f.profile; } }
             if (k === "swProfile") { if (val) f.profile = String(val); else delete f.profile; }
             if (k === "swPath") { const p = pathOf(String(val)); if (p) f.path = p; else delete f.path; }
@@ -4029,6 +4041,7 @@ export class ModelController {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
         }
+        if (f.type === "loft" && k === "lcPath") { upd(() => { const p = pathOf(String(val)); if (p) { f.centerline = p; delete f.ruled; delete f.close; } else delete f.centerline; }, true); return; }
         if (f.type === "loft" && /^lp\d+$/.test(k)) {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
@@ -4132,6 +4145,16 @@ export class ModelController {
       });
     }
     if (f.type === "curve") this.bindCurvePanel(pm, f, unit, upd);
+    if (f.type === "helix") {
+      pm.querySelector<HTMLButtonElement>("[data-vpadd]")?.addEventListener("click", () => upd(() => {
+        const rows = f.vpitch!, a = rows[rows.length - 1], b = rows[rows.length - 2];
+        rows.push({ h: { v: a.h.v + (a.h.v - b.h.v || 10) }, p: { v: a.p.v }, d: { v: a.d.v } });
+      }, true));
+      pm.querySelectorAll<HTMLButtonElement>("[data-vpdel]").forEach(b => b.addEventListener("click", () => upd(() => {
+        f.vpitch!.splice(+b.dataset.vpdel!, 1);
+        f.vpitch![0].h = { v: 0 };
+      }, true)));
+    }
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
@@ -4461,9 +4484,13 @@ export class ModelController {
       const fields = f.mode === "pitchRev" ? numField("pitch", t("Pitch"), f.pitch, "length") + this.countField("revs", t("Revolutions"), f.revs)
         : f.mode === "heightRev" ? numField("height", t("Height"), f.height, "length") + this.countField("revs", t("Revolutions"), f.revs)
         : numField("height", t("Height"), f.height, "length") + numField("pitch", t("Pitch"), f.pitch, "length");
-      return { title: t("Helix/Spiral"), body: group(t("Defined by"), sel("hsketch", t("Sketch with a circle"), skOpts(withCircle, f.sketch)) + sel("mode", t("Type"), modes.map(([v, l]) => `<option value="${v}"${v === f.mode ? " selected" : ""}>${esc(l)}</option>`).join("")))
-        + group(t("Parameters"), fields + chk("reverse", f.reverse, t("Reverse direction")) + numField("start", t("Start angle"), f.start ?? { v: 0 }, "angle") + chk("cw", f.cw, t("Clockwise")))
-        + group(t("Taper helix"), chk("taperOn", !!f.taper, t("Taper helix")) + (f.taper ? numField("taper", t("Angle"), f.taper, "angle") : ""))
+      const u = UNITS[this.doc.units.length], cell = (n: Num, key: string, label: string, i: number) => `<td><input type="text" inputmode="decimal" class="pm-n" data-num="vpitch.${i}.${key}" data-q="length" value="${esc(n.expr ?? trimNum(n.v * u.f, 6))}" aria-label="${esc(label)} ${i + 1}" spellcheck="false"${key === "h" && i === 0 ? " disabled" : ""} /></td>`;
+      const table = f.vpitch ? `<table class="pm-pts"><thead><tr><th>${esc(t("Height"))}</th><th>${esc(t("Pitch"))}</th><th>${esc(t("Diameter"))}</th><th></th></tr></thead><tbody>${f.vpitch.map((r, i) => `<tr>${cell(r.h, "h", t("Height"), i)}${cell(r.p, "p", t("Pitch"), i)}${cell(r.d, "d", t("Diameter"), i)}<td>${f.vpitch!.length > 2 ? `<button class="icon" data-vpdel="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${i + 1}">✕</button>` : ""}</td></tr>`).join("")}</tbody></table><button class="btn small" data-vpadd="1">${esc(t("Add row"))}</button>` : "";
+      const params = f.vpitch ? table + chk("reverse", f.reverse, t("Reverse direction")) + numField("start", t("Start angle"), f.start ?? { v: 0 }, "angle") + chk("cw", f.cw, t("Clockwise"))
+        : fields + chk("reverse", f.reverse, t("Reverse direction")) + numField("start", t("Start angle"), f.start ?? { v: 0 }, "angle") + chk("cw", f.cw, t("Clockwise"));
+      return { title: t("Helix/Spiral"), body: group(t("Defined by"), sel("hsketch", t("Sketch with a circle"), skOpts(withCircle, f.sketch)) + (f.vpitch ? "" : sel("mode", t("Type"), modes.map(([v, l]) => `<option value="${v}"${v === f.mode ? " selected" : ""}>${esc(l)}</option>`).join(""))) + chk("vpitchOn", !!f.vpitch, t("Variable pitch")))
+        + group(t("Parameters"), params)
+        + (f.vpitch ? "" : group(t("Taper helix"), chk("taperOn", !!f.taper, t("Taper helix")) + (f.taper ? numField("taper", t("Angle"), f.taper, "angle") : "")))
         + `<p class="pm-help muted">${esc(t("The helix starts on the sketch's circle and runs along the sketch normal. Use it as a sweep path for springs and threads."))}</p>` };
     }
     if (f.type === "split") {
@@ -4501,14 +4528,23 @@ export class ModelController {
         `<label class="pm-field"><span>${esc(t("Profile"))}</span><select data-k="profileKind"><option value="sketch"${f.circular ? "" : " selected"}>${esc(t("Sketch profile"))}</option><option value="circular"${f.circular ? " selected" : ""}>${esc(t("Circular profile"))}</option></select></label>`
         + (f.circular ? numField("circular", t("Diameter"), f.circular, "length") : sel("swProfile", t("Profile sketch"), skOpts(closed, f.profile ?? "", t("None"))))
         + sel("swPath", t("Path"), paths))
-        + group(t("Options"), orient(f.orient))
+        + group(t("Guide curve"), sel("swGuide", t("Guide curve"), opt("", t("None"), f.guide ? pathKey(f.guide) : "") + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), f.guide ? pathKey(f.guide) : "")).join("") + sketches.filter(s => s.id !== f.profile && (!f.path || !("sketch" in f.path) || s.id !== f.path.sketch)).map(s => opt(`s:${s.id}`, featureLabel(s.name), f.guide ? pathKey(f.guide) : "")).join(""))
+          + (f.guide ? `<p class="pm-help muted">${esc(t("The profile grows, shrinks and turns so that its edge keeps touching the guide curve. Start the guide on the profile."))}</p>` : ""))
+        + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : "")))
         + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
     }
     const closed = sketches.filter(sketchProfileOk);
     const rows = f.profiles.map((id, i) => sel(`lp${i}`, `${t("Profile")} ${i + 1}`, skOpts(closed, id, t("Remove")))).join("")
       + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"));
     return { title: f.op === "cut" ? t("Cut-Loft") : t("Loft"), body: group(t("Profiles"), rows + `<p class="pm-help muted">${esc(t("Profiles are joined in this order. Each is one closed region, usually on parallel planes."))}</p>`)
-      + group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : "")) };
+      + group(t("Centerline"), (() => {
+        const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
+        const curves = this.doc.features.slice(0, at).filter(g => g.type === "helix" || g.type === "curve" || g.type === "sketch3d");
+        const cur = f.centerline ? pathKey(f.centerline) : "";
+        return sel("lcPath", t("Centerline"), opt("", t("None"), cur) + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), cur)).join("") + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join(""))
+          + (f.centerline ? `<p class="pm-help muted">${esc(t("The loft follows the centreline between its profiles. Each profile should sit across it, in its order."))}</p>` : "");
+      })())
+      + (f.centerline ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
   }
 
   /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
@@ -4949,9 +4985,11 @@ const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="
 /** Whether a feature uses a sketch up (SolidWorks hides it once used). */
 function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "extrude" || g.type === "revolve" || g.type === "helix") return g.sketch === sketch;
-  if (g.type === "sweep" || g.type === "sweepsurf") return g.profile === sketch || (!!g.path && "sketch" in g.path && g.path.sketch === sketch);
+  const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
+  if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
+  if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
   if (g.type === "curve") return g.sketch === sketch;
-  if (g.type === "loft") return g.profiles.includes(sketch);
+  if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline);
   if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf") return g.sketch === sketch;
   return false;
 }

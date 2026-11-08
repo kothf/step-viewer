@@ -1100,3 +1100,54 @@ test("3D sketch as a sweep path (FR-SK-080)", async () => {
   const br = m.evaluate(doc([{ ...k, pts: [...(k as { pts: unknown[] }).pts, { id: "D", p: [30, 10, 0] }], segs: [...(k as { segs: unknown[] }).segs, { id: "l3", t: "line", pts: ["B", "D"] }] } as Feature, sw]));
   assert.equal(br.statuses.find(s => s.id === "w")?.code, "E-SWP-PATH");
 });
+
+test("Sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const bbox = (shape: unknown) => {
+    const b = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(shape, b, false);
+    const lo = b.CornerMin(), hi = b.CornerMax();
+    return [lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()];
+  };
+  const line: Feature = { id: "c1", type: "curve", name: "Curve1", kind: "xyz", pts: [[0, 0, 0], [0, 0, 30]] };
+  // A 10 mm square swept 30 up with a 45° twist: same volume as the prism, but the top corner reaches 5√2.
+  const sq = rect("s", 0, 0, 10, 10);
+  let r = run(m, doc([sq, line, { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" }, twist: { v: Math.PI / 4 } } as Feature]));
+  close(r.props!.volume, 3000, 2e-3);
+  close(bbox(r.body!.shape)[3], 5 * Math.SQRT2, 2e-3);
+  // No twist: the plain prism.
+  r = run(m, doc([sq, line, { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" } } as Feature]));
+  close(bbox(r.body!.shape)[3], 5, 1e-6);
+  // Guide curve: a Ø10 circle up a 50 mm line, its edge led out to radius 10 by a straight guide: a frustum.
+  const c = circle("k", 0, 0, 5, { std: "XY" });
+  const path: Feature = { id: "c1", type: "curve", name: "Curve1", kind: "xyz", pts: [[0, 0, 0], [0, 0, 50]] };
+  const guide: Feature = { id: "g1", type: "curve", name: "Curve2", kind: "xyz", pts: [[5, 0, 0], [10, 0, 50]] };
+  r = run(m, doc([c, path, guide, { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "k", path: { curve: "c1" }, guide: { curve: "g1" } } as Feature]));
+  close(r.props!.volume, (Math.PI * 50 / 3) * (25 + 50 + 100), 5e-3);
+  // A square profile follows a guide off its corner too: 10 → 20 mm over 30, a square frustum.
+  r = run(m, doc([sq, line, { ...guide, pts: [[5, 5, 0], [10, 10, 30]] } as Feature, { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" }, guide: { curve: "g1" } } as Feature]));
+  close(r.props!.volume, 7000, 2e-3);
+  // A guide that starts on the path cannot scale the profile.
+  const onPath = m.evaluate(doc([sq, line, { ...guide, pts: [[0, 0, 0], [10, 10, 30]] } as Feature, { id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" }, guide: { curve: "g1" } } as Feature]));
+  assert.equal(onPath.statuses.find(s => s.id === "w")?.code, "E-SWP-GUIDE");
+  // Loft along a centreline from a 10 mm square to a 20 mm square 30 up: a square frustum, 7000 mm³.
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 30 } } as Feature;
+  const big = rect("t", 0, 0, 20, 20, { plane: "p1" });
+  r = run(m, doc([sq, pl, big, line, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["s", "t"], centerline: { curve: "c1" } } as Feature]));
+  close(r.props!.volume, 7000, 2e-3);
+  // Variable pitch: constant rows match the plain helix's 4 turns; pitch 2 → 6 over 20 mm turns ln 3 / 0.2 times.
+  const turns = (pts: number[][]) => { let a = 0; for (let i = 1; i < pts.length; i++) { let d = Math.atan2(pts[i][1], pts[i][0]) - Math.atan2(pts[i - 1][1], pts[i - 1][0]); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; a += d; } return a / (2 * Math.PI); };
+  const hc = circle("h", 0, 0, 10, { std: "XY" });
+  const hx = (vpitch: [number, number, number][]): Feature => ({ id: "x", type: "helix", name: "Helix1", sketch: "h", mode: "pitchRev", pitch: { v: 5 }, revs: { v: 4 }, height: { v: 20 }, vpitch: vpitch.map(([h, p, d]) => ({ h: { v: h }, p: { v: p }, d: { v: d } })) } as Feature);
+  r = run(m, doc([hc, hx([[0, 5, 20], [20, 5, 20]])]));
+  close(turns(r.curves.x), 4, 1e-6);
+  r = run(m, doc([hc, hx([[0, 2, 20], [20, 6, 30]])]));
+  close(turns(r.curves.x), Math.log(3) / 0.2, 1e-6);
+  const end = r.curves.x.at(-1)!;
+  close(end[2], 20, 1e-9);
+  close(Math.hypot(end[0], end[1]), 15, 1e-9);
+  // Rows must climb.
+  const bad = m.evaluate(doc([hc, hx([[0, 2, 20], [0, 6, 30]])]));
+  assert.equal(bad.statuses.find(s => s.id === "x")?.code, "E-HLX-ROWS");
+});
