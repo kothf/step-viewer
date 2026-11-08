@@ -122,7 +122,7 @@ export interface Frame {
   /** Motors on axis mates: how far each has turned (rad) or slid (mm). */
   axis: { mate: string; motion: "rotary" | "linear"; amount: number }[];
   /** Exploded view progress by view id. */
-  explode: { id: string; k: number }[];
+  explode: { id: string; k: number; seq?: boolean }[];
   /** Component id → opacity (0 hidden … 1 opaque) for components with appearance keys. */
   look: Record<string, number>;
   /** Component id → offset for components with placement keys. */
@@ -136,7 +136,7 @@ export function frameAt(study: MotionStudy, t: number, mates: Map<string, Mate>)
   const on = study.tracks.filter(k => !k.off);
   for (const k of on) {
     if (k.kind === "mate") { const v = valueAt(k.keys, t); if (v != null && mates.has(k.mate)) f.values[k.mate] = v; }
-    else if (k.kind === "explode") { const v = valueAt(k.keys, t); if (v != null) f.explode.push({ id: k.view, k: clamp(v, 0, 1) }); }
+    else if (k.kind === "explode") { const v = valueAt(k.keys, t); if (v != null) f.explode.push({ id: k.view, k: clamp(v, 0, 1), ...(k.seq ? { seq: true } : {}) }); }
     else if (k.kind === "look") { const v = valueAt(k.keys, t); if (v != null) f.look[k.comp] = clamp(v, 0, 1); }
     else if (k.kind === "pose") { const p = poseAt(k.keys, t); if (p) f.pose[k.comp] = p; }
     else if (k.kind === "camera") f.camera = cameraAt(k.keys, t);

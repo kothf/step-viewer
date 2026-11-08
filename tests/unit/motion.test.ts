@@ -310,3 +310,16 @@ test("motion interference over a study: per-frame pairs become spans per pair; p
   assert.deepEqual(csv.slice(1), ['"Pin, 1",Plate,0.2,0.3', '"Pin, 1",Plate,0.5,0.5']);
   assert.deepEqual(clashItems([], 30), []);
 });
+
+test("explode steps one after another (animation wizard) or all at once (FR-FT-122)", async () => {
+  const { explodeAt } = await import("../../src/asm/patterns");
+  const v = { id: "x", name: "E", steps: [{ comps: ["a"], dir: [1, 0, 0] as [number, number, number], dist: 10 }, { comps: ["b", "a"], dir: [0, 0, 1] as [number, number, number], dist: 20 }] };
+  assert.deepEqual(explodeAt(v, 0.5).get("a"), [5, 0, 10]);
+  assert.deepEqual(explodeAt(v, 0.25, true).get("a"), [5, 0, 0]);
+  assert.equal(explodeAt(v, 0.25, true).has("b"), false);
+  assert.deepEqual(explodeAt(v, 0.75, true).get("b"), [0, 0, 10]);
+  assert.deepEqual(explodeAt(v, 1, true).get("a"), [10, 0, 20]);
+  assert.equal(explodeAt(v, 0, true).size, 0);
+  const s: MotionStudy = { id: "s", name: "S", duration: 2, fps: 10, tracks: [{ id: "t", kind: "explode", view: "x", keys: [{ t: 0, v: 0 }, { t: 2, v: 1 }], seq: true }] };
+  assert.deepEqual(frameAt(s, 1, new Map()).explode, [{ id: "x", k: 0.5, seq: true }]);
+});
