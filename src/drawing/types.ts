@@ -160,7 +160,12 @@ export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin:
  *  (sheet mm); `arc` is the largest scallop chord (mm, default 6); `rev` an optional revision letter in a triangle at the first corner. */
 export interface CloudAnnot { id: string; t: "cloud"; view?: undefined; pos: [number, number]; pts: number[]; arc?: number; rev?: string }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot;
+/** A centreline or centre mark put in by hand (SolidWorks' Centerline / Center Mark, FR-DRW-023). `k` "line": between two
+ *  parallel straight edges (the middle line over both) or through two points; "mark": a cross on a round edge seen end-on
+ *  (also arcs, which get no automatic mark). `ext` is how far it runs past the geometry, in sheet mm (default 2). */
+export interface CLineAnnot { id: string; t: "cline"; view: string; k: "line" | "mark"; refs: GeoRef[]; ext?: number; pos?: undefined }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot;
 
 export interface Sheet {
   id: string;
