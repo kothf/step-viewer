@@ -5,11 +5,108 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.132.0] - 2026-11-08
+## [1.146.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
+
+## [1.144.0] - 2026-11-08
+
+### Added
+
+- **Slot tools (FR-SK-017)**: the Slot ▾ menu now has Centerpoint straight slot (centre, one end, width), Centerpoint arc slot (arc centre, start, end, width) and 3-point arc slot (start, end, a point on the arc, width) next to the straight slot, all with a live preview. Every slot gets its width and its length (straight) or centre-line radius (arc) as dimensions, and the Modify box opens on them in turn; Add dimensions in the panel turns that off.
+
+### Fixed
+
+- **Sketch solver**: two arcs joined end to end and tangent there were counted as unconstrained, so such sketches showed too many degrees of freedom; the rank test is also less sensitive to rounding, so redundant relations no longer read as fully defining.
+
+## [1.143.0] - 2026-11-08
+
+### Added
+
+- **Sweep end tangency (FR-FT-080)**: next to Start tangency, End tangency "Path tangent" ends a sweep with the profile square to the path. With Keep normal constant the profile turns gradually from its sketch plane at the start to square at the end. Not with a guide curve or a closed path.
+
+## [1.142.0] - 2026-11-08
+
+### Added
+
+- **Text along a curve (FR-SK-020)**: a selected sketch text can follow a line, arc, circle, spline or ellipse of the sketch (Along curve in the text panel), starting where its start point is nearest. Flip side runs it the other way, so text round a circle stands on top instead of hanging inside. The letters stay closed regions for Extrude and Cut.
+
+## [1.141.0] - 2026-11-08
+
+### Added
+
+- **Geometry pattern option (FR-FT-074)**: linear, circular, sketch/table driven patterns and mirror of features have a Geometry pattern box. On (the default) copies the seed's shape as before; off rebuilds each extrude or revolve where the instance lands, so end conditions such as up to face hold at every instance.
+
+## [1.140.0] - 2026-11-08
+
+### Fixed
+
+- **Assembly stuck on "Rebuilding…"**: switching to another document tab while an assembly was still rebuilding (the first build takes a few seconds while the geometry kernel starts) left the assembly waiting for ever once you came back, so inserting more components did nothing. Parking a document now ends its kernel work cleanly, and the assembly builds again when shown. The same fix covers parts parked mid-rebuild.
+- A new part no longer takes the name of a part already open in another tab (two empty parts were both Part1).
+
+### Added
+
+- **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in SolidWorks. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
+- **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
+- **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
+
+## [1.139.0] - 2026-11-08
+
+### Added
+
+- **Section at the sketch plane (FR-SK-006)**: the sketch bar's Section button cuts the model at the sketch plane while you sketch, hiding the material in front of it. It stays on for later sketches until turned off, and the cut goes away when you leave the sketch.
+- **Configuration table (FR-CFG-003)**: the Configurations panel exports every configuration as a CSV table, one row per configuration and one column per value: dimensions and feature values (mm, degrees or expressions), pattern counts, suppression (S/U), variables and material. Importing a table (comma or semicolon separated) updates the configurations it names and adds new ones, as one undo step.
+
+## [1.138.0] - 2026-11-08
+
+### Added
+
+- **Cuts in the sheet metal flat pattern (FR-FT-120)**: holes and cuts that ordinary features (extrude cuts, holes) make in the flat faces of a sheet metal part now show in the flat pattern. The material each feature took out of a face is moved onto the pattern with that face, so a hole in a flange lands where the flange lies when unfolded. The flat pattern DXF then takes its outline from the pattern itself, holes included (circles and arcs stay exact). Exported while folded, the DXF has the sheet outline only and says to flatten first. Cuts across a bend aren't unrolled yet.
+
+## [1.137.0] - 2026-11-08
+
+### Added
+
+- **Sketch text (FR-SK-020)**: the Text tool (sketch Point ▾ menu) places text from the bundled DejaVu fonts (sans, serif, monospace, bold and italic) at a capital-letter height. Its letters are closed regions, so Extrude embosses them and Cut engraves them. Select a text to change its words, font, height or angle; drag, dimension or relate its start point like any other point.
+
+## [1.135.0] - 2026-11-08
+
+### Added
+
+- **Edit in context (FR-ASM-030)**: right-click a component and choose Edit in context. Its part opens with the rest of the assembly shown see-through around it.
+  - A sketch on a flat face of another component is an external reference, marked -> in the Features tree.
+  - Back in the assembly, the sketch follows that face whenever the components move or change.
+  - External References (Features → Plane ▾) lists each one with its state: in context, out of context (->?) or locked (->*). You can lock them one by one or all at once.
+
+## [1.134.0] - 2026-11-08
+
+### Added
+
+- **Setback fillets (FR-FT-033)**: an edge fillet's Setback parameters take corners where three or more filleted edges meet. At each one the fillets stop a setback distance from the corner and one smooth patch, tangent to the faces around it, blends the corner instead of the rolling-ball corner. Each corner has its own distance.
+
+## [1.133.0] - 2026-11-08
+
+### Added
+
+- Sheet metal, first slice of FRS P6 (FR-FT-120), on a new **Sheet Metal** tab of the part's command bar:
+  - **Base Flange/Tab**: a closed sketch becomes a flat plate; an open chain of lines becomes a bent flange of a given depth, with bends at the corners.
+  - Sheet metal parameters on the base flange: thickness, bend radius, K-factor, bend allowance or bend deduction, rectangular bend relief and its ratio, and gauge tables (mild steel, stainless steel, aluminium) that fill in thickness, radius and K-factor.
+  - **Edge Flange** on straight edges picked in the view, with a live preview: angle, length to the outer or inner virtual sharp, material inside / material outside / bend outside, a custom bend radius, and offsets from the edge ends (bend reliefs are cut automatically).
+  - **Hem**: closed or open (with a gap), material inside or outside.
+  - **Flatten** shows the flat pattern on the plane of the base flange, with up and down bend lines; click again to fold it back. The flat pattern is exact: every bend takes its bend allowance.
+  - **Flat pattern DXF**: the outline and the bend lines (layers OUTLINE, BEND_UP, BEND_DOWN) as DXF R12 in millimetres.
+  - **Sketched Bend**: a line sketched on a flat face folds the face along it: angle, bend centerline / bend starts at the line / bend ends at it, which side folds, direction and a custom radius. The flat pattern keeps the face's size.
+  - **Tab**: on a part with a base flange, Base Flange/Tab turns a closed sketch drawn beside a flat face (touching its edge) into a tab of the sheet's thickness that joins the flat pattern.
+  - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
+
+
+## [1.131.0] - 2026-11-08
+
+### Added
+
+- **Loft connectors (FR-FT-082)**: the Loft panel has a Connectors group with a start point per profile. The loft joins the picked points, so matching corners stop a loft from twisting and a corner further round twists it on purpose. Automatic keeps the old behaviour. This completes the loft options of FR-FT-082.
 
 ## [1.129.0] - 2026-11-08
 
@@ -1151,8 +1248,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.132.0...HEAD
-[1.132.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.132.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.146.0...HEAD
+[1.146.0]: https://github.com/kothf/step-viewer/compare/v1.144.0...v1.146.0
+[1.144.0]: https://github.com/kothf/step-viewer/compare/v1.143.0...v1.144.0
+[1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0
+[1.142.0]: https://github.com/kothf/step-viewer/compare/v1.141.0...v1.142.0
+[1.141.0]: https://github.com/kothf/step-viewer/compare/v1.140.0...v1.141.0
+[1.140.0]: https://github.com/kothf/step-viewer/compare/v1.139.0...v1.140.0
+[1.139.0]: https://github.com/kothf/step-viewer/compare/v1.138.0...v1.139.0
+[1.138.0]: https://github.com/kothf/step-viewer/compare/v1.137.0...v1.138.0
+[1.137.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.137.0
+[1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
+[1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
+[1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
+[1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
 [1.129.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.129.0
 [1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0
 [1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0

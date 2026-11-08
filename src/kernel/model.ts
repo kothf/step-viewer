@@ -13,11 +13,15 @@
 import type { V2 } from "../model/types";
 import type { HealFeature, RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
+import { ctxFrame } from "../model/context";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
 import { chain3d } from "../sketch/sketch3d";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
+import { evalSheet } from "../sheetmetal/kernel";
+import { SheetError, type SheetState } from "../sheetmetal/sheet";
+import { isSheet } from "../sheetmetal/types";
 import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
 
 export class FeatureError extends Error {
@@ -31,7 +35,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[] }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -237,6 +241,7 @@ export class Modeller {
       if (!f) throw new FeatureError("E-FT-PARENT", "The reference plane is missing or has an error.");
       return f;
     }
+    if ("ctx" in ref) return ctxFrame(ref.ctx);
     const oc = this.oc;
     const face = this.resolveFace(body, ref.face);
     const ad = new oc.BRepAdaptor_Surface_2(face, true);
@@ -782,7 +787,134 @@ export class Modeller {
         if (j >= 0) out.names[j] = `${f.id}:${f.type}:${i}`;
       }
     });
+    if (f.type === "fillet" && f.setbacks?.length) return this.setbackCorners(f, prev, out, edges, used, (i: number) => Math.max(radV(i), rad2(i)));
     return out;
+  }
+
+  /**
+   * Setback fillets (FR-FT-033): at each picked corner the fillets of the edges meeting there are cut
+   * by planes square to the edges `d` mm from the vertex; the fillet pieces inside and the corner blend
+   * are taken out and the opening is filled with one patch (BRepOffsetAPI_MakeFilling) tangent to the
+   * faces around it, named `fid:setback:k`.
+   */
+  private setbackCorners(f: FilletFeature, prev: Named, body: Named, edges: any[], used: number[], rad: (i: number) => number): Named {
+    const oc = this.oc;
+    const corners = (f.setbacks ?? []).map((s, k) => {
+      if ("point" in s.v) throw new FeatureError("E-FT-VERTEX", "Pick a vertex of the body.");
+      if (!(s.d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The size must be more than 0.");
+      // The corner: the end of a filleted edge nearest the click (the clicked edge may be one the preview made).
+      const at = s.v.at;
+      let vtx: any = null, best = Infinity;
+      for (const i of used) for (const x of [oc.TopExp.FirstVertex(edges[i], false), oc.TopExp.LastVertex(edges[i], false)]) {
+        const dd = d3(this.xyz(oc.BRep_Tool.Pnt(x)), at);
+        if (dd < best) { best = dd; vtx = x; }
+      }
+      if (!vtx) throw new FeatureError("E-FT-SETBACK3", "A setback needs a corner where three or more filleted edges meet.");
+      const o = this.xyz(oc.BRep_Tool.Pnt(vtx));
+      const legs: { i: number; p: V3; t: V3 }[] = [];
+      for (const i of used) {
+        const e = edges[i];
+        // Vertices in curve order (not the edge's orientation), so they match the parameters.
+        const first = oc.TopExp.FirstVertex(e, false).IsSame(vtx);
+        if (!first && !oc.TopExp.LastVertex(e, false).IsSame(vtx)) continue;
+        const c = new oc.BRepAdaptor_Curve_2(e);
+        const u0 = first ? c.FirstParameter() : c.LastParameter();
+        const len = oc.GCPnts_AbscissaPoint.Length_7(c, c.FirstParameter(), c.LastParameter(), 1e-7);
+        if (s.d >= len - 1e-6) throw new FeatureError("E-FT-SETBACK", "The setback is longer than an edge at the corner.");
+        const u = new oc.GCPnts_AbscissaPoint_2(c, first ? s.d : -s.d, u0).Parameter();
+        const p = new oc.gp_Pnt_1(), v = new oc.gp_Vec_1();
+        c.D1(u, p, v);
+        legs.push({ i, p: this.xyz(p), t: mul(unit(this.xyz(v)), first ? 1 : -1) });
+      }
+      if (legs.length < 3) throw new FeatureError("E-FT-SETBACK3", "A setback needs a corner where three or more filleted edges meet.");
+      return { k, o, d: s.d, legs, reach: s.d + 2 * Math.max(...legs.map(l => rad(l.i))) };
+    });
+    // Cut the fillet faces of every leg where its plane crosses them.
+    const big = this.size(body.shape) * 2 + 100;
+    const seq = new oc.TopTools_SequenceOfShape_1();
+    for (const c of corners) for (const l of c.legs) {
+      const pl = new oc.BRepBuilderAPI_MakeFace_9(new oc.gp_Pln_3(this.P(l.p), this.D(l.t)), -big, big, -big, big).Face();
+      body.faces.forEach((x, j) => {
+        if (body.names[j] !== `${f.id}:fillet:${l.i}`) return;
+        const sec = new oc.BRepAlgoAPI_Section_3(x, pl, false);
+        sec.ComputePCurveOn1(true);
+        sec.Approximation(true);
+        sec.Build(new oc.Message_ProgressRange_1());
+        if (sec.IsDone()) for (const e of this.sub(sec.Shape(), "EDGE")) if (d3(this.edgeMid(e), c.o) < c.reach) seq.Append_1(e);
+      });
+    }
+    if (seq.Length()) {
+      const sp = new oc.BRepFeat_SplitShape_2(body.shape);
+      sp.Add_1(seq);
+      sp.Build(new oc.Message_ProgressRange_1());
+      if (!sp.IsDone()) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      body = this.carry(sp, [body], sp.Shape(), f.id);
+    }
+    // The faces inside each corner: made by the fillet, on the vertex side of every leg's plane.
+    const old = new Set(prev.names);
+    const gone = new Set<number>();
+    const loops: { k: number; faces: number[] }[] = corners.map(c => {
+      const faces: number[] = [];
+      body.faces.forEach((x, j) => {
+        if (old.has(body.names[j]) || gone.has(j)) return;
+        const m = this.centroid(x);
+        if (d3(m, c.o) < c.reach && c.legs.every(l => dot(sub3(m, l.p), l.t) < 0)) { faces.push(j); gone.add(j); }
+      });
+      if (!faces.length) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      return { k: c.k, faces };
+    });
+    // Each opening filled with a patch tangent to the faces around it.
+    const patches: Named[] = [];
+    for (const lp of loops) {
+      const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      bb.MakeCompound(comp);
+      for (const j of lp.faces) bb.Add(comp, body.faces[j]);
+      const wires = this.subWires(new oc.ShapeAnalysis_FreeBounds_3(comp, false, false, false).GetClosedWires());
+      if (wires.length !== 1) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      const mk = new oc.BRepOffsetAPI_MakeFilling(3, 15, 2, false, 1e-5, 1e-4, 1e-2, 0.1, 8, 9);
+      for (const e of this.sub(wires[0], "EDGE")) {
+        const j = body.faces.findIndex((x, q) => !gone.has(q) && this.sub(x, "EDGE").some(g => g.IsSame(e)));
+        if (j >= 0) mk.Add_2(e, body.faces[j], oc.GeomAbs_Shape.GeomAbs_G1, true);
+        else mk.Add_1(e, oc.GeomAbs_Shape.GeomAbs_C0, true);
+      }
+      try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+      if (!mk.IsDone()) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+      const faces = this.sub(mk.Shape(), "FACE");
+      patches.push({ shape: mk.Shape(), faces, names: faces.map((_, q) => `${f.id}:setback:${lp.k}${q ? `:${q}` : ""}`) });
+    }
+    // Sew the kept faces and the patches back into solids.
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-3, true, true, true, false);
+    const kept = body.faces.map((x, j) => ({ x, name: body.names[j] })).filter((_x, j) => !gone.has(j));
+    for (const k of kept) sew.Add(k.x);
+    for (const p of patches) sew.Add(p.shape);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const sewn = sew.SewedShape();
+    const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+    bb.MakeCompound(comp);
+    let open = 0;
+    for (const ex = new oc.TopExp_Explorer_2(sewn, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+      const sh = oc.TopoDS.Shell_1(ex.Current());
+      if (!oc.BRep_Tool.IsClosed_1(sh)) { open++; continue; }
+      let solid = new oc.ShapeFix_Solid_1().SolidFromShell(sh);
+      if (this.volume(solid) < 0) solid = solid.Reversed();
+      bb.Add(comp, solid);
+    }
+    if (open || this.solids(comp) !== this.solids(body.shape)) throw new FeatureError("E-FT-SETBACK", "The corner could not be set back.");
+    const shape = this.solids(comp) === 1 ? new oc.TopExp_Explorer_2(comp, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE).Current() : comp;
+    // Names: by identity through the sewing, else the nearest centroid.
+    const map: [any, string, V3][] = [...kept.map(k => [k.x, k.name] as [any, string]), ...patches.flatMap(p => p.faces.map((x, q) => [x, p.names[q]] as [any, string]))]
+      .map(([x, n]) => [sew.IsModified(x) ? sew.Modified(x) : x, n, this.centroid(x)] as [any, string, V3]);
+    const faces = this.sub(shape, "FACE");
+    let q = 0;
+    const names = faces.map(x => {
+      const hit = map.find(([g]) => g.IsSame(x));
+      if (hit) return hit[1];
+      const c = this.centroid(x);
+      let best: [any, string, V3] | null = null;
+      for (const e of map) if (!best || d3(e[2], c) < d3(best[2], c)) best = e;
+      return best && d3(best[2], c) < 1e-2 * (1 + this.size(x)) ? best[1] : `${f.id}:new:${q++}`;
+    });
+    return { shape, faces, names };
   }
 
   /** A stable key for an edge: the sorted names of the faces that hold it. */
@@ -2288,6 +2420,32 @@ export class Modeller {
     const guide = f.guide ? this.pathWire(f.guide, doc, prev, frames) : null;
     const twist = !guide && f.orient !== "normal" && f.twist && Math.abs(f.twist.v) > 1e-9 ? this.twistSpine(spine, f.twist.v) : null;
     const law = guide ? this.guideLaw(spine, guide) : null;
+    // End tangency "path tangent" (P5): a second section at the path's end, the profile turned square to the
+    // path there (the least turn from the profile's plane to the end tangent), so the sweep ends square.
+    let endSection: ((w: any) => any) | null = null;
+    let endVertex: any = null;
+    const profN = !f.circular && f.profile ? this.sketchOf(f.profile, doc, prev, frames, "a profile sketch").frame.n : null;
+    if (f.endTangent && profN && !law && !oc.BRep_Tool.IsClosed_1(spine)) {
+      const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+      const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1(), p1 = new oc.gp_Pnt_1(), v1 = new oc.gp_Vec_1();
+      ad.D1(ad.FirstParameter(), p0, v0);
+      ad.D1(ad.LastParameter(), p1, v1);
+      const t0 = unit(this.xyz(v0)), t1 = unit(this.xyz(v1));
+      const n = dot(profN, t0) >= 0 ? profN : mul(profN, -1);
+      const P0 = this.xyz(p0), P1 = this.xyz(p1);
+      const ax: V3 = [n[1] * t1[2] - n[2] * t1[1], n[2] * t1[0] - n[0] * t1[2], n[0] * t1[1] - n[1] * t1[0]];
+      const ang = Math.atan2(Math.hypot(...ax), dot(n, t1));
+      const rot = new oc.gp_Trsf_1();
+      if (Math.hypot(...ax) > 1e-9) rot.SetRotation_1(new oc.gp_Ax1_2(this.P(P0), this.D(unit(ax))), ang);
+      else if (ang > 1) rot.SetMirror_2(new oc.gp_Ax1_2(this.P(P0), this.D(Math.abs(n[2]) < 0.9 ? unit([n[1], -n[0], 0]) : unit([0, n[2], -n[1]]))));
+      const tr = new oc.gp_Trsf_1();
+      tr.SetTranslation_1(this.V(sub3(P1, P0)));
+      tr.Multiply(rot);
+      endSection = (w: any) => oc.TopoDS.Wire_1(new oc.BRepBuilderAPI_Transform_2(w, tr, true).Shape());
+      const va = new oc.TopoDS_Vertex(), vb = new oc.TopoDS_Vertex();
+      oc.TopExp.Vertices_2(spine, va, vb);
+      endVertex = vb;
+    }
     const pipe = (w: any, edgeEnt: [any, string][]): Named => {
       const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
       if (guide) {
@@ -2308,6 +2466,7 @@ export class Modeller {
       // Path tangent at the start: OCCT turns the profile square to the path (WithCorrection).
       const fix = !!f.startTangent && !f.circular;
       if (law) mk.SetLaw_1(w, law, false, fix); else mk.Add_1(w, false, fix);
+      if (endSection) mk.Add_2(endSection(w), endVertex, false, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
       if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");
@@ -2347,6 +2506,7 @@ export class Modeller {
     const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
     let firstEdges: [any, string][] = [];
     const wires: any[] = [];
+    const starts: (V3 | undefined)[] = [];
     f.profiles.forEach((id, k) => {
       const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
       const { faces, edgeEnt } = this.profileFaces(sk, frame);
@@ -2354,7 +2514,17 @@ export class Modeller {
       const w = oc.BRepTools.OuterWire(faces[0]);
       if (k === 0) firstEdges = edgeEnt;
       wires.push(w);
+      const cid = f.connectors?.[k];
+      const cp = cid ? sk.ents.find(e => e.id === cid && e.t === "point") : undefined;
+      if (cp && cp.t === "point") starts[k] = add(add(frame.o, mul(frame.x, cp.x)), mul(frame.y, cp.y));
     });
+    // Connectors (FR-FT-082): each profile starts at its picked point, all wound the same way, so the loft
+    // joins those points instead of letting OCCT line the profiles up.
+    const connected = starts.some(Boolean);
+    if (connected) {
+      const d = sub3(this.wireCentre(wires[wires.length - 1]), this.wireCentre(wires[0]));
+      wires.forEach((w, k) => { wires[k] = this.startWire(w, starts[k] ?? null, d); });
+    }
     if (f.close && wires.length >= 3) wires.push(wires[0]);
     // Guide curves (FR-FT-082, P5): sections of the free loft between the profiles, stretched to the guides.
     const guided = !!f.guides?.length && !f.ruled && !f.close;
@@ -2383,7 +2553,7 @@ export class Modeller {
       if (last) wires.splice(wires.length - 1, 0, last);
     }
     for (const w of wires) mk.AddWire(w);
-    mk.CheckCompatibility(true);
+    mk.CheckCompatibility(!connected);
     mk.Build(new oc.Message_ProgressRange_1());
     if (!mk.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
     let shape = mk.Shape();
@@ -2403,6 +2573,41 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /**
+   * A closed wire rebuilt to start at the vertex nearest `at` (when given) and to wind counter-clockwise
+   * about `d`, keeping its edges (so names from them still resolve).
+   */
+  private startWire(w: any, at: V3 | null, d: V3): any {
+    const oc = this.oc;
+    let edges: any[] = [], verts: V3[] = [];
+    for (const ex = new oc.BRepTools_WireExplorer_2(w); ex.More(); ex.Next()) { edges.push(ex.Current()); verts.push(this.xyz(oc.BRep_Tool.Pnt(ex.CurrentVertex()))); }
+    if (edges.length < 2) return w;
+    // Winding from the polygon of the vertices and the edge middles (arcs count).
+    const pts: V3[] = [];
+    edges.forEach((e, i) => {
+      pts.push(verts[i]);
+      const c = new oc.BRepAdaptor_Curve_2(e), u = (c.FirstParameter() + c.LastParameter()) / 2;
+      pts.push(this.xyz(c.Value(u)));
+    });
+    let area: V3 = [0, 0, 0];
+    for (let i = 0; i < pts.length; i++) area = add(area, cross(pts[i], pts[(i + 1) % pts.length]));
+    if (dot(area, d) < 0) {
+      // Reverse: the edges in the other order, each reversed; edge i then starts where it used to end.
+      const n = edges.length;
+      const rev = edges.map((_, i) => edges[n - 1 - i].Reversed());
+      const rv = edges.map((_, i) => verts[(n - i) % n]);
+      edges = rev.map(e => oc.TopoDS.Edge_1(e)); verts = rv;
+    }
+    if (at) {
+      let k = 0;
+      verts.forEach((v, i) => { if (d3(v, at) < d3(verts[k], at)) k = i; });
+      edges = [...edges.slice(k), ...edges.slice(0, k)];
+    }
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const e of edges) mw.Add_1(e);
+    return mw.IsDone() ? mw.Wire() : w;
   }
 
   /** The centre of a wire's length. */
@@ -2442,7 +2647,7 @@ export class Modeller {
     // The free loft the sections are cut from.
     const free = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6);
     for (const w of wires) free.AddWire(w);
-    free.CheckCompatibility(true);
+    free.CheckCompatibility(!f.connectors?.some(Boolean));
     free.Build(new oc.Message_ProgressRange_1());
     if (!free.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
     const solid = free.Shape();
@@ -3262,7 +3467,8 @@ export class Modeller {
    * Applies a mirror or pattern's transforms. Bodies: each copy becomes a new body (a mirror with merge
    * joins it to its original). Otherwise the tools are applied as bosses and cuts (see `applyCopies`).
    */
-  private copyBy(f: CopySource & { id: string; type: string; merge?: boolean }, prev: Named, set: { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[]): Named {
+  private copyBy(f: CopySource & { id: string; type: string; merge?: boolean; features?: string[] }, prev: Named, set: { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[], ctx?: { doc: PartDoc; frames: Record<string, Frame> }): Named {
+    if (f.vary && (f.copy ?? "features") === "features" && ctx && f.features?.length) return this.varyCopies(f as CopySource & { id: string; features: string[] }, prev, set, xfs, ctx.doc, ctx.frames);
     if (f.copy === "bodies") {
       const out = [...set.list];
       for (const xf of xfs) for (const i of set.idx) {
@@ -3276,6 +3482,56 @@ export class Modeller {
     return this.applyCopies(prev, copies, f.id, set.seeds);
   }
 
+  /**
+   * Instances re-evaluated (FR-FT-074, geometry pattern off): each extrude or revolve seed is built again
+   * from its sketch moved by the instance transform, against the body as it stands, so end conditions
+   * (up to face, up to next, through all) hold at every place. Other seeds are copied as geometry.
+   */
+  private varyCopies(f: CopySource & { id: string; features: string[] }, prev: Named, set: { seeds: Tool[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[], doc: PartDoc, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    let body = prev;
+    const skipped: string[] = [];
+    const used: Tool[] = [];
+    let total = 0;
+    const tfP = (trsf: any, p: V3): V3 => this.xyz(this.P(p).Transformed(trsf));
+    const tfD = (trsf: any, d: V3): V3 => { const v = this.V(d).Transformed(trsf); return [v.X(), v.Y(), v.Z()]; };
+    for (const xf of xfs) {
+      for (const [k, id] of f.features.entries()) {
+        const seed = doc.features.find(x => x.id === id);
+        if (!seed || seed.suppressed) continue;
+        total++;
+        const before = this.volume(body.shape), solids = this.solids(body.shape);
+        try {
+          let out: Named;
+          const iid = `${f.id}:${xf.tag(k)}`;
+          if (seed.type === "extrude" || seed.type === "revolve") {
+            const sk = doc.features.find(x => x.id === seed.sketch);
+            if (!sk || sk.type !== "sketch") throw new Error("no sketch");
+            const fr = frames[sk.id] ?? this.frameOf(sk, body, frames);
+            const moved: Frame = { o: tfP(xf.trsf, fr.o), x: tfD(xf.trsf, fr.x), y: tfD(xf.trsf, fr.y), n: tfD(xf.trsf, fr.n) };
+            out = this.sweep({ ...seed, id: iid, merge: true } as typeof seed, doc, body, { ...frames, [sk.id]: moved });
+            used.push(...(this.tools.get(iid) ?? []));
+            this.tools.delete(iid);
+          } else {
+            const ts = this.tools.get(id);
+            if (!ts) throw new Error("no tool");
+            out = body;
+            for (const t of ts) { const c = this.transformed(t, xf.trsf, f.id, xf.tag(k)); out = this.bool(c.op, out, c.shape, f.id); used.push(c); }
+          }
+          const after = this.volume(out.shape);
+          const boss = seed.type === "extrude" || seed.type === "revolve" ? seed.op === "boss" : false;
+          if (Math.abs(after - before) < 1e-9 || (boss && this.solids(out.shape) > solids)) { skipped.push(xf.label); continue; }
+          body = out;
+        } catch { skipped.push(xf.label); }
+      }
+    }
+    if (!used.length || skipped.length === total) throw new FeatureError("E-PAT-NONE", "No copy touches the body.");
+    this.tools.set(f.id, [...set.seeds, ...used]);
+    if (skipped.length) this.warning = `${skipped.length} of ${total} copies fall outside the body and were skipped: ${[...new Set(skipped)].join("; ")}.`;
+    void oc;
+    return body;
+  }
+
   /** Mirror (FR-FT-072): the seed features' tools reflected in a plane, or the whole body joined to its reflection. */
   private mirror(f: MirrorFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
@@ -3285,7 +3541,7 @@ export class Modeller {
     const trsf = new oc.gp_Trsf_1();
     trsf.SetMirror_3(new oc.gp_Ax2_3(this.P(fr.o), this.D(fr.n)));
     const set = this.seedSet(f, doc, prev, true);
-    return this.copyBy(f, prev, set, [{ trsf, tag: k => f.copy === "bodies" ? `mb${k}` : `m${k}`, label: "1" }]);
+    return this.copyBy(f, prev, set, [{ trsf, tag: k => f.copy === "bodies" ? `mb${k}` : `m${k}`, label: "1" }], { doc, frames });
   }
 
   /** Linear pattern (FR-FT-070): count × count2 copies; instance (0, 0) is the seed. */
@@ -3309,7 +3565,7 @@ export class Modeller {
       const tk = key.replace(",", "_");
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   /** Circular pattern (FR-FT-071): copies turned about an axis; equal spacing spreads them over the angle. */
@@ -3331,7 +3587,7 @@ export class Modeller {
       trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
     }
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   /**
@@ -3353,7 +3609,7 @@ export class Modeller {
       const fr = frames[sk.id];
       if (!fr) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
       const used = new Set<string>();
-      for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
+      for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1", "p"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
       for (const e of sk.ents) if (e.t === "spline") for (const q of e.pts) used.add(q);
       const pts = sk.ents.filter(e => e.t === "point" && !used.has(e.id) && e.id !== f.refPt) as { id: string; x: number; y: number }[];
       const ref = f.refPt ? sk.ents.find(e => e.id === f.refPt && e.t === "point") as { x: number; y: number } | undefined : undefined;
@@ -3370,7 +3626,7 @@ export class Modeller {
       xfs.push({ trsf, tag: k => f.copy === "bodies" ? `p${i}b${k}` : `p${i}s${k}`, label: String(i + 1) });
     });
     if (!xfs.length) throw new FeatureError("E-SPAT-NONE", f.src === "table" ? "Add table rows with offsets other than 0, 0." : "The sketch has no free points away from the seed.");
-    return this.copyBy(f, prev!, set, xfs);
+    return this.copyBy(f, prev!, set, xfs, { doc, frames });
   }
 
   private size(shape: any) {
@@ -3401,7 +3657,7 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]> } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -3409,6 +3665,8 @@ export class Modeller {
     let body: Named | null = null;
     // Surface bodies (FRS 9.11): open sheets, kept apart from the solids.
     let sheets: Named | null = null;
+    // Sheet metal (FR-FT-120): the panels and bends made so far.
+    let sm: SheetState | null = null;
     let chain = "";
     const statuses: FeatureStatus[] = [];
     const frames: Record<string, Frame> = {};
@@ -3435,6 +3693,7 @@ export class Modeller {
         if (!hit.status.ok) failed.add(f.id);
         body = hit.body;
         sheets = hit.sheets;
+        sm = hit.sm ?? null;
         return;
       }
       let status: FeatureStatus = { id: f.id, ok: true };
@@ -3483,6 +3742,7 @@ export class Modeller {
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
+          else if (isSheet(f)) ({ body, sm } = evalSheet(this.sheetApi(), f, doc, body, sm, sk => this.frameOf(sk, body, frames)));
           else if (isWeld(f)) body = evalWeld(this as unknown as WeldHost, f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
@@ -3506,17 +3766,23 @@ export class Modeller {
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;
-          status = { id: f.id, ok: false, code: e instanceof FeatureError ? e.code : "E-KRN", message: e instanceof FeatureError ? e.message : `Kernel error: ${e.message ?? e}` };
+          const coded = e instanceof FeatureError || e instanceof SheetError;
+          status = { id: f.id, ok: false, code: coded ? (e as FeatureError).code : "E-KRN", message: coded ? e.message : `Kernel error: ${e.message ?? e}` };
           failed.add(f.id);
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id) });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions) };
+    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), sheet: sm };
+  }
+
+  /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
+  private sheetApi() {
+    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */

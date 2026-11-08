@@ -59,6 +59,7 @@ function fixedSet(sk: SketchFeature) {
     else if (e.t === "arc") { fixed.add(e.c); fixed.add(e.a); fixed.add(e.b); }
     else if (e.t === "ellipse") { for (const q of [e.c, e.a, e.b, e.p0, e.p1]) if (q) fixed.add(q); }
     else if (e.t === "spline") for (const q of e.pts) fixed.add(q);
+    else if (e.t === "text") fixed.add(e.p);
   }
   return fixed;
 }
@@ -87,6 +88,7 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
       : e.t === "circle" ? [...pv(e.c), ...((rad.get(e.id) ?? -1) >= 0 ? [rad.get(e.id)!] : [])]
       : e.t === "ellipse" ? [e.c, e.a, e.b, e.p0, e.p1].flatMap(q => (q ? pv(q) : []))
       : e.t === "spline" ? e.pts.flatMap(pv)
+      : e.t === "text" ? pv(e.p)
       : [...pv(e.c), ...pv(e.a), ...pv(e.b)]);
   }
   const add = (owner: string, t: Term) => { sys.terms.push(t); sys.owner.push(owner); };
@@ -210,6 +212,14 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
         return [term([a, b, c, rr], x => Math.abs(lineDist(c(x), a(x), b(x))) - rr(x))];
       }
       const c1 = center(sys, ents, r.e[0]), r1 = R(sys, ents, r.e[0]), c2 = center(sys, ents, r.e[1]), r2 = R(sys, ents, r.e[1]);
+      // Arcs joined end to end: the radii to the shared end lie on one line. (The distance form has a zero
+      // gradient there, so the solver could not count the relation.)
+      const e0 = ents.get(r.e[0]), e1 = ents.get(r.e[1]);
+      const shared = e0?.t === "arc" && e1?.t === "arc" ? [e0.a, e0.b].find(q => q === e1.a || q === e1.b) : undefined;
+      if (shared) {
+        const S = P(sys, shared);
+        return [term([c1, c2, S], x => { const u = sub(S(x), c1(x)), v = sub(S(x), c2(x)); return cross(u, v) / (nrm(u) * nrm(v) || 1); })];
+      }
       return [term([c1, r1, c2, r2], x => dist(c1(x), c2(x)) - (r.inner ? Math.abs(r1(x) - r2(x)) : r1(x) + r2(x)))];
     }
     case "concentric": {
@@ -399,7 +409,8 @@ function nullSpace(sys: System): { rank: number; pinned: boolean[]; basis: Float
   for (let c = 0; c < n && row < M.length; c++) {
     let p = row;
     for (let r = row + 1; r < M.length; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
-    if (Math.abs(M[p][c]) < 1e-8 * scale) continue;
+    // Derivatives are central differences (noise about 1e-9 at 100 mm), so the threshold sits well above that.
+    if (Math.abs(M[p][c]) < 1e-6 * scale) continue;
     [M[p], M[row]] = [M[row], M[p]];
     const piv = M[row][c];
     for (let k = c; k < n; k++) M[row][k] /= piv;
