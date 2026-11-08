@@ -3100,6 +3100,23 @@ try {
     // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
     check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
       `model 1.167: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
+    // 1.170: a spline leaving a line's end takes Tangent and Equal curvature (FR-SK-050/051); Tangent turns its end along the line.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const q of [[14, -6], [20, -6], [20, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("spline"));
+    for (const q of [[20, -6], [26, -2.5], [32, -6], [32, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("select"));
+    await click([17, -6]);
+    const onSp = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); return l[Math.floor(l.length / 4)]; });
+    { const [x, y] = await toPage(onSp); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.keyboard.down("Control"); await mp.mouse.down(); await mp.mouse.up(); await mp.keyboard.up("Control"); await mp.waitForTimeout(150); }
+    const relBtns = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-rel]")].map(b => b.dataset.rel).join(","));
+    if (await mp.$('#mc-pm [data-rel="tangent"]')) await mp.click('#mc-pm [data-rel="tangent"]');
+    await mp.waitForTimeout(150);
+    const st = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); const d = [l[1][0] - l[0][0], l[1][1] - l[0][1]]; return { tan: ed.sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, slope: Math.round(Math.abs(d[1] / d[0]) * 1000) / 1000, dir: Math.sign(d[0]), ok: ed.info.status }; });
+    check(/tangent/.test(relBtns) && /curvature/.test(relBtns) && st.tan === 1 && st.slope < 0.01 && st.dir === 1 && st.ok === "ok",
+      `model 1.170: spline tangent to the line it leaves; Equal curvature offered (${relBtns}, ${JSON.stringify(st)})`);
     await ctx.close();
   }
 

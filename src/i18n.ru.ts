@@ -397,6 +397,7 @@ export const RU: Record<string, string> = {
   "Midpoint": "Середина",
   "Quadrant": "Квадрант",
   "Intersection": "Пересечение",
+  "Equal curvature": "Равная кривизна",
   "Face centre": "Центр грани",
   "Face": "Грань",
   "Cut {what}": "Разрез: {what}",

@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.170.0] - 2026-11-08
+
+### Added
+
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+
 ## [1.167.0] - 2026-11-08
 
 ### Added
@@ -1344,7 +1350,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.167.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.170.0...HEAD
+[1.170.0]: https://github.com/kothf/step-viewer/compare/v1.167.0...v1.170.0
 [1.167.0]: https://github.com/kothf/step-viewer/compare/v1.166.0...v1.167.0
 [1.166.0]: https://github.com/kothf/step-viewer/compare/v1.164.0...v1.166.0
 [1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0

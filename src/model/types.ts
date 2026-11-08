@@ -51,7 +51,9 @@ export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"
   | "equal" | "tangent" | "concentric" | "midpoint" | "fix" | "onCurve" | "symmetric"
   /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
-  | "intersection";
+  | "intersection"
+  /** Equal curvature (G2) where a spline meets a line, arc or spline at a shared end; includes tangency (FR-SK-051). */
+  | "curvature";
 
 export interface SkRel {
   id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
