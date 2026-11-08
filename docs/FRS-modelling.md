@@ -1114,6 +1114,13 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 - **FR-UND-005** (P1, M) The Undo and Redo buttons have a ▾ list of the last 20 steps by name ("Extrude1 depth 20 → 25", FR-UND-001); picking a step undoes or redoes back to it. The button tooltips name the step they will undo. (1.85.0 shows a generic "Undo (Ctrl+Z)".)
 - **FR-UI-116** (P1, M) **Units in the status bar**: clicking the unit label opens the unit systems (mm-g-s, cm-g-s, m-kg-s, in-lb-s, custom…) and decimals; choosing one changes the document's display units as an undoable document change; values are stored in mm and radians as before.
 
+**Menus and toolbars (review 2026-11-08, Andrey: "reorganize all menus/buttons")**
+
+- **FR-UI-117** (P1, M) **One command bar for everything** (completes FR-UI-010..013): every 3D document has one tabbed command bar, a full-width row under the header; no tool gets its own row of buttons. The tabs follow what is open: a model file shows **Evaluate**; a part shows **Features**, **Sketch**, **Surfaces**, **Weldments**, **Evaluate** (and **Sheet Metal** once it lands); an assembly shows **Assembly** and **Evaluate**. The bar remembers the last tab per document type. Features groups related commands behind split buttons (Sweep ▾ Loft, Cut-Sweep ▾ Cut-Loft, Pattern ▾, Plane ▾ Axis/Point/Coordinate system, Curves ▾ Helix/3D sketch/XYZ/Composite/Projected/Split line, Bodies ▾, Direct editing ▾); Surfaces and Weldments list their commands as buttons. Entering a sketch selects Sketch; leaving it selects Features.
+- **FR-UI-118** (P1, M) **Header = document and application**: the header holds the menu, Open, New ▾, the document name, the view controls (display mode, projection, standard views, Display ▾), language, theme, help and the panel toggles. Measuring tools live in the Evaluate tab; the right panel's pages (Properties, Section, Explode, Mass, Export) are tabs at the top of the right panel; Filter, Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab row, like SolidWorks' menu bar. Every keyboard shortcut works whichever tab is shown.
+- **FR-UI-119** (P1, M) **Rule for new modules**: a new module (sheet metal, motion, drawings, PCB) adds a tab or a group in an existing tab, never a floating bar of its own, and its buttons use the shared `mc-b` icon + label style with its own SVG icons (FR-UI-015). A tab whose buttons do not fit folds labels into icons with tooltips before it scrolls.
+- **FR-UI-120** (P1, M) **Document tabs** (completes FR-DOC-003): open parts, assemblies and drawings show as tabs along the bottom of the window above the status bar, each with its type icon, name, modified dot and ✕; a click switches to it, keeping its own undo, selection and camera; Ctrl+Tab cycles; closing a modified document asks to save. Opening a part from an assembly opens a new tab instead of replacing the assembly.
+
 ---
 
 ## 14. Non-functional requirements
@@ -1395,6 +1402,8 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 - **AT-UX-14** (FR-HIS-012) Save a part rolled back above its last two features, reopen it: it opens rolled back with the notice; Roll to end in the notice shows all features.
 - **AT-UX-15** (FR-UI-105, P3) In a two-body part, Tab over body 2 hides it; Shift+Tab over the same spot shows it; both steps are undoable.
 - **AT-UX-16** (FR-UI-116, FR-SK-047) Choose in-lb-s in the status bar: a 25.4 mm dimension shows 1.000 in, the file still stores 25.4; Ctrl+Z returns to mm. While sketching, the status bar shows the cursor x, y in the document unit.
+- **AT-UX-17** (FR-UI-117, FR-UI-118) Open a STEP file: the command bar shows only Evaluate with the 12 measuring tools on one row at 1366 px; the header has no measuring tools. New part: the tabs are Features, Sketch, Surfaces, Weldments and Evaluate; Sketch on Top selects the Sketch tab and Exit sketch returns to Features; R (radius) still starts the radius tool while Features is shown. New assembly: the part's tabs and quick buttons are gone; Assembly and Evaluate remain.
+- **AT-UX-18** (FR-UI-120) Open a part, then an assembly, then a drawing: three tabs at the bottom; clicking the part's tab shows the part with its undo history and camera as left; closing the modified assembly asks to save.
 
 **PDM**
 
@@ -1613,7 +1622,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
 | Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
-| Command search Ctrl+K | FR-UI-014 (S) | No | Weaker (not started) |
+| Command search Ctrl+K | FR-UI-014 (S) | Done (1.110.0) | Done |
 | Units in the status bar | FR-UI-116 | No | New |
 | Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
 
@@ -1628,7 +1637,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-DOC-003 | Several documents open at once in tabs | One part, assembly or drawing at a time: opening one closes the other (`leaveOthers`) | Partly |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
-| FR-UI-014 | Command search (Ctrl+K) | No | Not built |
+| FR-UI-014 | Command search (Ctrl+K) | Done in 1.110.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | No | Not built |
 | FR-UI-043 | Panels remember the last options per feature type | Only hole favourites | Not built |
@@ -1645,7 +1654,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | --- | --- | --- | --- |
 | FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
-| FR-SK-073 | **Check sketch for feature** before starting it | Problems show only once a feature fails | Not built |
+| FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.110.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
 
 **Part features (section 9)**

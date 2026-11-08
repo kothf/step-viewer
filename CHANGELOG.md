@@ -5,6 +5,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.110.0] - 2026-11-08
+
+### Added
+
+- **Command bar** (FRS 13.2, FR-UI-010 to FR-UI-013, FR-UI-117 to FR-UI-119): one tabbed bar under the header holds every 3D command, as in SolidWorks' CommandManager.
+  - A part shows the tabs **Features**, **Sketch**, **Surfaces**, **Weldments** and **Evaluate**. An assembly shows **Assembly** and **Evaluate**. A plain model shows **Evaluate**.
+  - The measuring tools, which had their own row in the header, are now on the **Evaluate** tab.
+  - Undo ▾, Redo, Save ▾ and STEP sit at the right end of the tab strip.
+  - Entering a sketch switches to the Sketch tab; leaving it goes back to Features.
+  - The bar switches to icons only when it is too narrow, and the arrow keys move between tabs.
+- **Make assembly from part** (New ▾): a new assembly with the open part as its first component, fixed at the origin, including unsaved changes.
+- **Ctrl+K command search** (FR-UI-014): type part of a command's name and press Enter to run it.
+- **Check sketch for feature** (FR-SK-073): the sketch panel checks the sketch for an extrude, revolve, loft or sweep profile, sweep path or rib, and points at open ends, overlaps, crossings and zero-length lines.
+- **Sizes typed while drawing**: while you draw a line, rectangle or circle, typing a number opens length or size boxes; Enter places the shape with driving dimensions.
+
+### Changed
+
+- The right panel's tabs (Measurements, Section, Display, Properties) moved from the header to the top of the right panel.
+- The part and assembly status lines keep their place below the view; the filter bar no longer shifts the view.
+
 ## [1.107.0] - 2026-11-08
 
 ### Added
@@ -1030,7 +1050,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.107.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.110.0...HEAD
+[1.110.0]: https://github.com/kothf/step-viewer/compare/v1.107.0...v1.110.0
 [1.107.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.107.0
 [1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
 [1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
