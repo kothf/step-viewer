@@ -5,6 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
+import { pathLength, plotSvg, speeds, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -224,4 +225,26 @@ test("key interpolations: snap holds then jumps, ease in/out start and end slowl
   close(valueAt([{ t: 0, v: 0 }, { t: 2, v: 10, interp: "easein" as const }], 1)!, 2.5);
   const pk = [{ t: 0, d: [0, 0, 0] as [number, number, number], r: [0, 0, 0] as [number, number, number] }, { t: 1, d: [0, 0, 8] as [number, number, number], r: [0, 0, 0] as [number, number, number], interp: "easeout" as const }];
   close(poseAt(pk, 0.5)!.d[2], 6);
+});
+
+test("trace paths: points through the frames, speed, series, length, CSV and plot", () => {
+  // A component turning 90° about Z over 3 frames: the point (10, 0, 0) runs a quarter circle.
+  const frames = [0, 1, 2].map(k => ({ a: compose(translation([0, 0, k]), [Math.cos(k * Math.PI / 4), -Math.sin(k * Math.PI / 4), 0, 0, Math.sin(k * Math.PI / 4), Math.cos(k * Math.PI / 4), 0, 0, 0, 0, 1, 0]) }));
+  const pts = tracePoints(frames, "a", [10, 0, 0]);
+  assert.equal(pts.length, 3);
+  assert.ok(Math.abs(pts[2][0]) < 1e-9 && Math.abs(pts[2][1] - 10) < 1e-9 && Math.abs(pts[2][2] - 2) < 1e-9);
+  // Missing component: the last point repeats.
+  assert.deepEqual(tracePoints([...frames, {}], "a", [10, 0, 0])[3], pts[2]);
+  const line = [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]] as [number, number, number][];
+  assert.deepEqual(speeds(line, 10), [10, 10, 10, 10]);
+  assert.deepEqual(traceSeries(line, 10, "dist"), [0, 1, 2, 3]);
+  assert.deepEqual(traceSeries(line, 10, "x"), [0, 1, 2, 3]);
+  assert.equal(pathLength(line), 3);
+  const csv = traceCsv(line, 10).trim().split("\n");
+  assert.equal(csv.length, 5);
+  assert.equal(csv[0], "t (s),x (mm),y (mm),z (mm),speed (mm/s)");
+  assert.equal(csv[2], "0.1,1,0,0,10");
+  const svg = plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance");
+  assert.match(svg, /<polyline points="[^"]+"/);
+  assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
 });
