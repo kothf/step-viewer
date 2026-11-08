@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.218.0] - 2026-11-08
+## [1.223.0] - 2026-11-08
 
 ### Changed
 
 - **Assemblies build on all CPU cores (FR-ARC-016).** WebAssembly runs one thread per instance, so the geometry kernel used to build an assembly's parts one after another on a single core. Opening an assembly now also starts up to 3 helper kernel workers (2 on a 4- or 8-thread CPU; more made builds slower, since every kernel instance competes for the CPU while it starts) that build the distinct parts at the same time, biggest first, while the assembly's own worker takes its share. A helper sends the exact body back as BREP with its named faces, plus its analysed mesh, so measurements, mates, interference and STEP export work as before. Only parts the assembly does not hold yet go to the helpers; editing one part still rebuilds just that part. On a 4-core machine the 23-part Leuenberger valve stage builds its parts in 4.7 s instead of 10.3 s; on a 4-core/8-thread i7 the 34-part engine builds in about 18 s instead of 32 s (one part, the nameplate with its embossed text, takes 15 s of that by itself). Helpers stop after 30 s idle to give their memory back. `?workers=N` sets the number of helpers and `?workers=0` turns it off.
+
+## [1.219.0] - 2026-11-08
+
+### Changed
+
+- **✓ and ✕ are always in reach.** The title row of every PropertyManager panel (features, sheet metal, weldments, surfaces, assembly commands) stays pinned at the top while the panel scrolls, so accepting no longer needs a scroll back up. The sketch panel, sketch pattern/move/rotate/scale, Sketch plane and Part properties moved their OK/Cancel (and Exit sketch) from the bottom into that row.
+- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in SolidWorks, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
 
 ## [1.215.0] - 2026-11-08
 
@@ -1524,8 +1531,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.218.0...HEAD
-[1.218.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.218.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.223.0...HEAD
+[1.223.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.223.0
+[1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
 [1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
 [1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0

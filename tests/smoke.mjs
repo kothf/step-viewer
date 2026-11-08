@@ -8696,6 +8696,62 @@ try {
     await ctx.close();
   }
 
+  // --- ✓/✕ always in reach: pinned panel title row and the confirmation corner at the top right of the view (FR-UI-021) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 700 } });
+    const kp = await ctx.newPage();
+    kp.on("pageerror", e => errors.push(e.message));
+    kp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await kp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await kp.goto(`${origin}/index.html?debug&nokernel`);
+    await kp.waitForFunction(() => window.__sv);
+    await kp.click("#new-part");
+    await kp.waitForFunction(() => window.__sv.model?.store);
+    await kp.click('[data-c="sketch"]');
+    await kp.click('#mc-pm [data-std="XY"]');
+    await kp.waitForFunction(() => window.__sv.model.mode().kind === "sketch");
+    await kp.waitForTimeout(300);
+    // Scroll the long sketch panel to its end: the ✓ in its title row stays inside the panel.
+    const reach = async (pmSel, cornerSel) => kp.evaluate(([ps, cs]) => {
+      const pm = document.querySelector(ps);
+      pm.scrollTop = pm.scrollHeight;
+      const r = pm.getBoundingClientRect(), ok = pm.querySelector(".pm-top .pm-ok").getBoundingClientRect();
+      const corner = document.querySelector(cs), c = corner.getBoundingClientRect(), vp = document.querySelector("#viewport").getBoundingClientRect();
+      const cube = document.querySelector("#navcube").getBoundingClientRect();
+      return { scrolls: pm.scrollHeight > pm.clientHeight, okIn: ok.top >= r.top - 1 && ok.bottom <= r.bottom + 1 && ok.height > 0, scrolled: pm.classList.contains("scrolled"),
+        corner: !corner.hidden && c.height > 0, top: Math.round(c.top - vp.top), leftOfCube: c.right <= cube.left, okTitle: corner.querySelector(".mc-ok").title };
+    }, [pmSel, cornerSel]);
+    await kp.waitForTimeout(100);
+    const sk = await reach("#mc-pm", "#mc-confirm");
+    check(sk.scrolls && sk.okIn && sk.corner && sk.top <= 16 && sk.leftOfCube && sk.okTitle === "Exit sketch (Enter)",
+      `✓ reach: the sketch panel's ✓ stays in view when the panel is scrolled, and the corner sits at the top right of the view (${JSON.stringify(sk)})`);
+    await kp.waitForTimeout(100);
+    const sc = await kp.evaluate(() => document.querySelector("#mc-pm").classList.contains("scrolled"));
+    // The panel ✓ exits the sketch.
+    await kp.click("#mc-pm .pm-top .pm-ok");
+    await kp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    const exited = await kp.evaluate(() => ({ hidden: document.querySelector("#mc-confirm").hidden, sketches: window.__sv.model.store.doc.features.filter(f => f.type === "sketch").length }));
+    check(sc && exited.hidden && exited.sketches === 1, `✓ reach: a scrolled panel marks its title row; the panel ✓ exits the sketch and the corner goes (${sc}, ${JSON.stringify(exited)})`);
+    // Assembly: the Explode panel's ✓/✕ are mirrored in the corner.
+    await kp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await kp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await kp.click("#new-more"); await kp.click("#new-asm-part");
+    await kp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && document.querySelector("#app").classList.contains("asm"), null, { timeout: 120000 });
+    const before = await kp.evaluate(() => !document.querySelector("#asm-confirm").hidden);
+    await kp.click('#asm-tools [data-ac="explode"]');
+    await kp.waitForFunction(() => !document.querySelector("#asm-confirm").hidden);
+    const ac = await kp.evaluate(() => { const c = document.querySelector("#asm-confirm"), r = c.getBoundingClientRect(), vp = document.querySelector("#viewport").getBoundingClientRect(); return { top: Math.round(r.top - vp.top), cancel: !c.querySelector(".mc-cancel").hidden }; });
+    await kp.click("#asm-confirm .mc-ok");
+    await kp.waitForFunction(() => document.querySelector("#asm-pm").hidden || !document.querySelector("#asm-pm .pm-top"));
+    const after = await kp.evaluate(() => document.querySelector("#asm-confirm").hidden);
+    check(!before && ac.top <= 16 && ac.cancel && after, `✓ reach: the assembly corner shows only while a panel with ✓ is open, and its ✓ closes the panel (${before}, ${JSON.stringify(ac)}, ${after})`);
+    await ctx.close();
+  }
+
   // --- Drawings: a model view of another part configuration (FR-DRW-010) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
