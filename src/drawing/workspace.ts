@@ -1052,7 +1052,7 @@ export class DrawingWorkspace {
   }
 
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
-  private pickAt(viewId: string, p: Pt, only?: "circle"): Pick | null {
+  private pickAt(viewId: string, p: Pt, only?: "circle", first = false): Pick | null {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
@@ -1071,8 +1071,10 @@ export class DrawingWorkspace {
         if (d < bd) { bd = d; best = { kind: "pt", ref, e }; }
       }
     }
-    if (best) return best;
-    bd = tol;
+    // A circle right under the cursor beats a point that is not (a small hole's own centre, a nearby centre or line end), so
+    // circles smaller than the snap radius can still be picked (exam bug 37).
+    const pt = best, pd = bd;
+    best = null; bd = tol;
     for (const e of topo.edges) {
       if (e.t === "l" && !only) {
         const a = S(e.a), b = S(e.b), dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
@@ -1082,9 +1084,15 @@ export class DrawingWorkspace {
         if (d < bd && inDetail(fromSheet(pl, q[0], q[1]))) { bd = d; best = { kind: "line", ref: edgeRef(e, "e"), e }; }
       } else if (endOn(e) && e.c && e.r) {
         const c = S(e.c), R = e.r * pl.s, d = Math.abs(Math.hypot(p[0] - c[0], p[1] - c[1]) - R);
-        if (d < bd && inDetail(fromSheet(pl, p[0], p[1]))) { bd = d; best = { kind: "circle", ref: edgeRef(e, "e"), e }; }
+        // Arcs of one circle seen end-on lie on top of each other: on a tie the fuller one wins, so a whole circle gives a Ø (exam bug 36).
+        const tie = best?.kind === "circle" && Math.abs(d - bd) < 1e-6 && (e.sp ?? 0) > (best.e.sp ?? 0) + 1e-6;
+        if ((d < bd - 1e-6 || tie) && inDetail(fromSheet(pl, p[0], p[1]))) { bd = Math.min(bd, d); best = { kind: "circle", ref: edgeRef(e, "e"), e }; }
       }
     }
+    // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
+    // intersection curve on a shaft): a lone point makes no dimension.
+    const onCircle = best?.kind === "circle" && bd < tol * 0.3;
+    if (pt && !(onCircle && (pd > bd + tol * 0.3 || (first && pt.e !== best!.e && pt.e.t !== "c")))) return pt;
     return best;
   }
 
@@ -1166,7 +1174,7 @@ export class DrawingWorkspace {
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
-      const pick = this.pickAt(vid, p);
+      const pick = this.pickAt(vid, p, undefined, !m.picks.length);
       const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref);
       if (!m.picks.length) { if (!pick) return; m.view = vid; m.picks = [pick]; }
       else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e)) m.picks.push(pick);
@@ -1388,7 +1396,7 @@ export class DrawingWorkspace {
     let s = "";
     if (m.kind === "dim") {
       for (const pk of m.picks) s += show(pk, "drw-edge on");
-      const hov = this.pickAt(vid, at);
+      const hov = this.pickAt(vid, at, undefined, !m.picks.length);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
         const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);
