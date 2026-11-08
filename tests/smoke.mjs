@@ -2981,6 +2981,17 @@ try {
       await mp.evaluate(() => document.querySelector("#lang-btn").click());
       return r;
     })();
+    // 1.152.0: 3-point rectangle and parallelogram from the Rectangle menu (FR-SK-013).
+    await mp.click('#mc-tools [data-fly="rect"]');
+    const rfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    const nl0 = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").length);
+    await click([5, -5]); await click([25, -12]); await click([20, -18]);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("pgram"));
+    await click([40, -5]); await click([60, -5]); await click([66, -16]);
+    const quads = await mp.evaluate(n0 => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const ls = sk.ents.filter(e => e.t === "line").slice(n0); const last = ls.slice(-4); const d = last.map(l => [P(l.a).x, P(l.a).y]); return { n: ls.length, perp: sk.rels.filter(r => r.t === "perpendicular").length, par: sk.rels.filter(r => r.t === "parallel").length, fourth: d[3].map(v => Math.round(v * 100) / 100), ok: ed.info.status }; }, nl0);
+    check(rfly === "Corner rectangle|Centre rectangle|3-point corner rectangle|3-point centre rectangle|Parallelogram|Polygon" && quads.n === 8 && quads.perp === 1 && quads.par >= 4 && quads.fourth.join(",") === "46,-16" && quads.ok === "ok",
+      `model 1.152: 3-point rectangle and parallelogram (${rfly}, ${JSON.stringify(quads)})`);
     check(ru === "Добавить размеры", `model 1.144: Add dimensions in Russian (${ru})`);
     await ctx.close();
   }
@@ -7597,6 +7608,14 @@ try {
     const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
+    await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.waitForTimeout(100);
+    const ct = await mp.evaluate(() => {
+      const hl = window.__sv.modeller.decor.children.filter(o => o.isMesh && o.material?.opacity === 0.45);
+      return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
+    });
+    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["SHS 50x50x4 × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();

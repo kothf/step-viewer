@@ -23,6 +23,7 @@ import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
+import { quadCorners } from "./shapes";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -51,7 +52,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "rect3" | "crect3" | "pgram" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -623,6 +624,27 @@ export class SketchEditor {
         }
         finish(this.tool === "rect" ? "Add rectangle" : "Add centre rectangle");
       }
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      return;
+    }
+    if (this.tool === "rect3" || this.tool === "crect3" || this.tool === "pgram") {
+      // 3-point rectangles and the parallelogram (FR-SK-013, P2): two clicks set the first side (any angle), the third the other.
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      if (d.pts.length < 2) { d.pts.push(p); d.ids.push(s.id); if (d.pts.length === 1) d.snapCurve = s.curve; this.render(); return; }
+      const q = quadCorners(this.tool, d.pts[0], d.pts[1], p);
+      if (!q) return;
+      const centred = this.tool === "crect3";
+      const ids = q.map((c, i) => this.usePoint(c, centred ? null : i === 0 ? d.ids[0] : i === 1 ? d.ids[1] : i === 2 && this.tool === "pgram" ? s.id : null, !centred && i === 0 ? d.snapCurve ?? null : null, rels));
+      const lines = ids.map((a, i) => { const id = uid("l"); this.sk.ents.push({ id, t: "line", a, b: ids[(i + 1) % 4] }); return id; });
+      if (this.tool !== "pgram") rels.push({ id: uid("r"), t: "perpendicular", e: [lines[0], lines[1]] });
+      rels.push({ id: uid("r"), t: "parallel", e: [lines[0], lines[2]] }, { id: uid("r"), t: "parallel", e: [lines[1], lines[3]] });
+      if (centred) {
+        const diag = uid("l");
+        this.sk.ents.push({ id: diag, t: "line", a: ids[0], b: ids[2], cons: true });
+        rels.push({ id: uid("r"), t: "midpoint", e: [d.ids[0] === ORIGIN ? ORIGIN : this.usePoint(d.pts[0], d.ids[0], d.snapCurve ?? null, rels), diag] });
+      }
+      finish(this.tool === "pgram" ? "Add parallelogram" : centred ? "Add 3-point centre rectangle" : "Add 3-point rectangle");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
       return;
@@ -2143,6 +2165,9 @@ export class SketchEditor {
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       intersect: "Click model faces: the curves where the sketch plane cuts them are added",
       slot: "Click the two centres, then the width",
+      rect3: "Click two corners for the first side, then the width",
+      crect3: "Click the centre, the middle of a side, then a corner",
+      pgram: "Click three corners; the fourth follows",
       cslot: "Click the slot's centre, then one end, then the width",
       aslot: "Click the arc's centre, the start, the end (counter-clockwise), then the width",
       aslot3: "Click the start, the end, a point on the arc, then the width",
@@ -2269,6 +2294,10 @@ export class SketchEditor {
       else if (this.tool === "rect" || this.tool === "crect") {
         const [x0, y0] = this.tool === "rect" ? a : [2 * a[0] - p[0], 2 * a[1] - p[1]];
         poly([[x0, y0], [p[0], y0], [p[0], p[1]], [x0, p[1]], [x0, y0]], C.pre);
+      } else if (this.tool === "rect3" || this.tool === "crect3" || this.tool === "pgram") {
+        const q = d.pts.length === 2 ? quadCorners(this.tool, d.pts[0], d.pts[1], p) : null;
+        if (q) poly([...q, q[0]], C.pre);
+        else poly([d.pts[0], d.pts.length === 2 ? d.pts[1] : p], C.pre);
       } else if (this.tool === "polygon") {
         const r = Math.hypot(p[0] - a[0], p[1] - a[1]), a0 = Math.atan2(p[1] - a[1], p[0] - a[0]), n = this.polySides;
         poly(Array.from({ length: n + 1 }, (_, i) => [a[0] + r * Math.cos(a0 + (2 * Math.PI * i) / n), a[1] + r * Math.sin(a0 + (2 * Math.PI * i) / n)] as V2), C.pre);
