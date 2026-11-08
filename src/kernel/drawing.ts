@@ -198,13 +198,37 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
 }
 
 /** A section view (FR-DRW-012): `view.dir` is the plane's normal, pointing at the viewer; material on the viewer's side of the plane through `p` is cut away. `cut` holds the cut faces as closed 2D loops (outer and holes alike; fill them even-odd). */
-export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[]): Projection {
+/**
+ * `stair` (offset and half sections): the cutter is a staircase polygon of (t, o) points in the plane through `o`
+ * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
+ * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
+ */
+export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any } = {}): Projection {
   const { x, y, n } = viewAxes(view);
   const info = shapeInfo(oc, shape);
   const [lo, hi] = info.box;
   const L = 2 * Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 10;
   let box: any;
-  if (poly && poly.length >= 6) {
+  const st = opts.stair;
+  if (st) {
+    const { o, e, m } = st;
+    const w: V3 = [e[1] * m[2] - e[2] * m[1], e[2] * m[0] - e[0] * m[2], e[0] * m[1] - e[1] * m[0]];
+    const far = L + Math.hypot(o[0] - (lo[0] + hi[0]) / 2, o[1] - (lo[1] + hi[1]) / 2, o[2] - (lo[2] + hi[2]) / 2);
+    const cl = (k: number) => Math.abs(k) >= 1e8 ? Math.sign(k) * far : k;
+    const mp = new oc.BRepBuilderAPI_MakePolygon_1();
+    let last: number[] | null = null;
+    for (let i = 0; i + 1 < st.pts.length; i += 2) {
+      const t = cl(st.pts[i]), k = cl(st.pts[i + 1]);
+      const q = [0, 1, 2].map(j => o[j] + e[j] * t + m[j] * k - w[j] * far);
+      if (last && Math.hypot(q[0] - last[0], q[1] - last[1], q[2] - last[2]) < 1e-7) continue;
+      mp.Add_1(new oc.gp_Pnt_3(q[0], q[1], q[2]));
+      last = q;
+    }
+    mp.Close();
+    if (!mp.IsDone()) throw new Error("The section could not be cut");
+    const face = new oc.BRepBuilderAPI_MakeFace_15(mp.Wire(), true).Face();
+    box = new oc.BRepPrimAPI_MakePrism_1(face, new oc.gp_Vec_4(w[0] * 2 * far, w[1] * 2 * far, w[2] * 2 * far), false, true).Shape();
+  } else if (poly && poly.length >= 6) {
     // Broken-out section (FR-DRW-015): only the material inside the outline (view axes u, v),
     // from the plane through p towards the viewer, is taken away.
     const d = dot(p, n);
@@ -226,7 +250,13 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
   cutter.Build(new oc.Message_ProgressRange_1());
   if (!cutter.IsDone()) throw new Error("The section could not be cut");
   const rest = cutter.Shape();
-  const proj = project(oc, rest, view, tol);
+  let drawn = rest;
+  if (opts.keep) {
+    const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
+    b.MakeCompound(c); b.Add(c, rest); b.Add(c, opts.keep);
+    drawn = c;
+  }
+  const proj = project(oc, drawn, view, tol);
   // Faces on the cutting plane: their wires, flattened into the view's axes.
   const cut: number[][] = [];
   const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
@@ -236,7 +266,8 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) continue;
     const pl = ad.Plane(), dn = pl.Axis().Direction(), lp = pl.Location();
     if (Math.abs(Math.abs(dn.X() * n[0] + dn.Y() * n[1] + dn.Z() * n[2]) - 1) > 1e-7) continue;
-    if (Math.abs(lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2] - d0) > 1e-5) continue;
+    const ld = lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2];
+    if (!(st ? st.planes : [d0]).some(d => Math.abs(ld - d) <= 1e-5)) continue;
     for (const wx = new oc.TopExp_Explorer_2(f, A.TopAbs_WIRE, A.TopAbs_SHAPE); wx.More(); wx.Next()) {
       const loop: number[] = [];
       for (const it = new oc.BRepTools_WireExplorer_2(oc.TopoDS.Wire_1(wx.Current())); it.More(); it.Next()) {

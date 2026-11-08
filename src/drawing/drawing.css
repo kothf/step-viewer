@@ -99,3 +99,6 @@ circle.drw-edge { fill: none; }
 .drw-tb-cells input:not([type]) { width: 120px; }
 .drw-tb-cells td { padding: 2px 4px 2px 0; }
 .drw-tb-dlg label.btn input[type=file] { display: none; }
+.drw-fs { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 8px 0 0; }
+.drw-fs legend { font-size: 12px; padding: 0 4px; }
+.drw-exlist { max-height: 160px; overflow-y: auto; }

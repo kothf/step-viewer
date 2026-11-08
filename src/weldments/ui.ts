@@ -182,10 +182,10 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
   }
   return {
     title: t("Fillet Bead"),
-    body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length"))
+    body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length") + chk("wTangent", f.tangent !== false, t("Tangent propagation")))
       + group(t("Face set 1"), box("wf1", t("Faces"), faces(f.faces1.length)) + (f.faces1.length ? `<button class="btn small" data-k="wclear" data-wlist="faces1">${esc(t("Clear faces"))}</button>` : ""))
       + group(t("Face set 2"), box("wf2", t("Faces"), faces(f.faces2.length)) + (f.faces2.length ? `<button class="btn small" data-k="wclear" data-wlist="faces2">${esc(t("Clear faces"))}</button>` : "")
-        + help(t("Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2."))),
+        + help(t("Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2. With tangent propagation it follows on round corners."))),
   };
 }
 
@@ -223,6 +223,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
+  if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
   return null;
 }
 

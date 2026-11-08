@@ -2,6 +2,7 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
+import type { Stair } from "./views";
 import { geometryDiff, project, readShape, section, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
@@ -13,7 +14,7 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir }
-  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[] }
+  | { id: number; type: "section"; view: ViewDir; p: V3; poly?: number[]; stair?: Stair; exclude?: string[] }
   | { id: number; type: "alt"; view: ViewDir; moves: { comp: string; tf: number[] }[] }
   /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
   | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
@@ -106,7 +107,20 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true, proj: n ? project(oc, comp, r.view) : { vis: [], hid: [], box: [0, 0, 0, 0], ms: 0 } });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
-      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p, 0.02, r.poly) });
+      // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
+      let cutShape = shape, keep: any;
+      if (r.exclude?.length && placedShapes.length) {
+        const out = (id: string) => r.exclude!.some(x => id === x || id.startsWith(`${x}/`));
+        const b = new oc.BRep_Builder(), a = new oc.TopoDS_Compound(), k = new oc.TopoDS_Compound();
+        b.MakeCompound(a); b.MakeCompound(k);
+        let na = 0, nk = 0;
+        for (const pc of placedShapes) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
+        if (nk) {
+          if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
+          cutShape = a; keep = k;
+        }
+      }
+      post({ id: r.id, ok: true, proj: section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep }) });
     }
   } catch (err) {
     post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });

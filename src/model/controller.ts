@@ -23,7 +23,7 @@ import { parseXyz } from "./curves";
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -50,7 +50,10 @@ import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { lang, onLangChange, t } from "../i18n";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
-import type { EndCapFeature } from "../weldments/types";
+import type { EndCapFeature, GussetFeature } from "../weldments/types";
+
+/** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
+type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
 
 export interface ModelHost {
   viewer: Viewer;
@@ -95,12 +98,12 @@ type Mode =
 /** Which selection box of the feature panel the next click in the view fills. */
 type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "hupto" | "upbody" | "mthick" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
-type BodyFeature = IntersectFeature | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
+type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
-const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
+const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "indent" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
 const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern";
 /** A sketch's free points (not the ends or centres of its curves): where a sketch-driven pattern puts copies. */
 function freePoints(sk: Feature): { id: string; x: number; y: number }[] {
@@ -144,7 +147,7 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦" };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦" };
 const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -268,8 +271,10 @@ export class ModelController {
   private sketchMark = 0;
   /** The depth arrow of an extrude (FR-FT-017): its mesh, and the drag in progress. */
   /** Drag handle: the extrude depth arrow, or the revolve angle handle (`ang` set: centre on the axis, unit axis, radius vector at 0°). */
-  private arrow: { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } } | null = null;
-  private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number } | null = null;
+  /** `key`: the feature's number it drags; `label`: its value button. Several may show (gusset legs); `arrow` is the one in use. */
+  private arrow: DragArrow | null = null;
+  private arrows: DragArrow[] = [];
+  private arrowDrag: { start: number; depth: number; moved: boolean; raw?: number; key?: string } | null = null;
 
   constructor(private host: ModelHost, occtBase: string) {
     this.kernel = new ModelKernel(occtBase);
@@ -633,7 +638,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -700,11 +705,12 @@ export class ModelController {
       const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
       if (threadEdge) this.setThreadEdge(th, threadEdge);
       draft = th;
-    } else if (type === "combine" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
+    } else if (type === "combine" || type === "indent" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const nm = nextName(d, type);
       draft = type === "intersect" ? { id, type, name: nm, bodies: [], exclude: [] } satisfies IntersectFeature
         : type === "combine" ? { id, type, name: nm, op: "add", tools: [] } satisfies CombineFeature
+        : type === "indent" ? { id, type, name: nm, tools: [], thickness: { v: 2 }, clearance: { v: 0 } } satisfies IndentFeature
         : type === "bsplit" ? { id, type, name: nm, bodies: [] } satisfies SplitBodyFeature
         : type === "delbody" ? { id, type, name: nm, bodies: [] } satisfies DeleteBodyFeature
         : type === "scale" ? { id, type, name: nm, bodies: [], about: "centroid", factor: { v: 1 } } satisfies ScaleFeature
@@ -794,7 +800,7 @@ export class ModelController {
       : type === "spattern" ? ((draft as SketchPatternFeature).sketch || (draft as CopyFeature).features.length ? "seeds" : "psketch")
       : type === "tpattern" ? "seeds"
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
-      : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
+      : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
     this.host.clearPick();
@@ -925,6 +931,7 @@ export class ModelController {
     if (f.type === "curve" && f.kind === "projected" && !f.sketch) { toast(t("Pick a sketch to project."), true); return; }
     if (f.type === "sweep" && !f.profile && !f.circular) { toast(t("Pick a profile sketch, or use a circular profile."), true); return; }
     if (f.type === "combine" && (!f.main || !f.tools.length)) { toast(t("Pick the main body and at least one other body."), true); return; }
+    if (f.type === "indent" && (!f.main || !f.tools.length)) { toast(t("Pick the target body and at least one tool body."), true); return; }
     if (f.type === "bsplit" && !f.plane) { toast(t("Pick a plane or a flat face to split with."), true); return; }
     if ((f.type === "delbody" || f.type === "movebody") && !f.bodies.length) { toast(t("Pick the bodies."), true); return; }
     if ((f.type === "delface" || f.type === "moveface") && !f.faces.length) { toast(t("Pick the faces."), true); return; }
@@ -2175,8 +2182,8 @@ export class ModelController {
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const fr = hit ? this.faceRef(hit.faceId) : null;
     if (!fr || own(fr.name)) { toast(t("Click a face of a body.")); return; }
-    if (f.type === "combine" && (m.focus === "main" || !f.main)) { f.main = fr; m.focus = "bodies"; this.draftChanged(); return; }
-    const list = f.type === "combine" ? f.tools : f.bodies;
+    if ((f.type === "combine" || f.type === "indent") && (m.focus === "main" || !f.main)) { f.main = fr; m.focus = "bodies"; this.draftChanged(); return; }
+    const list = f.type === "combine" || f.type === "indent" ? f.tools : f.bodies;
     const near = (x: FaceRef) => x.name === fr.name && (!x.hint || !fr.hint || Math.hypot(x.hint[0] - fr.hint[0], x.hint[1] - fr.hint[1], x.hint[2] - fr.hint[2]) < 1e-3);
     const i = list.findIndex(near);
     if (i >= 0) list.splice(i, 1); else list.push(fr);
@@ -2416,6 +2423,7 @@ export class ModelController {
     }
     this.decor.clear();
     this.arrow = null;
+    this.arrows = [];
     document.getElementById("mc-layer")?.replaceChildren();
     this.planeMeshes = [];
     this.lineMats = [];
@@ -2704,9 +2712,10 @@ export class ModelController {
   // ---------- extrude depth arrow (FR-FT-017, FR-UI-027) ----------
 
   /** The extrude or revolve being edited, or the one selected in the tree (dragging it edits it at once). */
-  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | null {
+  private arrowFeature(): ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | null {
     const m = this.mode;
-    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid")) || (f?.type === "endcap" && f.faces.length > 0);
+    const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
+      || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2);
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
     if (m.kind !== "none" || !this.selected) return null;
     const f = this.store?.feature(this.selected);
@@ -2717,10 +2726,19 @@ export class ModelController {
   }
 
   private drawArrow() {
+    // While dragging, the redrawn arrows keep the one in use (a gusset has two).
+    const using = this.arrowDrag?.key;
+    this.drawArrows();
+    if (using) this.arrow = this.arrows.find(a => a.key === using) ?? this.arrow;
+  }
+
+  private drawArrows() {
     this.arrow = null;
+    this.arrows = [];
     const f = this.arrowFeature();
     if (!f) return;
     if (f.type === "endcap") { this.drawCapArrow(f); return; }
+    if (f.type === "gusset") { this.drawGussetArrows(f); return; }
     const sk = this.store!.feature(f.sketch);
     if (sk?.type !== "sketch") return;
     const fr = this.frameOf(sk);
@@ -2733,20 +2751,7 @@ export class ModelController {
     if (f.start === "offset") base.addScaledVector(new THREE.Vector3(...fr.n), (f.startOffset?.v ?? 0) * (f.startReverse ? -1 : 1));
     const dir = new THREE.Vector3(...fr.n).multiplyScalar((f.op === "cut" ? -1 : 1) * (f.flip ? -1 : 1));
     const mid = f.end === "mid";
-    const tip = base.clone().addScaledVector(dir, mid ? f.depth.v / 2 : f.depth.v);
-    const obj = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10).translate(0, 0.5, 0), mat);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 18).translate(0, 1.25, 0), mat);
-    // A fat invisible cylinder is what the pointer hits.
-    const pick = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.6, 8).translate(0, 0.8, 0), new THREE.MeshBasicMaterial({ visible: false }));
-    obj.add(shaft, head, pick);
-    obj.position.copy(tip);
-    obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    obj.renderOrder = 2600;
-    shaft.renderOrder = head.renderOrder = 2600;
-    this.decor.add(obj);
-    this.arrow = { obj, pick, base, dir, scale: 1, mid };
+    this.placeArrow(base, dir, f.depth.v, mid, "depth");
     this.handleLabel(f.id, "depth", t("Drag the arrow to change the depth; click to type it"));
   }
 
@@ -2765,12 +2770,37 @@ export class ModelController {
     const fi = data.faces[best];
     const base = new THREE.Vector3(...fi.center);
     const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(f.inward ? -1 : 1);
-    this.placeArrow(base, dir, f.thickness.v, false);
+    this.placeArrow(base, dir, f.thickness.v, false, "thickness");
     this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
   }
 
-  /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it). */
-  private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean) {
+  /** The leg arrows of a gusset (FR-FT-121): from the inner corner along each supporting face. */
+  private drawGussetArrows(f: GussetFeature) {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return;
+    const faceOf = (name: string) => { const i = names.indexOf(name); const fi = i >= 0 ? data.faces[i] : undefined; return fi?.type === "plane" && fi.normal ? fi : null; };
+    // The plate's faces lying on face 1 and face 2 (their normals point away from those faces).
+    const on1 = faceOf(`${f.id}:on1`), on2 = faceOf(`${f.id}:on2`);
+    if (!on1 || !on2) return;
+    const n1 = new THREE.Vector3(...on1.normal!).negate(), n2 = new THREE.Vector3(...on2.normal!).negate();
+    const L = n1.clone().cross(n2);
+    if (L.length() < 1e-6) return;
+    L.normalize();
+    const leg = (n: THREE.Vector3, other: THREE.Vector3) => { const d = L.clone().cross(n).normalize(); return d.dot(other) < 0 ? d.negate() : d; };
+    const u1 = leg(n1, n2), u2 = leg(n2, n1);
+    const c = Math.min(f.chamfer?.v ?? 0, Math.min(f.d1.v, f.d2.v) * 0.9);
+    // Each face runs from the chamfer (or the corner) to the leg's end along its leg: its centre is half way.
+    const P = new THREE.Vector3(...on1.center).addScaledVector(u1, -(c + f.d1.v) / 2);
+    const P2 = new THREE.Vector3(...on2.center).addScaledVector(u2, -(c + f.d2.v) / 2);
+    P.add(P2).multiplyScalar(0.5);
+    this.placeArrow(P.clone(), u1, f.d1.v, false, "d1");
+    this.handleLabel(f.id, "d1", t("Drag the arrow to change the length along face 1; click to type it"));
+    this.placeArrow(P.clone(), u2, f.d2.v, false, "d2");
+    this.handleLabel(f.id, "d2", t("Drag the arrow to change the length along face 2; click to type it"));
+  }
+
+  /** A straight drag arrow from `base` along `dir`, its tip at `value` (Mid plane: half of it), dragging the number `key`. */
+  private placeArrow(base: THREE.Vector3, dir: THREE.Vector3, value: number, mid: boolean, key: string) {
     const obj = new THREE.Group();
     const mat = new THREE.MeshBasicMaterial({ color: 0xf08c00, depthTest: false, transparent: true });
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1, 10).translate(0, 0.5, 0), mat);
@@ -2781,7 +2811,8 @@ export class ModelController {
     obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     obj.renderOrder = shaft.renderOrder = head.renderOrder = 2600;
     this.decor.add(obj);
-    this.arrow = { obj, pick, base, dir, scale: 1, mid };
+    this.arrow = { obj, pick, base, dir, scale: 1, mid, key };
+    this.arrows.push(this.arrow);
   }
 
   private handleLabel(id: string, num: string, title: string) {
@@ -2793,6 +2824,8 @@ export class ModelController {
       setTimeout(() => ($("#mc-pm").querySelector<HTMLInputElement>(`input[data-num=${num}]`))?.focus(), 0);
     });
     $("#mc-layer").appendChild(label);
+    const a = this.arrows.at(-1);
+    if (a) a.label = label;
     this.sizeArrow();
   }
 
@@ -2824,7 +2857,8 @@ export class ModelController {
     const obj = new THREE.Group();
     obj.add(arc, head);
     this.decor.add(obj);
-    this.arrow = { obj, pick, base: c, dir: u, scale: 1, mid: !!f.mid, ang: { c, u, r, arc, head } };
+    this.arrow = { obj, pick, base: c, dir: u, scale: 1, mid: !!f.mid, key: "angle", ang: { c, u, r, arc, head } };
+    this.arrows.push(this.arrow);
     this.placeAngle(f.angle.v);
     this.handleLabel(f.id, "angle", t("Drag the handle to change the angle; click to type it"));
   }
@@ -2860,22 +2894,23 @@ export class ModelController {
 
   /** Keeps the arrow a constant size on screen and its value label beside the tip. */
   private sizeArrow() {
-    const a = this.arrow;
-    if (!a) return;
     const v = this.host.viewer;
+    const f = this.arrowFeature();
+    for (const a of this.arrows) {
     const holder = a.ang ? a.ang.head : a.obj;
     const px = v.pxWorld(holder.position);
     a.scale = px * 70;
     holder.scale.setScalar(a.scale);
-    const label = $("#mc-layer").querySelector<HTMLElement>(".mc-handle");
-    const f = this.arrowFeature();
+    const label = a.label;
     if (label && f) {
       const tip = a.ang ? a.ang.head.position.clone().add(a.ang.head.position.clone().sub(a.ang.c).setLength(a.scale * 0.9)) : a.obj.position.clone().addScaledVector(a.dir, a.scale * 1.5);
       const s = tip.project(v.camera);
       label.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       label.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
-      label.textContent = f.type === "revolve" ? `${trimNum((f.angle.v * 180) / Math.PI, 2)}°`
-        : `${trimNum((f.type === "endcap" ? f.thickness.v : f.depth.v) * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+      const val = (f as unknown as Record<string, Num | undefined>)[a.key]?.v ?? 0;
+      label.textContent = a.key === "angle" ? `${trimNum((val * 180) / Math.PI, 2)}°`
+        : `${trimNum(val * UNITS[units.current].f, units.decimals ?? this.doc.units.decimals)} ${units.current}`;
+    }
     }
   }
 
@@ -2886,10 +2921,14 @@ export class ModelController {
     return rc;
   }
 
+  /** Whether the pointer is on a drag arrow; the one hit becomes the arrow in use. */
   private arrowHit(e: PointerEvent) {
-    if (!this.arrow) return false;
-    this.arrow.obj.updateMatrixWorld(true);
-    return this.ray(e).intersectObject(this.arrow.pick, false).length > 0;
+    const ray = this.ray(e);
+    for (const a of this.arrows) {
+      a.obj.updateMatrixWorld(true);
+      if (ray.intersectObject(a.pick, false).length) { this.arrow = a; return true; }
+    }
+    return false;
   }
 
   /** Distance along the arrow's axis to the point nearest the pointer's ray. */
@@ -2904,16 +2943,19 @@ export class ModelController {
 
   private startArrowDrag(e: PointerEvent) {
     const f = this.arrowFeature();
-    if (!f) return;
+    if (!f || !this.arrow) return;
+    const key = this.arrow.key;
     // Selected in the tree (no command open): dragging edits the feature and applies on release (Instant3D).
     if (this.mode.kind === "none") {
       const i = this.doc.features.findIndex(x => x.id === f.id);
       this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false, instant: true };
       this.renderAll();
+      // The arrows were drawn again: keep dragging the same one.
+      this.arrow = this.arrows.find(a => a.key === key) ?? this.arrow;
     }
     this.arrowDrag = f.type === "revolve"
-      ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e) }
-      : { start: this.axisParam(e), depth: f.type === "endcap" ? f.thickness.v : f.depth.v, moved: false };
+      ? { start: 0, depth: f.angle.v, moved: false, raw: this.pointerAngle(e), key }
+      : { start: this.axisParam(e), depth: (f as unknown as Record<string, Num>)[key].v, moved: false, key };
     const canvas = this.host.viewer.renderer.domElement;
     canvas.style.cursor = "grabbing";
     // Keep getting the moves and the release when the pointer leaves the view.
@@ -2923,8 +2965,8 @@ export class ModelController {
   private moveArrow(e: PointerEvent) {
     const m = this.mode, d = this.arrowDrag, a = this.arrow;
     if (m.kind === "feature" && m.draft.type === "revolve" && d && a?.ang) { this.moveAngle(e, m.draft, d); return; }
-    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap") || !d || !a) return;
-    const key = m.draft.type === "endcap" ? "thickness" : "depth";
+    if (m.kind !== "feature" || (m.draft.type !== "extrude" && m.draft.type !== "endcap" && m.draft.type !== "gusset") || !d || !a) return;
+    const key = a.key;
     const k = a.mid ? 2 : 1;
     let v = d.depth + (this.axisParam(e) - d.start) * k;
     // Round to a step that suits the zoom (Shift: finer).
@@ -2933,7 +2975,7 @@ export class ModelController {
     const fu = UNITS[units.current].f;
     v = (Math.round((v * fu) / step) * step) / fu;
     if (!(v > 1e-6)) v = step / fu;
-    const draft = m.draft as { depth?: Num; thickness?: Num };
+    const draft = m.draft as unknown as Record<string, Num>;
     if (Math.abs(v - draft[key]!.v) < 1e-12) return;
     d.moved = true;
     draft[key] = { v };
@@ -3455,7 +3497,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": showCutList(this.last?.cutList, this.doc); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
@@ -4254,7 +4296,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || (key === "angle" && f.type === "member") || /^vpitch\.0\.h$/.test(key))) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || (key === "angle" && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
@@ -4293,6 +4335,7 @@ export class ModelController {
         if (k === "mode" && (f.type === "axis" || f.type === "point")) { upd(() => { (f as { mode: string }).mode = String(val); delete f.edge; delete f.face; if (f.type === "axis") delete f.planes; if (f.type === "point") delete f.at; }, true); return; }
         if (k === "mode" && f.type === "plane") { upd(() => { f.mode = val as "offset" | "angle"; if (f.mode === "angle") { f.angle ??= { v: Math.PI / 4 }; if (!f.axis) m.focus = "axis"; } else m.focus = "base"; }, true); return; }
         if (k === "dkind" && f.type === "draft") { upd(() => { if (val === "parting") { f.kind = "parting"; f.parting ??= []; f.faces = []; } else { delete f.kind; delete f.parting; delete f.other; } m.focus = f.plane ? "faces" : "nplane"; }, true); return; }
+        if (k === "startTan" && f.type === "sweep") { upd(() => { if (val === "path") f.startTangent = true; else delete f.startTangent; }, true); return; }
         if (k === "ribDraft" && f.type === "rib") { upd(() => { if (val) f.draft = { v: Math.PI / 180 }; else { delete f.draft; delete f.draftOut; } }, true); return; }
         if ((k === "startC" || k === "endC") && f.type === "loft") { upd(() => { const key = k === "startC" ? "startNormal" : "endNormal"; if (val === "normal") f[key] = true; else delete f[key]; }, true); return; }
         if ((k === "startLen" || k === "endLen") && f.type === "loft") {
@@ -4480,7 +4523,7 @@ export class ModelController {
           if (k === "end" && val !== "offset") { delete g.upToOffset; delete g.reverseOffset; }
           if (k === "end" && val !== "blind" && val !== "mid") delete g.draft;
           if (k === "op" && val !== "cut" && g.end === "through2") g.end = "through";
-        }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes");
+        }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
@@ -4597,7 +4640,7 @@ export class ModelController {
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
-      if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; if (f.type === "intersect") f.exclude = []; this.draftChanged(); } });
+      if (isBodyOp(f)) { if (f.type === "combine" || f.type === "indent") f.tools = []; else f.bodies = []; if (f.type === "intersect") f.exclude = []; this.draftChanged(); } });
     if (f.type === "intersect") {
       pm.querySelector<HTMLButtonElement>('[data-k="keepAll"]')?.addEventListener("click", () => upd(() => { f.exclude = []; }, true));
       pm.querySelectorAll<HTMLInputElement>("input[data-rgn]").forEach(inp => inp.addEventListener("change", () => {
@@ -4988,6 +5031,8 @@ export class ModelController {
         + sel("swPath", t("Path"), paths))
         + group(t("Guide curve"), sel("swGuide", t("Guide curve"), opt("", t("None"), f.guide ? pathKey(f.guide) : "") + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), f.guide ? pathKey(f.guide) : "")).join("") + sketches.filter(s => s.id !== f.profile && (!f.path || !("sketch" in f.path) || s.id !== f.path.sketch)).map(s => opt(`s:${s.id}`, featureLabel(s.name), f.guide ? pathKey(f.guide) : "")).join(""))
           + (f.guide ? `<p class="pm-help muted">${esc(t("The profile grows, shrinks and turns so that its edge keeps touching the guide curve. Start the guide on the profile."))}</p>` : ""))
+        + (f.circular ? "" : group(t("Start and End Tangency"), `<label class="pm-field"><span>${esc(t("Start tangency"))}</span><select data-k="startTan"><option value=""${f.startTangent ? "" : " selected"}>${esc(t("None"))}</option><option value="path"${f.startTangent ? " selected" : ""}>${esc(t("Path tangent"))}</option></select></label>`
+          + (f.startTangent ? `<p class="pm-help muted">${esc(t("The profile is turned square to the path where the path starts."))}</p>` : "")))
         + group(t("Options"), (f.guide ? "" : orient(f.orient)) + (f.guide || f.orient === "normal" ? "" : chk("twistOn", !!f.twist, t("Twist along path")) + (f.twist ? numField("twist", t("Twist angle"), f.twist, "angle") : "")))
         + `<p class="pm-help muted">${esc(t("The profile moves along the path. A circular profile needs no sketch: it is centred on the start of the path, square to it."))}</p>` };
     }
@@ -5300,7 +5345,7 @@ export class ModelController {
     numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, chk: (k: string, on: boolean | undefined, label: string) => string): { title: string; body: string } {
     const box = (fc: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${focus === fc ? " focus" : ""}" data-focus="${fc}" translate="no">${esc(value)}</button></div>`;
     const n = (k: number) => t("{n} body|{n} bodies", { n: k });
-    const list = f.type === "combine" ? f.tools : f.bodies;
+    const list = f.type === "combine" || f.type === "indent" ? f.tools : f.bodies;
     const clear = list.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear bodies"))}</button>` : "";
     const count = this.last?.props?.bodies;
     const status = count ? `<p class="pm-help muted">${esc(t("The part has {n} body|The part has {n} bodies", { n: count }))}</p>` : "";
@@ -5310,6 +5355,12 @@ export class ModelController {
       return { title: t("Combine"), body: group(t("Operation type"), `<label class="pm-field"><span>${esc(t("Operation"))}</span><select data-k="op">${o("add", t("Add"))}${o("subtract", t("Subtract"))}${o("common", t("Common"))}</select></label>`)
         + group(t("Main body"), box("main", t("Body"), f.main ? t("Body picked") : t("None")))
         + group(f.op === "subtract" ? t("Bodies to subtract") : t("Bodies to combine"), box("bodies", t("Bodies"), n(f.tools.length)) + clear) + help + status };
+    }
+    if (f.type === "indent") {
+      return { title: t("Indent"), body: group(t("Selections"), box("main", t("Target body"), f.main ? t("Body picked") : t("None"))
+          + box("bodies", t("Tool bodies"), n(f.tools.length)) + clear)
+        + group(t("Parameters"), chk("cut", f.cut, t("Cut (no wall)")) + (f.cut ? "" : numField("thickness", t("Thickness"), f.thickness, "length")) + numField("clearance", t("Clearance"), f.clearance, "length"))
+        + `<p class="pm-help muted">${esc(t("The target body takes the shape of the tool bodies: they are cut out, grown by the clearance, and a wall of the thickness follows them on the side they press into. The tool bodies stay."))}</p>` + help + status };
     }
     if (f.type === "intersect") {
       const regions = this.last?.regions?.[f.id] ?? [];
@@ -5487,6 +5538,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["split", t("Split Line"), t("Split line: project a sketch onto faces to split them")],
   ["import", t("Insert body"), t("Insert body: a part, STEP, IGES or BREP file into this part, with check and heal")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
+  ["indent", t("Indent"), t("Indent: a body takes the shape of tool bodies pressed into it, with a wall or as a cut")],
   ["intersect", t("Intersect"), t("Intersect: solids and surfaces cut each other into regions; keep the ones you want")],
   ["bsplit", t("Split"), t("Split bodies with a plane into separate bodies")],
   ["movebody", t("Body-Move/Copy"), t("Move or copy bodies: translate and rotate")],
@@ -5540,6 +5592,7 @@ const ICON_SVG: Record<string, string> = {
   loftcut: S('<path d="M2 6h12v8H2z"/><path d="M5 12h3l3-4H9z" fill="currentColor" fill-opacity=".3"/>'),
   import: S('<path d="M8 2v8M5 7l3 3 3-3"/><path d="M3 11v3h10v-3"/>'),
   combine: S('<circle cx="6" cy="8" r="4"/><circle cx="10" cy="8" r="4"/>'),
+  indent: S('<path d="M2 7h4v3h4V7h4v4H2z"/><path d="M6 2h4v8H6z" stroke-dasharray="2 1.5"/>'),
   bsplit: S('<path d="M2 4h12v9H2z"/><path d="M9 2l-2 13"/>'),
   movebody: S('<path d="M2 9h6v5H2z"/><path d="M8 9l3-3h3v5l-3 3M9 3h5v5"/>'),
   scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
