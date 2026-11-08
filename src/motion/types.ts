@@ -88,4 +88,6 @@ export interface TracePath {
   plot?: "dist" | "speed" | "accel" | "x" | "y" | "z" | "angle" | "aspeed";
   /** Hidden in the view. */
   off?: boolean;
+  /** Sensor on the plotted quantity: out-of-range frames are marked on the timeline, and `stop` pauses playback where it trips. */
+  alert?: { min?: number; max?: number; stop?: boolean };
 }

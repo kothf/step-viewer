@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmBaseFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { BendCalc, BendPosition, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -448,6 +448,98 @@ export function breakCorner(prev: SheetState, f: SmCornerFeature): { state: Shee
     ops.push({ kind: "cut", M: panel.M, loop: [P1, V, P2], segs: [line("c0", P1, V), line("c1", V, P2), back] });
   }
   return { state: st, ops };
+}
+
+/** Closed corner (SolidWorks): each picked flange end face moves along its flange to the neighbouring flange,
+ * over that flange's end (overlap) or up to its inside face less the gap (underlap), and the neighbour's end
+ * facing it moves the other way to close the corner. The flat outlines move with them. */
+export function closedCorner(prev: SheetState, f: SmClosedFeature): { state: SheetState; ops: SheetOp[] } {
+  if (!f.faces.length) throw new SheetError("E-SM-NOFACE", "Pick the end faces of the flanges to close.");
+  const st = clone(prev);
+  const T = st.T, gap = Math.max(f.gap?.v ?? 0.1, 0);
+  const reach = 2 * T + st.R + gap + 1e-6;
+  const ops: SheetOp[] = [];
+  for (const ref of f.faces) {
+    const k = ref.name.lastIndexOf(":");
+    const pid = ref.name.slice(0, k), eid = ref.name.slice(k + 1);
+    const A = st.panels.find(p => p.id === pid);
+    const i = A ? A.outer.findIndex(x => x.ent === eid) : -1;
+    if (!A || i < 0) throw new SheetError("E-SM-ENDFACE", "Pick an end face of a flange (a side face across its thickness).");
+    const ea = endFace(A, i, T);
+    if (!ea) throw new SheetError("E-SM-CLOSEDSHAPE", "The end face must be flat and square to the flange's edges.");
+    // The nearest other flat face ahead whose planes the end face would cross, beside its outline.
+    let best: { B: Panel; near: number; far: number } | null = null;
+    for (const B of st.panels) {
+      if (B === A) continue;
+      const h = planeHits(ea.P, ea.dir, B, T);
+      if (!h || h.far < -1e-6 || !beside(B, add(ea.P, mul(ea.dir, (h.near + h.far) / 2)), reach)) continue;
+      if (!best || h.far < best.far) best = { B, ...h };
+    }
+    if (!best) throw new SheetError("E-SM-NOMATE", "No flange to close against was found beyond this face.");
+    const over = f.kind === "overlap";
+    moveEnd(A, i, over ? best.far : best.near - gap, ops);
+    // The neighbour's end facing this flange closes the rest: up to its inside face less the gap, or over it.
+    const B = best.B;
+    let back: { j: number; near: number; far: number } | null = null;
+    B.outer.forEach((_s, j) => {
+      const eb = endFace(B, j, T);
+      if (!eb) return;
+      const h = planeHits(eb.P, eb.dir, A, T);
+      if (!h || h.far < -1e-6 || h.near > reach || !beside(A, add(eb.P, mul(eb.dir, h.near)), reach)) return;
+      if (!back || h.near < back.near) back = { j, ...h };
+    });
+    if (back) { const bk = back as { j: number; near: number; far: number }; moveEnd(B, bk.j, over ? bk.near - gap : bk.far, ops); }
+  }
+  return { state: st, ops };
+}
+
+/** A flat end face of a panel: a straight piece with straight neighbours square to it; its middle and outward direction in 3D. */
+function endFace(A: Panel, i: number, T: number): { n: V2; P: V3; dir: V3 } | null {
+  const nO = A.outer.length;
+  const seg = A.outer[i], pre = A.outer[(i + nO - 1) % nO], nxt = A.outer[(i + 1) % nO];
+  if (seg.kind !== "line" || pre.kind !== "line" || nxt.kind !== "line") return null;
+  const l = d2(seg.a, seg.b);
+  if (l < 1e-9) return null;
+  // Out of the face: to the right of a counter-clockwise outline.
+  const n: V2 = [(seg.b[1] - seg.a[1]) / l, -(seg.b[0] - seg.a[0]) / l];
+  const skew = (s: Line) => { const u: V2 = [s.b[0] - s.a[0], s.b[1] - s.a[1]]; return Math.abs(u[0] * n[1] - u[1] * n[0]) / (Math.hypot(...u) || 1); };
+  if (skew(pre) > 1e-6 || skew(nxt) > 1e-6) return null;
+  const m: V2 = [(seg.a[0] + seg.b[0]) / 2, (seg.a[1] + seg.b[1]) / 2];
+  return { n, P: apply(A.M, [m[0], m[1], T / 2]), dir: applyDir(A.M, [n[0], n[1], 0]) };
+}
+
+/** Where a ray from P along dir crosses panel B's two faces (near and far), if it meets them squarely enough. */
+function planeHits(P: V3, dir: V3, B: Panel, T: number): { near: number; far: number } | null {
+  const den = dot(B.M.z, dir);
+  if (Math.abs(den) < 0.5) return null;
+  const h0 = dot(B.M.z, B.M.o) - dot(B.M.z, P);
+  const t0 = h0 / den, t1 = (h0 + T) / den;
+  return { near: Math.min(t0, t1), far: Math.max(t0, t1) };
+}
+
+/** A 3D point lies over panel B's outline, or within `reach` of it. */
+function beside(B: Panel, Q: V3, reach: number): boolean {
+  const q3 = local(B.M, Q), q: V2 = [q3[0], q3[1]];
+  return inPolygon(q, loopPolygon(B.outer)) || onLoop(B.outer, q, reach);
+}
+
+/** Moves panel A's end piece i out by d (back when negative): a strip joined on, or cut off, and the outline updated. */
+function moveEnd(A: Panel, i: number, d: number, ops: SheetOp[]) {
+  if (Math.abs(d) < 1e-7) return;
+  const nO = A.outer.length;
+  const seg = A.outer[i] as Line, pre = A.outer[(i + nO - 1) % nO] as Line, nxt = A.outer[(i + 1) % nO] as Line;
+  const l = d2(seg.a, seg.b), n: V2 = [(seg.b[1] - seg.a[1]) / l, -(seg.b[0] - seg.a[0]) / l];
+  const a2 = p2(seg.a, s2(n, d)), b2 = p2(seg.b, s2(n, d));
+  if (d > 0) {
+    // A strip on the end, named as the panel so its faces read as the flange's.
+    ops.push({ kind: "panel", panel: { id: A.id, outer: polyLoop([seg.a, a2, b2, seg.b], [pre.ent, seg.ent, nxt.ent, "join"]), holes: [], M: A.M, n: 0 } });
+  } else {
+    if (-d >= Math.min(d2(pre.a, pre.b), d2(nxt.a, nxt.b)) - 1e-6) throw new SheetError("E-SM-CLOSEDBIG", "The flange would be cut away.");
+    ops.push({ kind: "cut", M: A.M, loop: [a2, seg.a, seg.b, b2], segs: [line(`${A.id}:${seg.ent}`, a2, b2), line("c0", b2, seg.b), line("c1", seg.b, seg.a), line("c2", seg.a, a2)] });
+  }
+  A.outer[(i + nO - 1) % nO] = { ...pre, b: a2 };
+  A.outer[i] = { ...seg, a: a2, b: b2 };
+  A.outer[(i + 1) % nO] = { ...nxt, a: b2 };
 }
 
 /** The panel and the two outline pieces (i ends where j starts) at a picked thickness edge. */
