@@ -8,7 +8,7 @@ import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
-import type { FaceRef, BodyProps, FeatureStatus, Frame, PartDoc, SketchFeature, V3 } from "./types";
+import type { FaceRef, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
 export interface Rebuild {
   statuses: FeatureStatus[];
@@ -19,6 +19,8 @@ export interface Rebuild {
   curves?: Record<string, V3[]>;
   /** Sheet metal panels and bends (FR-FT-120), for the flat pattern and its DXF. */
   sheet?: SheetState | null;
+  /** Regions each intersect feature found (FR-BODY-007). */
+  regions?: Record<string, IntersectRegion[]>;
   data: PartData | null;
   faceNames: string[];
   /** How many of the last `faceNames` belong to surface bodies (FRS 9.11); they come after the solids. */

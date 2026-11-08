@@ -660,11 +660,34 @@ export interface ExtendSurfFeature {
 
 import type { SheetFeature } from "../sheetmetal/types";
 
+/** Untrim surface (FR-FT-100): a one-face surface back to its natural bounds (`all`, the face's parameter box) or with its holes filled (`holes`). */
+export interface UntrimSurfFeature {
+  id: string; type: "untrimsurf"; name: string; suppressed?: boolean;
+  surface?: FaceRef;
+  mode?: "all" | "holes";
+}
+
+/**
+ * Intersect (FR-BODY-007): solids and surfaces cut each other into closed regions; the regions not
+ * excluded become bodies (merged into one unless `merge === false`) in place of the picked solids.
+ * `exclude` holds a point inside each region left out; `consume` removes the surfaces used.
+ */
+export interface IntersectFeature {
+  id: string; type: "intersect"; name: string; suppressed?: boolean;
+  bodies: FaceRef[];
+  exclude: V3[];
+  merge?: boolean;
+  consume?: boolean;
+}
+
+/** A region an intersect found: a point inside it, its volume and whether it is left out. */
+export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
+
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
-  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature;
+  | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature;
 export type FeatureType = Feature["type"];
 
 export interface PartProps {

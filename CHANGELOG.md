@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.93.0] - 2026-11-08
+
 ### Added
 
 - Sheet metal, first slice of FRS P6 (FR-FT-120), in a new **Sheet metal ▾** menu of the part modeller:
@@ -14,6 +16,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Hem**: closed or open (with a gap), material inside or outside.
   - **Flatten** shows the flat pattern on the plane of the base flange, with up and down bend lines; click again to fold it back. The flat pattern is exact: every bend takes its bend allowance.
   - **Flat pattern DXF**: the outline and the bend lines (layers OUTLINE, BEND_UP, BEND_DOWN) as DXF R12 in millimetres.
+
+## [1.88.0] - 2026-11-08
+
+### Added
+
+- **Intersect** (FR-BODY-007) in Sweep ▾: picked solids and surfaces (or all of them) cut each other into closed regions.
+  - The panel lists the regions by volume. Untick the ones to leave out.
+  - The kept regions replace the picked solids, merged into one body unless **Merge result** is off.
+  - **Consume surfaces** removes the surfaces used. Faces keep the names of the faces they came from, so later features stay attached.
+- **Untrim Surface** (FR-FT-100) in Surface ▾: a one-face surface goes back to the bounds of its underlying surface, or only its holes are filled.
+
+## [1.87.0] - 2026-11-08
+
+### Added
+
+- **Drawing view properties** (FR-DRW-017):
+  - Cosmetic threads of a part are drawn on its views, ISO 6410 style: thin lines at the thread diameter with a thick limit line from the side (dashed for a tapped hole, unless the view is a section), and a thin ¾ circle end-on. A view's Cosmetic threads box hides them.
+  - Sketches: tick Sketches on a view to show the part's visible sketches as thin lines (DXF layer SKETCH).
+  - Alignment: Break alignment lets a projected, section or auxiliary view move on its own (and stay put when its parent moves); Default alignment puts it back in line with its parent.
+
+## [1.86.0] - 2026-11-08
+
+### Added
+
+- **Drafting style for drawings** (FR-DRW-025): with nothing selected, the sheet panel's new Drafting style group sets, for the whole drawing:
+  - the annotation text height (2.5, 3.5 or 5 mm), with arrows sized to match;
+  - the arrowheads (filled, open, dot or oblique stroke);
+  - the ISO 128 line group (0.25, 0.35, 0.5 or 0.7 mm visible lines, thin lines half as wide).
+
+  The style is saved in the drawing and used in every export.
 
 ## [1.85.0] - 2026-11-08
 
@@ -860,7 +892,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.85.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.93.0...HEAD
+[1.93.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.93.0
+[1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
+[1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
+[1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
 [1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0
 [1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0

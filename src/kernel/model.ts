@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -33,7 +33,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; sm?: SheetState | null }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve; regions?: IntersectRegion[]; sm?: SheetState | null }
 
 export interface ModelMesh {
   name: string;
@@ -85,6 +85,8 @@ export class Modeller {
   private tools = new Map<string, Tool[]>();
   /** Curves made by helix features in the current evaluation (FR-FT-083). */
   private curves = new Map<string, Curve>();
+  /** Regions each intersect feature found (for its panel). */
+  private regions = new Map<string, IntersectRegion[]>();
   /** A warning set while evaluating the current feature. */
   private warning = "";
 
@@ -1369,6 +1371,101 @@ export class Modeller {
     if (out.IsNull()) throw new FeatureError("E-EXT-FAIL", "The surface could not be extended.");
     const part: Named = { shape: out, faces: [out], names: [list[i].names[0]] };
     return this.sheetsOf([...list.slice(0, i), part, ...list.slice(i + 1)]);
+  }
+
+  /** Untrim surface (FR-FT-100): the face rebuilt on its own surface, over its parameter box or inside its outer wire. */
+  private untrimSurf(f: UntrimSurfFeature, sheets: Named | null): Named | null {
+    const oc = this.oc;
+    if (!f.surface) throw new FeatureError("E-UNT-PICK", "Pick the surface to untrim.");
+    const list = this.sheetList(sheets);
+    const i = this.sheetIndex(list, sheets, f.surface);
+    if (list[i].faces.length !== 1) throw new FeatureError("E-UNT-ONE", "Untrim works on surface bodies of one face.");
+    const face = list[i].faces[0];
+    const surf = oc.BRep_Tool.Surface_2(face);
+    let out: any = null;
+    try {
+      if (f.mode === "holes") {
+        const outer = oc.BRepTools.OuterWire(face);
+        if (this.subWires(face).length < 2) throw new FeatureError("E-UNT-NOHOLE", "The surface has no holes to fill.");
+        const mk = new oc.BRepBuilderAPI_MakeFace_21(surf, outer, true);
+        if (mk.IsDone()) out = mk.Face();
+      } else {
+        const ad = new oc.BRepAdaptor_Surface_2(face, true);
+        const mk = new oc.BRepBuilderAPI_MakeFace_14(surf, ad.FirstUParameter(), ad.LastUParameter(), ad.FirstVParameter(), ad.LastVParameter(), 1e-6);
+        if (mk.IsDone()) out = mk.Face();
+      }
+    } catch (e) { if (e instanceof FeatureError) throw e; out = null; }
+    if (!out || out.IsNull()) throw new FeatureError("E-UNT-FAIL", "The surface could not be untrimmed.");
+    if (face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) out = out.Reversed();
+    const fix = new oc.ShapeFix_Face_2(out);
+    fix.Perform();
+    out = oc.TopoDS.Face_1(fix.Face());
+    const part: Named = { shape: out, faces: [out], names: [list[i].names[0]] };
+    return this.sheetsOf([...list.slice(0, i), part, ...list.slice(i + 1)]);
+  }
+
+  /** A point inside a solid: its centroid when that is inside, else a point just behind its largest face. */
+  private insidePoint(solid: any): V3 {
+    const oc = this.oc;
+    const inside = (p: V3) => {
+      const cl = new oc.BRepClass3d_SolidClassifier_3(solid, this.P(p), 1e-7);
+      return cl.State() === oc.TopAbs_State.TopAbs_IN;
+    };
+    const props = new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(solid, props, false, false, false);
+    const c = this.xyz(props.CentreOfMass());
+    if (inside(c)) return c;
+    const faces = this.sub(solid, "FACE").map(x => ({ x, a: (() => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, p, false, false); return p.Mass(); })() })).sort((a, b) => b.a - a.a);
+    const eps = Math.max(1e-4, this.size(solid) * 1e-4);
+    for (const { x } of faces) {
+      const p = this.centroid(x), n = this.faceNormalAt(x);
+      for (const s of [-eps, eps, -10 * eps, 10 * eps]) { const q = add(p, mul(n, s)); if (inside(q)) return q; }
+    }
+    return c;
+  }
+
+  /**
+   * Intersect (FR-BODY-007): BOPAlgo_MakerVolume builds every closed region the picked solids and
+   * surfaces bound; the regions without an excluded point are kept (fused unless `merge === false`)
+   * and replace the picked solids. Faces keep the names of the faces they came from.
+   */
+  private intersect(f: IntersectFeature, body: Named | null, sheets: Named | null): { body: Named | null; sheets: Named | null } {
+    const oc = this.oc;
+    const solids = body ? this.bodyList(body) : [], sl = this.sheetList(sheets);
+    let si: number[], ti: number[];
+    if (!f.bodies.length) { si = solids.map((_, i) => i); ti = sl.map((_, i) => i); }
+    else {
+      const onSheet = (r: FaceRef) => !!sheets && sheets.names.includes(r.name);
+      ti = [...new Set(f.bodies.filter(onSheet).map(r => this.sheetIndex(sl, sheets, r)))];
+      si = body ? this.pickedBodies(solids, body, f.bodies.filter(r => !onSheet(r))) : [];
+    }
+    if (si.length + ti.length < 1 || (si.length + ti.length < 2 && !ti.length)) throw new FeatureError("E-INT-PICK", "Pick the solids and surfaces that bound the regions (at least two, or surfaces alone).");
+    const inputs = [...si.map(i => solids[i]), ...ti.map(i => sl[i])];
+    const mk = new oc.BOPAlgo_MakerVolume_1();
+    const args = new oc.TopTools_ListOfShape_1();
+    for (const n of inputs) args.Append_1(n.shape);
+    mk.SetArguments(args);
+    mk.SetIntersect(true);
+    mk.Perform(new oc.Message_ProgressRange_1());
+    if (mk.HasErrors()) throw new FeatureError("E-INT-FAIL", "The bodies could not be intersected.");
+    const res = this.carry(mk, inputs, mk.Shape(), f.id);
+    const regions = this.bodyList(res).filter(r => Math.abs(this.volume(r.shape)) > 1e-9);
+    if (!regions.length) throw new FeatureError("E-INT-NONE", "The bodies and surfaces enclose no region.");
+    const info: IntersectRegion[] = regions.map(r => ({ c: this.insidePoint(r.shape), v: Math.abs(this.volume(r.shape)), out: false }));
+    const contains = (r: Named, p: V3) => new oc.BRepClass3d_SolidClassifier_3(r.shape, this.P(p), 1e-7).State() === oc.TopAbs_State.TopAbs_IN;
+    regions.forEach((r, k) => { const ex = f.exclude.map((p, i) => contains(r, p) ? i : -1).filter(i => i >= 0); info[k].out = ex.length > 0; if (ex.length) info[k].ex = ex; });
+    this.regions.set(f.id, info);
+    const kept = regions.filter((_, k) => !info[k].out);
+    if (!kept.length) throw new FeatureError("E-INT-ALL", "Every region is excluded: keep at least one.");
+    let out = kept;
+    if (f.merge !== false && kept.length > 1) {
+      let m = kept[0];
+      for (const r of kept.slice(1)) m = this.bool("fuse", m, r, f.id);
+      out = this.bodyList(m);
+    }
+    const restSolids = solids.filter((_, i) => !si.includes(i));
+    const restSheets = sl.filter((_, i) => !ti.includes(i) || !f.consume);
+    return { body: this.compoundOf([...restSolids, ...out]), sheets: this.sheetsOf(restSheets) };
   }
 
   /** The normal of a face at the middle of its parameter range (orientation-corrected). */
@@ -2663,7 +2760,7 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; sheet: SheetState | null } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
@@ -2680,6 +2777,7 @@ export class Modeller {
     const next: CacheEntry[] = [];
     this.tools = new Map();
     this.curves = new Map();
+    this.regions = new Map();
     // Freeze bar (FR-HIS-024): features up to it keep their cached result even when they changed.
     const frozen = doc.freezeAfter ? doc.features.findIndex(f => f.id === doc.freezeAfter) + 1 : 0;
     doc.features.forEach((f, i) => {
@@ -2694,6 +2792,7 @@ export class Modeller {
         if (hit.tools) this.tools.set(f.id, hit.tools);
         if (hit.sketch) { doc.features[i] = hit.sketch; sketches[f.id] = hit.sketch; }
         if (hit.curve) this.curves.set(f.id, hit.curve);
+        if (hit.regions) this.regions.set(f.id, hit.regions);
         if (!hit.status.ok) failed.add(f.id);
         body = hit.body;
         sheets = hit.sheets;
@@ -2727,6 +2826,8 @@ export class Modeller {
           else if (f.type === "trimsurf") sheets = this.trimSurf(f, body, sheets, frames);
           else if (f.type === "fillsurf") sheets = this.fillSurf(f, sheets);
           else if (f.type === "extendsurf") sheets = this.extendSurf(f, sheets);
+          else if (f.type === "untrimsurf") sheets = this.untrimSurf(f, sheets);
+          else if (f.type === "intersect") ({ body, sheets } = this.intersect(f, body, sheets));
           else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
           else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
           else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
@@ -2770,12 +2871,12 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), sm });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id), regions: this.regions.get(f.id), sm });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, sheets, statuses, frames, sketches, curves, sheet: sm };
+    return { body, sheets, statuses, frames, sketches, curves, regions: Object.fromEntries(this.regions), sheet: sm };
   }
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */

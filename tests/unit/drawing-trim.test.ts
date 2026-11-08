@@ -64,3 +64,14 @@ test("break view: the band is left out, the far side closes up to the gap, and p
 test("a break narrower than the gap does nothing", () => {
   assert.equal(breakMap(view({ breaks: [{ axis: "v", a: 0, b: 3 }] }), 1), null);
 });
+
+test("drafting style: text height, arrow length and the ISO 128 line group follow the drawing (FR-DRW-025)", async () => {
+  const annot = await import("../../src/drawing/annot");
+  const { PEN_W } = await import("../../src/drawing/prims");
+  annot.useStyle({ text: 5, arrow: "tick", lines: 0.5 });
+  assert.equal(annot.TEXT_H, 5);
+  assert.deepEqual([PEN_W.thick, PEN_W.thin, PEN_W.hidden], [0.5, 0.25, 0.25]);
+  annot.useStyle(undefined);
+  assert.equal(annot.TEXT_H, 3.5);
+  assert.deepEqual([PEN_W.thick, PEN_W.thin, PEN_W.frame], [0.35, 0.18, 0.5]);
+});
