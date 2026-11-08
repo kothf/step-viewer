@@ -3166,6 +3166,43 @@ export class Modeller {
     return { brep, solids: this.solids(body.shape), faces: body.faces.length };
   }
 
+  /**
+   * A body as BREP text plus where each named face sits in the shape's face map (1-based; negative
+   * when the named face is the map's face reversed), so another kernel worker can rebuild the same
+   * named body with `fromTransport` (parallel assembly builds). Null when a face is not in the map.
+   */
+  toTransport(body: Named): { brep: string; order: number[] } | null {
+    const oc = this.oc;
+    const map = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+    const order: number[] = [];
+    for (const f of body.faces) {
+      const i = map.FindIndex(f);
+      if (i < 1) return null;
+      order.push(map.FindKey(i).Orientation_1() === f.Orientation_1() ? i : -i);
+    }
+    return { brep: this.brepText(body).brep, order };
+  }
+
+  /** The named body `toTransport` wrote (in this worker's OCCT). */
+  fromTransport(brep: string, order: number[], names: string[]): Named {
+    const oc = this.oc;
+    const path = `/xfer${Date.now()}${Math.floor(Math.random() * 1e6)}.brep`;
+    oc.FS.writeFile(path, brep);
+    const shape = new oc.TopoDS_Shape();
+    const ok = oc.BRepTools.Read_2(shape, path, new oc.BRep_Builder(), new oc.Message_ProgressRange_1());
+    oc.FS.unlink(path);
+    if (!ok || shape.IsNull()) throw new Error("The part body could not be read.");
+    const map = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+    const faces = order.map(i => {
+      if (Math.abs(i) > map.Extent()) throw new Error("The part body does not match its faces.");
+      const k = map.FindKey(Math.abs(i));
+      return oc.TopoDS.Face_1(i < 0 ? k.Reversed() : k);
+    });
+    return { shape, faces, names };
+  }
+
   /** Bodies back into one shape: a compound when there are several. */
   private compoundOf(parts: Named[]): Named {
     if (parts.length === 1) return parts[0];

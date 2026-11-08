@@ -8,7 +8,7 @@ import { cutList, isWeld, type WeldHost } from "../weldments/kernel";
 import { Kernel, type PartProbe } from "./occ";
 import { solidworksToStep } from "./solidworks";
 import { ParasolidReader } from "../sw/parasolid";
-import { Modeller } from "./model";
+import { Modeller, type ModelMesh, type Named } from "./model";
 import { Assembler } from "./assembly";
 import type { AsmDoc } from "../asm/types";
 import { analyzeMesh } from "../topology";
@@ -18,6 +18,9 @@ import { invert } from "../asm/math";
 import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
+
+/** A part another worker evaluated for a parallel assembly build: BREP + face order + analysed mesh, or why it has no body. */
+export interface Prebuilt { brep?: string; order?: number[]; names?: string[]; data?: PartData; error?: string }
 
 export type KernelRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
@@ -30,7 +33,10 @@ export type KernelRequest =
   | { id: number; type: "partBody"; doc: PartDoc }
   | { id: number; type: "recognize"; doc: PartDoc }
   /** Assemblies (FRS 10): place the components and return one mesh per shown component. */
-  | { id: number; type: "asm"; doc: AsmDoc; quality: number }
+  | { id: number; type: "asm"; doc: AsmDoc; quality: number; pre?: Record<string, Prebuilt> }
+  | { id: number; type: "asmPrime"; doc: AsmDoc; key: string; quality: number }
+  | { id: number; type: "prebuild"; doc: PartDoc; quality: number }
+  | { id: number; type: "ping" }
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
   | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
@@ -72,11 +78,22 @@ async function init(base: string, module: WebAssembly.Module) {
   heap = () => oc.HEAPU8?.length ?? 0;
 }
 
+/** The analysed mesh of a part body in its own coordinates, made exact from the body. */
+function analysePart(body: Named, mesh: ModelMesh, name: string): PartData {
+  const data = analyzeMesh(mesh);
+  data.name = name;
+  const keep = kernel!.meshes;
+  kernel!.meshes = [{ shape: body.shape, faces: body.faces, name, color: [0.72, 0.74, 0.78], solid: true }];
+  try { applyPatch(data, kernel!.exact(0, probe(data))); } finally { kernel!.meshes = keep; }
+  return data;
+}
+
 self.onmessage = async (e: MessageEvent<KernelRequest>) => {
   const r = e.data;
   try {
     if (r.type === "init") { await init(r.base, r.module); post({ id: r.id, ok: true }); return; }
     if (!kernel) throw new Error("Kernel not started");
+    if (r.type === "ping") { post({ id: r.id, ok: true }); return; }
     if (r.type === "load") post({ id: r.id, ok: true, counts: kernel.load(new Uint8Array(r.buffer), r.name), heap: heap() });
     else if (r.type === "exact") post({ id: r.id, ok: true, patches: r.probes.map((p, i) => (p ? kernel!.exact(i, p) : null)) });
     else if (r.type === "step") {
@@ -153,10 +170,41 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         preview = { position, status };
       }
       post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, regions: res.regions, sheet: res.sheet, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, cutList: cut, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+    } else if (r.type === "prebuild") {
+      // Parallel assembly builds (pool.ts): a helper worker evaluates one part and sends its body
+      // as BREP text with the face order, plus the analysed mesh, to the assembly's own worker.
+      const m = new Modeller(kernel.module);
+      let out: Prebuilt;
+      try {
+        const res = m.evaluate(r.doc);
+        const bad = res.statuses.find(x => !x.ok && x.code !== "suppressed");
+        const t = res.body && m.toTransport(res.body);
+        if (!res.body) out = { error: bad?.message ?? "The part has no body." };
+        else if (!t) throw new Error("The part body could not be sent.");
+        else out = { ...t, names: res.body.names, data: analysePart(res.body, m.mesh(res.body, r.doc.name, [0.72, 0.74, 0.78], r.quality), r.doc.name) };
+      } catch (err) {
+        out = { error: err instanceof Error ? err.message : String(err) };
+      }
+      post({ id: r.id, ok: true, pre: out, heap: heap() });
+    } else if (r.type === "asmPrime") {
+      // This worker's own share of a parallel build: evaluated and analysed now, placed by the next "asm".
+      assembler ??= new Assembler(kernel.module);
+      shared ??= new WeakMap();
+      const p = assembler.prime(r.key, r.doc, r.quality);
+      const base = shared.get(p.src);
+      if (p.body && !(base && base.quality === r.quality)) shared.set(p.src, { quality: r.quality, data: analysePart(p.body, p.mesh(), r.doc.parts[r.key].name) });
+      post({ id: r.id, ok: true });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
       shared ??= new WeakMap();
       const t0 = performance.now();
+      for (const [k, pre] of Object.entries(r.pre ?? {})) {
+        if (!r.doc.parts[k]) continue;
+        try {
+          const src = assembler.adopt(k, r.doc, pre);
+          if (pre.data) shared.set(src, { quality: r.quality, data: pre.data });
+        } catch { /* evaluated here instead */ }
+      }
       const { placed, statuses } = assembler.evaluate(r.doc, r.quality);
       const parts = [];
       kernel.meshes = [];
@@ -169,7 +217,14 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         const base = shared.get(p.src);
         let data: PartData;
         if (base && base.quality === r.quality) data = transformPart(base.data, p.tf, p.name);
-        else {
+        else if (assembler.prime(p.part, r.doc, r.quality).src === p.src) {
+          // Analysed in part coordinates, like the parallel builds (a tilted copy's analysis can find spurious curve edges).
+          const pr = assembler.prime(p.part, r.doc, r.quality);
+          const own = analysePart(pr.body!, pr.mesh(), p.name);
+          shared.set(p.src, { quality: r.quality, data: own });
+          data = transformPart(own, p.tf, p.name);
+        } else {
+          // A component cut by an assembly feature has its own world mesh.
           data = analyzeMesh(p.mesh());
           data.name = p.name;
           applyPatch(data, kernel.exact(kernel.meshes.length - 1, probe(data)));
