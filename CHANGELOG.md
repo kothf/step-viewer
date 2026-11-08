@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.245.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
+
 ## [1.240.0] - 2026-11-08
 
 ### Added
@@ -1588,7 +1594,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.240.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.245.0...HEAD
+[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.245.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
