@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.104.0] - 2026-11-08
+## [1.105.0] - 2026-11-08
 
 ### Added
 
@@ -32,7 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Fixed
 
-- New assembly (or opening one) while a part was open left the part modelling bar showing under the assembly bar.
+- New assembly (or opening one) while a part was open left the part modelling bar and the "Start a sketch on a plane" card showing in the assembly.
 
 ## [1.100.0] - 2026-11-08
 
@@ -1008,8 +1008,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.104.0...HEAD
-[1.104.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.104.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.105.0...HEAD
+[1.105.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.105.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0

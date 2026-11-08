@@ -372,9 +372,10 @@ export class ModelController {
     if (this.store.dirty) journalSave(this.doc, this.fileName);
     if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
-    // Hide the part bar, or it shows through under the assembly bar after New assembly.
+    // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    this.renderEmpty();
     this.vault = null;
     this.renderVaultBar();
     this.returnTo = null;
