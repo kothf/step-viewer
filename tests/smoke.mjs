@@ -3288,6 +3288,13 @@ try {
     const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
     check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
       `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
+    // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
+    await clicks(top.id, [[-50, -30], [-50, -60]]);
+    tx = await texts();
+    const htab = (await annots()).find(a => a.t === "htable");
+    check(!!htab && htab.holes.length === 1 && ["Tag", "X LOC", "Size", "Ø16 THRU"].every(s => tx.includes(s)) && tx.filter(s => s === "A1").length === 2 && tx.includes("30"),
+      `drawing: hole table lists the hole from the origin and tags it on the view (${tx.filter(s => /^(Tag|A1|Ø16|30|60)/.test(s)).join(" ")})`);
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-dims.png` });
     // Exports carry the annotations; Russian uses the decimal comma.
     const svgT = await dp.evaluate(() => window.__sv.drw.svg());
@@ -6369,7 +6376,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 15 && mode === "note", `drawing: annotation tab shows the 15 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 16 && mode === "note", `drawing: annotation tab shows the 16 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };

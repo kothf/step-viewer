@@ -98,6 +98,8 @@ export interface DimAnnot {
   txt?: string;
   /** Model item it was imported from (`<feature>:<dimension>`): its points are rebuilt from the part. */
   src?: string;
+  /** Inspection dimension (FR-DRW-021): the text sits in an obround frame. */
+  insp?: boolean;
 }
 
 /** A note: on the sheet (sheet mm) or on a view (its model axes, so it moves with the view), with an optional leader to the model. */
@@ -128,7 +130,14 @@ export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "r
  */
 export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: GeoRef; pos: [number, number]; txt?: string; stack?: string[] }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot;
+/**
+ * A hole table (FR-DRW-024): the holes seen end-on in a view, tagged on the view (A1, A2, B1: one letter per size) and listed
+ * with their X/Y from `origin` along the view's axes and their size. `pos` (the table's top-left corner) is in the view's
+ * model axes like other view annotations; `holes` are circle edges, so the table follows the model.
+ */
+export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot;
 
 export interface Sheet {
   id: string;
