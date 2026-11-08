@@ -459,7 +459,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 ### 8.1 Entering and leaving a sketch
 
 - **FR-SK-001** (P1, M) **Sketch** starts on a selected plane or planar face; without a selection it asks for one, showing the standard planes. The view turns normal to the sketch plane (option: off), and the sketch toolbar replaces the feature toolbar.
-- **FR-SK-002** (P1, M) The sketch has a local 2D coordinate system: origin projected from the part origin; X axis aligned with the plane's natural direction (standard planes) or a chosen edge (P2: "Sketch orientation" option).
+- **FR-SK-002** (P1, M) The sketch has a local 2D coordinate system: origin projected from the part origin; X axis aligned with the plane's natural direction (standard planes) or a chosen edge (P2: "Sketch orientation" option). **Sketch orientation done (1.170.0: X axis box in Edit sketch plane).**
 - **FR-SK-003** (P1, M) Leaving the sketch: **Exit sketch** (confirm corner, or Ctrl+Enter / the sketch button again) keeps changes; **Discard** (with confirmation if changed) reverts to the state at entry.
 - **FR-SK-004** (P1, M) Starting a feature (e.g. Extrude) while in a sketch exits the sketch and uses it as the feature's profile.
 - **FR-SK-005** (P1, M) Editing an existing sketch rolls the model back to just before that sketch; geometry after it is hidden or shown transparent (option).
