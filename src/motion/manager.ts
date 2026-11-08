@@ -2,6 +2,7 @@
 // distance/angle mates, motors on mates, exploded view and camera keys; play, loop, back and forth; record
 // a WebM video or an animated GIF of the view. Frames are solved in order with the assembly's mate solver
 // (each from the one before, so linkages do not flip) and cached until the study or the assembly changes.
+import { makeGrip } from "../resize";
 import { t, onLangChange } from "../i18n";
 import { toast } from "../ui";
 import { uid } from "../model/doc";
@@ -27,6 +28,7 @@ type AnyKey = Key | CamKey | PoseKey;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
+const MAX_ZOOM = 64;
 const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
 
 export class MotionManager {
@@ -39,6 +41,8 @@ export class MotionManager {
   sel: Sel = null;
   /** The copied key (Ctrl+C or the key menu) and the kind of track it came from. */
   private clip: { kind: Track["kind"]; unit: string; key: AnyKey } | null = null;
+  /** Timeline zoom (view only): 1 shows the whole study, 2 half of it, … (SolidWorks' Zoom In / Zoom Out / Zoom to Fit). */
+  zoom = 1;
   /** Solved component transforms per frame, from frame 0 up. */
   private frames: Record<string, Tf>[] = [];
   /** Frames where the mates could not all be solved. */
@@ -52,6 +56,7 @@ export class MotionManager {
   private capture: ((src: HTMLCanvasElement) => void) | null = null;
   private renderWaiters: (() => void)[] = [];
   recording: "webm" | "gif" | null = null;
+  private grip: HTMLDivElement;
 
   constructor(private asm: AsmController, private viewer: Viewer) {
     this.pane = document.createElement("section");
@@ -60,6 +65,9 @@ export class MotionManager {
     this.pane.setAttribute("aria-label", "Motion study");
     this.pane.hidden = true;
     $("#viewport").appendChild(this.pane);
+    // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
+    this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
+    this.grip.classList.add("mo-grip");
     asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide() };
     viewer.onRender(() => {
       if (this.capture) this.capture(viewer.renderer.domElement);
@@ -458,7 +466,8 @@ export class MotionManager {
       ...doc.components.filter(c => !c.suppressed && !s.tracks.some(k => k.kind === "look" && k.comp === c.id)).map(c => `<option value="look:${esc(c.id)}" translate="no">${esc(t("Appearance"))}: ${esc(c.name)}</option>`),
       ...(s.tracks.some(k => k.kind === "camera") ? [] : [`<option value="camera:">${esc(t("Camera"))}</option>`])].join("");
     const ib = (a: string, glyph: string, title: string, extra = "") => `<button class="icon mo-ib" data-mo="${a}" title="${esc(title)}" aria-label="${esc(title)}"${extra}>${glyph}</button>`;
-    const step = s.duration <= 3 ? 0.5 : s.duration <= 20 ? 1 : s.duration <= 60 ? 5 : 10;
+    const shown = s.duration / this.zoom;
+    const step = shown <= 0.6 ? 0.05 : shown <= 1.5 ? 0.1 : shown <= 3 ? 0.5 : shown <= 20 ? 1 : shown <= 60 ? 5 : 10;
     let ticks = "";
     for (let v = 0; v <= s.duration + 1e-9; v += step) ticks += `<span class="mo-tick" style="left:${this.x(v)}">${esc(fmt(v, 1))}</span>`;
     const names = s.tracks.map(k => {
@@ -491,6 +500,7 @@ export class MotionManager {
       + `<label class="mo-f"><select data-mo="mode" aria-label="${esc(t("Playback mode"))}">${(["once", "loop", "reciprocate"] as const).map(m => `<option value="${m}"${m === playMode ? " selected" : ""}>${esc(t(m === "once" ? "Play once" : m === "loop" ? "Loop" : "Reciprocate"))}</option>`).join("")}</select></label>`
       + `<label class="mo-f"><select data-mo="speed" aria-label="${esc(t("Playback speed"))}">${[0.25, 0.5, 1, 2, 4].map(v => `<option value="${v}"${v === this.speed ? " selected" : ""}>${v}×</option>`).join("")}</select></label>`
       + `<span class="mo-time" data-mo="time" aria-live="off"></span>`
+      + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
@@ -500,10 +510,37 @@ export class MotionManager {
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
-      + `<div class="mo-tl"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div>`
+      + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
+    this.pane.prepend(this.grip);
+    const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw");
+    if (tlw) tlw.scrollLeft = this.scrollX;
     this.bind();
     this.updateHead(Math.round(this.time * s.fps));
+  }
+
+  /** The timeline's horizontal scroll, kept across re-renders. */
+  private scrollX = 0;
+
+  /** Zooms the timeline by `f` (clamped to 1…MAX_ZOOM), keeping the time at `at` (default the playhead) where it is on screen. */
+  setZoom(z: number, at = this.time) {
+    const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw"), tl = tlw?.querySelector<HTMLElement>(".mo-tl");
+    const nz = Math.max(1, Math.min(MAX_ZOOM, z));
+    if (!tlw || !tl || Math.abs(nz - this.zoom) < 1e-9) return;
+    const d = this.study.duration, w0 = tl.offsetWidth, screen = (at / d) * w0 - tlw.scrollLeft;
+    this.zoom = nz;
+    this.render();
+    const tl2 = this.pane.querySelector<HTMLElement>(".mo-tl"), tlw2 = this.pane.querySelector<HTMLElement>(".mo-tlw");
+    if (tl2 && tlw2) { tlw2.scrollLeft = Math.max(0, (at / d) * tl2.offsetWidth - screen); this.scrollX = tlw2.scrollLeft; }
+  }
+
+  /** Scrolls the zoomed timeline so that the playhead stays in view. */
+  private followHead() {
+    if (this.zoom <= 1) return;
+    const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw"), tl = tlw?.querySelector<HTMLElement>(".mo-tl");
+    if (!tlw || !tl) return;
+    const x = (this.time / this.study.duration) * tl.offsetWidth, l = tlw.scrollLeft, w = tlw.clientWidth;
+    if (x < l + 10 || x > l + w - 10) { tlw.scrollLeft = Math.max(0, x - w * 0.2); this.scrollX = tlw.scrollLeft; }
   }
 
   /** The selected key's or motor's properties. */
@@ -546,7 +583,7 @@ export class MotionManager {
 
   private updateHead(i: number) {
     const s = this.study, line = this.pane.querySelector<HTMLElement>(".mo-head-line");
-    if (line) line.style.left = this.x(this.time);
+    if (line) { line.style.left = this.x(this.time); this.followHead(); }
     const tm = this.pane.querySelector<HTMLElement>("[data-mo=time]");
     if (tm) tm.textContent = `${fmt(this.time)} / ${fmt(s.duration)} ${t("s")}`;
     if (!this.recording) this.setStatus(this.badFrames.has(i) ? t("The mates cannot be solved at {t} s; the components stay where they were.", { t: fmt(i / s.fps) }) : "");
@@ -575,6 +612,9 @@ export class MotionManager {
       else if (a === "start") this.seek(0);
       else if (a === "end") this.seek(this.study.duration);
       else if (a === "addkey" && this.sel) this.addKey(this.sel.track);
+      else if (a === "zin") this.setZoom(this.zoom * 2);
+      else if (a === "zout") this.setZoom(this.zoom / 2);
+      else if (a === "zfit") { this.scrollX = 0; this.setZoom(1); }
       else if (a === "wexplode") this.wizard("explode");
       else if (a === "wcollapse") this.wizard("collapse");
       else if (a === "orbit") this.wizard("orbit");
@@ -602,6 +642,16 @@ export class MotionManager {
     on(".mo-name[data-track]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = { track: el.dataset.track! }; this.render(); });
     // Ruler: click or drag to scrub.
     const ruler = pane.querySelector<HTMLElement>("[data-ruler]");
+    // Ctrl+wheel zooms the timeline about the pointer; plain wheel scrolls as usual.
+    const tlw = pane.querySelector<HTMLElement>(".mo-tlw");
+    tlw?.addEventListener("scroll", () => { this.scrollX = tlw.scrollLeft; });
+    tlw?.addEventListener("wheel", e => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const tl = tlw.querySelector<HTMLElement>(".mo-tl")!, r = tl.getBoundingClientRect();
+      const at = Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width))) * s.duration;
+      this.setZoom(this.zoom * (e.deltaY < 0 ? 1.5 : 1 / 1.5), at);
+    }, { passive: false });
     const tAt = (ev: PointerEvent, el: HTMLElement) => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width))) * s.duration; };
     ruler?.addEventListener("pointerdown", e => {
       ruler.setPointerCapture(e.pointerId);
@@ -864,6 +914,8 @@ export class MotionManager {
     }
     else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && e.altKey && this.sel?.key != null) { e.preventDefault(); this.moveKey((e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 10 : 1) / this.study.fps); }
     else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); this.seek(this.snap(this.time + (e.key === "ArrowRight" ? 1 : -1) / this.study.fps)); }
+    else if ((e.key === "+" || e.key === "=") && !e.ctrlKey && !e.metaKey) { e.preventDefault(); this.setZoom(this.zoom * 2); }
+    else if (e.key === "-" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); this.setZoom(this.zoom / 2); }
     else if (e.key === "Home") { e.preventDefault(); this.seek(0); }
     else if (e.key === "End") { e.preventDefault(); this.seek(this.study.duration); }
   }
