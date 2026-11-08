@@ -10,9 +10,9 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
 import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
-import { applyExt, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
+import { applyExt, piercePoint, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
-import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
+import { ORIGIN, curveJoint, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
@@ -103,12 +103,12 @@ const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
 const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
-  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕",
+  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ", pierce: "⊕",
 };
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
-  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection",
+  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection", curvature: "Equal curvature", pierce: "Pierce",
 };
 
 /** A relation's name: a fix that follows a model edge is "On edge". */
@@ -153,6 +153,8 @@ export class SketchEditor {
   private labelDrag: { id: string; x0: number; y0: number; moved: boolean; base: SketchFeature } | null = null;
   /** Re-attach: the dangling On edge relation the next model edge click attaches (FR-SK-064). */
   reattaching: string | null = null;
+  /** Pierce (FR-SK-051): the point the next model edge click pierces. */
+  piercing: string | null = null;
   /** Show dimension names with their values (FR-SK-065). */
   showNames = false;
   private input: HTMLInputElement | null = null;
@@ -199,6 +201,7 @@ export class SketchEditor {
   setTool(tool: SkTool) {
     this.closeInput(false);
     this.reattaching = null;
+    this.piercing = null;
     this.tool = tool;
     this.draft = { pts: [], ids: [], cursor: null, snap: null };
     this.dimDraft = { picks: [], dim: null };
@@ -1211,6 +1214,13 @@ export class SketchEditor {
     if (total === 2 && n("ellipse") + circ === 2 && n("ellipse")) out.push("concentric");
     if (total === 3 && n("line") >= 1 && (n("point") === 2 || n("line") === 3)) out.push("symmetric");
     if (total === 3 && n("point") === 1 && n("line") + circ + n("ellipse") === 2) out.push("intersection");
+    // A spline and a line, arc or spline meeting at an end: tangent and equal curvature (FR-SK-050/051).
+    if (total === 2 && n("spline") >= 1 && n("spline") + n("line") + n("arc") === 2) {
+      const [a, b] = [...this.selection];
+      if (curveJoint(this.sk, a, b)) out.push("tangent", "curvature");
+    }
+    // Pierce: one point, then a model edge that crosses the sketch plane (FR-SK-051).
+    if (total === 1 && n("point") === 1 && !this.selection.has(ORIGIN) && this.host.modelEdges && this.host.edgeRef) out.push("pierce");
     if (total >= 1 && !this.selection.has(ORIGIN)) out.push("fix");
     return [...new Set(out)];
   }
@@ -1218,6 +1228,7 @@ export class SketchEditor {
   addRelation(kind: RelKind) {
     if (!this.validRelations().includes(kind)) return;
     let e = [...this.selection];
+    if (kind === "pierce") { this.startPierce(e[0]); return; }
     const kindOf = (id: string) => (id === ORIGIN ? "point" : this.ent(id)?.t);
     if (kind === "symmetric") {
       // The line of symmetry last: a construction line if there is one.
@@ -2035,6 +2046,7 @@ export class SketchEditor {
    */
   private convertAt(e: PointerEvent) {
     if (this.reattaching) { this.reattachAt(e); return; }
+    if (this.piercing) { this.pierceAt(e); return; }
     const edges = this.host.modelEdges?.(e);
     if (!edges?.length) { this.host.toast(t("Click a model edge or face to convert.")); return; }
     const made: { id: string; ext: EdgeRef | null }[] = [];
@@ -2087,19 +2099,61 @@ export class SketchEditor {
     const ed = this.host.modelEdges?.(e);
     if (!rel || !ed?.length || ed.length !== 1) { this.host.toast(t("Click one model edge.")); return false; }
     const ent = this.ent(rel.e[0]);
-    const g = projectEdge(ed[0], this.frame);
     const ref = this.host.edgeRef?.(ed[0]) ?? null;
     const next = structuredClone(this.sk);
     const ne = next.ents.find(x => x.id === ent?.id);
-    if (!g || !ne || !ref || !applyExt(next, ne, g)) { this.host.toast(t("That edge is a different kind of curve: pick a {kind}.", { kind: t(ent?.t === "line" ? "straight edge" : ent?.t === "circle" ? "circular edge" : "arc edge") }), "warn"); return false; }
+    if (rel.t === "pierce") {
+      const q = ne?.t === "point" ? piercePoint(ed[0], this.frame, [ne.x, ne.y]) : null;
+      if (!q || !ref || ne?.t !== "point") { this.host.toast(t("That edge does not cross the sketch plane."), "warn"); return false; }
+      ne.x = q[0]; ne.y = q[1];
+    } else {
+      const g = projectEdge(ed[0], this.frame);
+      if (!g || !ref || !ne || !applyExt(next, ne, g)) { this.host.toast(t("That edge is a different kind of curve: pick a {kind}.", { kind: t(ent?.t === "line" ? "straight edge" : ent?.t === "circle" ? "circular edge" : "arc edge") }), "warn"); return false; }
+    }
     const nr = next.rels.find(r => r.id === id)!;
-    nr.ext = ref;
+    nr.ext = ref!;
     delete nr.dangling;
     this.reattaching = null;
     this.sk = next;
     this.commit("Re-attach");
     this.setTool("select");
     this.host.onSelection?.([...this.selection]);
+    return true;
+  }
+
+  /** Pierce (FR-SK-051): the next model edge clicked holds the point where it crosses the sketch plane. */
+  startPierce(pointId: string) {
+    this.setTool("convert");
+    this.piercing = pointId;
+    this.selection.add(pointId);
+    this.host.status(t("Click a model edge that crosses the sketch plane: the point moves to where it pierces the plane."));
+    this.host.onSelection?.([...this.selection]);
+  }
+
+  private pierceAt(e: PointerEvent): boolean {
+    const id = this.piercing!;
+    const ed = this.host.modelEdges?.(e);
+    if (!ed?.length || ed.length !== 1) { this.host.toast(t("Click one model edge.")); return false; }
+    const p = this.ent(id);
+    const ref = this.host.edgeRef?.(ed[0]) ?? null;
+    const q = p?.t === "point" ? piercePoint(ed[0], this.frame, [p.x, p.y]) : null;
+    if (!q || !ref) { this.host.toast(t("That edge does not cross the sketch plane."), "warn"); return false; }
+    const next = structuredClone(this.sk);
+    const np = next.ents.find(x => x.id === id);
+    if (np?.t !== "point") return false;
+    np.x = q[0]; np.y = q[1];
+    // A pierce replaces the point's fix and is the only thing holding it.
+    next.rels = next.rels.filter(r => !(r.e.length === 1 && r.e[0] === id && (r.t === "fix" || r.t === "pierce")));
+    const r = tryAdd(next, { rel: { id: uid("r"), t: "pierce", e: [id], ext: ref } });
+    if (!r.ok) { this.host.toast(t("That relation conflicts with the sketch's other relations and dimensions."), "error"); return false; }
+    this.piercing = null;
+    this.sk = r.sketch;
+    this.info = r.result;
+    this.commit("Add pierce relation");
+    this.setTool("select");
+    this.selection.add(id);
+    this.host.onSelection?.([...this.selection]);
+    this.render();
     return true;
   }
 

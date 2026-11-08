@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { occ } from "./occ";
@@ -280,4 +280,34 @@ test("sheet metal: break corner chamfers and rounds outside corners (FR-FT-120)"
   const bad = (f: SmCornerFeature) => m.evaluate(doc([s, base(), f])).statuses.find(x => x.id === "c")!;
   assert.equal(bad(bc("chamfer", 60)).ok, false);
   assert.equal(bad(bc("chamfer", 5, [{ faces: ["b:p0:sl1", "b:p0:sl3"] }])).ok, false);
+});
+
+test("sheet metal: closed corner runs flange ends on to meet (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const { apply } = await import("../../src/sheetmetal/sheet");
+  const s = rect("s", 0, 0, 100, 50);
+  // Two flanges, material outside, made separately on the front and right edges: they leave an open corner.
+  const fl = (id: string, e: string): SmFlangeFeature => ({ id, type: "smflange", name: id, edges: [{ faces: ["b:p0:top", `b:p0:${e}`] }], length: { v: 20 }, angle: { v: Math.PI / 2 }, position: "outside" });
+  const cc = (face: string, kind: "overlap" | "underlap"): SmClosedFeature => ({ id: "c", type: "smclosed", name: "Closed-Corner1", faces: [{ name: face }], kind });
+  const v0 = run(doc([s, base(), fl("f", "sl1"), fl("g", "sl2")])).props.volume;
+  // In world terms: the front flange covers the right one's end (to x = 102), the right one runs to 0.1 mm from it.
+  const ends = (r: ReturnType<typeof run>) => {
+    const end = (pid: string, ent: string) => { const p = r.sheet!.panels.find(x => x.id === pid)!, sg = p.outer.find(x => x.ent === ent)!; return apply(p.M, [(sg as any).a[0], (sg as any).a[1], 0]); };
+    return { fx: end("f:p0", "s1")[0], gy: end("g:p0", "s0")[1] };
+  };
+  let r = run(doc([s, base(), fl("f", "sl1"), fl("g", "sl2"), cc("f:p0:s1", "overlap")]));
+  let e = ends(r);
+  close(e.fx, 102); close(e.gy, 0.1);
+  close(r.props.volume - v0, 16 * 2 * 2 + 16 * 1.9 * 2, 1e-6);
+  assert.ok(r.body!.names.includes("f:p0:s1") && r.body!.names.includes("g:p0:s0"), "the moved end faces keep their names");
+  run(doc([s, base(), fl("f", "sl1"), fl("g", "sl2"), cc("f:p0:s1", "overlap"), flat]));
+  // Underlap from the front flange = overlap from the right one: the front flange is cut back 0.1 mm short of it.
+  for (const c of [cc("f:p0:s1", "underlap"), cc("g:p0:s0", "overlap")]) {
+    r = run(doc([s, base(), fl("f", "sl1"), fl("g", "sl2"), c]));
+    e = ends(r);
+    close(e.fx, 99.9); close(e.gy, -2);
+  }
+  // A face with no flange beyond it.
+  assert.equal(m.evaluate(doc([s, base(), fl("f", "sl1"), fl("g", "sl2"), cc("f:p0:s0", "overlap")])).statuses.find(x => x.id === "c")!.ok, false);
 });

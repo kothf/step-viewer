@@ -174,6 +174,34 @@ export function traceSeries(pts: V3[], fps: number, q: TracePlot, angles: number
   return pts.map(p => (p0 ? Math.hypot(p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]) : 0));
 }
 
+/** A result sensor's limits on the plotted quantity: frames below `min` or above `max` are out of range. */
+export interface Limits { min?: number; max?: number }
+
+/** Whether each sample lies outside the limits (an unset limit never trips). */
+export function outOfRange(v: number[], l: Limits): boolean[] {
+  return v.map(x => (l.min !== undefined && x < l.min) || (l.max !== undefined && x > l.max));
+}
+
+/** Runs of out-of-range frames as [first, last] times (s). */
+export function alertSpans(v: number[], fps: number, l: Limits): [number, number][] {
+  const o = outOfRange(v, l), out: [number, number][] = [];
+  for (let i = 0; i < o.length; i++) {
+    if (!o[i]) continue;
+    let j = i;
+    while (j + 1 < o.length && o[j + 1]) j++;
+    out.push([i / fps, j / fps]);
+    i = j;
+  }
+  return out;
+}
+
+/** The first frame in (from, to] where the value goes out of range (it was in range the frame before), or -1. */
+export function tripFrame(v: number[], l: Limits, from: number, to: number): number {
+  const o = outOfRange(v, l);
+  for (let i = Math.max(1, from + 1); i <= Math.min(to, o.length - 1); i++) if (o[i] && !o[i - 1]) return i;
+  return -1;
+}
+
 /** Length of the path (mm). */
 export function pathLength(pts: V3[]): number {
   let s = 0;

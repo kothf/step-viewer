@@ -1,7 +1,9 @@
 // Solver acceptance set (FRS 16.3).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs } from "../../src/sketch/solver";
+import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs, curveJoint } from "../../src/sketch/solver";
+import { entBezier } from "../../src/sketch/conic";
+import { piercePoint } from "../../src/sketch/external";
 import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
 
 const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
@@ -211,4 +213,71 @@ test("tangency at a shared end counts once: a fully dimensioned slot has 0 DOF (
   const r = solve(s);
   assert.equal(r.status, "ok");
   assert.equal(r.dof, 0);
+});
+
+test("spline tangent and equal curvature at a shared end (FR-SK-050, FR-SK-051)", () => {
+  type Sp = SkEnt & { t: "spline" };
+  const xy = (s: SketchFeature) => (id: string) => P(s, id) as [number, number];
+  const endOf = (s: SketchFeature, id: string) => {
+    const e = s.ents.find(x => x.id === id) as Sp;
+    const bz = entBezier(e, xy(s));
+    const [b0, b1, b2] = bz;
+    const d1 = [b1[0] - b0[0], b1[1] - b0[1]], d2 = [b2[0] - 2 * b1[0] + b0[0], b2[1] - 2 * b1[1] + b0[1]];
+    const l = Math.hypot(d1[0], d1[1]);
+    return { t: [d1[0] / l, d1[1] / l], k: (2 / 3) * (d1[0] * d2[1] - d1[1] * d2[0]) / l ** 3 };
+  };
+  // A line into an interpolating spline: tangency moves the free spline point.
+  const s1 = sk(
+    [pt("a", -10, 0), pt("b", 0, 0), pt("q", 5, 3), pt("c", 10, 0), ln("l", "a", "b"), { id: "s", t: "spline", pts: ["b", "q", "c"] }],
+    [rel("fix", "l"), rel("fix", "c")],
+  );
+  const dof0 = solve(s1).dof;
+  const r1 = tryAdd(s1, { rel: rel("tangent", "l", "s") });
+  assert.ok(r1.ok);
+  assert.equal(r1.result.dof, dof0 - 1);
+  const e1 = endOf(r1.sketch, "s");
+  near(Math.abs(e1.t[1]), 0, 1e-6);
+  assert.ok(e1.t[0] > 0, "the spline carries on from the line");
+  // An arc into a style spline: equal curvature = tangent and the same turn (1/r) at the joint.
+  const s2 = sk(
+    [pt("o", 0, 0), pt("a", 10, 0), pt("b", 0, 10), { id: "k", t: "arc", c: "o", a: "a", b: "b" },
+      pt("p1", -4, 11), pt("p2", -8, 9), pt("p3", -11, 5), pt("p4", -12, 0), { id: "s", t: "spline", kind: "style", pts: ["b", "p1", "p2", "p3", "p4"] }],
+    [rel("fix", "k"), rel("fix", "p4")],
+  );
+  const dof2 = solve(s2).dof;
+  const r2 = tryAdd(s2, { rel: rel("curvature", "k", "s") });
+  assert.ok(r2.ok);
+  assert.equal(r2.result.dof, dof2 - 2);
+  const e2 = endOf(r2.sketch, "s");
+  near(e2.t[0], -1, 1e-6);
+  near(e2.k, 0.1, 1e-6);
+  // Ends held together by a coincident relation count as a joint; curves apart have none.
+  const s3 = sk([pt("a", 0, 0), pt("b", 5, 0), pt("c", 5, 0), pt("d", 9, 2), pt("e", 12, 0), ln("l", "a", "b"), { id: "s", t: "spline", pts: ["c", "d", "e"] }],
+    [rel("coincident", "b", "c")]);
+  assert.deepEqual(curveJoint(s3, "l", "s"), ["b", "c"]);
+  s3.rels = [];
+  assert.equal(curveJoint(s3, "l", "s"), null);
+});
+
+test("pierce: crossing points and the held point (FR-SK-051)", () => {
+  const F = { o: [0, 0, 0] as [number, number, number], x: [1, 0, 0] as [number, number, number], y: [0, 1, 0] as [number, number, number], n: [0, 0, 1] as [number, number, number] };
+  const near = (q: number[] | null, x: number, y: number) => { assert.ok(q); assert.ok(Math.hypot(q[0] - x, q[1] - y) < 1e-9, `${q} ≠ ${x},${y}`); };
+  // A slanted line, extended past its ends.
+  near(piercePoint({ type: "line", start: [1, 2, 3], end: [2, 4, 5], mid: [1.5, 3, 4], closed: false }, F, [0, 0]), -0.5, -1);
+  // In the plane: none.
+  assert.equal(piercePoint({ type: "line", start: [0, 0, 0], end: [1, 0, 0], mid: [0.5, 0, 0], closed: false }, F, [0, 0]), null);
+  // A circle of radius 5 about X through the origin crosses at y = ±5; the nearer one wins.
+  const c = { type: "circle", start: [0, 5, 0] as [number, number, number], end: [0, 5, 0] as [number, number, number], mid: [0, -5, 0] as [number, number, number], closed: true, center: [0, 0, 0] as [number, number, number], axis: [1, 0, 0] as [number, number, number], radius: 5 };
+  near(piercePoint(c, F, [0, 4]), 0, 5);
+  near(piercePoint(c, F, [0, -4]), 0, -5);
+  // Lifted 6 above the plane, it never reaches it.
+  assert.equal(piercePoint({ ...c, center: [0, 0, 6] }, F, [0, 0]), null);
+  // Other curves by their polyline.
+  near(piercePoint({ type: "curve", start: [0, 0, -1], end: [2, 0, 1], mid: [1, 0, 0], closed: false, pts: [0, 0, -1, 1, 0, -0.5, 2, 0, 1] }, F, [0, 0]), 4 / 3, 0);
+  // The solver holds a pierced point like a fixed one.
+  const s = sk([pt("p", 3, 4), pt("q", 0, 0), ln("l", "p", "q")], [{ id: "r", t: "pierce", e: ["p"], ext: { faces: ["a", "b"] } }, rel("horizontal", "l")]);
+  const r = solve(s);
+  assert.equal(r.status, "ok");
+  const p = s.ents.find(e => e.id === "p") as SkEnt & { t: "point" };
+  assert.ok(Math.abs(p.x - 3) < 1e-9 && Math.abs(p.y - 4) < 1e-9);
 });

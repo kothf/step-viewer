@@ -1657,3 +1657,118 @@ test("pattern instances re-evaluated: up to a sloped face at every place (FR-FT-
   const vary = run(m, doc([...base, ...cut, lp({ vary: true })]));
   close(v0 - vary.props!.volume, a * (h(10) + h(30) + h(50)), 1e-3);
 });
+
+test("FR-ARC-016: a body sent between kernel workers (BREP + face order) keeps every named face", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 10, 5, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  const body = run(m, doc([s1, ex, s2, cut])).body!;
+  const t = m.toTransport(body)!;
+  assert.ok(t && t.order.length === body.faces.length);
+  const back = new Modeller(oc).fromTransport(t.brep, t.order, body.names);
+  assert.deepEqual(back.names, body.names);
+  const facts = (f: any) => {
+    const p = new oc.GProp_GProps_1();
+    oc.BRepGProp.SurfaceProperties_1(f, p, false, false);
+    const c = p.CentreOfMass();
+    return [p.Mass(), c.X(), c.Y(), c.Z(), f.Orientation_1().value];
+  };
+  body.faces.forEach((f, i) => facts(f).forEach((v, k) => close(facts(back.faces[i])[k] as number, v as number)));
+});
+
+test("sketch orientation: X axis along a straight edge (FR-SK-002)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = (xAxis?: SketchFeature["xAxis"]): SketchFeature => ({ ...circle("s2", 10, 0, 3, { face: { name: "f1:end" } }), ...(xAxis ? { xAxis } : {}) });
+  const F0 = run(m, doc([s1, ex, top()])).frames.s2;
+  // The edge on the +X side of the top face runs along Y: X turns onto the plane's own Y, the normal stays.
+  const edge = { faces: ["f1:side:s1l2", "f1:end"] as [string, string] };
+  const F1 = run(m, doc([s1, ex, top({ edge })])).frames.s2;
+  for (let k = 0; k < 3; k++) { close(F1.x[k], F0.y[k]); close(F1.n[k], F0.n[k]); close(F1.o[k], F0.o[k]); }
+  const F2 = run(m, doc([s1, ex, top({ edge, flip: true })])).frames.s2;
+  for (let k = 0; k < 3; k++) close(F2.x[k], -F0.y[k]);
+  // A vertical edge is square to the plane: the plane's direction stays, with a warning.
+  const r3 = run(m, doc([s1, ex, top({ edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] } })]));
+  for (let k = 0; k < 3; k++) close(r3.frames.s2.x[k], F0.x[k]);
+  assert.ok(r3.statuses.find(s => s.id === "s2")?.warning, "warned");
+});
+
+test("pierce: a sketch point where a model edge crosses the sketch plane (FR-SK-051)", async () => {
+  const m = new Modeller(await occ());
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const hole = circle("s2", 0, 0, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  const pierceSk = (id: string, plane: SketchFeature["plane"], x: number, y: number, faces: [string, string]): SketchFeature => ({
+    id, type: "sketch", name: id, plane, dims: [],
+    ents: [{ id: "q", t: "point", x, y }],
+    rels: [{ id: "r", t: "pierce", e: ["q"], ext: { faces } }],
+  });
+  const world = (f: { o: V3; x: V3; y: V3 }, p: SkEnt) => {
+    const q = p as SkEnt & { t: "point" };
+    return [0, 1, 2].map(k => f.o[k] + q.x * f.x[k] + q.y * f.y[k]);
+  };
+  // A vertical block edge (x = 50, y = -30) pierces XY at its foot.
+  let r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, pierceSk("s3", { std: "XY" }, 40, -20, ["f1:side:s1l1", "f1:side:s1l2"])]));
+  let w = world(r.frames.s3, r.sketches.s3.ents[0]);
+  close(w[0], 50); close(w[1], -30); close(Math.abs(w[2]) + 1, 1);
+  // The hole's top circle crosses XZ twice: the point takes the crossing nearer where it was.
+  const onXZ = (x: number) => pierceSk("s3", { std: "XZ" }, x, 0, ["f1:end", "f2:side:s2k"]);
+  for (const sx of [1, -1]) {
+    const F = run(m, doc([rect("s1", 0, 0, 100, 60), ex, hole, cut, pierceSk("s3", { std: "XZ" }, 0, 0, ["f1:end", "f2:side:s2k"])])).frames.s3;
+    // Start near world x = 4·sx, z = 18 in this plane's coordinates.
+    const u = 4 * sx * F.x[0] + 18 * F.x[2], v = 4 * sx * F.y[0] + 18 * F.y[2];
+    r = run(m, doc([rect("s1", 0, 0, 100, 60), ex, hole, cut, { ...onXZ(0), ents: [{ id: "q", t: "point", x: u, y: v }] }]));
+    w = world(r.frames.s3, r.sketches.s3.ents[0]);
+    close(w[0], 5 * sx); close(Math.abs(w[1]) + 1, 1); close(w[2], 20);
+  }
+  // A spline edge (the top of an extruded spline profile) crossing XZ: sampled and bisected onto y = 0.
+  const sp: SketchFeature = {
+    id: "s4", type: "sketch", name: "s4", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [
+      { id: "a", t: "point", x: -20, y: -10 }, { id: "b", t: "point", x: 0, y: 10 }, { id: "c", t: "point", x: 20, y: -10 },
+      { id: "sp", t: "spline", pts: ["a", "b", "c"] }, { id: "ln", t: "line", a: "c", b: "a" },
+    ],
+  };
+  const ex4: Feature = { id: "f4", type: "extrude", name: "Extrude4", sketch: "s4", op: "boss", end: "blind", depth: { v: 20 } };
+  const xs: number[] = [];
+  for (const sx of [1, -1]) {
+    const F = run(m, doc([sp, ex4, pierceSk("s5", { std: "XZ" }, 0, 0, ["f4:end", "f4:side:sp"])])).frames.s5;
+    const u = 12 * sx * F.x[0] + 18 * F.x[2], v = 12 * sx * F.y[0] + 18 * F.y[2];
+    r = run(m, doc([sp, ex4, { ...pierceSk("s5", { std: "XZ" }, 0, 0, ["f4:end", "f4:side:sp"]), ents: [{ id: "q", t: "point", x: u, y: v }] }]));
+    w = world(r.frames.s5, r.sketches.s5.ents[0]);
+    assert.ok(Math.abs(w[1]) < 1e-7, `on the plane: ${w[1]}`);
+    close(w[2], 20);
+    assert.ok(w[0] * sx > 5 && w[0] * sx < 20, `crossing on its side: ${w[0]}`);
+    xs.push(w[0]);
+  }
+  close(xs[0], -xs[1], 1e-6);
+  // An edge parallel to the plane never pierces it: dangling, with a warning.
+  r = m.evaluate(doc([rect("s1", 0, 0, 100, 60), ex, pierceSk("s3", { std: "XY" }, 40, -20, ["f1:end", "f1:side:s1l2"])])) as typeof r;
+  assert.equal(r.sketches.s3.rels[0].dangling, true);
+  assert.equal(r.statuses.find(s => s.id === "s3")?.code, "warning");
+});
+
+test("a boss standing on the body is glued on, one standing in it is fused (nameplate speed-up)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Three pads on the top face: they only touch the block, so they are glued on.
+  const top = { face: { name: "f1:end" } };
+  const pads: SketchFeature = { ...rect("s2", -30, 0, 10, 10, top), ents: [...rect("s2", -30, 0, 10, 10, top).ents, ...rect("s3", 10, 0, 10, 10, top).ents, ...rect("s4", 30, 0, 10, 10, top).ents] };
+  const ex2: Feature = { id: "f2", type: "extrude", name: "Pads", sketch: "s2", op: "boss", end: "blind", depth: { v: 5 } };
+  const r = run(m, doc([s1, ex, pads, ex2]));
+  close(r.props!.volume, 120000 + 3 * 500);
+  assert.equal(r.body!.names.filter(n => n === "f2:end").length, 3);
+  assert.equal(r.body!.names.filter(n => n.startsWith("f2:side:")).length, 12);
+  assert.equal(r.body!.faces.length, 6 + 15);
+  // Direction 2 sinks the pads into the block: no longer only touching, so a plain fuse.
+  const r2 = run(m, doc([s1, ex, pads, { ...ex2, depth2: { v: 2 } } as Feature]));
+  close(r2.props!.volume, 120000 + 3 * 500);
+  // Reversed into the block: nothing added.
+  const r3 = run(m, doc([s1, ex, pads, { ...ex2, flip: true } as Feature]));
+  close(r3.props!.volume, 120000);
+});

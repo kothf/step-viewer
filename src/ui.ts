@@ -265,3 +265,34 @@ export function initPanels(app: HTMLElement) {
   };
 }
 export type Panels = ReturnType<typeof initPanels>;
+
+/**
+ * PropertyManager reach (FR-UI-117): a scrolled panel shows a line under its pinned title row, and a
+ * viewport confirmation corner mirrors the ✓/✕ of a panel that has them (the assembly panels; the part
+ * modeller drives its own `#mc-confirm`).
+ */
+export function initConfirmCorners() {
+  document.addEventListener("scroll", e => {
+    const el = e.target;
+    if (el instanceof HTMLElement && el.classList.contains("pm")) el.classList.toggle("scrolled", el.scrollTop > 0);
+  }, true);
+  for (const [cornerId, pmId] of [["asm-confirm", "asm-pm"]] as const) {
+    const corner = document.getElementById(cornerId), pm = document.getElementById(pmId);
+    if (!corner || !pm) continue;
+    const okOf = () => pm.hidden ? null : pm.querySelector<HTMLButtonElement>(".pm-top .pm-ok");
+    const cancelOf = () => pm.hidden ? null : pm.querySelector<HTMLButtonElement>(".pm-top .pm-cancel");
+    const ok = corner.querySelector<HTMLButtonElement>(".mc-ok")!, cancel = corner.querySelector<HTMLButtonElement>(".mc-cancel")!;
+    const sync = () => {
+      const o = okOf(), c = cancelOf();
+      corner.hidden = !o;
+      if (!pm.hidden) pm.classList.toggle("scrolled", pm.scrollTop > 0);
+      cancel.hidden = !c;
+      if (o) { ok.title = o.title; ok.setAttribute("aria-label", o.getAttribute("aria-label") ?? o.title); }
+      if (c) { cancel.title = c.title; cancel.setAttribute("aria-label", c.getAttribute("aria-label") ?? c.title); }
+    };
+    ok.addEventListener("click", () => okOf()?.click());
+    cancel.addEventListener("click", () => cancelOf()?.click());
+    new MutationObserver(sync).observe(pm, { childList: true, attributes: true, attributeFilter: ["hidden"] });
+    sync();
+  }
+}

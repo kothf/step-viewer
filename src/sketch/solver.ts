@@ -7,6 +7,7 @@
 // that is what makes dragging feel natural. Degrees of freedom and which
 // entities are fully defined come from the rank and null space of the Jacobian.
 import type { SkDim, SkEnt, SkRel, SketchFeature, V2 } from "../model/types";
+import { entBezier } from "./conic";
 
 /** The sketch origin: a fixed point every sketch has. */
 export const ORIGIN = "O";
@@ -25,6 +26,8 @@ interface System {
   entVars: Map<string, number[]>;
   fixedXY: Map<string, V2>;
   fixedR: Map<string, number>;
+  /** Point pairs held together by a coincident relation ("a|b", both orders). */
+  coin: Set<string>;
 }
 
 export type SolveStatus = "ok" | "conflict" | "failed";
@@ -50,7 +53,7 @@ const TOL = 1e-9;
 function fixedSet(sk: SketchFeature) {
   const fixed = new Set<string>([ORIGIN]);
   const ent = new Map(sk.ents.map(e => [e.id, e] as const));
-  for (const r of sk.rels) if (r.t === "fix") for (const id of r.e) {
+  for (const r of sk.rels) if (r.t === "fix" || r.t === "pierce") for (const id of r.e) {
     const e = ent.get(id);
     if (!e) continue;
     if (e.t === "point") fixed.add(e.id);
@@ -78,7 +81,7 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
       else { rad.set(e.id, vals.length); vals.push(e.r); }
     }
   }
-  const sys: System = { x: Float64Array.from(vals), px, rad, terms: [], owner: [], entVars: new Map(), fixedXY, fixedR };
+  const sys: System = { x: Float64Array.from(vals), px, rad, terms: [], owner: [], entVars: new Map(), fixedXY, fixedR, coin: coinPairs(sk) };
   const ents = new Map(sk.ents.map(e => [e.id, e] as const));
   const pv = (id: string) => { const i = px.get(id); return i === undefined || i < 0 ? [] : [i, i + 1]; };
   for (const e of sk.ents) {
@@ -204,7 +207,9 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
       const A = len(0), B = len(1);
       return [term([A, B], x => A(x) - B(x))];
     }
+    case "curvature": return jointTerms(sys, ents, r, true);
     case "tangent": {
+      if (kind(0) === "spline" || kind(1) === "spline") return jointTerms(sys, ents, r, false);
       const li = kind(0) === "line" ? 0 : kind(1) === "line" ? 1 : -1;
       // Curves that share an end (a sketch fillet's arc and its lines): tangent there means the radius to that
       // end is square to the line, or both centres and the end are in line. The distance form below is flat
@@ -250,8 +255,88 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
         term([p, q, a, b], x => dot(sub(q(x), p(x)), sub(b(x), a(x))) / nrm(sub(b(x), a(x)))),
       ]);
     }
-    case "fix": return [];
+    case "fix": case "pierce": return [];
   }
+}
+
+function coinPairs(sk: SketchFeature): Set<string> {
+  const out = new Set<string>();
+  for (const r of sk.rels) if (r.t === "coincident" && r.e.length === 2) { out.add(`${r.e[0]}|${r.e[1]}`); out.add(`${r.e[1]}|${r.e[0]}`); }
+  return out;
+}
+
+/** End point ids of a line, arc or open spline (others have none). */
+function curveEnds(e: SkEnt | undefined): string[] {
+  if (!e) return [];
+  if (e.t === "line" || e.t === "arc") return [e.a, e.b];
+  if (e.t === "spline" && !e.closed && e.pts.length >= 2) return [e.pts[0], e.pts[e.pts.length - 1]];
+  return [];
+}
+
+/**
+ * Where two curves meet (FR-SK-050 tangent with splines, FR-SK-051 equal curvature): an end of each that is
+ * the same point or held to it by a coincident relation. Null when they do not share an end.
+ */
+export function curveJoint(sk: SketchFeature, a: string, b: string): [string, string] | null {
+  const ents = new Map(sk.ents.map(e => [e.id, e] as const));
+  return jointIn(ents, coinPairs(sk), a, b);
+}
+function jointIn(ents: Map<string, SkEnt>, coin: Set<string>, a: string, b: string): [string, string] | null {
+  const ea = curveEnds(ents.get(a)), eb = curveEnds(ents.get(b));
+  for (const p of ea) for (const q of eb) if (p === q || coin.has(`${p}|${q}`)) return [p, q];
+  return null;
+}
+
+type EndGeo = ((x: Float64Array) => { t: V2; k: number }) & { vars: number[] };
+/**
+ * A curve leaving its end q: the outgoing tangent (any length) and the signed curvature seen along it
+ * (positive = turning left). Splines use their end Bézier piece: B' = 3(B1 - B0), B'' = 6(B2 - 2B1 + B0).
+ */
+function endGeo(sys: System, ents: Map<string, SkEnt>, id: string, q: string): EndGeo | null {
+  const e = ents.get(id);
+  if (!e) return null;
+  const mk = (vars: number[], f: (x: Float64Array) => { t: V2; k: number }) => { const g = f as EndGeo; g.vars = [...new Set(vars)]; return g; };
+  if (e.t === "line") {
+    const A = P(sys, e.a), B = P(sys, e.b), first = q === e.a;
+    return mk([...A.vars, ...B.vars], x => ({ t: first ? sub(B(x), A(x)) : sub(A(x), B(x)), k: 0 }));
+  }
+  if (e.t === "arc") {
+    const C = P(sys, e.c), A = P(sys, e.a), B = P(sys, e.b), first = q === e.a;
+    return mk([...C.vars, ...A.vars, ...B.vars], x => {
+      const v = sub(first ? A(x) : B(x), C(x)), r = nrm(v);
+      // Counter-clockwise from a: the radius turned left; leaving b goes clockwise.
+      return first ? { t: [-v[1], v[0]], k: 1 / r } : { t: [v[1], -v[0]], k: -1 / r };
+    });
+  }
+  if (e.t === "spline") {
+    const pts = e.pts.map(p => P(sys, p)), first = q === e.pts[0];
+    return mk(pts.flatMap(p => p.vars), x => {
+      const bz = entBezier(e, pid => pts[e.pts.indexOf(pid)](x));
+      const [b0, b1, b2] = first ? [bz[0], bz[1], bz[2]] : [bz[bz.length - 1], bz[bz.length - 2], bz[bz.length - 3]];
+      const d1 = sub(b1, b0), d2: V2 = [b2[0] - 2 * b1[0] + b0[0], b2[1] - 2 * b1[1] + b0[1]];
+      const l = nrm(d1);
+      return { t: [3 * d1[0], 3 * d1[1]], k: (2 / 3) * cross(d1, d2) / (l * l * l) };
+    });
+  }
+  return null;
+}
+
+/**
+ * Tangent (with a spline) and equal curvature at the shared end of two curves: the curves leave the joint in
+ * opposite directions, and for curvature their signed curvatures along those directions cancel (G2).
+ * The curvature residual is scaled by the curves' size now, so it reads in millimetres like the others.
+ */
+function jointTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel, curvature: boolean): Term[] {
+  const j = jointIn(ents, sys.coin, r.e[0], r.e[1]);
+  if (!j) return [];
+  const g0 = endGeo(sys, ents, r.e[0], j[0]), g1 = endGeo(sys, ents, r.e[1], j[1]);
+  if (!g0 || !g1) return [];
+  const out: Term[] = [term([g0, g1], x => { const a = g0(x).t, b = g1(x).t; return cross(a, b) / (nrm(a) * nrm(b)); })];
+  if (curvature) {
+    const L = Math.max(1e-6, (nrm(g0(sys.x).t) + nrm(g1(sys.x).t)) / 2);
+    out.push(term([g0, g1], x => (g0(x).k + g1(x).k) * L));
+  }
+  return out;
 }
 
 /** Current value of a dimension (for driven ones, and to start new ones). */
