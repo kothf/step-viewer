@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.101.0] - 2026-11-08
+## [1.103.0] - 2026-11-08
 
 ### Added
 
@@ -989,8 +989,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.101.0...HEAD
-[1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.103.0...HEAD
+[1.103.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.103.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
