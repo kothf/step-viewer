@@ -7,6 +7,7 @@ import type { Projection, Seg2, V3 } from "../kernel/drawing";
 import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, Sheet } from "./types";
+import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import { boxInView, findView, lookDir, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
@@ -221,14 +222,16 @@ export function viewLabel(sheet: Sheet, v: DrawingView, pl: Placement, label: (s
 }
 
 /** Everything drawn for one view: its lines, the marks of its child views and its label. */
-export function viewBody(sheet: Sheet, v: DrawingView, proj: Projection | undefined, pl: Placement, label: (s: string, p?: Record<string, string>) => string): Prim[] {
-  return [...(proj ? viewPrims(v, proj, pl) : []), ...childMarks(sheet, v, pl), ...viewLabel(sheet, v, pl, label)];
+export function viewBody(sheet: Sheet, v: DrawingView, proj: Projection | undefined, pl: Placement, label: (s: string, p?: Record<string, string>) => string, ctx?: AnnotCtx): Prim[] {
+  const out = [...(proj ? viewPrims(v, proj, pl) : []), ...childMarks(sheet, v, pl), ...viewLabel(sheet, v, pl, label)];
+  if (ctx) out.push(...viewAnnots(sheet, v, pl, ctx).prims);
+  return out;
 }
 
 export interface Composed { prims: Prim[]; boxes: ViewBox[] }
 
 /** The whole sheet. `projections` is looked up by each view's request key. */
-export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<string, Projection>, modelBox: [V3, V3] | null, label: (s: string, p?: Record<string, string>) => string): Composed {
+export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<string, Projection>, modelBox: [V3, V3] | null, label: (s: string, p?: Record<string, string>) => string, ctx?: AnnotCtx): Composed {
   const prims = formatPrims(sheet, fields, label);
   const boxes: ViewBox[] = [];
   for (const v of sheet.views) {
@@ -236,8 +239,9 @@ export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<stri
     const pl = placement(sheet, v, proj, modelBox);
     const r = viewRect(pl);
     boxes.push({ id: v.id, x0: r[0], y0: r[1], x1: r[2], y1: r[3], ready: !!proj });
-    prims.push(...viewBody(sheet, v, proj, pl, label));
+    prims.push(...viewBody(sheet, v, proj, pl, label, ctx));
   }
+  prims.push(...sheetNotes(sheet).prims);
   return { prims, boxes };
 }
 

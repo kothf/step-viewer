@@ -1,0 +1,468 @@
+// Annotations on a drawing (FRS 11.3): dimensions, hole callouts, notes, and the automatic centre
+// marks and centrelines. Dimensions hold on to model edges by name (GeoRef), so after the part
+// changes they find their edges again and measure them anew (AT-P5-3). Drawn as sheet primitives
+// in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
+// 3.5 mm text above the dimension line, reading from the bottom or the right.
+import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
+import type { HoleInfo, ModelItem } from "./items";
+import type { Prim } from "./prims";
+import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, Tol } from "./types";
+import { viewDir } from "./views";
+
+type P2 = [number, number];
+export type Label = (s: string, p?: Record<string, string>) => string;
+
+/** What annotations need from the model and the UI. */
+export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label }
+
+export const TEXT_H = 3.5;
+const ARROW = 3;
+const dot3 = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const len2 = (a: P2) => Math.hypot(a[0], a[1]);
+const unit2 = (a: P2, fb: P2 = [1, 0]): P2 => { const l = len2(a); return l > 1e-12 ? [a[0] / l, a[1] / l] : fb; };
+const d2 = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+/** Approximate width of a text on the sheet (DejaVu Sans). */
+export const textW = (s: string, h = TEXT_H) => s.length * h * 0.85;
+
+/** A number for a drawing: `prec` decimals, or up to 2 with trailing zeros dropped; the language's decimal sign. */
+export function fmtNum(v: number, prec: number | undefined, dec = "."): string {
+  let s = prec != null ? v.toFixed(prec) : (Math.round(v * 100) / 100).toFixed(2).replace(/\.?0+$/, "");
+  if (s === "-0") s = "0";
+  return dec === "." ? s : s.replace(".", dec);
+}
+
+// ---------- references ----------
+
+/** The model edge a reference names (the one of that name nearest to its hint), or null when it is gone. */
+export function refEdge(ref: GeoRef, topo: Topo | null): MEdge | null {
+  if ("pt" in ref || !topo) return null;
+  let best: MEdge | null = null, bd = Infinity;
+  for (const e of topo.edges) {
+    if (e.k !== ref.e) continue;
+    const d = Math.hypot(...sub3(e.m, ref.h));
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
+/** The model point a reference stands for (for an edge "e": its middle, or a circle's centre). */
+export function refPoint(ref: GeoRef, topo: Topo | null): V3 | null {
+  if ("pt" in ref) return ref.pt;
+  const e = refEdge(ref, topo);
+  if (!e) return null;
+  if (ref.p === "c" || (ref.p === "e" && e.t === "c")) return e.c ?? e.m;
+  if (ref.p === "e") return e.m;
+  if (ref.q) return Math.hypot(...sub3(e.a, ref.q)) <= Math.hypot(...sub3(e.b, ref.q)) ? e.a : e.b;
+  return ref.p === "a" ? e.a : e.b;
+}
+
+/** A reference to a model edge, for annotations. */
+export function edgeRef(e: MEdge, p: "a" | "b" | "c" | "e"): GeoRef {
+  return { e: e.k, h: e.m, p, ...(p === "a" ? { q: e.a } : p === "b" ? { q: e.b } : {}) };
+}
+
+/** Projects model points into a view's axes. */
+export function projector(vd: ViewDir) {
+  const { x, y, n } = viewAxes(vd);
+  return { n, P: (p: V3): P2 => [dot3(p, x), dot3(p, y)] };
+}
+
+// ---------- dimension geometry ----------
+
+export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number }
+
+/** The measured geometry of a dimension in a view (model mm, view axes), or null when its edges are gone. */
+export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo | null {
+  const kind = a.k;
+  if (kind === "rad" || kind === "dia") {
+    const r0 = a.refs[0];
+    if (!r0) return null;
+    if ("pt" in r0) {
+      const p1 = a.refs[1] && refPoint(a.refs[1], topo);
+      if (!p1) return null;
+      const c = P(r0.pt), q = P(p1), r = d2(c, q);
+      return { k: kind, pts: [], c, r, value: kind === "rad" ? r : 2 * r };
+    }
+    const e = refEdge(r0, topo);
+    if (!e || e.t !== "c" || !e.c || !e.r) return null;
+    return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r };
+  }
+  if (kind === "ang") {
+    const lines: [P2, P2][] = [];
+    for (const r of a.refs) { const e = refEdge(r, topo); if (!e || e.t !== "l") return null; lines.push([P(e.a), P(e.b)]); }
+    if (lines.length !== 2) return null;
+    return { k: kind, pts: [], lines, value: 0 };
+  }
+  // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
+  const pts: P2[] = [];
+  const lineOf = (r: GeoRef): [P2, P2] | null => { if ("pt" in r || r.p !== "e") return null; const e = refEdge(r, topo); return e && e.t === "l" ? [P(e.a), P(e.b)] : null; };
+  const foot = (p: P2, l: [P2, P2]): P2 => { const [u, v] = l, dx = v[0] - u[0], dy = v[1] - u[1], L2 = dx * dx + dy * dy || 1, t = ((p[0] - u[0]) * dx + (p[1] - u[1]) * dy) / L2; return [u[0] + dx * t, u[1] + dy * t]; };
+  if (a.refs.length === 1) { const l = lineOf(a.refs[0]); if (!l) return null; pts.push(l[0], l[1]); }
+  else {
+    const l0 = lineOf(a.refs[0]), l1 = lineOf(a.refs[1]);
+    const p0 = l0 ? null : refPoint(a.refs[0], topo), p1 = l1 ? null : refPoint(a.refs[1], topo);
+    if (l0 && l1) { const m: P2 = [(l0[0][0] + l0[1][0]) / 2, (l0[0][1] + l0[1][1]) / 2]; pts.push(m, foot(m, l1)); }
+    else if (l0 && p1) { const q = P(p1); pts.push(foot(q, l0), q); }
+    else if (p0 && l1) { const q = P(p0); pts.push(q, foot(q, l1)); }
+    else if (p0 && p1) pts.push(P(p0), P(p1));
+    else return null;
+  }
+  const [s, t] = pts;
+  const value = kind === "h" ? Math.abs(t[0] - s[0]) : kind === "v" ? Math.abs(t[1] - s[1]) : d2(s, t);
+  return { k: kind, pts, value };
+}
+
+/** The sector of two lines that holds `t`: intersection, start angle and sweep (radians), or null for parallel lines. */
+export function angleSector(l1: [P2, P2], l2: [P2, P2], t: P2): { x: P2; a0: number; sw: number } | null {
+  const d1 = unit2([l1[1][0] - l1[0][0], l1[1][1] - l1[0][1]]), d2v = unit2([l2[1][0] - l2[0][0], l2[1][1] - l2[0][1]]);
+  const den = d1[0] * d2v[1] - d1[1] * d2v[0];
+  if (Math.abs(den) < 1e-9) return null;
+  const w: P2 = [l2[0][0] - l1[0][0], l2[0][1] - l1[0][1]];
+  const s = (w[0] * d2v[1] - w[1] * d2v[0]) / den;
+  const x: P2 = [l1[0][0] + d1[0] * s, l1[0][1] + d1[1] * s];
+  const norm = (v: number) => { v %= 2 * Math.PI; return v < 0 ? v + 2 * Math.PI : v; };
+  const at = Math.atan2(t[1] - x[1], t[0] - x[0]);
+  for (const s1 of [1, -1]) for (const s2 of [1, -1]) {
+    let a0 = Math.atan2(d1[1] * s1, d1[0] * s1), sw = norm(Math.atan2(d2v[1] * s2, d2v[0] * s2) - a0);
+    if (sw > Math.PI) { a0 = a0 + sw; sw = 2 * Math.PI - sw; }
+    if (norm(at - a0) <= sw + 1e-9) return { x, a0: norm(a0), sw };
+  }
+  return null;
+}
+
+// ---------- text of dimensions and callouts ----------
+
+export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up?: string; lo?: string } {
+  const f = (v: number) => fmtNum(v, a.prec, dec);
+  const pre = a.pre ?? (g.k === "rad" ? "R" : g.k === "dia" ? "Ø" : "");
+  const suf = (g.k === "ang" ? "°" : "") + (a.suf ?? "");
+  const tol: Tol | undefined = a.tol;
+  if (a.txt) return { main: a.txt };
+  const v = g.value;
+  if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
+  let main = pre + f(v);
+  if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}` };
+  if (tol?.t === "fit") return { main: `${main}${tol.fit ?? ""}${suf}` };
+  main += suf;
+  if (tol?.t === "dev") {
+    const sg = (x: number) => (x > 0 ? `+${f(x)}` : x < 0 ? `−${f(-x)}` : "0");
+    return { main, up: sg(tol.up ?? 0), lo: sg(-(tol.lo ?? 0)) };
+  }
+  return { main };
+}
+
+/** Hole callout lines (ISO style) for a round edge: from the hole feature at that place, else from the cylinder. */
+export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
+  const f = (v: number) => fmtNum(v, undefined, ctx.dec);
+  const c = e.c, ax = e.ax, r = e.r ?? 0;
+  if (c && ax) {
+    for (const h of ctx.holes) {
+      if (Math.abs(Math.abs(dot3(h.n, ax)) - 1) > 1e-6) continue;
+      const on = h.pts.some(p => { const w = sub3(c, p), along = dot3(w, h.n); return Math.hypot(w[0] - h.n[0] * along, w[1] - h.n[1] * along, w[2] - h.n[2] * along) < 1e-3; });
+      if (!on) continue;
+      const H = h.f, n = h.pts.length > 1 ? `${h.pts.length}× ` : "";
+      const depth = H.end === "through" ? ` ${ctx.label("THRU")}` : ` ↧${f(H.depth.v)}`;
+      const lines: string[] = [];
+      if (H.kind === "tapped" && H.size) {
+        lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
+        lines.push(`${H.size}-6H${H.threadDepth ? ` ↧${f(H.threadDepth.v)}` : H.end === "through" ? ` ${ctx.label("THRU")}` : ""}`);
+      } else lines.push(`${n}Ø${f(H.diameter.v)}${depth}`);
+      if (H.kind === "cbore" && H.cbDia) lines.push(`⌴Ø${f(H.cbDia.v)}${H.cbDepth ? ` ↧${f(H.cbDepth.v)}` : ""}`);
+      if (H.kind === "csink" && H.csDia) lines.push(`⌵Ø${f(H.csDia.v)} × ${f((H.csAngle?.v ?? Math.PI / 2) * 180 / Math.PI)}°`);
+      return lines;
+    }
+  }
+  // No hole feature: the cylinder's diameter, and its depth unless it goes right through the part.
+  let line = `Ø${f(2 * r)}`;
+  const cyl = c && ax && ctx.topo?.cyls.find(y => Math.abs(y.r - r) < 1e-6 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })());
+  if (cyl && ctx.box) {
+    const [lo, hi] = ctx.box, span = Math.abs(cyl.ax[0]) * (hi[0] - lo[0]) + Math.abs(cyl.ax[1]) * (hi[1] - lo[1]) + Math.abs(cyl.ax[2]) * (hi[2] - lo[2]);
+    const depth = cyl.v1 - cyl.v0;
+    line += depth >= span - 1e-3 ? ` ${ctx.label("THRU")}` : ` ↧${f(depth)}`;
+  }
+  return [line];
+}
+
+// ---------- drawing ----------
+
+export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number] }[] }
+
+const thin = (a: P2, b: P2): Prim => ({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "thin", layer: "ANNOT" });
+const add2 = (a: P2, b: P2, s = 1): P2 => [a[0] + b[0] * s, a[1] + b[1] * s];
+
+/** A text's hit box (sheet mm) for a centred or left/right aligned, possibly rotated, text. */
+function textBox(x: number, y: number, s: string, h: number, al: "l" | "c" | "r", rot = 0): [number, number, number, number] {
+  const w = textW(s, h), a = rot * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const x0 = al === "l" ? 0 : al === "c" ? -w / 2 : -w;
+  const pts = [[x0, -0.3 * h], [x0 + w, -0.3 * h], [x0, h * 1.1], [x0 + w, h * 1.1]].map(([u, v]) => [x + u * ca - v * sa, y + u * sa + v * ca]);
+  return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+}
+
+/** Draws one dimension. `pl` places the view's model axes on the sheet. */
+export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
+  const out: Prim[] = [];
+  const S = (p: P2) => toSheet(pl, p[0], p[1]);
+  const T = S(a.pos);
+  const txt = dimText(a, g, dec);
+  const h = TEXT_H, small = h * 0.7;
+  let mainW = 0, totalW = 0;
+  const measure = () => {
+    mainW = textW(txt.main, h);
+    const tolW = txt.up || txt.lo ? Math.max(textW(txt.up ?? "", small), textW(txt.lo ?? "", small)) : 0;
+    totalW = mainW + (txt.main && tolW ? tolW + 0.6 : tolW);
+  };
+  measure();
+  /** Writes the value centred at `c` along `d` (rotation `rot`), `up` being the reading up direction. */
+  const writeText = (c: P2, rot: number, al: "c" | "l" | "r" = "c"): [number, number, number, number] => {
+    const a0 = rot * Math.PI / 180, dir: P2 = [Math.cos(a0), Math.sin(a0)], up: P2 = [-dir[1], dir[0]];
+    // Start of the whole text block along the baseline.
+    const start = al === "c" ? add2(c, dir, -totalW / 2) : al === "l" ? c : add2(c, dir, -totalW);
+    if (txt.main) out.push({ t: "t", x: start[0], y: start[1], s: txt.main, h, al: "l", layer: "ANNOT", rot: rot || undefined });
+    if (txt.up || txt.lo) {
+      const s0 = add2(start, dir, txt.main ? mainW + 0.6 : 0);
+      const big = !txt.main;
+      const hh = big ? h * 0.8 : small;
+      if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.5); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+      if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.1); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+    }
+    return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
+  };
+  if (g.k === "rad" || g.k === "dia") {
+    const C = S(g.c!), R = g.r! * pl.s;
+    const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
+    const outside = d2(T, C) > R;
+    const far = outside ? T : add2(C, u, R);
+    out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
+    out.push(arrowHead(...add2(C, u, R), u[0], u[1], ARROW, 1));
+    if (g.k === "dia") out.push(arrowHead(...add2(C, u, -R), -u[0], -u[1], ARROW, 1));
+    // A short horizontal shoulder at the text, which sits on it.
+    const sx = u[0] >= 0 ? 1 : -1;
+    let box: [number, number, number, number];
+    if (outside) {
+      const end: P2 = [T[0] + sx * (totalW + 1), T[1]];
+      out.push(thin(T, end));
+      box = writeText([T[0] + sx * 0.5, T[1] + 0.8], 0, sx > 0 ? "l" : "r");
+    } else box = writeText([T[0], T[1] + 0.8], 0, "c");
+    return { prims: out, box };
+  }
+  if (g.k === "ang") {
+    const L = g.lines!.map(l => [S(l[0]), S(l[1])] as [P2, P2]);
+    const sec = angleSector(L[0], L[1], T);
+    if (!sec) return { prims: out, box: textBox(T[0], T[1], "?", h, "c") };
+    g.value = sec.sw * 180 / Math.PI;
+    const txt2 = dimText(a, g, dec);
+    txt.main = txt2.main; txt.up = txt2.up; txt.lo = txt2.lo;
+    const R = Math.max(d2(T, sec.x), 3), a1 = sec.a0 + sec.sw;
+    out.push({ t: "a", o: sec.x, r: R, a0: sec.a0, a1, pen: "thin", layer: "ANNOT" });
+    const tip = (an: number): P2 => [sec.x[0] + R * Math.cos(an), sec.x[1] + R * Math.sin(an)];
+    out.push(arrowHead(...tip(sec.a0), Math.sin(sec.a0), -Math.cos(sec.a0), ARROW, 1));
+    out.push(arrowHead(...tip(a1), -Math.sin(a1), Math.cos(a1), ARROW, 1));
+    // Extension lines when the arc runs past the lines' ends.
+    for (const [l, an] of [[L[0], sec.a0], [L[1], a1]] as [[P2, P2], number][]) {
+      const e: P2 = [Math.cos(an), Math.sin(an)], reach = Math.max(...l.map(p => (p[0] - sec.x[0]) * e[0] + (p[1] - sec.x[1]) * e[1]));
+      if (reach < R - 1) out.push(thin(add2(sec.x, e, Math.max(reach, 0) + 1), add2(sec.x, e, R + 2)));
+    }
+    const mid = sec.a0 + sec.sw / 2, tp: P2 = [sec.x[0] + (R + 1.5) * Math.cos(mid), sec.x[1] + (R + 1.5) * Math.sin(mid)];
+    measure();
+    const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
+    return { prims: out, box };
+  }
+  // Linear.
+  const [S1, S2] = g.pts.map(S);
+  const d: P2 = g.k === "h" ? [1, 0] : g.k === "v" ? [0, 1] : unit2([S2[0] - S1[0], S2[1] - S1[1]]);
+  const nrm: P2 = [-d[1], d[0]];
+  const off = (p: P2) => (T[0] - p[0]) * nrm[0] + (T[1] - p[1]) * nrm[1];
+  const D1 = add2(S1, nrm, off(S1)), D2 = add2(S2, nrm, off(S2));
+  for (const [s, e] of [[S1, D1], [S2, D2]] as [P2, P2][]) {
+    const v: P2 = [e[0] - s[0], e[1] - s[1]], L = len2(v);
+    if (L > 1.5) { const u: P2 = [v[0] / L, v[1] / L]; out.push(thin(add2(s, u, 1), add2(e, u, 2))); }
+  }
+  const al = (p: P2) => p[0] * d[0] + p[1] * d[1];
+  let [lo, hi] = [D1, D2];
+  if (al(lo) > al(hi)) [lo, hi] = [hi, lo];
+  const span = al(hi) - al(lo), st = al(T);
+  let rot = Math.atan2(d[1], d[0]) * 180 / Math.PI;
+  if (rot > 90.001) rot -= 180;
+  if (rot <= -89.999) rot += 180;
+  const rr = rot * Math.PI / 180, rdir: P2 = [Math.cos(rr), Math.sin(rr)], up: P2 = [-rdir[1], rdir[0]];
+  const base = add2(lo, d, st - al(lo));
+  // The dimension line runs under the text when the text is outside the arrows.
+  const tLo = st - totalW / 2 - 1, tHi = st + totalW / 2 + 1;
+  const inside = span >= 2 * ARROW + 2;
+  const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
+  out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
+  if (inside) { out.push(arrowHead(lo[0], lo[1], -d[0], -d[1], ARROW, 1)); out.push(arrowHead(hi[0], hi[1], d[0], d[1], ARROW, 1)); }
+  else { out.push(arrowHead(lo[0], lo[1], d[0], d[1], ARROW, 1)); out.push(arrowHead(hi[0], hi[1], -d[0], -d[1], ARROW, 1)); }
+  const box = writeText(add2(base, up, 1), rot, "c");
+  return { prims: out, box };
+}
+
+/** Draws a hole callout: a leader to the circle, a shoulder and the lines of text. */
+function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number] } {
+  const out: Prim[] = [];
+  const lines = a.txt ? a.txt.split("\n") : holeText(e, ctx);
+  const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
+  const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
+  const tip = add2(C, u, R);
+  out.push(thin(tip, T), arrowHead(tip[0], tip[1], -u[0], -u[1], ARROW, 1));
+  const sx = u[0] >= 0 ? 1 : -1, w = Math.max(...lines.map(s => textW(s))) + 1;
+  out.push(thin(T, [T[0] + sx * w, T[1]]));
+  const x = T[0] + sx * 0.5;
+  lines.forEach((s, i) => out.push({ t: "t", x, y: T[1] + 0.8 + (lines.length - 1 - i) * TEXT_H * 1.5, s, h: TEXT_H, al: sx > 0 ? "l" : "r", layer: "ANNOT" }));
+  const x0 = sx > 0 ? T[0] : T[0] - w, x1 = sx > 0 ? T[0] + w : T[0];
+  return { prims: out, box: [x0, T[1] - 0.5, x1, T[1] + 0.8 + lines.length * TEXT_H * 1.5] };
+}
+
+/** Draws a note (multi-line text) and its leader. */
+export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: Prim[]; box: [number, number, number, number] } {
+  const out: Prim[] = [], h = a.h ?? TEXT_H, lines = a.text.split("\n");
+  lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
+  const w = Math.max(1, ...lines.map(s => textW(s, h)));
+  if (leaderTo) {
+    const start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
+    const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
+    out.push(thin(start, leaderTo), arrowHead(leaderTo[0], leaderTo[1], u[0], u[1], ARROW, 1));
+  }
+  return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
+}
+
+/** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
+export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
+  const out: AnnotOut = { prims: [], hits: [] };
+  const vd = viewDir(sheet, v), { P, n } = projector(vd);
+  if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
+  for (const a of sheet.annots ?? []) {
+    if (a.view !== v.id) continue;
+    let r: { prims: Prim[]; box: [number, number, number, number] } | null = null;
+    if (a.t === "dim") {
+      // A model item measures the part as it is now.
+      const it = a.src ? ctx.items.find(i => i.src === a.src) : undefined;
+      const g = dimGeo(it ? { ...a, refs: [{ pt: it.p[0] }, { pt: it.p[1] }] } : a, P, ctx.topo);
+      if (g) r = dimPrims(a, g, pl, ctx.dec);
+      else { const T = toSheet(pl, a.pos[0], a.pos[1]); r = { prims: [{ t: "t", x: T[0], y: T[1], s: "?", h: TEXT_H, al: "c", layer: "ANNOT" }], box: textBox(T[0], T[1], "?", TEXT_H, "c") }; }
+    } else if (a.t === "hole") {
+      const e = refEdge(a.ref, ctx.topo);
+      if (e && e.t === "c") r = holePrims(a, e, P, pl, ctx);
+    } else {
+      const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
+      r = notePrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null);
+    }
+    if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
+  }
+  return out;
+}
+
+/** Notes on the sheet itself (not on a view). */
+export function sheetNotes(sheet: Sheet): AnnotOut {
+  const out: AnnotOut = { prims: [], hits: [] };
+  for (const a of sheet.annots ?? []) {
+    if (a.t !== "note" || a.view) continue;
+    const r = notePrims(a, a.pos, null);
+    out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box });
+  }
+  return out;
+}
+
+/**
+ * Centre marks on full circles seen end-on and centrelines along cylinders seen from the side
+ * (FR-DRW-023), in the centre line type; detail views clip them to their circle.
+ */
+export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3) => P2, n: V3): Prim[] {
+  const segs: { k: "l"; c: 0; p: [number, number, number, number] }[] = [];
+  const ext = 2 / pl.s;
+  // Circles seen end-on, grouped by centre and radius (STEP often splits a circle in two arcs).
+  const circ = new Map<string, { c: P2; r: number; sp: number }>();
+  for (const e of topo.edges) {
+    if (e.t !== "c" || !e.c || !e.ax || !e.r || Math.abs(Math.abs(dot3(e.ax, n)) - 1) > 1e-6) continue;
+    const c = P(e.c), key = `${c[0].toFixed(4)},${c[1].toFixed(4)},${e.r.toFixed(4)}`;
+    const g = circ.get(key) ?? { c, r: e.r, sp: 0 };
+    g.sp += e.sp ?? 0;
+    circ.set(key, g);
+  }
+  const marked = new Map<string, number>();
+  for (const g of circ.values()) {
+    if (g.sp < 2 * Math.PI - 1e-3) continue;
+    const key = `${g.c[0].toFixed(4)},${g.c[1].toFixed(4)}`;
+    marked.set(key, Math.max(marked.get(key) ?? 0, g.r));
+  }
+  for (const [key, r] of marked) {
+    if (r * pl.s < 1) continue;
+    const [cx, cy] = key.split(",").map(Number), L = r + ext;
+    segs.push({ k: "l", c: 0, p: [cx - L, cy, cx + L, cy] }, { k: "l", c: 0, p: [cx, cy - L, cx, cy + L] });
+  }
+  // Cylinders seen from the side: one centreline per axis over all the cylinders on it.
+  const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
+  for (const y of topo.cyls) {
+    if (Math.abs(dot3(y.ax, n)) > 1e-6) continue;
+    const a3 = (t: number): V3 => [y.o[0] + y.ax[0] * t, y.o[1] + y.ax[1] * t, y.o[2] + y.ax[2] * t];
+    const p0 = P(a3(y.v0)), p1 = P(a3(y.v1));
+    let d = unit2([p1[0] - p0[0], p1[1] - p0[1]]);
+    if (d[0] < -1e-9 || (Math.abs(d[0]) < 1e-9 && d[1] < 0)) d = [-d[0], -d[1]];
+    const off = p0[0] * -d[1] + p0[1] * d[0];
+    const key = `${Math.atan2(d[1], d[0]).toFixed(5)},${off.toFixed(4)}`;
+    const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map() };
+    const t = (p: P2) => (p[0] - g.a[0]) * g.d[0] + (p[1] - g.a[1]) * g.d[1];
+    g.t0 = Math.min(g.t0, t(p0), t(p1)); g.t1 = Math.max(g.t1, t(p0), t(p1));
+    const rk = y.r.toFixed(4);
+    g.sp.set(rk, (g.sp.get(rk) ?? 0) + y.sp);
+    axes.set(key, g);
+  }
+  for (const g of axes.values()) {
+    if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3)) continue;
+    const A = add2(g.a, g.d, g.t0 - ext), B = add2(g.a, g.d, g.t1 + ext);
+    segs.push({ k: "l", c: 0, p: [A[0], A[1], B[0], B[1]] });
+  }
+  const kept = v.kind === "detail" && v.c && v.r ? clipToCircle(segs, v.c, v.r) : segs;
+  const out: Prim[] = [];
+  for (const g of kept) if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
+  return out;
+}
+
+// ---------- model items ----------
+
+/**
+ * Model items (FR-DRW-020): each item goes to the first view where it reads best (looking along its
+ * plane's normal, or for a depth, square to it), once per sheet; its dimension line sits outside the view.
+ */
+export function placeItems(sheet: Sheet, items: ModelItem[], boxOf: (v: DrawingView) => [number, number, number, number] | null, uid: () => string): DimAnnot[] {
+  const have = new Set((sheet.annots ?? []).map(a => (a.t === "dim" ? a.src : undefined)).filter(Boolean));
+  const out: DimAnnot[] = [];
+  const stack = new Map<string, number>();
+  const order = [...sheet.views].sort((a, b) => (a.kind ? 1 : 0) - (b.kind ? 1 : 0) || (a.parent ? 1 : 0) - (b.parent ? 1 : 0));
+  for (const it of items) {
+    if (have.has(it.src)) continue;
+    for (const v of order) {
+      if (v.kind === "detail" || v.orient === "iso" || (v.side && v.side[0] && v.side[1])) continue;
+      const vd = viewDir(sheet, v), { P, n } = projector(vd), c = Math.abs(dot3(it.n, n));
+      if (it.side ? c > 1e-6 : c < 1 - 1e-6) continue;
+      const box = boxOf(v);
+      if (!box) continue;
+      const [a, b] = it.p.map(P);
+      let k: DimAnnot["k"] = it.k === "lin" ? "al" : it.k;
+      if (it.k === "lin") {
+        const dd = it.dir ? P([it.dir[0], it.dir[1], it.dir[2]]) : [b[0] - a[0], b[1] - a[1]];
+        k = Math.abs(dd[1]) < 1e-6 * (Math.abs(dd[0]) || 1) ? "h" : Math.abs(dd[0]) < 1e-6 * (Math.abs(dd[1]) || 1) ? "v" : "al";
+        if (Math.abs(k === "h" ? b[0] - a[0] : k === "v" ? b[1] - a[1] : Math.hypot(b[0] - a[0], b[1] - a[1])) < 1e-6) break;
+      }
+      let pos: P2;
+      if (k === "rad" || k === "dia") {
+        const c2 = a, r = Math.hypot(b[0] - a[0], b[1] - a[1]), dirv = unit2([b[0] - a[0], b[1] - a[1]], [Math.SQRT1_2, Math.SQRT1_2]);
+        pos = [c2[0] + dirv[0] * (r + 8), c2[1] + dirv[1] * (r + 8)];
+      } else {
+        // Outside the view on the side nearer the measured points, stacked 8 mm apart.
+        const mid: P2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+        let side: string, p: P2;
+        if (k === "h") { side = mid[1] >= cy ? "t" : "b"; const s = stack.get(v.id + side) ?? 0; p = [mid[0], side === "t" ? box[3] + 10 + 8 * s : box[1] - 10 - 8 * s]; stack.set(v.id + side, s + 1); }
+        else if (k === "v") { side = mid[0] >= cx ? "r" : "l"; const s = stack.get(v.id + side) ?? 0; p = [side === "r" ? box[2] + 10 + 8 * s : box[0] - 10 - 8 * s, mid[1]]; stack.set(v.id + side, s + 1); }
+        else { const d = unit2([b[0] - a[0], b[1] - a[1]]), nn: P2 = [-d[1], d[0]]; p = [mid[0] + nn[0] * 10, mid[1] + nn[1] * 10]; }
+        pos = p;
+      }
+      out.push({ id: uid(), t: "dim", view: v.id, k, refs: [{ pt: it.p[0] }, { pt: it.p[1] }], pos: [Math.round(pos[0] * 100) / 100, Math.round(pos[1] * 100) / 100], src: it.src });
+      break;
+    }
+  }
+  return out;
+}

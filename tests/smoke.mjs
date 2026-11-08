@@ -3188,6 +3188,112 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: dimensions, model items, hole callouts, centre marks, notes (FR-DRW-020..023, AT-P5-1/3) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwdim", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }],
+        dims: [{ id: "d1", name: "D1", t: "hdistance", e: ["p1", "p2"], val: { v: 100 } }, { id: "d2", name: "D2", t: "vdistance", e: ["p2", "p3"], val: { v: 60 } }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [{ id: "d3", name: "D3", t: "diameter", e: ["c1"], val: { v: 16 } }], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const [front, top] = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => ({ id: v.id, x: v.x, y: v.y })));
+    const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
+    const prims = () => dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    const texts = async () => (await prims()).filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s);
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    let pr = await prims();
+    const centre = pr.filter(p => p.layer === "CENTER" && p.pen === "center").length;
+    check(centre === 4, `drawing: centre marks on the hole seen end-on and centrelines on it from the front and the side (${centre} centre lines)`);
+    // Model items: the sketch's 100 and 60 and the Ø16 go to the top view, the extrude depth 20 to the front.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await dp.waitForTimeout(150);
+    let an = await annots();
+    let tx = await texts();
+    const where = an.map(a => `${a.src}@${a.view === front.id ? "front" : a.view === top.id ? "top" : "?"}`).sort().join(" ");
+    check(an.length === 4 && where === "f1:depth@front s1:d1@top s1:d2@top s2:d3@top" && ["100", "60", "Ø16", "20"].every(s => tx.includes(s)),
+      `drawing: model items imported once each into the view where they read best (${where}; ${tx.join(" ")})`);
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
+    await dp.waitForTimeout(150);
+    check((await annots()).length === 4, "drawing: model items are not inserted twice");
+    // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
+    await dp.click('#drw [data-a="dim"]');
+    let [x, y] = await at(front.id, -20, 20);
+    await dp.mouse.move(x, y + 3); await dp.mouse.move(x, y);
+    const hov = await dp.evaluate(() => document.querySelectorAll("#drw .drw-edge").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await at(front.id, 0, 38);
+    await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y);
+    const pv = await dp.evaluate(() => document.querySelectorAll("#drw .drw-preview text").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await at(top.id, 18, 0);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top.id, 30, 25);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.keyboard.press("Escape");
+    an = await annots();
+    const smart = an.filter(a => !a.src);
+    tx = await texts();
+    check(hov >= 1 && pv >= 1 && smart.length === 2 && smart[0].k === "h" && smart[0].view === front.id && smart[1].k === "dia" && tx.filter(s => s === "100").length === 2 && tx.filter(s => s === "Ø16").length === 2,
+      `drawing: Smart dimension: an edge placed above it gives a horizontal 100, a circle gives Ø16, with a live preview (${JSON.stringify(smart.map(a => a.k))}, ${tx.join(" ")})`);
+    // Select the 100 by its text and give it a ± tolerance.
+    [x, y] = await at(front.id, 0, 40.5);
+    await dp.mouse.click(x, y);
+    const selA = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-tolt="sym"]'));
+    if (selA) await dp.click('#drw [data-tolt="sym"]');
+    tx = await texts();
+    check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // Hole callout and a note.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
+    [x, y] = await at(top.id, 10, -8);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top.id, 40, -45);
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    dp.once("dialog", d => d.accept("BREAK SHARP EDGES"));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 60));
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.waitForTimeout(150);
+    tx = await texts();
+    an = await annots();
+    check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
+      `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-dims.png` });
+    // Exports carry the annotations; Russian uses the decimal comma.
+    const svgT = await dp.evaluate(() => window.__sv.drw.svg());
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(200);
+    const ru = await texts();
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(/100±0\.1/.test(svgT) && /data-l="CENTER"/.test(svgT) && ru.includes("100±0,1") && ru.some(s => /^Ø16 /.test(s) && !/THRU/.test(s)), `drawing: SVG export has the dimensions and centre lines; Russian uses the decimal comma (${ru.filter(s => /±|Ø16 /.test(s)).join(" / ")})`);
+    // Associative (AT-P5-3): the part gets 20 mm wider; the dimensions find their edges again and read 120.
+    await dp.click('#drw [data-a="back"]');
+    await dp.evaluate(() => window.__sv.modeller.store.change("Width", d => { const e = d.features[0].ents; e[1].x = 70; e[2].x = 70; }));
+    await dp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForTimeout(400);
+    await ready();
+    tx = await texts();
+    check(tx.includes("120±0.1") && tx.includes("120") && !tx.includes("?"), `drawing: after the part changes, the dimensions re-attach and update (${tx.filter(s => /^1[02]0/.test(s)).join(" ")})`);
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

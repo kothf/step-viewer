@@ -60,3 +60,6 @@
 .drw-cut { fill: none; stroke: #2563eb; stroke-width: .5; stroke-dasharray: 6 1.5 1 1.5; }
 .drw-edge { stroke: #f59e0b; stroke-width: 1.2; stroke-linecap: round; }
 .drw-snap { fill: #f59e0b; stroke: none; }
+.drw-edge.on { stroke: #2563eb; }
+circle.drw-edge { fill: none; }
+.drw-tolseg button { padding: 2px 6px; }
