@@ -5693,6 +5693,31 @@ try {
       const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
       document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
+      // Interference over the study (Results → Interference): in a new study a placement key carries pin 3 onto pin 2 by the
+      // end, so that pair interferes from some time to the end; a time button seeks there; the list closes.
+      const prevStudy = m.studyId, prevTime = m.time;
+      m.newStudy();
+      m.edit(st => { st.duration = 2; });
+      m.addTrack(`pose:${id}`);
+      const ct = m.study.tracks.find(k => k.kind === "pose");
+      const to = [c[1].tf[3] - c[2].tf[3], c[1].tf[7] - c[2].tf[7], c[1].tf[11] - c[2].tf[11]];
+      m.edit(st => { st.tracks.find(k => k.id === ct.id).keys[1].d = to; });
+      document.querySelector('#motion [data-mo="clash"]').click();
+      const ci = m.clash?.items ?? [], pair = ci.find(x => [x.a, x.b].sort().join() === [c[1].id, id].sort().join());
+      const sp = pair?.spans ?? [];
+      const listed = document.querySelectorAll("#motion .mo-clashes .mo-clash").length, bands = document.querySelectorAll("#motion .mo-ruler .mo-cspan").length;
+      document.querySelector("#motion [data-clt]")?.click();
+      const sought = m.time;
+      const all0 = ci.length;
+      const box = document.querySelector('#motion input[data-mo="clashall"]'); box.checked = true; box.dispatchEvent(new Event("change"));
+      const withTouching = m.clash.items.length + 0, ignoredAfter = m.clash.ignored;
+      const box2 = document.querySelector('#motion input[data-mo="clashall"]'); box2.checked = false; box2.dispatchEvent(new Event("change"));
+      document.querySelector('#motion [data-mo="clashclose"]')?.click();
+      const closed = !document.querySelector("#motion .mo-clashes");
+      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      m.deleteStudy();
+      m.studyId = prevStudy; m.render(); m.seek(prevTime);
+      trace.interfere = interfere;
       return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi, trace };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
@@ -5761,8 +5786,10 @@ try {
       && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
       && Object.values(tc.relative).every(v => v === true)
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
-      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone,
-      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
+      && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false,
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
@@ -7531,7 +7558,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 16 && mode === "note", `drawing: annotation tab shows the 16 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 17 && mode === "note", `drawing: annotation tab shows the 17 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8634,6 +8661,46 @@ try {
     const ru = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="cfg"] option')][0]?.textContent);
     await dp.evaluate(() => document.querySelector("#lang-btn").click());
     check(ru === "Активная (Default)", `drawing: configuration list in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: revision cloud ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwcloud", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cloud"]');
+    for (const [x, y] of [[30, 30], [90, 30], [90, 70], [30, 70], [30, 30]]) await clickSheet(x, y);
+    await dp.waitForTimeout(150);
+    const cl = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "cloud"); return { a: a && JSON.parse(JSON.stringify(a)), arcs: window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length, mode: window.__sv.drw.mode(), panel: !!document.querySelector('#drw .drw-props [data-d="carc"]') }; });
+    check(cl.a && cl.a.pts.length === 8 && cl.arcs === 10 + 7 + 10 + 7 && cl.mode === "none" && cl.panel, `drawing: revision cloud from four clicked corners, scallops of at most 6 mm (${JSON.stringify(cl)})`);
+    await dp.fill('#drw .drw-props [data-d="carc"]', "20");
+    await dp.press('#drw .drw-props [data-d="carc"]', "Enter");
+    await dp.waitForTimeout(150);
+    const arcs2 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT").length);
+    await clickSheet(60, 50);
+    await dp.waitForTimeout(100);
+    const inside = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="carc"]'));
+    await clickSheet(60, 30);
+    await dp.waitForTimeout(100);
+    const edge = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="carc"]'));
+    check(arcs2 === 3 + 2 + 3 + 2 && !inside && edge, `drawing: revision cloud arc size, picked on its outline only (${arcs2}, inside ${inside}, edge ${edge})`);
     await ctx.close();
   }
 

@@ -294,3 +294,19 @@ test("trace paths: points through the frames, speed, series, length, CSV and plo
   assert.match(svg, /<polyline points="[^"]+"/);
   assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
 });
+
+test("motion interference over a study: per-frame pairs become spans per pair; pairs touching at the start can be left out (FR-FT-122)", async () => {
+  const { clashItems, clashCsv, pairKey } = await import("../../src/motion/interfere");
+  const per: [string, string][][] = [[["p", "q"]], [["p", "q"]], [["b", "a"], ["p", "q"]], [["a", "b"]], [], [["b", "a"]]];
+  const all = clashItems(per, 10);
+  assert.deepEqual(all.map(x => x.key), ["p|q", "a|b"]);
+  assert.deepEqual(all[1].frames, [2, 3, 5]);
+  assert.deepEqual(all[1].spans, [[0.2, 0.3], [0.5, 0.5]]);
+  assert.deepEqual(all[0].spans, [[0, 0.2]]);
+  const moving = clashItems(per, 10, new Set([pairKey("q", "p")]));
+  assert.deepEqual(moving.map(x => x.key), ["a|b"]);
+  const csv = clashCsv(moving, id => (id === "a" ? "Pin, 1" : "Plate")).trim().split("\n");
+  assert.equal(csv[0], "component 1,component 2,from (s),to (s)");
+  assert.deepEqual(csv.slice(1), ['"Pin, 1",Plate,0.2,0.3', '"Pin, 1",Plate,0.5,0.5']);
+  assert.deepEqual(clashItems([], 30), []);
+});

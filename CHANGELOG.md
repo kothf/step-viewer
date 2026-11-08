@@ -5,6 +5,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.206.0] - 2026-11-08
+
+### Added
+
+- Drawings of an assembly: a model view can show **one component alone** (view panel → Components), so part details go on the assembly's own drawing. Its projected and section views follow, and its centre marks, smart dimensions and hole callouts use only that component's edges.
+
+### Fixed
+
+- Switching a drawing between first and third angle projection left the views where they were, so the view under the front view silently became a bottom view. Each projected view now stays the same view and moves across its parent, and a projected view dragged across its parent stops on its own side (as in SolidWorks).
+
+## [1.205.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
+
+## [1.202.0] - 2026-11-08
+
+### Added
+
+- Revision clouds on drawing sheets (Annotation → **Revision cloud**): click the corners of the changed area, then the first corner again or Enter. The cloud takes the last revision letter from the revision table (shown in a triangle), its arc size and letter can be changed in the panel, and it is picked on its outline only, so views inside it stay draggable. It goes into every export like the rest of the sheet.
+
 ## [1.200.0] - 2026-11-08
 
 ### Added
@@ -1477,7 +1499,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.200.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.206.0...HEAD
+[1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0
+[1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
+[1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
 [1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
 [1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0

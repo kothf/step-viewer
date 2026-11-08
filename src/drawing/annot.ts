@@ -9,7 +9,7 @@ import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 
@@ -247,7 +247,8 @@ export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
 // ---------- drawing ----------
 
 /** `dangling`: annotations whose model edge is gone (FR-DRW-026); the workspace shows them in the warning colour. */
-export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number] }[]; dangling: string[] }
+/** `ring`: a revision cloud's corners (sheet mm, closed): it is picked near its outline only, so views inside stay draggable. */
+export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number]; ring?: number[]; band?: number }[]; dangling: string[] }
 
 const thin = (a: P2, b: P2): Prim => ({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "thin", layer: "ANNOT" });
 const add2 = (a: P2, b: P2, s = 1): P2 => [a[0] + b[0] * s, a[1] + b[1] * s];
@@ -615,10 +616,62 @@ function surfOn(a: SurfAnnot, T: P2, f: { at: P2; d: P2 } | null, dec: string): 
 }
 
 /** Notes, free tolerance frames, surface symbols and tables on the sheet itself (not on a view). */
+/**
+ * A revision cloud: each side of the polygon (wound counter-clockwise) split into equal chords no longer than `arc`,
+ * each chord a half circle bulging outwards; with `rev`, the revision letter in a triangle at the first corner.
+ */
+export function cloudPrims(a: CloudAnnot): { prims: Prim[]; box: [number, number, number, number] } {
+  const n = Math.floor(a.pts.length / 2), [ox, oy] = a.pos;
+  let pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) pts.push([ox + a.pts[2 * i], oy + a.pts[2 * i + 1]]);
+  let area = 0;
+  for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; area += p[0] * q[1] - q[0] * p[1]; }
+  if (area < 0) pts = pts.reverse();
+  const arc = Math.max(1, a.arc ?? 6), prims: Prim[] = [];
+  let box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n], L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (L < 1e-6) continue;
+    const k = Math.max(1, Math.ceil(L / arc)), th = Math.atan2(q[1] - p[1], q[0] - p[0]), r = L / k / 2;
+    for (let j = 0; j < k; j++) {
+      const o: [number, number] = [p[0] + (q[0] - p[0]) * (j + 0.5) / k, p[1] + (q[1] - p[1]) * (j + 0.5) / k];
+      prims.push({ t: "a", o, r, a0: th + Math.PI, a1: th + 2 * Math.PI, pen: "thin", layer: "ANNOT" });
+      box = [Math.min(box[0], o[0] - r), Math.min(box[1], o[1] - r), Math.max(box[2], o[0] + r), Math.max(box[3], o[1] + r)];
+    }
+  }
+  if (a.rev && n) {
+    const [x, y] = a.pos.map((c, i) => c + a.pts[i]) as [number, number], s = TEXT_H * 2.2;
+    const c: [number, number] = [x - s * 0.7, y + s * 0.7];
+    prims.push({ t: "p", p: [c[0] - s / 2, c[1] - s * 0.29, c[0] + s / 2, c[1] - s * 0.29, c[0], c[1] + s * 0.58], closed: true, pen: "thin", layer: "ANNOT" });
+    prims.push({ t: "t", x: c[0], y: c[1] - TEXT_H * 0.4, s: a.rev, h: TEXT_H, al: "c", layer: "ANNOT" });
+    box = [Math.min(box[0], c[0] - s / 2), Math.min(box[1], c[1] - s * 0.29), Math.max(box[2], c[0] + s / 2), Math.max(box[3], c[1] + s * 0.58)];
+  }
+  if (!isFinite(box[0])) box = [ox, oy, ox, oy];
+  return { prims, box };
+}
+
+/** Distance from p to the closed polygon `ring` (x, y pairs). */
+export function ringDist(ring: number[], x: number, y: number): number {
+  let d = Infinity;
+  const n = Math.floor(ring.length / 2);
+  for (let i = 0; i < n; i++) {
+    const ax = ring[2 * i], ay = ring[2 * i + 1], bx = ring[(2 * i + 2) % (2 * n)], by = ring[(2 * i + 3) % (2 * n)];
+    const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
+    d = Math.min(d, Math.hypot(x - ax - t * dx, y - ay - t * dy));
+  }
+  return d;
+}
+
 export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?: Bom | null): AnnotOut {
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   for (const a of sheet.annots ?? []) {
     if (a.view) continue;
+    if (a.t === "cloud") {
+      const r = cloudPrims(a);
+      out.prims.push(...r.prims);
+      out.hits.push({ id: a.id, box: r.box, ring: a.pts.map((c, i) => c + a.pos[i % 2]), band: Math.max(1, a.arc ?? 6) });
+      continue;
+    }
     const r = a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
       : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label) : null;
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }

@@ -717,4 +717,18 @@ test("a component-only view keeps the topology of its components only", async ()
   assert.deepEqual(a.cyls.map(c => c.f), ["c2@f2"]);
   assert.deepEqual(topoOnly(topo, ["s1"]).edges.map(e => e.k), ["s1/c3@f0|s1/c3@f1"]);
   assert.equal(topoOnly(topo, undefined), topo);
+test("revision cloud: scallops bulge outwards whichever way the corners go", async () => {
+  const { cloudPrims } = await import("../../src/drawing/annot");
+  for (const pts of [[0, 0, 30, 0, 30, 20, 0, 20], [0, 0, 0, 20, 30, 20, 30, 0]]) {
+    const r = cloudPrims({ id: "c", t: "cloud", pos: [100, 50], pts, arc: 10 });
+    const arcs = r.prims.filter(p => p.t === "a") as any[];
+    assert.equal(arcs.length, 3 + 2 + 3 + 2);
+    for (const a of arcs) {
+      const m = (a.a0 + a.a1) / 2, x = a.o[0] + a.r * Math.cos(m), y = a.o[1] + a.r * Math.sin(m);
+      assert.ok(x < 100 + 1e-9 || x > 130 - 1e-9 || y < 50 + 1e-9 || y > 70 - 1e-9, "bulge outside the rectangle");
+    }
+    assert.deepEqual(r.box.map(v => Math.round(v * 100) / 100), [95, 45, 135, 75]);
+  }
+  const rv = cloudPrims({ id: "c", t: "cloud", pos: [0, 0], pts: [0, 0, 10, 0, 10, 10], rev: "B" });
+  assert.ok(rv.prims.some(p => p.t === "t" && p.s === "B"));
 });
