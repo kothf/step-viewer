@@ -3526,4 +3526,6 @@ export const RU: Record<string, string> = {
   "PDF (this sheet)": "PDF (этот лист)",
   "DXF 2000 (this sheet)": "DXF 2000 (этот лист)",
   "Link to property": "Ссылка на свойство",
+  "Active ({name})": "Активная ({name})",
+  "View configuration": "Конфигурация вида",
 };

@@ -1,7 +1,7 @@
 // Headless drawing rendering and version compare (FR-PDM-051): a .mcaddrw is opened in its own
 // drawing kernel, every sheet composed to primitives as the workspace draws it, and two versions
 // overlaid with what is only in the older one red and what is only in the newer one green.
-import { useStyle } from "./annot";
+import { factsCtx, useStyle, type AnnotCtx } from "./annot";
 import { t } from "../i18n";
 import { sheetBom, type Bom } from "./bom";
 import { DrawingKernel } from "./client";
@@ -10,7 +10,7 @@ import { unpackDrawing } from "./file";
 import type { Prim } from "./prims";
 import { sheetSize, type Fields } from "./sheet";
 import type { DrawingDoc, Sheet } from "./types";
-import { altReq, scaleText, viewReq } from "./views";
+import { altReq, scaleText, viewConfig, viewReq } from "./views";
 
 export interface SheetPrims { name: string; W: number; H: number; prims: Prim[] }
 
@@ -45,7 +45,10 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     useStyle(doc.style);
     return doc.sheets.map(sh => {
       const [W, H] = sheetSize(sh);
-      const ctx = { topo: facts.topo, holes: facts.holes, threads: facts.threads ?? [], sketches: facts.sketches ?? [], items: facts.items, box: facts.box, dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null };
+      const ctx: AnnotCtx = {
+        ...factsCtx(facts), dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null,
+        forView: v => { const c = viewConfig(sh, v), g = c && k.configs.get(c); return g ? factsCtx(g) : null; },
+      };
       return { name: sh.name, W, H, prims: composeSheet(sh, fieldsOf(doc, sh, mass), k.cache, facts.box, label, ctx).prims };
     });
   } finally { k.stop(); }

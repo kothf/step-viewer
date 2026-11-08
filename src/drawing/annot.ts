@@ -17,7 +17,11 @@ type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
-export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
+export interface AnnotCtx {
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
+  forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
+}
 
 /** Annotation text height and arrowhead in force (FR-DRW-025): set from the drawing's style by `useStyle` before composing. */
 export let TEXT_H = 3.5;
@@ -516,7 +520,14 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 }
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
+/** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null };
+}
+
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
+  const own = ctx.forView?.(v);
+  if (own) ctx = { ...ctx, ...own, forView: undefined };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));

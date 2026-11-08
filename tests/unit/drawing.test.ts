@@ -669,3 +669,19 @@ test("note property links: $PRP:\"name\" takes the title block field, SolidWorks
   const r = notePrims({ id: "n", t: "note", pos: [0, 0], text: 'M: $PRP:"material"' }, [0, 0], null);
   assert.equal((r.prims[0] as any).s, "M: Brass");
 });
+
+test("view configuration: projected, section and detail views follow their model view", async () => {
+  const { viewConfig, viewReq } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "Sheet1", size: "A3", landscape: true, scale: [1, 1], projection: "first", views: [
+    { id: "f", name: "F", orient: "front", x: 100, y: 100, config: "Tall" },
+    { id: "t", name: "T", parent: "f", side: [0, 1], x: 100, y: 200 },
+    { id: "d", name: "D", kind: "detail", parent: "t", c: [0, 0], r: 5, x: 200, y: 200 },
+    { id: "g", name: "G", orient: "top", x: 300, y: 100 },
+  ] } as any;
+  assert.equal(viewConfig(sheet, sheet.views[2]), "Tall");
+  assert.equal(viewConfig(sheet, sheet.views[3]), undefined);
+  const r = viewReq(sheet, sheet.views[1]);
+  assert.equal(r.cfg, "Tall");
+  assert.ok(r.key.endsWith("|cfg|Tall"));
+  assert.ok(!viewReq(sheet, sheet.views[3]).key.includes("|cfg|"));
+});
