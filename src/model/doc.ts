@@ -1,7 +1,7 @@
 // Document store: every change goes through `change()` (a command with a label),
 // which gives undo/redo, dirty tracking and autosave in one place (FRS 6.2, 7.4).
 // Undo keeps whole snapshots: part documents are small JSON, and snapshots can't drift.
-import { SCHEMA, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
+import { SCHEMA, pathId, type Feature, type FeatureType, type PartDoc, type LineRef, type PlaneRef, type VertexRef } from "./types";
 
 const UNDO_DEPTH = 200;
 
@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -157,7 +157,9 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
   if (f.type === "helix") features.push(f.sketch);
-  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push("sketch" in f.path ? f.path.sketch : f.path.helix); }
+  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); }
+  if (f.type === "sweepsurf") { features.push(f.profile); if (f.path) features.push(pathId(f.path)); }
+  if (f.type === "curve") { if (f.sketch) features.push(f.sketch); for (const e of f.edges ?? []) faces.push(...e.faces); faces.push(...(f.faces ?? []).map(x => x.name)); }
   if (f.type === "loft") features.push(...f.profiles);
   if (f.type === "rib") features.push(f.sketch);
   if (f.type === "combine") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }

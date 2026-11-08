@@ -6,38 +6,44 @@ import type { V2 } from "../model/types";
 
 /** Bézier control points of the spline through pts (closed: back to the first point). */
 export function splineBezier(pts: V2[], closed = false): V2[] {
+  return splineBezierN(pts, closed) as V2[];
+}
+
+/** The same interpolant in any number of dimensions (3D curves through XYZ points, FR-FT-085). */
+export function splineBezierN<T extends number[]>(pts: T[], closed = false): T[] {
   const P = closed ? [...pts, pts[0]] : pts.slice();
   const m = P.length; // knots
   if (m < 2) return P.slice();
+  const dim = P[0].length;
   const n = m - 1; // segments
-  const h = Array.from({ length: n }, (_, i) => Math.hypot(P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1]) || 1e-9);
+  const dist = (a: number[], b: number[]) => Math.hypot(...a.map((v, j) => b[j] - v));
+  const h = Array.from({ length: n }, (_, i) => dist(P[i], P[i + 1]) || 1e-9);
   // Unknown derivative at each distinct knot (closed: the last knot is the first).
   const k = closed ? n : m;
   const A = Array.from({ length: k }, () => new Float64Array(k));
-  const bx = new Float64Array(k), by = new Float64Array(k);
+  const B = Array.from({ length: dim }, () => new Float64Array(k));
   const at = (i: number) => (closed ? ((i % k) + k) % k : i);
   for (let i = 0; i < k; i++) {
     const open0 = !closed && i === 0, openN = !closed && i === k - 1;
     if (open0) {
       A[0][0] = 2; if (k > 1) A[0][1] = 1;
-      bx[0] = (3 * (P[1][0] - P[0][0])) / h[0]; by[0] = (3 * (P[1][1] - P[0][1])) / h[0];
+      for (let j = 0; j < dim; j++) B[j][0] = (3 * (P[1][j] - P[0][j])) / h[0];
     } else if (openN) {
       A[i][i - 1] = 1; A[i][i] = 2;
-      bx[i] = (3 * (P[i][0] - P[i - 1][0])) / h[i - 1]; by[i] = (3 * (P[i][1] - P[i - 1][1])) / h[i - 1];
+      for (let j = 0; j < dim; j++) B[j][i] = (3 * (P[i][j] - P[i - 1][j])) / h[i - 1];
     } else {
       const hp = h[at(i - 1)], hn = h[at(i)];
       const pp = P[at(i - 1)], pc = P[i], pn = P[at(i) + 1];
       A[i][at(i - 1)] += hn; A[i][i] += 2 * (hp + hn); A[i][at(i + 1)] += hp;
-      bx[i] = 3 * ((hn * (pc[0] - pp[0])) / hp + (hp * (pn[0] - pc[0])) / hn);
-      by[i] = 3 * ((hn * (pc[1] - pp[1])) / hp + (hp * (pn[1] - pc[1])) / hn);
+      for (let j = 0; j < dim; j++) B[j][i] = 3 * ((hn * (pc[j] - pp[j])) / hp + (hp * (pn[j] - pc[j])) / hn);
     }
   }
-  const dx = solveDense(A.map(r => Float64Array.from(r)), bx), dy = solveDense(A, by);
-  const D = (i: number): V2 => [dx[at(i)], dy[at(i)]];
-  const out: V2[] = [P[0]];
+  const X = B.map(b => solveDense(A.map(r => Float64Array.from(r)), b));
+  const D = (i: number) => X.map(x => x[at(i)]);
+  const out: T[] = [P[0]];
   for (let i = 0; i < n; i++) {
     const a = P[i], b = P[i + 1], da = D(i), db = D(i + 1);
-    out.push([a[0] + (h[i] * da[0]) / 3, a[1] + (h[i] * da[1]) / 3], [b[0] - (h[i] * db[0]) / 3, b[1] - (h[i] * db[1]) / 3], b);
+    out.push(a.map((v, j) => v + (h[i] * da[j]) / 3) as T, b.map((v, j) => v - (h[i] * db[j]) / 3) as T, b);
   }
   return out;
 }

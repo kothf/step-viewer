@@ -11,9 +11,10 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
+import { splineBezierN } from "../sketch/spline";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
 import { solve } from "../sketch/solver";
 
@@ -376,6 +377,24 @@ export class Modeller {
     return { faces, edgeEnt };
   }
 
+  /** One B-spline edge through cubic Bézier poles (3n + 1): joined with triple knots at the chord lengths, then the interior knots dropped (the interpolant is C2). */
+  private bezierEdge(bz: V3[]): any {
+    const oc = this.oc;
+    const n = (bz.length - 1) / 3;
+    const poles = new oc.TColgp_Array1OfPnt_2(1, bz.length);
+    bz.forEach((q, i) => poles.SetValue(i + 1, this.P(q)));
+    const knots = new oc.TColStd_Array1OfReal_2(1, n + 1), mults = new oc.TColStd_Array1OfInteger_2(1, n + 1);
+    // Knots at the chord lengths the interpolant was parametrised by, so the joins are C2 in the parameter too.
+    let u = 0;
+    for (let i = 0; i <= n; i++) {
+      if (i) u += d3(bz[3 * i], bz[3 * i - 3]) || 1e-9;
+      knots.SetValue(i + 1, u); mults.SetValue(i + 1, i === 0 || i === n ? 4 : 3);
+    }
+    const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, 3, false);
+    for (let i = n; i >= 2; i--) curve.RemoveKnot(i, 1, 1e-7 * (1 + Math.abs(bz[0][0]) + Math.abs(bz[0][1]) + Math.abs(bz[0][2])));
+    return new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+  }
+
   /** An OCCT edge for a sketch curve placed on its plane (moved by `off`). */
   private segEdge(s: Seg, frame: Frame, off: V3 = [0, 0, 0]): any {
     const oc = this.oc;
@@ -383,21 +402,7 @@ export class Modeller {
     let e: any;
     if (s.kind === "line") e = new oc.BRepBuilderAPI_MakeEdge_3(this.P(this.w(frame, s.a, off)), this.P(this.w(frame, s.b, off))).Edge();
     else if (s.kind === "spline") {
-      // One B-spline edge: the Bézier segments joined with triple knots (C1 form of the C2 curve).
-      const n = (s.bz.length - 1) / 3;
-      const poles = new oc.TColgp_Array1OfPnt_2(1, s.bz.length);
-      s.bz.forEach((q, i) => poles.SetValue(i + 1, this.P(this.w(frame, q, off))));
-      const knots = new oc.TColStd_Array1OfReal_2(1, n + 1), mults = new oc.TColStd_Array1OfInteger_2(1, n + 1);
-      // Knots at the chord lengths the interpolant was parametrised by, so the joins are C2 in the parameter too.
-      let u = 0;
-      for (let i = 0; i <= n; i++) {
-        if (i) u += Math.hypot(s.bz[3 * i][0] - s.bz[3 * i - 3][0], s.bz[3 * i][1] - s.bz[3 * i - 3][1]) || 1e-9;
-        knots.SetValue(i + 1, u); mults.SetValue(i + 1, i === 0 || i === n ? 4 : 3);
-      }
-      const curve = new oc.Geom_BSplineCurve_1(poles, knots, mults, 3, false);
-      // The interpolant is C2: drop the interior knots to single ones (cleaner curve, accurate mass properties).
-      for (let i = n; i >= 2; i--) curve.RemoveKnot(i, 1, 1e-7 * (1 + Math.abs(s.bz[0][0]) + Math.abs(s.bz[0][1])));
-      e = new oc.BRepBuilderAPI_MakeEdge_24(new oc.Handle_Geom_Curve_2(curve)).Edge();
+      e = this.bezierEdge(s.bz.map(q => this.w(frame, q, off)));
     } else if (s.kind === "ellipse" || s.kind === "earc") {
       // gp_Elips wants the major radius first: swap the axes when the "minor" one is longer.
       const { c, u, r1, r2 } = s.el;
@@ -1227,6 +1232,38 @@ export class Modeller {
     return this.sheetsOf([...this.sheetList(sheets), ...parts]);
   }
 
+  /** Swept surface (FR-FT-100): the profile sketch's chain of curves moved along the path, no caps. */
+  private sweepSurf(f: SweepSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const oc = this.oc;
+    const spine = this.pathWire(f.path, doc, body, frames);
+    const { sk, frame } = this.sketchOf(f.profile, doc, body, frames, "a profile sketch");
+    const p = sketchPath(sk);
+    if (p.error) throw new FeatureError("E-SWS-PROFILE", "The profile must be one chain of curves, open or closed.");
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    const edgeEnt: [any, string][] = [];
+    for (const sg of p.segs) { const e = this.segEdge(sg, frame); mw.Add_1(e); edgeEnt.push([e, sg.ent]); }
+    if (!mw.IsDone()) throw new FeatureError("E-SWS-PROFILE", "The profile must be one chain of curves, open or closed.");
+    const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
+    if (f.orient === "normal") {
+      const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+      const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1();
+      ad.D1(ad.FirstParameter(), p0, v0);
+      mk.SetMode_2(new oc.gp_Ax2_3(p0, this.D(unit(this.xyz(v0)))));
+    } else mk.SetMode_1(!!f.path && "helix" in f.path);
+    // The wire's edges are copies: match them back to the sketch curves by position for the names.
+    const wire = mw.Wire();
+    const wedges = this.sub(wire, "EDGE");
+    const named: [any, string][] = wedges.map(e => { const m = this.edgeMid(e); let best = edgeEnt[0][1], bd = Infinity; for (const [g, ent] of edgeEnt) { const d = d3(this.edgeMid(g), m); if (d < bd) { bd = d; best = ent; } } return [e, best] as [any, string]; });
+    mk.Add_1(wire, false, false);
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
+    const shape = mk.Shape();
+    const gen: [any, string][] = [];
+    for (const [e, ent] of named) for (const g of this.list(mk.Generated(e))) gen.push([g, ent]);
+    const parts = this.sheetParts(shape, (x, k) => { const q = gen.find(([g]) => g.IsSame(x)); return q ? `${f.id}:side:${q[1]}` : `${f.id}:new:${k}`; });
+    return this.sheetsOf([...this.sheetList(sheets), ...parts]);
+  }
+
   /**
    * Trim surface: the surface body split by a plane or a surface into the part on the tool's normal side
    * (common with a long slab: the tool pushed far along its normal) and the rest (cut); the side holding
@@ -1713,16 +1750,16 @@ export class Modeller {
     return { wire, pts };
   }
 
-  /** The wire of a sweep path: a helix, or a sketch's chain of curves. */
-  private pathWire(f: SweepFeature, doc: PartDoc, body: Named | null, frames: Record<string, Frame>): any {
+  /** The wire of a sweep path: a helix or curve feature, or a sketch's chain of curves. */
+  private pathWire(path: SweepPath | undefined, doc: PartDoc, body: Named | null, frames: Record<string, Frame>): any {
     const oc = this.oc;
-    if (!f.path) throw new FeatureError("E-SWP-PATH", "Pick a path: a sketch or a helix.");
-    if ("helix" in f.path) {
-      const c = this.curves.get(f.path.helix);
-      if (!c) throw new FeatureError("E-FT-PARENT", "The helix is missing or has an error.");
+    if (!path) throw new FeatureError("E-SWP-PATH", "Pick a path: a sketch, a helix or a curve.");
+    if ("helix" in path || "curve" in path) {
+      const c = this.curves.get("helix" in path ? path.helix : path.curve);
+      if (!c) throw new FeatureError("E-FT-PARENT", "helix" in path ? "The helix is missing or has an error." : "The curve is missing or has an error.");
       return c.wire;
     }
-    const { sk, frame } = this.sketchOf(f.path.sketch, doc, body, frames, "a path sketch");
+    const { sk, frame } = this.sketchOf(path.sketch, doc, body, frames, "a path sketch");
     const p = sketchPath(sk);
     if (p.error) throw new FeatureError(p.error.code, p.error.message);
     const mk = new oc.BRepBuilderAPI_MakeWire_1();
@@ -1731,10 +1768,81 @@ export class Modeller {
     return mk.Wire();
   }
 
+  /** Points along a wire, in order, for drawing it. */
+  private wirePts(wire: any): V3[] {
+    const oc = this.oc;
+    const ad = new oc.BRepAdaptor_CompCurve_2(wire, false);
+    const t0 = ad.FirstParameter(), t1 = ad.LastParameter();
+    const n = Math.max(32, Math.min(4000, 48 * this.sub(wire, "EDGE").length));
+    const pts: V3[] = [];
+    for (let k = 0; k <= n; k++) pts.push(this.xyz(ad.Value(t0 + ((t1 - t0) * k) / n)));
+    return pts;
+  }
+
+  /**
+   * 3D curves (FR-FT-085): through XYZ points (the sketch splines' C2 chord-length interpolant, one
+   * B-spline edge), composite (model edges joined into one wire) or projected (a sketch chain projected
+   * along its normal onto faces; the nearest piece in front of the sketch is kept).
+   */
+  private curve(f: CurveFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Curve {
+    const oc = this.oc;
+    if (f.kind === "xyz") {
+      const pts = (f.pts ?? []).filter((q, i, a) => !i || d3(q, a[i - 1]) > 1e-9);
+      if (f.closed && pts.length > 2 && d3(pts[0], pts[pts.length - 1]) < 1e-9) pts.pop();
+      if (pts.length < 2) throw new FeatureError("E-CRV-POINTS", "A curve needs at least two different points.");
+      if (f.closed && pts.length < 3) throw new FeatureError("E-CRV-POINTS", "A closed curve needs at least three points.");
+      const edge = pts.length === 2 ? new oc.BRepBuilderAPI_MakeEdge_3(this.P(pts[0]), this.P(pts[1])).Edge() : this.bezierEdge(splineBezierN(pts, !!f.closed));
+      const wire = new oc.BRepBuilderAPI_MakeWire_2(edge).Wire();
+      return { wire, pts: this.wirePts(wire) };
+    }
+    if (f.kind === "composite") {
+      if (!f.edges?.length) throw new FeatureError("E-CRV-EDGES", "Pick the edges to join.");
+      const list = new oc.TopTools_ListOfShape_1();
+      for (const r of f.edges) list.Append_1(this.resolveEdge(body, r));
+      const mk = new oc.BRepBuilderAPI_MakeWire_1();
+      mk.Add_3(list);
+      if (!mk.IsDone() || this.sub(mk.Wire(), "EDGE").length !== f.edges.length) throw new FeatureError("E-CRV-JOIN", "The edges do not join end to end into one chain.");
+      const wire = mk.Wire();
+      return { wire, pts: this.wirePts(wire) };
+    }
+    const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch to project");
+    const p = sketchPath(sk);
+    if (p.error) throw new FeatureError(p.error.code, p.error.message);
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const sg of p.segs) mw.Add_1(this.segEdge(sg, frame));
+    if (!mw.IsDone()) throw new FeatureError("E-SWP-PATH", "The path's curves do not join end to end.");
+    let target: any;
+    if (f.faces?.length) {
+      const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+      bb.MakeCompound(comp);
+      for (const r of f.faces) bb.Add(comp, this.resolveAny(body, sheets, r));
+      target = comp;
+    } else {
+      target = body?.shape ?? sheets?.shape;
+      if (!target) throw new FeatureError("E-FT-NOBODY", "There is no body to project onto.");
+    }
+    // The projection runs both ways along the line: the piece nearest in front of the sketch wins,
+    // looking along the normal first (against it with `flip`), then the other way.
+    for (const sg of f.flip ? [-1, 1] : [1, -1]) {
+      const dir = mul(frame.n, sg);
+      const pr = new oc.BRepProj_Projection_1(mw.Wire(), target, this.D(dir));
+      let best: Curve | null = null, bd = Infinity;
+      for (pr.Init(); pr.More(); pr.Next()) {
+        const w = pr.Current();
+        const pts = this.wirePts(w);
+        const dist = pts.reduce((acc, q) => acc + dot(sub3(q, frame.o), dir), 0) / pts.length;
+        if (dist < -1e-6 || dist >= bd) continue;
+        bd = dist; best = { wire: w, pts };
+      }
+      if (best) return best;
+    }
+    throw new FeatureError("E-CRV-MISS", "The sketch does not project onto the faces.");
+  }
+
   /** Sweep (FR-FT-080/081): profile regions (or a circle) along a path, with MakePipeShell. */
   private sweepAlong(f: SweepFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
-    const spine = this.pathWire(f, doc, prev, frames);
+    const spine = this.pathWire(f.path, doc, prev, frames);
     const helixPath = !!f.path && "helix" in f.path;
     const pipe = (w: any, edgeEnt: [any, string][]): Named => {
       const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
@@ -2436,6 +2544,8 @@ export class Modeller {
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
           else if (f.type === "helix") this.curves.set(f.id, this.helix(f, doc, body, frames));
+          else if (f.type === "curve") this.curves.set(f.id, this.curve(f, doc, body, sheets, frames));
+          else if (f.type === "sweepsurf") sheets = this.sweepSurf(f, doc, body, sheets, frames);
           else if (f.type === "sweep") body = this.sweepAlong(f, doc, body, frames);
           else if (f.type === "loft") body = this.loft(f, doc, body, frames);
           else if (f.type === "rib") body = this.rib(f, doc, body, frames);
