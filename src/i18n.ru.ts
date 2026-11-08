@@ -3568,4 +3568,10 @@ export const RU: Record<string, string> = {
   "Arc size (mm)": "Размер дуги (мм)",
   "Click the corners of the area to mark with a revision cloud.": "Щёлкните углы области, которую нужно отметить облаком изменений.",
   "Click more corners; click the first corner or press Enter to close the cloud.": "Щёлкните ещё углы; щёлкните первый угол или нажмите Enter, чтобы замкнуть облако.",
+  "Center mark": "Маркер центра",
+  "Extension (mm)": "Выступ (мм)",
+  "Pick two parallel edges, or two points.": "Выберите две параллельные кромки или две точки.",
+  "Click a round edge seen end-on: a circle or an arc. Esc ends.": "Щёлкните круглую кромку, видимую с торца: окружность или дугу. Esc завершает.",
+  "Click a straight edge or a point (a circle's centre) of a view. Esc ends.": "Щёлкните прямую кромку или точку (центр окружности) на виде. Esc завершает.",
+  "Click a parallel edge, or a second point. Esc ends.": "Щёлкните параллельную кромку или вторую точку. Esc завершает.",
 };
