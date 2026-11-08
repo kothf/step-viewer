@@ -7907,6 +7907,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
+    const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
+    const len0 = await memLen();
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wCapDir"]', "in");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const capIn = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { dir: f.dir, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    const len1 = await memLen();
+    check(capIn.dir === "in" && !capIn.bad && JSON.stringify(capIn.plate) === "[40,40,5]" && Math.abs(len0 - len1 - 5) < 0.05, `weldments: inward end cap keeps the overall length (${JSON.stringify({ ...capIn, len0, len1 })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();

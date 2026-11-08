@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Aligned section (FR-DRW-012).** Section ▾ Aligned section takes the end of the first leg, the centre and the end of the second leg on a view. The material on the second leg's side is turned about the centre into the first leg's plane before the cut, so spokes and holes on a bolt circle show at their true distance from the centre, as in SolidWorks. The cutting line shows both legs with arrows at each end, and each component keeps its own hatching.
+## [1.177.0] - 2026-11-08
+
+### Added
+
+- **End cap thickness direction (FR-FT-121).** End Cap chooses **Outward** (the plate past the end), **Inward** (the overall length stays: the member is cut back by the plate's thickness, its new end face keeps its name) or **Internal** (the plate fits inside a tube's inner outline with a clearance, flush with the end), as in SolidWorks. The thickness arrow follows the plate.
 
 ## [1.176.0] - 2026-11-08
 
@@ -1394,7 +1399,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.178.0...HEAD
-[1.178.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.178.0
+[1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0
+[1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0
 [1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
 [1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
 [1.174.0]: https://github.com/kothf/step-viewer/compare/v1.173.0...v1.174.0

@@ -77,8 +77,18 @@ export interface EndCapFeature {
   chamfer?: Num;
   /** Round the plate's corners with radius `chamfer` instead of chamfering them. */
   fillet?: boolean;
+  /** Old files: true = `dir` "in". */
   inward?: boolean;
+  /**
+   * Thickness direction (SolidWorks): "out" adds the plate past the end; "in" keeps the overall length
+   * (the member is cut back by the thickness); "internal" fits the plate inside a hollow profile's
+   * inner outline, flush with the end, `inset` = clearance.
+   */
+  dir?: "out" | "in" | "internal";
 }
+
+/** An end cap's thickness direction (old files use `inward`). */
+export const capDir = (f: EndCapFeature): "out" | "in" | "internal" => f.dir ?? (f.inward ? "in" : "out");
 
 /**
  * Gusset: a triangular (or polygonal) plate in the corner between two flat faces that meet at an
