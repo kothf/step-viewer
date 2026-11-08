@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.90.0] - 2026-11-08
+
+### Added
+
+- **User sheet formats** (FR-DRW-004): with nothing selected, New title block… (or Edit title block…) in the sheet panel opens a title block editor.
+  - It starts from the ISO block. Set the block's size and each cell's position, size, field (any title block field, the scale, sheet, size, units or the projection symbol), label and text size, with a live preview.
+  - Add a PNG or JPEG logo (up to 512 KB) and place it.
+  - Save and use puts the block on the sheet, which keeps its own copy so the drawing file opens the same anywhere. It also saves the block in this browser's library, listed under My formats in the Sheet format menu for other sheets and drawings.
+  - Export format / Import format… share a format as a small JSON file.
+  - The logo is drawn on screen and in PDF, SVG and PNG exports; DXF leaves it out.
+
 ## [1.87.0] - 2026-11-08
 
 ### Added
@@ -870,7 +881,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.87.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
+[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.90.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
