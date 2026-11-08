@@ -157,10 +157,10 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }
   if (f.type === "helix") features.push(f.sketch);
-  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); }
+  if (f.type === "sweep") { if (f.profile) features.push(f.profile); if (f.path) features.push(pathId(f.path)); if (f.guide) features.push(pathId(f.guide)); }
   if (f.type === "sweepsurf") { features.push(f.profile); if (f.path) features.push(pathId(f.path)); }
   if (f.type === "curve") { if (f.sketch) features.push(f.sketch); for (const e of f.edges ?? []) faces.push(...e.faces); faces.push(...(f.faces ?? []).map(x => x.name)); }
-  if (f.type === "loft") features.push(...f.profiles);
+  if (f.type === "loft") { features.push(...f.profiles); if (f.centerline) features.push(pathId(f.centerline)); }
   if (f.type === "rib") features.push(f.sketch);
   if (f.type === "combine") { if (f.main) faces.push(f.main.name); faces.push(...f.tools.map(x => x.name)); }
   if (f.type === "bsplit") { plane(f.plane); faces.push(...f.bodies.map(x => x.name)); }

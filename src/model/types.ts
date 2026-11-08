@@ -379,6 +379,12 @@ export interface HelixFeature {
   /** Clockwise (left-handed) instead of counter-clockwise about the direction it runs. */
   cw?: boolean;
   reverse?: boolean;
+  /**
+   * Variable pitch (FR-FT-083, P5): rows of height, pitch and diameter from the start; pitch and
+   * diameter vary linearly between rows and the last row's height is the helix height. The mode,
+   * pitch, revolutions, height and taper are then unused.
+   */
+  vpitch?: { h: Num; p: Num; d: Num }[];
   hidden?: boolean;
 }
 
@@ -450,6 +456,10 @@ export interface SweepFeature {
   path?: SweepPath;
   /** Follow path (the profile turns with the path's frame) or keep normal constant. */
   orient?: "follow" | "normal";
+  /** Twist along path (P5): the profile turns this far about the path from start to end (follow path only). */
+  twist?: Num;
+  /** Guide curve (P5): the profile is scaled and turned so that it keeps touching this curve. */
+  guide?: SweepPath;
 }
 
 /** Loft (FR-FT-082): through two or more closed profiles in order. */
@@ -461,6 +471,8 @@ export interface LoftFeature {
   ruled?: boolean;
   /** Close loft: back from the last profile to the first (needs three or more). */
   close?: boolean;
+  /** Centreline (P5): the loft follows this path between its profiles. */
+  centerline?: SweepPath;
 }
 
 /**

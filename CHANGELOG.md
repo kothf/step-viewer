@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.84.0] - 2026-11-08
+
+### Added
+
+- Sweep, loft and helix options from FRS P5 (FR-FT-080, FR-FT-082, FR-FT-083):
+  - **Twist along path**: a sweep turns its profile about the path by a set angle from start to end.
+  - **Guide curve**: a sweep's profile grows, shrinks and turns so that its edge keeps touching a guide curve (a sketch, helix, curve or 3D sketch).
+  - **Centerline**: a loft follows a path between its profiles instead of the straight join.
+  - **Variable pitch** helix: a table of height, pitch and diameter rows; pitch and diameter change linearly between rows.
+
 ## [1.83.0] - 2026-11-08
 
 ### Added
@@ -830,7 +840,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.83.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.84.0...HEAD
+[1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0
 [1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0
 [1.82.0]: https://github.com/kothf/step-viewer/compare/v1.81.0...v1.82.0
 [1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0

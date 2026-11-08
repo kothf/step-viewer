@@ -5455,6 +5455,90 @@ try {
     await ctx.close();
   }
 
+  // --- 1.84: sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-080, FR-FT-082, FR-FT-083) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const turns = pts => { let a = 0; for (let i = 1; i < pts.length; i++) { let d = Math.atan2(pts[i][1], pts[i][0]) - Math.atan2(pts[i - 1][1], pts[i - 1][0]); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; a += d; } return a / (2 * Math.PI); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A Ø20 circle for the helix, a 10 mm square, a 20 mm square 30 up, a straight 30 mm curve and a slanted guide.
+    await mp.evaluate(() => window.__sv.model.store.change("Setup", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, h, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [P(id + "1", -h, -h), P(id + "2", h, -h), P(id + "3", h, h), P(id + "4", -h, h), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push({ id: "h", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("hc", 0, 0), { id: "hk", t: "circle", c: "hc", r: 10 }] });
+      d.features.push({ ...sq("s", 5, { std: "XY" }), name: "Sketch2" }, { id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 30 } }, { ...sq("t", 10, { plane: "p1" }), name: "Sketch3" });
+      d.features.push({ id: "c1", type: "curve", name: "Curve1", kind: "xyz", pts: [[0, 0, 0], [0, 0, 30]] }, { id: "g1", type: "curve", name: "Curve2", kind: "xyz", pts: [[5, 0, 0], [10, 0, 30]] });
+    }));
+    await settle();
+    // Variable pitch helix: tick the box, set pitch 2 at the bottom and 6 at the top (and Ø30), add a row and remove it.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Helix/Spiral")');
+    await settle();
+    await mp.check('#mc-pm input[data-k="vpitchOn"]');
+    await settle();
+    const rows0 = await mp.evaluate(() => document.querySelectorAll('#mc-pm input[data-num^="vpitch."]').length);
+    for (const [k, v] of [["vpitch.0.p", "2"], ["vpitch.1.p", "6"], ["vpitch.1.d", "30"], ["vpitch.1.h", "20"]]) {
+      await mp.fill(`#mc-pm input[data-num="${k}"]`, v);
+      await mp.press(`#mc-pm input[data-num="${k}"]`, "Tab");
+      await settle();
+    }
+    await mp.click("#mc-pm [data-vpadd]");
+    await settle();
+    const rows1 = await mp.evaluate(() => window.__sv.model.mode().draft.vpitch.length);
+    await mp.click('#mc-pm [data-vpdel="2"]');
+    await settle();
+    const hx = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { id: m.draft.id, rows: m.draft.vpitch.length, pts: window.__sv.model.last().curves?.[m.draft.id] ?? [] }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const end = hx.pts.at(-1) ?? [0, 0, 0];
+    check(rows0 === 6 && rows1 === 3 && hx.rows === 2 && Math.abs(turns(hx.pts) - Math.log(3) / 0.2) < 1e-3 && Math.abs(end[2] - 20) < 1e-6 && Math.abs(Math.hypot(end[0], end[1]) - 15) < 1e-6,
+      `model 1.84: variable pitch helix from the row table (FR-FT-083) (${JSON.stringify({ rows0, rows1, rows: hx.rows, turns: turns(hx.pts), end })})`);
+    // Sweep with a 45° twist: the square along the straight curve keeps its volume, the top corner turns out to 5√2.
+    await mp.evaluate(() => { window.__sv.model.store.change("Sweep", d => d.features.push({ id: "w", type: "sweep", name: "Sweep1", op: "boss", profile: "s", path: { curve: "c1" } })); window.__sv.modeller.editFeature("w"); });
+    await settle();
+    await mp.check('#mc-pm input[data-k="twistOn"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="twist"]', "45");
+    await mp.press('#mc-pm input[data-num="twist"]', "Tab");
+    await settle();
+    const tw = await mp.evaluate(() => { const l = window.__sv.model.last(); return { twist: window.__sv.model.mode().draft.twist?.v, v: l.props?.volume ?? 0, x: Math.max(...window.__sv.viewer.parts.map(p => { p.mesh.geometry.computeBoundingBox(); return p.mesh.geometry.boundingBox.max.x; })) }; });
+    // Then a guide curve instead: the twist goes, the profile follows the guide out to 20 mm wide (a square frustum).
+    await mp.selectOption('#mc-pm select[data-k="swGuide"]', "c:g1");
+    await settle();
+    const gd = await mp.evaluate(() => { const m = window.__sv.model.mode(), l = window.__sv.model.last(); return { guide: m.draft.guide, twist: !!m.draft.twist, twistBox: !!document.querySelector('#mc-pm input[data-k="twistOn"]'), v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(Math.abs(tw.twist - Math.PI / 4) < 1e-9 && Math.abs(tw.v - 3000) / 3000 < 2e-3 && Math.abs(tw.x - 5 * Math.SQRT2) < 0.05,
+      `model 1.84: Sweep with a twist along the path (FR-FT-080) (${JSON.stringify(tw)})`);
+    check(gd.guide?.curve === "g1" && !gd.twist && !gd.twistBox && !gd.bad && Math.abs(gd.v - 7000) / 7000 < 5e-3,
+      `model 1.84: Sweep with a guide curve (${JSON.stringify(gd)})`);
+    // Loft along a centreline: 10 mm square to 20 mm square, the straight curve as centreline.
+    await mp.evaluate(() => { window.__sv.model.store.change("Loft", d => { d.features = d.features.filter(f => f.id !== "w"); d.features.push({ id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["s", "t"] }); }); window.__sv.modeller.editFeature("l"); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="lcPath"]', "c:c1");
+    await settle();
+    const lf = await mp.evaluate(() => { const m = window.__sv.model.mode(), l = window.__sv.model.last(); return { c: m.draft.centerline, ruled: !!document.querySelector('#mc-pm input[data-k="ruled"]'), v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(lf.c?.curve === "c1" && !lf.ruled && !lf.bad && Math.abs(lf.v - 7000) / 7000 < 2e-3, `model 1.84: Loft along a centerline (FR-FT-082) (${JSON.stringify(lf)})`);
+    // In Russian: the helix panel with its row table.
+    await mp.click("#lang-btn");
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), hx.id);
+    await settle();
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm th, #mc-pm label")].map(e => e.textContent).join("|"));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(/Переменный шаг/.test(ru) && !/[A-Za-z]{3}/.test(ru.replace(/\(mm\)|mm|Enter|Esc|Tab/g, "")), `model 1.84: helix panel in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
