@@ -35,10 +35,21 @@ const d3 = (a: V3, b: V3) => len(sub(a, b));
 
 export const isWeld = (f: Feature): f is WeldFeature => f.type === "member" || f.type === "trimext" || f.type === "endcap" || f.type === "gusset" || f.type === "weldbead";
 
-/** A member's path segment in the world. */
-export interface PathSeg { ent: string; a: V3; b: V3; w: V3; L: number }
+/**
+ * A member's path segment in the world: a straight line, or an arc of a 2D sketch (`arc`: centre,
+ * axis = the sketch normal, radius and sweep from `a` to `b` about it). `wa`/`wb` are the tangents at
+ * the ends, running from `a` to `b`; `w` is the chord direction and `L` the length along the path.
+ */
+export interface PathSeg { ent: string; a: V3; b: V3; w: V3; L: number; wa: V3; wb: V3; arc?: { c: V3; n: V3; r: number; ang: number } }
 
-/** The world ends of a member segment: a 2D sketch line placed on its plane, or a 3D sketch line. */
+/** The point halfway along a segment. */
+export function segMid(s: PathSeg): V3 {
+  if (!s.arc) return add(s.a, mul(s.w, s.L / 2));
+  const { c, n, ang } = s.arc, x = sub(s.a, c), y = cross(n, x), t = ang / 2;
+  return add(c, add(mul(x, Math.cos(t)), mul(y, Math.sin(t))));
+}
+
+/** The world ends of a member segment: a 2D sketch line or arc placed on its plane, or a 3D sketch line. */
 export function segOf(ref: { sketch: string; ent: string }, doc: PartDoc, frames: Record<string, Frame>): PathSeg {
   const sk = doc.features.find(x => x.id === ref.sketch);
   const lost = () => new FeatureError("E-WLD-PATH", "A path segment of the member is missing: pick lines of a sketch or 3D sketch.");
@@ -47,13 +58,24 @@ export function segOf(ref: { sketch: string; ent: string }, doc: PartDoc, frames
   if (sk.type === "sketch") {
     const fr = frames[sk.id];
     const e = sk.ents.find(x => x.id === ref.ent);
-    if (!fr || !e || e.t !== "line") throw lost();
+    if (!fr || !e || (e.t !== "line" && e.t !== "arc")) throw lost();
     const pt = (id: string): V3 => {
       const p = sk.ents.find(x => x.id === id);
       if (!p || p.t !== "point") throw lost();
       return add(add(fr.o, mul(fr.x, p.x)), mul(fr.y, p.y));
     };
     a = pt(e.a); b = pt(e.b);
+    if (e.t === "arc") {
+      // Counter-clockwise from a to b about the centre, seen down the sketch normal.
+      const c = pt(e.c), n = fr.n, r = d3(a, c);
+      if (r < 1e-6) throw new FeatureError("E-WLD-PATH", "A path segment of the member has no length.");
+      const x = unit(sub(a, c)), y = cross(n, x), q = sub(b, c);
+      let ang = Math.atan2(dot(q, y), dot(q, x));
+      if (ang <= 1e-9) ang += 2 * Math.PI;
+      const wb = unit(cross(n, sub(b, c)));
+      const ch = d3(a, b);
+      return { ent: ref.ent, a, b, w: ch > 1e-9 ? mul(sub(b, a), 1 / ch) : y, L: r * ang, wa: y, wb, arc: { c, n, r, ang } };
+    }
   } else if (sk.type === "sketch3d") {
     const s = sk.segs.find(x => x.id === ref.ent);
     if (!s || s.t !== "line") throw lost();
@@ -62,15 +84,16 @@ export function segOf(ref: { sketch: string; ent: string }, doc: PartDoc, frames
   } else throw lost();
   const L = d3(a, b);
   if (L < 1e-6) throw new FeatureError("E-WLD-PATH", "A path segment of the member has no length.");
-  return { ent: ref.ent, a, b, w: mul(sub(b, a), 1 / L), L };
+  const w = mul(sub(b, a), 1 / L);
+  return { ent: ref.ent, a, b, w, L, wa: w, wb: w };
 }
 
 /** The "up" direction of a profile on a segment: a 2D sketch's normal, else world Z (X for vertical members). */
 function upOf(ref: { sketch: string }, seg: PathSeg, doc: PartDoc, frames: Record<string, Frame>): V3 {
   const sk = doc.features.find(x => x.id === ref.sketch);
   let up: V3 = sk?.type === "sketch" && frames[sk.id] ? frames[sk.id].n : [0, 0, 1];
-  if (Math.abs(dot(up, seg.w)) > 0.99) up = Math.abs(seg.w[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-  return unit(sub(up, mul(seg.w, dot(up, seg.w))));
+  if (Math.abs(dot(up, seg.wa)) > 0.99) up = Math.abs(seg.wa[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  return unit(sub(up, mul(seg.wa, dot(up, seg.wa))));
 }
 
 /** How a member's profile is placed on one segment: profile (u, v) to world, on the plane through `at`. */
@@ -98,7 +121,7 @@ export function memberDesc(f: MemberFeature, doc: PartDoc): string {
 
 function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
   const v = upOf(ref, seg, doc, frames);
-  const u = cross(v, seg.w);
+  const u = cross(v, seg.wa);
   const an = f.anchor ? anchorPoint(shape, f.anchor) : shape.origin ?? [0, 0];
   const a = f.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
   const p2 = (q: V2): V2 => {
@@ -108,7 +131,7 @@ function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string }, doc:
     return [x * c - y * s, x * s + y * c];
   };
   const R = Math.max(...outline(shape.outer, 8).map(q => Math.hypot(...p2(q))));
-  return { u, v, w: seg.w, p2, R, shape };
+  return { u, v, w: seg.wa, p2, R, shape };
 }
 
 const at3 = (pl: Placement, o: V3, q: V2): V3 => add(add(o, mul(pl.u, pl.p2(q)[0])), mul(pl.v, pl.p2(q)[1]));
@@ -168,6 +191,22 @@ function prism(h: WeldHost, pl: Placement, a: V3, b: V3, base: string, filled = 
   const first = h.sub(mk.FirstShape(), "FACE"), last = h.sub(mk.LastShape(), "FACE");
   let n = 0;
   return { shape, faces, names: faces.map((x, i) => names[i] ?? (first.some(g => g.IsSame(x)) ? `${base}:start` : last.some(g => g.IsSame(x)) ? `${base}:end` : `${base}:new:${n++}`)) };
+}
+
+/** A member's profile revolved along an arc segment, faces named like `prism`'s. */
+function revolveArc(h: WeldHost, pl: Placement, s: PathSeg, base: string): Named {
+  const oc = h.oc, { c, n, ang } = s.arc!;
+  const { face, edges } = profileFace(h, pl, s.a);
+  const ax = new oc.gp_Ax1_2(new oc.gp_Pnt_3(c[0], c[1], c[2]), new oc.gp_Dir_4(n[0], n[1], n[2]));
+  const mk = new oc.BRepPrimAPI_MakeRevol_1(face, ax, ang, true);
+  const shape0 = mk.Shape();
+  const shape = h.volume(shape0) < 0 ? shape0.Reversed() : shape0;
+  const faces = h.sub(shape, "FACE");
+  const names: (string | null)[] = faces.map(() => null);
+  for (const [e, k] of edges) for (const g of h.list(mk.Generated(e))) { const i = faces.findIndex(x => x.IsSame(g)); if (i >= 0) names[i] = `${base}:side:${k}`; }
+  const first = h.sub(mk.FirstShape(), "FACE"), last = h.sub(mk.LastShape(), "FACE");
+  let m = 0;
+  return { shape, faces, names: faces.map((x, i) => names[i] ?? (first.some(g => g.IsSame(x)) ? `${base}:start` : last.some(g => g.IsSame(x)) ? `${base}:end` : `${base}:new:${m++}`)) };
 }
 
 /** A big box on the side of the plane (p, n) that `n` points to, its faces all named `name`. */
@@ -234,36 +273,53 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
   const tol = 1e-6 * (1 + Math.max(...segs.map(s => s.L)));
   const gap = Math.max(0, f.gap?.v ?? 0);
   const endPt = (i: number, e: 0 | 1) => (e ? segs[i].b : segs[i].a);
+  /** The tangent at an end, pointing out of the segment. */
+  const outAt = (i: number, e: 0 | 1) => (e ? segs[i].wb : mul(segs[i].wa, -1));
+  /** The profile's placement at an end (an arc's turns along it). */
+  const plAt = (i: number, e: 0 | 1) => (e && segs[i].arc ? placement(f, { ...segs[i], wa: segs[i].wb }, f.segs[i], doc, frames, shape) : pls[i]);
   const ends: [End, End][] = segs.map((_s, i) => ([0, 1] as const).map(e => {
     const P = endPt(i, e);
     const others: [number, 0 | 1][] = [];
     segs.forEach((_t, j) => { if (j !== i) for (const k of [0, 1] as const) if (d3(endPt(j, k), P) < tol) others.push([j, k]); });
     const corner = f.corners?.[cornerKey([segs[i].ent, ...others.map(([j]) => segs[j].ent)])] ?? f.corner;
     if (!others.length || corner === "none") return { kind: "free" } as End;
-    const din = e ? segs[i].w : mul(segs[i].w, -1);
+    const din = outAt(i, e);
+    /** Run past the corner until the other members' outlines are covered. */
+    const cover = (js: [number, 0 | 1][]) => Math.max(0, ...js.flatMap(([j, k]) => { const p = plAt(j, k); return outline(p.shape.outer, 8).map(q => dot(sub(at3(p, P, q), P), din)); }));
     if (others.length > 1) {
-      // Three or more meet: the first (butt2: the last) runs through, the others stop at its face.
-      const all = [i, ...others.map(([j]) => j)];
+      // Three or more meet: the first straight one (butt2: the last) runs through, the others stop at its face.
+      const all = [i, ...others.map(([j]) => j)].filter(x => !segs[x].arc);
+      if (!all.length) return { kind: "free" } as End;
       const through = corner === "butt2" ? Math.max(...all) : Math.min(...all);
-      if (through !== i) return Math.abs(dot(segs[i].w, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
-      const ext = Math.max(0, ...others.flatMap(([j]) => outline(pls[j].shape.outer, 8).map(q => dot(sub(at3(pls[j], P, q), P), din))));
-      return { kind: "through", ext } as End;
+      if (through !== i) return Math.abs(dot(din, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
+      return { kind: "through", ext: cover(others) } as End;
     }
     const [j, k] = others[0];
-    const dout = k ? mul(segs[j].w, -1) : segs[j].w;
+    const dout = mul(outAt(j, k), -1);
     if (Math.abs(dot(din, dout)) > 1 - 1e-9) return { kind: "free" } as End;
-    if (corner === "miter") return { kind: "miter", n: unit(add(din, dout)) } as End;
-    const through = corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
+    // An arc can't run through a corner: a butt with an arc makes the straight member run through, two arcs are mitred.
+    const arcs = (segs[i].arc ? 1 : 0) + (segs[j].arc ? 1 : 0);
+    if (corner === "miter" || arcs === 2) return { kind: "miter", n: unit(add(din, dout)) } as End;
+    const through = arcs ? (segs[i].arc ? j : i) : corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
     if (through !== i) return { kind: "trimmed", other: j } as End;
-    // Run past the corner until the other member's outline is covered.
-    const ext = Math.max(0, ...outline(pls[j].shape.outer, 8).map(q => dot(sub(at3(pls[j], P, q), P), din)));
-    return { kind: "through", ext } as End;
+    return { kind: "through", ext: cover([[j, k]]) } as End;
   }) as [End, End]);
   const items: Named[] = segs.map((s, i) => {
     const pl = pls[i], base = `${f.id}:${s.ent}`;
-    const extOf = (e: End) => e.kind === "through" ? e.ext : e.kind === "miter" ? pl.R / Math.max(Math.abs(dot(e.n, s.w)), 0.05) + pl.R : e.kind === "trimmed" ? pls[e.other].R + pl.R * 2 : 0;
+    const extOf = (e: End, k: 0 | 1) => e.kind === "through" ? e.ext : e.kind === "miter" ? pl.R / Math.max(Math.abs(dot(e.n, outAt(i, k))), 0.05) + pl.R : e.kind === "trimmed" ? pls[e.other].R + pl.R * 2 : 0;
     const [e0, e1] = ends[i];
-    let body = prism(h, pl, sub(s.a, mul(s.w, extOf(e0))), add(s.b, mul(s.w, extOf(e1))), base);
+    let body: Named;
+    if (s.arc) {
+      // Revolved about the arc's axis; ends that need more material get a straight run along the tangent.
+      body = revolveArc(h, pl, s, base);
+      ([0, 1] as const).forEach(k => {
+        const x = extOf(ends[i][k], k);
+        if (x <= 1e-9) return;
+        const P = endPt(i, k), out = outAt(i, k);
+        const tail = prism(h, plAt(i, k), sub(P, mul(out, 1e-3)), add(P, mul(out, x)), base);
+        body = bool(h, "fuse", body, tail, f.id);
+      });
+    } else body = prism(h, pl, sub(s.a, mul(s.w, extOf(e0, 0))), add(s.b, mul(s.w, extOf(e1, 1))), base);
     const big = 4 * (s.L + pl.R * 40);
     ([e0, e1] as End[]).forEach((e, k) => {
       const P = k ? s.b : s.a;
@@ -273,13 +329,14 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
       if (e.kind === "trimmed") {
         // Cut square to the other member's face that looks at this one (the plane holds its axis).
         const o = segs[e.other], op = pls[e.other];
-        const din = k ? s.w : mul(s.w, -1);
+        const din = outAt(i, k as 0 | 1);
         const m = unit(sub(mul(din, -1), mul(o.w, dot(mul(din, -1), o.w))));
         const ext = Math.max(0, ...outline(op.shape.outer, 8).map(q => dot(sub(at3(op, P, q), P), m)));
         body = bool(h, "cut", body, halfBox(h, add(P, mul(m, ext + gap)), mul(m, -1), big, nm), f.id);
       }
     });
-    return pieceNear(h, body, add(s.a, mul(s.w, s.L / 2)));
+    const piece = pieceNear(h, body, segMid(s));
+    return s.arc ? unify(h, piece) : piece;
   });
   return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...items]);
 }
@@ -334,6 +391,7 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     if (i === bi) throw new FeatureError("E-WLD-TRIM", "A member can't be trimmed by itself.");
     const sref = mo.f.segs.find(s => s.ent === mo.ent)!;
     const s = segOf(sref, doc, frames);
+    if (s.arc) throw new FeatureError("E-WLD-TRIM", "Curved members can't be trimmed or extended.");
     const pl = placement(mo.f, s, sref, doc, frames);
     const base = `${mo.f.id}:${mo.ent}`;
     const mid = add(s.a, mul(s.w, s.L / 2));
@@ -618,6 +676,23 @@ export function evalWeld(h: WeldHost, f: WeldFeature, doc: PartDoc, body: Named 
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
+/** A curved member's length on its path: the arc between the end faces, measured by the angle about the axis of the points of each end face nearest the start and end, and straight runs beyond. */
+function arcLength(h: WeldHost, part: Named, s: PathSeg): number {
+  const { c, n, r, ang } = s.arc!;
+  const x = unit(sub(s.a, c)), y = cross(n, x);
+  // Each point's position along the path: angle × r on the arc, or the distance past an end along its tangent.
+  const along = (p: V3) => {
+    const q = sub(p, c), t = Math.atan2(dot(q, y), dot(q, x));
+    const tt = t < -1e-9 ? t + 2 * Math.PI : t;
+    if (tt <= ang + 1e-9) return tt * r;
+    // Past the end, or before the start (angles beyond the sweep wrap round): the nearer tangent run.
+    const pastEnd = dot(sub(p, s.b), s.wb), beforeStart = dot(sub(p, s.a), mul(s.wa, -1));
+    return pastEnd >= beforeStart ? s.L + pastEnd : -beforeStart;
+  };
+  const ts = edgePoints(h, part.shape).map(along);
+  return Math.max(...ts) - Math.min(...ts);
+}
+
 /** The weldment cut list (FR-FT-121): members by profile, length and end angles; plates by size; weld beads by size. */
 export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: number }[], doc: PartDoc, frames: Record<string, Frame>): CutItem[] {
   const oc = h.oc;
@@ -641,12 +716,13 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         const ref = owner.segs.find(s => s.ent === ent);
         if (!ref) continue;
         const s = segOf(ref, doc, frames);
+        // Straight: the extent along the segment; curved: the length along the arc's centreline (plus straight runs past its ends).
         const ts = edgePoints(h, part.shape).map(p => dot(sub(p, s.a), s.w));
-        const length = Math.max(...ts) - Math.min(...ts);
+        const length = s.arc ? arcLength(h, part, s) : Math.max(...ts) - Math.min(...ts);
         const ang = (end: string) => {
           const i = part.names.findIndex(n => n === `${owner.id}:${ent}:${end}`);
           const n = i >= 0 ? planeN(part.faces[i]) : null;
-          return n ? (Math.acos(Math.min(1, Math.abs(dot(n, s.w)))) * 180) / Math.PI : 0;
+          return n ? (Math.acos(Math.min(1, Math.abs(dot(n, end === "start" ? s.wa : s.wb)))) * 180) / Math.PI : 0;
         };
         const a1 = r1(ang("start")), a2 = r1(ang("end"));
         const [lo, hi] = a1 <= a2 ? [a1, a2] : [a2, a1];
