@@ -4814,7 +4814,7 @@ try {
     await mp.waitForFunction(() => !window.__sv.asm.doc && window.__sv.viewer.parts.length === 2, null, { timeout: 120000 });
     const re = await mp.evaluate(() => { const flat = n => [n.name, ...n.children.flatMap(flat)]; return { tree: flat(window.__sv.viewer.tree), parts: window.__sv.viewer.parts.map(p => ({ name: p.data.name, x: [Math.round(p.data.bboxMin[0] * 1000) / 1000, Math.round(p.data.bboxMax[0] * 1000) / 1000] })) }; });
     check(inf.title === "Interference detection" && inf.status === "1 interference · 100 mm³" && inf.rows.length === 1 && /^box<1> ↔ box<2>: 100 mm³$/.test(inf.rows[0]) && Math.abs(inf.v - 100) < 1e-6
-      && bom.open && bom.cells.join("|") === "1|box|BX-10||Aluminium 6061|2|0.0027" && bom.csv.split("\r\n")[1] === "1,box,BX-10,,Aluminium 6061,2,0.002700"
+      && bom.open && bom.cells.join("|") === "1|box|BX-10||Aluminium 6061|2|0.0027|" && bom.csv.split("\r\n")[1] === "1,box,BX-10,,Aluminium 6061,2,0.002700,,"
       && re.parts.map(p => p.name).join() === "box,box" && re.tree.includes("Assembly1") && Math.abs(re.parts[1].x[0] - 4) < 1e-3 && Math.abs(re.parts[1].x[1] - 14) < 1e-3,
       `asm 1.63: interference finds the 1 mm overlap, BOM counts and weighs, assembly STEP reopens placed (FR-ASM-020/024, AT-P4-4..6) (${JSON.stringify({ inf, bom, re })})`);
     await ctx.close();
@@ -5188,12 +5188,88 @@ try {
     await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
     await shown(5);
     const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
-    check(panel.kinds === 6 && panel.sizes === 11 && panel.len === "12"
+    check(panel.kinds === 17 && panel.sizes === 11 && panel.len === "12"
       && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
-      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 fasteners placed/.test(fast.status ?? "") && fast.configs === 11
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 11
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
       `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
+    await ctx.close();
+  }
+
+  // --- 1.158: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.waitForFunction(() => window.__sv);
+    // A 60 × 40 × 10 block with a Ø32 bearing bore at x = 20 and a Ø6 pin hole at x = 48.
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+    await tp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), [
+      { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 60, 0), pt("c", 60, 40), pt("d", 0, 40), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"),
+        pt("h1", 20, 20), { id: "k1", t: "circle", c: "h1", r: 16 }, pt("h2", 48, 20), { id: "k2", t: "circle", c: "h2", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    await tp.waitForTimeout(150);
+    await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const block = [...await tp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => tp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await tp.click("#new-more");
+    await tp.click("#new-asm");
+    await tp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    await tp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "block.mcadprt")), block);
+    await shown(1);
+    await tp.click('#asm-tools [data-ac="fastener"]');
+    const hole = (x, r, z) => tp.evaluate(([x, r, z]) => {
+      const a = window.__sv.asm, d = window.__sv.viewer.parts[0].data;
+      const j = d.faces.findIndex(f => f.type === "cylinder" && Math.abs(f.center[0] - x) < 0.01 && Math.abs(f.center[1] - 20) < 0.01);
+      a.fastenHole(0, j, [x + r, 20, z]);
+    }, [x, r, z]);
+    // A 625 bearing picked, the Ø32 bore clicked near the top: the size follows the bore (62xx series kept: 6201).
+    const panel = await tp.evaluate(() => {
+      window.__sv.asm.setFastener({ kind: "bearing", size: "625" });
+      return { title: document.querySelector("#asm-pm h3")?.textContent, groups: document.querySelectorAll('#asm-pm select[data-f="kind"] optgroup').length, auto: !!document.querySelector('#asm-pm [data-a="auto"]')?.checked };
+    });
+    await hole(20, 16, 9.5);
+    await shown(2);
+    await tp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    // A dowel pin (size 2 picked) on the Ø6 hole: size 6, its top flush with the block.
+    await tp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso2338", size: "2" }));
+    await hole(48, 3, 9.5);
+    await shown(3);
+    await tp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await shown(3);
+    const tb = await tp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components, r = v => Math.round(v * 1e3) / 1e3;
+      const at = k => { const t = c[k].tf; return [t[3], t[7], t[11], t[10]].map(r); };
+      return { names: c.map(x => x.name), mates: a.doc.mates.map(m => [m.type, m.align ?? ""]), brg: at(1), pin: at(2), dof: [a.solved?.dof[c[1].id], a.solved?.dof[c[2].id]] };
+    });
+    await tp.evaluate(() => window.__sv.asm.closeTools());
+    // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
+    const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];
+    await tp.evaluate(b => window.__sv.asm.dropFiles([new File([new Uint8Array(b)], "91290A115_Black-Oxide Alloy Steel Socket Head Screw.STEP")]), cube);
+    await shown(4);
+    const mc = await tp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components[3], pd = a.doc.parts[c.part].doc;
+      a.showBom();
+      const link = document.querySelector("#asm-bom-body a[data-buy]");
+      const row = link?.closest("tr")?.textContent ?? "";
+      document.querySelector("#asm-bom [data-a=close]").click();
+      return { pn: pd.props?.partNumber, desc: pd.props?.description, vendor: pd.props?.custom?.Vendor, href: link?.getAttribute("href"), target: link?.getAttribute("target"), row, csv: a.bomCsvText().split("\r\n").slice(0, 1)[0], csvRow: a.bomCsvText().split("\r\n").find(l => l.includes("91290A115")) };
+    });
+    check(panel.title === "Toolbox" && panel.groups === 6 && panel.auto
+      && /^Ball bearing 6201<1>$/.test(tb.names[1]) && /^ISO 2338 6 x \d+<1>$/.test(tb.names[2])
+      && JSON.stringify(tb.mates) === '[["concentric",""],["coincident","aligned"],["concentric",""],["coincident","aligned"]]'
+      && JSON.stringify(tb.brg) === "[20,20,10,1]" && JSON.stringify(tb.pin) === "[48,20,10,1]" && JSON.stringify(tb.dof) === "[1,1]"
+      && mc.pn === "91290A115" && mc.desc === "Black-Oxide Alloy Steel Socket Head Screw" && mc.vendor === "McMaster-Carr"
+      && mc.href === "https://www.mcmaster.com/91290A115/" && mc.target === "_blank" && mc.row.includes("91290A115")
+      && mc.csv.endsWith("Vendor,Vendor URL") && mc.csvRow?.endsWith("McMaster-Carr,https://www.mcmaster.com/91290A115/"),
+      `asm 1.158: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
     await ctx.close();
   }
 
@@ -7701,8 +7777,17 @@ try {
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
     const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
+    await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
+    await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
+    await mp.fill('#wld-cut input[data-cp="part"][data-ci="0"]', "FR-001");
+    await mp.press('#wld-cut input[data-cp="part"][data-ci="0"]', "Tab");
+    await settle();
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    await settle();
+    const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
+    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
     await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);
@@ -7710,7 +7795,7 @@ try {
       const hl = window.__sv.modeller.decor.children.filter(o => o.isMesh && o.material?.opacity === 0.45);
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
-    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["SHS 50x50x4 × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();

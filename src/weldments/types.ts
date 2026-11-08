@@ -128,6 +128,12 @@ export interface CutItem {
   bodies: string[];
 }
 
+/** A cut list item's key in `PartDoc.cutProps`: what makes items alike (kind, description, length, end angles, plate size). */
+export function cutKey(c: CutItem): string {
+  const r = (v: number | undefined) => v == null ? "" : String(Math.round(v * 10) / 10);
+  return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|");
+}
+
 /** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */
 export function cornerKey(ents: string[]): string {
   return [...ents].sort().join("+");

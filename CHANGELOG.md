@@ -11,6 +11,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Style spline (FR-SK-019)**: the Line ▾ menu adds Style spline, as in SolidWorks. Click its control points: the curve starts and ends at the first and last ones and is pulled towards the others without passing through them, with the control polygon drawn while you sketch and when it is selected. Drag a control point to reshape it. The kernel gets the same B-spline (cubic, clamped, uniform knots) as one exact edge, so extrudes, cuts and revolves follow it exactly.
 
+## [1.160.0] - 2026-11-08
+
+### Added
+
+- **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like SolidWorks' cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
+
+## [1.158.0] - 2026-11-08
+
+### Added
+
+- **Toolbox** (FR-ASM-028): the assembly's Fasteners command is now Toolbox, with standard parts grouped as screws, nuts, washers, pins, keys and bearings. New: countersunk socket screws (ISO 10642), set screws (ISO 4026), thin, nylon insert and flange nuts (ISO 4035, 7040, 4161), small and large washers (ISO 7092, 7093), dowel and spring pins (ISO 2338, 8752), square-ended parallel keys (DIN 6885 B) and deep groove ball bearings (625 to 6306). Every size is a configuration, as before. With Size from the hole on, clicking a hole picks the size that fits it: the largest screw, nut or washer that passes, the pin of that diameter, or the bearing whose outside diameter matches the bore. Countersunk and set screws, pins and bearings go in flush with the face around the hole; the seat is also found past a countersink.
+- **McMaster-Carr parts** (FR-ASM-028): the McMaster-Carr button opens their catalogue in a new tab. Download a part's 3-D STEP file there and drop it on the open assembly (dropping parts or STEP/IGES/BREP files on an assembly now inserts them as components). The part number and description come from the file name, and the BOM gets a Vendor column with a link to the product page (also in the CSV). The component menu gets Buy at McMaster-Carr. Nothing is fetched from McMaster-Carr's site, as their terms don't allow it.
+
 ## [1.157.0] - 2026-11-08
 
 ### Added
@@ -1298,7 +1311,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.162.0...HEAD
-[1.162.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.162.0
+[1.162.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.162.0
+[1.160.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.160.0
+[1.158.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.158.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
 [1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
