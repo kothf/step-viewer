@@ -145,6 +145,16 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const rg = run(m, doc([k, mem, tr, cap, g]));
   assert.equal(rg.info.length, 4);
   near(rg.volume - rc.volume, 0.5 * 60 * 60 * 5, 1e-6);
+  // Location along the corner: the plate's centre (its face on face 1) moves with offset and thickness side.
+  const yOf = (gf: Partial<Feature>) => { const r = run(m, doc([k, mem, tr, cap, { ...g, ...gf } as Feature])); const i = r.body!.names.indexOf("g:on1"); return centroid(m, r.body!.faces[i])[1]; };
+  const ym = yOf({}), ys = yOf({ loc: "start" } as Partial<Feature>), ye = yOf({ loc: "end" } as Partial<Feature>);
+  const dirIn = Math.sign(ym - ys);
+  near(Math.abs(ye - ym), Math.abs(ym - ys), 1e-9);
+  near(yOf({ loc: "start", side: "both" } as Partial<Feature>), ys - dirIn * 2.5, 1e-9);
+  near(yOf({ loc: "start", side: "out" } as Partial<Feature>), ys - dirIn * 5, 1e-9);
+  near(yOf({ loc: "start", offset: { v: 10 } } as Partial<Feature>), ys + dirIn * 10, 1e-9);
+  near(yOf({ loc: "end", offset: { v: 10 }, side: "out" } as Partial<Feature>), ye - dirIn * 10 + dirIn * 5, 1e-9);
+  near(yOf({ offset: { v: 4 } } as Partial<Feature>), ym + dirIn * 4, 1e-9);
 
   // Fillet bead where the beam's top face meets the post: 4 mm legs along the flat part of the top (40 - 2 × 6 corner radius).
   const beamTop = rg.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rg.body!.faces[i])[2] - 320) < 1e-6)!;
