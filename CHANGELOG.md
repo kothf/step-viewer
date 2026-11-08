@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.181.0] - 2026-11-08
+
+### Added
+
+- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as SolidWorks does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
+
 ## [1.180.0] - 2026-11-08
 
 ### Added
@@ -1405,7 +1411,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.180.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.181.0...HEAD
+[1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
 [1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
 [1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0
 [1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0

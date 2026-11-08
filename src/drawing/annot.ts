@@ -11,6 +11,7 @@ import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { viewDir } from "./views";
+import { fitLimits } from "./iso286";
 
 type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
@@ -193,12 +194,16 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
   if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
   let main = pre + f(v);
   if (tol?.t === "sym") return { main: `${main}±${f(tol.up ?? 0)}${suf}` };
-  if (tol?.t === "fit") return { main: `${main}${tol.fit ?? ""}${suf}` };
-  main += suf;
-  if (tol?.t === "dev") {
-    const sg = (x: number) => (x > 0 ? `+${f(x)}` : x < 0 ? `−${f(-x)}` : "0");
-    return { main, up: sg(tol.up ?? 0), lo: sg(-(tol.lo ?? 0)) };
+  const sg = (x: number) => (x > 0 ? `+${f(x)}` : x < 0 ? `−${f(-x)}` : "0");
+  if (tol?.t === "fit") {
+    const code = tol.fit ?? "", lim = tol.show && tol.show !== "code" && !code.includes("/") ? fitLimits(code, v) : null;
+    if (!lim) return { main: `${main}${code}${suf}` };
+    // Deviations to the fit's own precision (µm), never rounded away by the dimension's.
+    const fd = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + (x === 0 ? "0" : fmtNum(Math.abs(x), Math.max(a.prec ?? 0, 3), dec));
+    return { main: tol.show === "both" ? `${main}${code}${suf}` : main + suf, up: fd(lim.up), lo: fd(lim.lo) };
   }
+  main += suf;
+  if (tol?.t === "dev") return { main, up: sg(tol.up ?? 0), lo: sg(-(tol.lo ?? 0)) };
   return { main };
 }
 
