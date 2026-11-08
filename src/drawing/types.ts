@@ -26,6 +26,9 @@ export interface DrawingView {
   /** Own scale as [numerator, denominator]; absent: the sheet scale (projected views: the parent's). */
   scale?: [number, number];
   /** A part configuration to draw (FR-DRW-010), set on a model view; views made from it follow. Absent: the part's active one. */
+  /** Assembly drawings: the top-level components a model view shows alone (a detail sheet of one part from the assembly);
+   *  views made from it follow. Absent: every shown component. */
+  only?: string[];
   config?: string;
   style?: DisplayStyle;
   tangent?: TangentEdges;
