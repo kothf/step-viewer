@@ -160,7 +160,9 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
     case "lock": {
       if (!tfa || !tfb || !m.rel) break;
       const r = compose(invert(tfa), tfb);
-      for (let i = 0; i < 12; i++) out.push((r[i] - m.rel[i]) * (i % 4 === 3 ? 1 : L));
+      // Partial locks (motion study motors): only the orientation, or only the travel along an axis of a.
+      if (m.keep === "slide") { const d = m.along ?? [0, 0, 1]; out.push(d[0] * (r[3] - m.rel[3]) + d[1] * (r[7] - m.rel[7]) + d[2] * (r[11] - m.rel[11])); break; }
+      for (let i = 0; i < 12; i++) if (m.keep !== "rot" || i % 4 !== 3) out.push((r[i] - m.rel[i]) * (i % 4 === 3 ? 1 : L));
       break;
     }
   }
