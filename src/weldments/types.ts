@@ -73,8 +73,10 @@ export interface EndCapFeature {
   faces: FaceRef[];
   thickness: Num;
   inset: Num;
-  /** Corner chamfer of the plate. */
+  /** Corner treatment of the plate: chamfer distance, or the fillet radius when `fillet`. */
   chamfer?: Num;
+  /** Round the plate's corners with radius `chamfer` instead of chamfering them. */
+  fillet?: boolean;
   inward?: boolean;
 }
 

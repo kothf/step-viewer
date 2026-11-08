@@ -3025,6 +3025,8 @@ export const RU: Record<string, string> = {
   "The inset is too big for the end face.": "Отступ слишком велик для торцевой грани.",
   "The member runs parallel to the boundary plane.": "Элемент параллелен плоскости границы.",
   "The plate corners could not be chamfered.": "Не удалось снять фаски на углах пластины.",
+  "The plate corners could not be rounded.": "Не удалось скруглить углы пластины.",
+  "Treat the corners": "Обрабатывать углы",
   "The profile outline could not be closed.": "Не удалось замкнуть контур профиля.",
   "The two faces are parallel: a gusset needs faces that meet at a corner.": "Грани параллельны: для косынки нужны грани, сходящиеся в углу.",
   "There are no weldment members yet: add a Structural Member first.": "Элементов сварной конструкции пока нет: сначала добавьте элемент конструкции.",

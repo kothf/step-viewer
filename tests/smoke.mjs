@@ -7827,8 +7827,19 @@ try {
     await settle();
     const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
     check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
-    // The end cap's thickness arrow: dragging it outwards thickens the plate.
+    // Corner treatment: Fillet swaps the Distance field for Radius and stores `fillet`.
     const capId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wCapCorner"]', "fillet");
+    await settle();
+    const capR = await mp.evaluate(() => ({ label: document.querySelector('#mc-pm [data-num="chamfer"]')?.closest("label")?.textContent?.trim(), fillet: window.__sv.model.mode().draft?.fillet }));
+    await mp.click("#mc-cancel");
+    await settle();
+    check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
     // Look at the cap from close by, so the arrow is on screen.

@@ -568,18 +568,25 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
     let shape = mk.Shape();
     if (f.chamfer && f.chamfer.v > 1e-9) {
       // Straight edges along the thickness are the plate's corners.
-      const ch = new oc.BRepFilletAPI_MakeChamfer(shape);
+      const ch = f.fillet ? new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational) : new oc.BRepFilletAPI_MakeChamfer(shape);
+      const what = f.fillet ? "The plate corners could not be rounded." : "The plate corners could not be chamfered.";
       let any = false;
+      const plates = h.sub(shape, "FACE");
+      const planeOf = (x: any): V3 | null => { const fa = new oc.BRepAdaptor_Surface_2(x, true); if (fa.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null; const d = fa.Plane().Axis().Direction(); return [d.X(), d.Y(), d.Z()]; };
       for (const e of h.sub(shape, "EDGE")) {
         const ca = new oc.BRepAdaptor_Curve_2(e);
         if (ca.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) continue;
         const p0 = ca.Value(ca.FirstParameter()), p1 = ca.Value(ca.LastParameter());
         const d = unit([p1.X() - p0.X(), p1.Y() - p0.Y(), p1.Z() - p0.Z()]);
-        if (Math.abs(dot(d, fr.n)) > 0.999) { ch.Add_2(f.chamfer.v, e); any = true; }
+        if (Math.abs(dot(d, fr.n)) <= 0.999) continue;
+        // Only sharp corners: two flat sides at an angle (a rounded outline's tangent seams are left alone).
+        const ns = plates.filter(x => h.sub(x, "EDGE").some(y => y.IsSame(e))).map(planeOf);
+        if (ns.length !== 2 || !ns[0] || !ns[1] || Math.abs(dot(ns[0], ns[1])) > 0.999) continue;
+        ch.Add_2(f.chamfer.v, e); any = true;
       }
       if (any) {
-        try { ch.Build(new oc.Message_ProgressRange_1()); if (ch.IsDone()) shape = ch.Shape(); else h.warning = "The plate corners could not be chamfered."; }
-        catch { h.warning = "The plate corners could not be chamfered."; }
+        try { ch.Build(new oc.Message_ProgressRange_1()); if (ch.IsDone()) shape = ch.Shape(); else h.warning = what; }
+        catch { h.warning = what; }
       }
     }
     if (h.volume(shape) < 0) shape = shape.Reversed();
