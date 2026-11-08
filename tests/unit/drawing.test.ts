@@ -502,3 +502,49 @@ test("shaded views: triangles facing the viewer, back to front, drawn under the 
   assert.ok(!viewPrims({ ...(v as object), style: "shaded" } as never, proj, pl).some(p => p.layer === "VISIBLE" || p.layer === "HIDDEN"), "shaded alone has no edges");
   assert.match(sheetSvg(pr, 420, 297), /fill="#[0-9a-f]{6}" stroke="#[0-9a-f]{6}"/);
 });
+
+test("section hatching by material and component: loops know their solid, patterns follow the material (FR-DRW-012)", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { sectionHatch, materialPattern, patternHatch } = await import("../../src/drawing/compose");
+  const oc = await occ();
+  // Two separate blocks side by side in one compound, like two components of an assembly.
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  b.Add(comp, new oc.BRepPrimAPI_MakeBox_3(new oc.gp_Pnt_3(-20, -5, 0), 20, 10, 10).Shape());
+  b.Add(comp, new oc.BRepPrimAPI_MakeBox_3(new oc.gp_Pnt_3(0, -5, 0), 20, 10, 10).Shape());
+  const s = section(oc, comp, { dir: [0, -1, 0], up: [0, 0, 1] }, [0, 0, 0]);
+  assert.equal(s.cut!.length, 2);
+  assert.deepEqual([...s.cutOf!].sort(), [0, 1]);
+  // Each loop lies on its own block: the first block's loop is left of x = 0.
+  const left = s.cut!.findIndex(l => Math.max(...l.filter((_, i) => i % 2 === 0)) <= 1e-6);
+  assert.equal(s.cutOf![left], 0);
+
+  assert.equal(materialPattern("Steel (carbon)"), "ansi32");
+  assert.equal(materialPattern("Stainless steel 304"), "ansi32");
+  assert.equal(materialPattern("Brass"), "ansi33");
+  assert.equal(materialPattern("Aluminium 6061"), "ansi38");
+  assert.equal(materialPattern("ABS"), "ansi34");
+  assert.equal(materialPattern("Polycarbonate"), "ansi34");
+  assert.equal(materialPattern("Cast iron"), "ansi31");
+  assert.equal(materialPattern(null), "ansi31");
+
+  const sq = [0, 0, 20, 0, 20, 20, 0, 20];
+  const ang = (h: number[]) => Math.round(Math.atan2(h[3] - h[1], h[2] - h[0]) * 180 / Math.PI + 360) % 180;
+  // ANSI31 = one family; ANSI32 = pairs (twice the lines of a 2·gap family); ANSI37 = crossed.
+  const n31 = patternHatch([sq], "ansi31", 2, Math.PI / 4).length, n32 = patternHatch([sq], "ansi32", 2, Math.PI / 4).length;
+  assert.ok(Math.abs(n32 - n31) <= 2, `ansi32 ${n32} vs ansi31 ${n31}`);
+  assert.deepEqual([...new Set(patternHatch([sq], "ansi37", 2, Math.PI / 4).map(ang))].sort((a, b) => a - b), [45, 135]);
+  // ANSI33's second family is dashed: more, shorter pieces than its solid family.
+  const h33 = patternHatch([sq], "ansi33", 2, Math.PI / 4), len = (h: number[]) => Math.hypot(h[2] - h[0], h[3] - h[1]);
+  assert.ok(Math.min(...h33.map(len)) < 2.01);
+
+  // Two components: the second is hatched at 135°; one component alone stays at the view's angle.
+  const hs = { gap: 2, angle: 45, pattern: "material" as const };
+  const two = sectionHatch([sq, sq.map((x, i) => i % 2 ? x : x + 30)], hs, ["a", "b"], ["Cast iron", "Cast iron"]);
+  assert.deepEqual([...new Set(two.map(ang))].sort((a, b) => a - b), [45, 135]);
+  const one = sectionHatch([sq], hs, ["a"], ["Cast iron"]);
+  assert.deepEqual([...new Set(one.map(ang))], [45]);
+  // A fixed pattern overrides the material.
+  const fixed = sectionHatch([sq], { ...hs, pattern: "ansi37" }, ["a"], ["Steel (carbon)"]);
+  assert.deepEqual([...new Set(fixed.map(ang))].sort((a, b) => a - b), [45, 135]);
+});

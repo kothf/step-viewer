@@ -21,6 +21,11 @@ export interface Projection {
   ms: number;
   /** Section views: the cut faces as closed 2D loops (fill even-odd). */
   cut?: number[][];
+  /** Section views: for each `cut` loop, the index of the input solid it lies on (TopExp order; -1 unknown). */
+  cutOf?: number[];
+  /** Section views: for each `cut` loop, who it belongs to (component id or body) and its material, set by the worker. */
+  cutKey?: string[];
+  cutMat?: (string | null)[];
   /** Shaded views (FR-DRW-010): triangles facing the viewer, back to front, 7 numbers each: u0 v0 u1 v1 u2 v2 grey. */
   shade?: number[];
 }
@@ -199,6 +204,15 @@ export function shapeInfo(oc: any, shape: any): { box: [V3, V3]; volume: number 
   return { box: [[lo.X(), lo.Y(), lo.Z()], [hi.X(), hi.Y(), hi.Z()]], volume: Math.abs(p.Mass()) };
 }
 
+/** The shapes of a TopTools_ListOfShape (the bindings have no list iterator: walk a copy). */
+function shapeList(oc: any, l: any): any[] {
+  const out: any[] = [];
+  const copy = new oc.TopTools_ListOfShape_3(l);
+  while (copy.Size() > 0) { const s = copy.First_1(); out.push(s.Oriented(s.Orientation_1())); copy.RemoveFirst(); }
+  copy.delete();
+  return out;
+}
+
 /** A section view (FR-DRW-012): `view.dir` is the plane's normal, pointing at the viewer; material on the viewer's side of the plane through `p` is cut away. `cut` holds the cut faces as closed 2D loops (outer and holes alike; fill them even-odd). */
 /**
  * `stair` (offset and half sections): the cutter is a staircase polygon of (t, o) points in the plane through `o`
@@ -252,6 +266,17 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
   cutter.Build(new oc.Message_ProgressRange_1());
   if (!cutter.IsDone()) throw new Error("The section could not be cut");
   const rest = cutter.Shape();
+  // Which input solid each piece of the result came from, so each component or body is hatched on its own.
+  const A0 = oc.TopAbs_ShapeEnum, owned: { f: any; i: number }[] = [];
+  {
+    let i = 0;
+    for (const ex = new oc.TopExp_Explorer_2(shape, A0.TopAbs_SOLID, A0.TopAbs_SHAPE); ex.More(); ex.Next(), i++) {
+      const s = ex.Current();
+      let pieces = shapeList(oc, cutter.Modified(s));
+      if (!pieces.length && !cutter.IsDeleted(s)) pieces = [s];
+      for (const pc of pieces) for (const fx = new oc.TopExp_Explorer_2(pc, A0.TopAbs_FACE, A0.TopAbs_SHAPE); fx.More(); fx.Next()) owned.push({ f: fx.Current(), i });
+    }
+  }
   let drawn = rest;
   if (opts.keep) {
     const b = new oc.BRep_Builder(), c = new oc.TopoDS_Compound();
@@ -260,7 +285,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
   }
   const proj = project(oc, drawn, view, tol);
   // Faces on the cutting plane: their wires, flattened into the view's axes.
-  const cut: number[][] = [];
+  const cut: number[][] = [], cutOf: number[] = [];
   const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
   for (const ex = new oc.TopExp_Explorer_2(rest, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
     const f = oc.TopoDS.Face_1(ex.Current());
@@ -270,6 +295,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     if (Math.abs(Math.abs(dn.X() * n[0] + dn.Y() * n[1] + dn.Z() * n[2]) - 1) > 1e-7) continue;
     const ld = lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2];
     if (!(st ? st.planes : [d0]).some(d => Math.abs(ld - d) <= 1e-5)) continue;
+    const owner = owned.find(o => o.f.IsSame(f))?.i ?? -1;
     for (const wx = new oc.TopExp_Explorer_2(f, A.TopAbs_WIRE, A.TopAbs_SHAPE); wx.More(); wx.Next()) {
       const loop: number[] = [];
       for (const it = new oc.BRepTools_WireExplorer_2(oc.TopoDS.Wire_1(wx.Current())); it.More(); it.Next()) {
@@ -283,10 +309,10 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
           loop.push(dot(P, x), dot(P, y));
         }
       }
-      if (loop.length >= 6) cut.push(loop);
+      if (loop.length >= 6) { cut.push(loop); cutOf.push(owner); }
     }
   }
-  return { ...proj, cut };
+  return { ...proj, cut, cutOf };
 }
 
 // ---------- model topology for dimensions and centre marks (FR-DRW-021/023) ----------
