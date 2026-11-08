@@ -3,9 +3,9 @@
 // changes they find their edges again and measure them anew (AT-P5-3). Drawn as sheet primitives
 // in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
-import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kernel/drawing";
-import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
-import type { HoleInfo, ModelItem } from "./items";
+import { viewAxes, type MEdge, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
+import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
@@ -16,7 +16,7 @@ type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
-export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
+export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
 
 /** Annotation text height and arrowhead in force (FR-DRW-025): set from the drawing's style by `useStyle` before composing. */
 export let TEXT_H = 3.5;
@@ -356,6 +356,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
+  if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
+  if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   for (const a of sheet.annots ?? []) {
     if (a.view !== v.id) continue;
     let r: { prims: Prim[]; box: [number, number, number, number] } | null = null;
@@ -496,6 +498,63 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   const out: Prim[] = [];
   for (const g of kept) if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
   return out;
+}
+
+// ---------- cosmetic threads and sketches (FR-DRW-017) ----------
+
+/** Layers drawn on every view by itself (not by an annotation): previews of one annotation leave them out. */
+export const AUTO_LAYERS = new Set<string>(["CENTER", "THREAD", "SKETCH"]);
+
+/**
+ * Where a thread runs: from its edge's centre `c` along `dir` into the cylinder, for `L` mm. The cylinder
+ * is the one on the edge's axis with its radius; the thread goes towards its far end.
+ */
+export function threadRun(t: ThreadInfo, topo: Topo | null): { c: V3; dir: V3; L: number; R: number } | null {
+  const cyl = topo?.cyls.find(y => Math.abs(y.r - t.r) < 1e-4 && Math.abs(Math.abs(dot3(y.ax, t.ax)) - 1) < 1e-6 && (() => { const w = sub3(t.c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })());
+  if (!cyl) return null;
+  const tc = dot3(sub3(t.c, cyl.o), cyl.ax);
+  const toEnd = Math.abs(tc - cyl.v0) <= Math.abs(tc - cyl.v1);
+  const dir: V3 = toEnd ? cyl.ax : [-cyl.ax[0], -cyl.ax[1], -cyl.ax[2]];
+  const full = toEnd ? cyl.v1 - tc : tc - cyl.v0;
+  const L = t.L == null ? full : Math.min(t.L, full);
+  return L > 1e-6 ? { c: t.c, dir, L, R: t.r } : null;
+}
+
+/**
+ * ISO 6410-1 cosmetic threads: seen from the side, thin lines at the thread diameter and a thick limit line
+ * across; seen end-on, a thin ¾ circle (gap in the upper right quadrant). Internal threads seen from the
+ * side lie inside the part, so they are dashed unless the view is a section.
+ */
+export function threadPrims(v: DrawingView, pl: Placement, threads: ThreadInfo[], topo: Topo | null, P: (p: V3) => P2, n: V3): Prim[] {
+  const thinS: Seg2[] = [], hidS: Seg2[] = [], limS: Seg2[] = [], limH: Seg2[] = [];
+  for (const t of threads) {
+    const run = threadRun(t, topo);
+    if (!run) continue;
+    const { c, dir, L } = run, r = t.d / 2, R = Math.max(r, run.R);
+    const cos = dot3(dir, n);
+    const c2 = P(c), e2 = P([c[0] + dir[0] * L, c[1] + dir[1] * L, c[2] + dir[2] * L]);
+    if (Math.abs(Math.abs(cos) - 1) < 1e-6) {
+      // End-on: the near end is visible when the thread runs away from the viewer.
+      (cos < 0 ? thinS : hidS).push({ k: "a", c: 0, o: c2, r, a0: Math.PI / 2, a1: 2 * Math.PI });
+    } else if (Math.abs(cos) < 1e-6) {
+      const d = unit2([e2[0] - c2[0], e2[1] - c2[1]]), s: P2 = [-d[1], d[0]];
+      const hidden = t.internal && v.kind !== "section";
+      for (const k of [-1, 1]) (hidden ? hidS : thinS).push({ k: "l", c: 0, p: [c2[0] + s[0] * r * k, c2[1] + s[1] * r * k, e2[0] + s[0] * r * k, e2[1] + s[1] * r * k] });
+      (hidden ? limH : limS).push({ k: "l", c: 0, p: [e2[0] - s[0] * R, e2[1] - s[1] * R, e2[0] + s[0] * R, e2[1] + s[1] * R] });
+    }
+  }
+  return [...decorPrims(v, pl, thinS, "thin", "THREAD"), ...decorPrims(v, pl, hidS, "hidden", "THREAD"), ...decorPrims(v, pl, limS, "thick", "THREAD"), ...decorPrims(v, pl, limH, "hidden", "THREAD")];
+}
+
+/** The model's shown sketches projected into the view as thin polylines. */
+export function sketchPrims(v: DrawingView, pl: Placement, sketches: SketchInfo[], P: (p: V3) => P2): Prim[] {
+  const segs: Seg2[] = [];
+  for (const sk of sketches) for (const line of sk.lines) {
+    const p: number[] = [];
+    for (const q of line) p.push(...P(q));
+    if (p.length >= 4) segs.push({ k: "p", c: 0, p });
+  }
+  return decorPrims(v, pl, segs, "thin", "SKETCH");
 }
 
 // ---------- model items ----------

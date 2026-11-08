@@ -6,7 +6,7 @@ import { geometryDiff, project, readShape, section, shapeInfo, topology, type V3
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
-import type { PartDoc } from "../model/types";
+import type { EdgeRef, PartDoc } from "../model/types";
 import { modelItems } from "./items";
 
 export type DrawingRequest =
@@ -51,11 +51,21 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       if (!oc) throw new Error("Kernel not started");
       let extra = {};
       if (r.part) {
-        const res = new Modeller(oc).evaluate(r.part);
+        const md = new Modeller(oc), res = md.evaluate(r.part);
         if (!res.body) throw new Error("The part has no body yet.");
         shape = res.body.shape;
-        let mi: ReturnType<typeof modelItems> = { items: [], holes: [] };
-        try { mi = modelItems(r.part, res.frames, res.sketches); } catch { /* no model items */ }
+        const body = res.body;
+        // A cosmetic thread's round edge, found by its persistent name.
+        const edgeCircle = (ref: EdgeRef) => {
+          try {
+            const ad = new oc.BRepAdaptor_Curve_2(md.resolveEdge(body, ref));
+            if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Circle) return null;
+            const ci = ad.Circle(), l = ci.Location(), d = ci.Axis().Direction();
+            return { c: [l.X(), l.Y(), l.Z()] as V3, ax: [d.X(), d.Y(), d.Z()] as V3, r: ci.Radius() };
+          } catch { return null; }
+        };
+        let mi: ReturnType<typeof modelItems> = { items: [], holes: [], threads: [], sketches: [] };
+        try { mi = modelItems(r.part, res.frames, res.sketches, edgeCircle); } catch { /* no model items */ }
         extra = { topo: topology(oc, shape, res.body.names), ...mi };
       } else if (r.asm) {
         // An assembly (FR-DRW-030): the shown components placed into one compound; face names get
