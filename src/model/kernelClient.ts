@@ -5,6 +5,8 @@
 // document (FR-ARC-011/012).
 import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
+import type { Prebuilt } from "../kernel/kernel.worker";
+import { kernelPool, type KernelPool } from "../kernel/pool";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
 import type { SheetState } from "../sheetmetal/sheet";
@@ -87,6 +89,7 @@ export class ModelKernel {
     this.worker = null;
     this.ready = null;
     this.heap = 0;
+    this.known.clear();
   }
 
   private call<T>(msg: Record<string, unknown>): Promise<T> {
@@ -158,8 +161,64 @@ export class ModelKernel {
 
   /** Evaluates an assembly: one mesh per shown component, placed (FRS 10). */
   async assembly(doc: AsmDoc): Promise<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }> {
+    let t = performance.now();
+    const todo = this.unbuilt(doc);
+    const pool = todo.length > 1 ? kernelPool(this.base) : null;
+    pool?.warm(todo.length - 1);
     await this.start();
-    return this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1 });
+    const worker = this.worker;
+    const lap = () => { const n = performance.now(), d = n - t; t = n; return Math.round(d); };
+    const start = lap();
+    const pre = pool ? await this.prebuild(doc, todo, pool) : undefined;
+    const pb = lap();
+    const r = await this.call<{ parts: { id: string; data: PartData; faces: string[] }[]; statuses: AsmComponentStatus[]; features?: AsmFeatureStatus[]; props: BodyProps | null }>({ type: "asm", doc, quality: 1, pre });
+    // The worker now holds these part sources; a new worker (after a crash) knows none.
+    this.timing = { start, prebuild: pb, asm: lap(), worker: Math.round((r as any).ms) };
+    if (this.worker === worker) this.known = new Map(Object.entries(doc.parts).map(([k, p]) => [k, JSON.stringify(p.doc)]));
+    return r;
+  }
+
+  /** Part documents the assembly worker has evaluated, by part key (as JSON), so only changed parts are built again. */
+  private known = new Map<string, string>();
+  /** Time spent on the last parallel part build, and on how many workers (for `?debug`). */
+  /** Where the last assembly build spent its time (ms), for `?debug` profiling. */
+  timing: Record<string, number> = {};
+  lastParallel: { parts: number; workers: number; ms: number } | null = null;
+
+  /** Part keys the assembly worker does not hold yet, biggest document first. */
+  private unbuilt(doc: AsmDoc): string[] {
+    return Object.entries(doc.parts)
+      .filter(([k, p]) => !p.asm && this.known.get(k) !== JSON.stringify(p.doc))
+      .map(([k, p]) => ({ k, size: JSON.stringify(p.doc).length }))
+      .sort((a, b) => b.size - a.size).map(x => x.k);
+  }
+
+  /**
+   * Parallel part builds (FR-ARC-016): parts the assembly worker does not hold yet are built at
+   * once, biggest first, by the helper pool and by the assembly worker itself. Helper results come
+   * back as BREP bodies with their analysed meshes for the "asm" call; a part a helper could not
+   * build is left to the assembly worker.
+   */
+  private async prebuild(doc: AsmDoc, todo: string[], pool: KernelPool): Promise<Record<string, Prebuilt>> {
+    const t0 = performance.now();
+    const pre: Record<string, Prebuilt> = {};
+    let next = 0;
+    const own = async () => { while (next < todo.length) await this.call({ type: "asmPrime", doc, key: todo[next++], quality: 1 }); };
+    const helper = async () => {
+      // Take parts only once a helper has started, so the assembly worker is not left waiting on one that is still loading.
+      try { await pool.run({ type: "ping" }); } catch { return; }
+      while (next < todo.length) {
+        const k = todo[next++];
+        try {
+          const r = await pool.run<{ pre: Prebuilt }>({ type: "prebuild", doc: doc.parts[k].doc, quality: 1 });
+          pre[k] = r.pre;
+        } catch { /* the assembly worker builds it in the "asm" call */ }
+      }
+    };
+    const lanes = Math.min(pool.size, todo.length - 1);
+    await Promise.all([own(), ...Array.from({ length: lanes }, helper)]);
+    this.lastParallel = { parts: todo.length, workers: lanes + 1, ms: performance.now() - t0 };
+    return pre;
   }
 
   /** Overlapping component pairs, with the overlap volume and triangles (FR-ASM-020). */
