@@ -1151,3 +1151,46 @@ test("Sweep twist and guide curve, loft centreline, variable pitch helix (FR-FT-
   const bad = m.evaluate(doc([hc, hx([[0, 2, 20], [0, 6, 30]])]));
   assert.equal(bad.statuses.find(s => s.id === "x")?.code, "E-HLX-ROWS");
 });
+
+test("Intersect bodies and surfaces into regions; untrim surface (FR-BODY-007, FR-FT-100)", async () => {
+  const m = new Modeller(await occ());
+  // Two 20 × 20 × 10 boxes as separate bodies, overlapping by half: three regions of 2000 mm³.
+  const boxes: Feature[] = [rect("a", 0, 0, 20, 20), { id: "ea", type: "extrude", name: "E1", sketch: "a", op: "boss", end: "blind", depth: { v: 10 } },
+    rect("b", 10, 0, 20, 20), { id: "eb", type: "extrude", name: "E2", sketch: "b", op: "boss", end: "blind", depth: { v: 10 }, merge: false } as Feature];
+  const it = (o: Partial<{ bodies: { name: string }[]; exclude: number[][]; merge: boolean; consume: boolean }> = {}): Feature => ({ id: "i", type: "intersect", name: "Intersect1", bodies: [], exclude: [], ...o } as Feature);
+  let r = run(m, doc([...boxes, it()]));
+  assert.equal(r.regions.i.length, 3);
+  r.regions.i.forEach(g => close(g.v, 2000, 1e-6));
+  close(r.props!.volume, 6000, 1e-6);
+  assert.equal(r.props!.bodies, 1);
+  // Leave the common part out: the two outer pieces stay, as two bodies (they do not touch).
+  r = run(m, doc([...boxes, it({ exclude: [[5, 0, 5]] })]));
+  close(r.props!.volume, 4000, 1e-6);
+  assert.equal(r.props!.bodies, 2);
+  assert.deepEqual(r.regions.i.map(g => g.out).filter(Boolean).length, 1);
+  // Not merged: three bodies.
+  r = run(m, doc([...boxes, it({ merge: false })]));
+  assert.equal(r.props!.bodies, 3);
+  // A plane surface at z = 4 across the first box: two regions; keep the lower one and consume the surface.
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 4 } } as Feature;
+  const surf: Feature[] = [pl, rect("s", 0, 0, 40, 40, { plane: "p1" }), { id: "ps", type: "planesurf", name: "Surface-Plane1", sketch: "s" }];
+  const one: Feature[] = boxes.slice(0, 2);
+  r = run(m, doc([...one, ...surf, it({ bodies: [{ name: "ea:end" }, { name: "ps:face:0" }], exclude: [[0, 0, 8]], consume: true })]));
+  close(r.props!.volume, 20 * 20 * 4, 1e-6);
+  assert.equal(r.sheets, null);
+  assert.ok(r.body!.names.includes("ea:start") && r.body!.names.includes("ps:face:0"), r.body!.names.join());
+  // Excluding every region is an error.
+  const all = m.evaluate(doc([...one, ...surf, it({ exclude: [[0, 0, 8], [0, 0, 2]] })]));
+  assert.equal(all.statuses.find(s => s.id === "i")?.code, "E-INT-ALL");
+  // Untrim: a 40 mm square surface with a Ø10 hole gets its hole filled; a Ø20 disc goes back to its 20 mm parameter square.
+  const props = (m as never as { props(b: unknown): { area: number } });
+  const holed: SketchFeature = { ...rect("h", 0, 0, 40, 40), ents: [...rect("h", 0, 0, 40, 40).ents, { id: "hc", t: "point", x: 0, y: 0 }, { id: "hk", t: "circle", c: "hc", r: 5 }] };
+  const ps: Feature = { id: "ps", type: "planesurf", name: "Surface-Plane1", sketch: "h" };
+  r = run(m, doc([holed, ps]));
+  close(props.props(r.sheets!).area, 1600 - Math.PI * 25, 1e-6);
+  r = run(m, doc([holed, ps, { id: "u", type: "untrimsurf", name: "Surface-Untrim1", surface: { name: "ps:face:0" }, mode: "holes" } as Feature]));
+  close(props.props(r.sheets!).area, 1600, 1e-6);
+  r = run(m, doc([circle("d", 0, 0, 10, { std: "XY" }), { id: "ps", type: "planesurf", name: "Surface-Plane1", sketch: "d" }, { id: "u", type: "untrimsurf", name: "Surface-Untrim1", surface: { name: "ps:face:0" } } as Feature]));
+  close(props.props(r.sheets!).area, 400, 1e-6);
+  assert.deepEqual(r.sheets!.names, ["ps:face:0"]);
+});

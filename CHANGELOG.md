@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.87.0] - 2026-11-08
+## [1.90.0] - 2026-11-08
 
 ### Added
 
@@ -17,10 +17,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Space** opens the orientation picker at the cursor: the six views laid out as an unfolded cube, plus Isometric, Normal to, Zoom to fit, Zoom to selection, Zoom to area and Previous view.
   - **Zoom to area** frames a box you drag.
   - **Zoom to selection** frames the picked face, edge or parts.
+- Part modelling commands (FR-UND-005, FR-UI-106, FR-UI-107, FR-UI-111, FR-HIS-022):
+  - The **Undo** and **Redo** tooltips name the step ("Undo: Add Extrude1").
+  - **Undo ▾** lists the last 20 steps; picking one undoes back to it.
+  - **Enter** with no command running repeats the last feature command.
+  - The feature panel's **📌 Keep visible** pushpin opens the same command again after OK; **Ctrl+Enter** does it once.
+  - A **right-click** without a drag while a command runs offers **OK** and **Cancel** (fillet and chamfer keep their edge helpers below).
+  - **What's wrong**: the error count above the feature tree opens a list of the features with errors and warnings. A click selects one; a double click edits it.
 
 ### Changed
 
 - Camera moves take 300 ms, down from 450 ms. They apply at once when the system asks for reduced motion.
+
+## [1.88.0] - 2026-11-08
+
+### Added
+
+- **Intersect** (FR-BODY-007) in Sweep ▾: picked solids and surfaces (or all of them) cut each other into closed regions.
+  - The panel lists the regions by volume. Untick the ones to leave out.
+  - The kept regions replace the picked solids, merged into one body unless **Merge result** is off.
+  - **Consume surfaces** removes the surfaces used. Faces keep the names of the faces they came from, so later features stay attached.
+- **Untrim Surface** (FR-FT-100) in Surface ▾: a one-face surface goes back to the bounds of its underlying surface, or only its holes are filled.
+
+## [1.87.0] - 2026-11-08
+
+### Added
+
+- **Drawing view properties** (FR-DRW-017):
+  - Cosmetic threads of a part are drawn on its views, ISO 6410 style: thin lines at the thread diameter with a thick limit line from the side (dashed for a tapped hole, unless the view is a section), and a thin ¾ circle end-on. A view's Cosmetic threads box hides them.
+  - Sketches: tick Sketches on a view to show the part's visible sketches as thin lines (DXF layer SKETCH).
+  - Alignment: Break alignment lets a projected, section or auxiliary view move on its own (and stay put when its parent moves); Default alignment puts it back in line with its parent.
 
 ## [1.86.0] - 2026-11-08
 
@@ -878,7 +904,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.87.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
+[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.90.0
+[1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
