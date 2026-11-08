@@ -1,6 +1,7 @@
 // Sheet formats (FR-DRW-001/002/003): sizes, the frame with zone marks
 // (ISO 5457), and the title block (ISO 7200 or ANSI Y14.1 style) with its fields.
 import { rect, type Prim } from "./prims";
+import { textWidth } from "./textWidth";
 import type { DrawingProps, Sheet, SheetSize, TitleFormat } from "./types";
 
 /** Landscape sizes in mm. */
@@ -116,7 +117,24 @@ export function fieldAt(s: Sheet, x: number, y: number): keyof DrawingProps | nu
 }
 
 /** Fits text into a cell width: Helvetica-like glyphs are ~0.55 of the height wide. */
-function fitH(s: string, h: number, w: number) { return Math.max(1.8, Math.min(h, w / Math.max(1, s.length * 0.56))); }
+/** A cell value centred at (x, yc): one line when it fits at a fair size, else broken at a space into two lines in `room` mm of height (FR-DRW-004). */
+export function cellText(v: string, x: number, yc: number, hMax: number, w: number, room: number, bold: boolean): Prim[] {
+  const one = fitH(v, hMax, w, bold);
+  const words = v.split(" ");
+  if (one < 0.7 * hMax && words.length > 1) {
+    let best: [string, string] | null = null, bw = Infinity;
+    for (let i = 1; i < words.length; i++) { const a = words.slice(0, i).join(" "), b = words.slice(i).join(" "), m = Math.max(textWidth(a, 1, bold), textWidth(b, 1, bold)); if (m < bw) { bw = m; best = [a, b]; } }
+    const h2 = Math.min(hMax, w / Math.max(0.5, bw), room / 2.6);
+    if (best && h2 > one * 1.15) {
+      const gap = h2 * 0.6;
+      return best.map((s, i) => ({ t: "t" as const, x, y: yc + (i === 0 ? gap / 2 : -gap / 2 - h2), s, h: h2, al: "c" as const, layer: "TEXT", bold }));
+    }
+  }
+  return [{ t: "t", x, y: yc - one / 2, s: v, h: one, al: "c", layer: "TEXT", bold }];
+}
+
+/** The text height that fits `s` into `w` mm, at most `h` (smaller than 1.8 mm only when nothing larger fits). */
+function fitH(s: string, h: number, w: number, bold = false) { const k = textWidth(s, 1, bold); return Math.max(Math.min(1.8, h), Math.min(h, w / Math.max(0.5, k))); }
 
 /** The frame, zone marks and title block. Labels come translated through `label`. */
 export function formatPrims(s: Sheet, f: Fields, label: (cellLabel: string) => string): Prim[] {
@@ -154,8 +172,8 @@ export function formatPrims(s: Sheet, f: Fields, label: (cellLabel: string) => s
     out.push({ t: "t", x: bx + c.x + 1, y: by + c.y + c.h - 2.6, s: s.format === "ansi" ? c.ansi : label(c.label), h: 1.8, al: "l", layer: "FORMAT" });
     const v = String(f[c.key] ?? "");
     if (v) {
-      const h = fitH(v, c.big ? 5 : 3, c.w - 2);
-      out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + (c.big ? c.h / 2 - h / 2 - 1 : 1.3), s: v, h, al: "c", layer: "TEXT", bold: c.big });
+      if (c.big) out.push(...cellText(v, bx + c.x + c.w / 2, by + c.y + c.h / 2 - 1, 5, c.w - 2, c.h - 5, true));
+      else { const h = fitH(v, 3, c.w - 2); out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + 1.3, s: v, h, al: "c", layer: "TEXT" }); }
     }
   }
   out.push(...rect(bx + 120, by, 60, 16, "thin", "FORMAT"), ...projSymbol(s, bx + 120, by, 60, 16, label));
@@ -177,8 +195,9 @@ export function userBlock(s: Sheet, tb: TitleFormat, bx: number, by: number, f: 
       else { const h = fitH(l, Math.min(c.big ? 5 : 3.5, c.h - 1.5), c.w - 2); out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + c.h / 2 - h / 2, s: l, h, al: "c", layer: "FORMAT", bold: c.big }); }
     }
     if (v) {
-      const room = c.label ? c.h - 4 : c.h - 1.5, h = fitH(v, Math.max(1.8, Math.min(c.big ? 5 : 3, room)), c.w - 2);
-      out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + (c.label ? Math.max(1.3, (c.h - 3.2) / 2 - h / 2) : c.h / 2 - h / 2), s: v, h, al: "c", layer: "TEXT", bold: c.big });
+      const room = c.label ? c.h - 4 : c.h - 1.5, hMax = Math.max(1.8, Math.min(c.big ? 5 : 3, room)), h = fitH(v, hMax, c.w - 2, !!c.big);
+      if (room >= 7) out.push(...cellText(v, bx + c.x + c.w / 2, by + c.y + (c.label ? Math.max(1.3 + h / 2, (c.h - 3.2) / 2) : c.h / 2), hMax, c.w - 2, room, !!c.big));
+      else out.push({ t: "t", x: bx + c.x + c.w / 2, y: by + c.y + (c.label ? Math.max(1.3, (c.h - 3.2) / 2 - h / 2) : c.h / 2 - h / 2), s: v, h, al: "c", layer: "TEXT", bold: c.big });
     }
   }
   return out;

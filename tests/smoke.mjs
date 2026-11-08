@@ -3826,6 +3826,10 @@ try {
     const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
     check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
       `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
+    // The deviations start right of the drawn "Ø16H7", measured on the rendered glyphs (exam bug 39). The screen font may not be
+    // DejaVu (exports embed it), and glyph boxes include side bearings, so a sliver under 0.15·h counts as clear; the bug was ~1·h.
+    const devGap = await dp.evaluate(() => { const els = [...document.querySelectorAll("#drw svg text")], r = s => els.find(e => e.textContent === s)?.getBoundingClientRect(); const m = r("Ø16H7"), u = r("+0.018"), l = [...els].filter(e => e.textContent === "0").map(e => e.getBoundingClientRect()).find(q => m && Math.abs(q.left - u.left) < 2); return m && u ? { gap: +(u.left - m.right).toFixed(1), lo: l ? +(l.left - m.right).toFixed(1) : null, h: +m.height.toFixed(1) } : null; });
+    check(devGap && devGap.gap > -0.15 * devGap.h && (devGap.lo === null || devGap.lo > -0.15 * devGap.h), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);
@@ -5799,9 +5803,14 @@ try {
       const box = document.querySelector('#motion input[data-mo="clashall"]'); box.checked = true; box.dispatchEvent(new Event("change"));
       const withTouching = m.clash.items.length + 0, ignoredAfter = m.clash.ignored;
       const box2 = document.querySelector('#motion input[data-mo="clashall"]'); box2.checked = false; box2.dispatchEvent(new Event("change"));
+      // Stop playback at interference: playing from 0 trips where the first span starts.
+      const cstop = document.querySelector('#motion input[data-mo="clashstop"]'); cstop.checked = true; cstop.dispatchEvent(new Event("change"));
+      const stopTrip = m.tripAt(0, Math.round(m.study.duration * m.study.fps)), stopWant = Math.round(sp[0]?.[0] * m.study.fps);
+      m.clashStop = false;
+      const stopOff = m.tripAt(0, Math.round(m.study.duration * m.study.fps));
       document.querySelector('#motion [data-mo="clashclose"]')?.click();
       const closed = !document.querySelector("#motion .mo-clashes");
-      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll, stopTrip: stopTrip && !stopTrip.x && stopTrip.i === stopWant, stopOff: stopOff === null };
       // Explode keys: Step by step on the key panel sets the track's seq; the one-step wizard leaves it off.
       m.wizard("explode");
       const et = m.study.tracks.find(k => k.kind === "explode");
@@ -5882,7 +5891,7 @@ try {
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
-      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
       && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,

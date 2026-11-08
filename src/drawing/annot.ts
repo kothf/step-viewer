@@ -12,6 +12,7 @@ import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
+import { textWidth } from "./textWidth";
 
 type P2 = [number, number];
 export type Label = (s: string, p?: Record<string, string>) => string;
@@ -51,7 +52,7 @@ const unit2 = (a: P2, fb: P2 = [1, 0]): P2 => { const l = len2(a); return l > 1e
 const d2 = (a: P2, b: P2) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 /** Approximate width of a text on the sheet (DejaVu Sans). */
-export const textW = (s: string, h = TEXT_H) => s.length * h * 0.85;
+export const textW = (s: string, h = TEXT_H) => textWidth(s, h);
 
 /** A number for a drawing: `prec` decimals, or up to 2 with trailing zeros dropped; the language's decimal sign. */
 export function fmtNum(v: number, prec: number | undefined, dec = "."): string {
@@ -303,8 +304,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       const s0 = add2(start, dir, txt.main ? mainW + 0.6 : 0);
       const big = !txt.main;
       const hh = big ? h * 0.8 : small;
-      if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.5); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
-      if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.1); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+      if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.6); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+      if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.25); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
     }
     return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
   };
