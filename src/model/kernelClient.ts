@@ -18,6 +18,8 @@ export interface Rebuild {
   curves?: Record<string, V3[]>;
   data: PartData | null;
   faceNames: string[];
+  /** How many of the last `faceNames` belong to surface bodies (FRS 9.11); they come after the solids. */
+  sheetFaces?: number;
   /** The part's solid bodies, shown or hidden (FR-BODY-001). */
   bodies?: { key: string; ref: FaceRef; volume: number }[];
   props: BodyProps | null;

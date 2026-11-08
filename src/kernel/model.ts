@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { DeleteFaceFeature, MoveFaceFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { applyExt, projectEdge, type ModelEdge } from "../sketch/external";
@@ -28,7 +28,7 @@ export interface Named { shape: any; faces: any[]; names: string[] }
 type Tool = { shape: Named; op: "fuse" | "cut" };
 /** A curve feature's result (helix): the OCCT wire and points along it for the view. */
 interface Curve { wire: any; pts: V3[] }
-interface CacheEntry { key: string; body: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve }
+interface CacheEntry { key: string; body: Named | null; sheets: Named | null; status: FeatureStatus; frame?: Frame; tools?: Tool[]; sketch?: SketchFeature; curve?: Curve }
 
 export interface ModelMesh {
   name: string;
@@ -924,17 +924,23 @@ export class Modeller {
    * Move face (FR-FT-101), offset: each flat face is pushed out along its normal (a prism of the face
    * fused on) or pulled in (a prism cut away). The moved face keeps its name; the new side faces are `fid:side:k`.
    */
-  private moveFaces(f: MoveFaceFeature, prev: Named | null): Named {
+  private moveFaces(f: MoveFaceFeature, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
     if (!f.faces.length) throw new FeatureError("E-FT-NOFACES", "Click the faces to move.");
+    if (f.mode === "rotate") return this.rotateFaces(f, prev, frames);
+    const tr = f.mode === "translate";
     const d = f.distance.v;
-    if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
+    const vec: V3 = [f.dx?.v ?? 0, f.dy?.v ?? 0, f.dz?.v ?? 0];
+    if (tr ? !(Math.hypot(...vec) > 1e-6) : !(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The distance must be more than 0.");
     let body = prev, k = 0;
     for (const r of f.faces) {
       const face = this.resolveFace(body, r), pl = this.facePlane(face);
       if (!pl) throw new FeatureError("E-FT-MOVEFLAT", "Move face works on flat faces.");
-      const dir = mul(pl.n, f.flip ? -d : d);
+      // Translate: only the move along the normal changes a flat face (its neighbours grow with it).
+      const along = tr ? dot(vec, pl.n) : f.flip ? -d : d;
+      if (Math.abs(along) < 1e-9) continue;
+      const dir = mul(pl.n, along);
       const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(dir), false, true);
       if (!mk.IsDone()) throw new FeatureError("E-FT-MOVEFACE", "The face could not be moved.");
       let tool = mk.Shape();
@@ -944,9 +950,249 @@ export class Modeller {
       const named: Named = { shape: tool, faces, names: faces.map(x => (x.IsSame(top) ? r.name : `${f.id}:side:${k++}`)) };
       // The original face goes inside (fuse) or is cut away; its name moves to the prism's far end.
       const rest: Named = { shape: body.shape, faces: body.faces, names: body.names.map((n, i) => (body.faces[i].IsSame(face) ? `${f.id}:old` : n)) };
-      body = this.mergeSides(this.bool(f.flip ? "cut" : "fuse", rest, named, f.id), f.id);
+      body = this.mergeSides(this.bool(along < 0 ? "cut" : "fuse", rest, named, f.id), f.id);
+    }
+    if (body === prev) throw new FeatureError("E-MVF-PARALLEL", "The move is parallel to the faces, so it changes nothing.");
+    return body;
+  }
+
+  /** Move face, rotate: each flat face turns about an axis in its plane, as a draft hinged on that axis. */
+  private rotateFaces(f: MoveFaceFeature, prev: Named, frames: Record<string, Frame>): Named {
+    const a = f.angle?.v ?? 0;
+    if (!(Math.abs(a) > 1e-6) || Math.abs(a) >= Math.PI / 2 - 1e-3) throw new FeatureError("E-MVF-ANGLE", "The angle must be between 0° and 90°.");
+    const ax = this.lineOf(f.axis, prev, frames, "an axis to rotate about");
+    const tol = 1e-6 * (1 + this.size(prev.shape));
+    let body = prev;
+    for (const r of f.faces) {
+      const face = this.resolveFace(body, r), pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-FT-MOVEFLAT", "Move face works on flat faces.");
+      if (Math.abs(dot(ax.d, pl.n)) > 1e-6 || Math.abs(dot(add(ax.o, mul(pl.p, -1)), pl.n)) > tol) throw new FeatureError("E-MVF-AXIS", "The axis must lie in the plane of each face: pick an edge of the face.");
+      // Pull square to the axis in the face's plane: the face is parallel to it, so the draft turns it about the axis.
+      const pull = unit(cross(ax.d, pl.n));
+      body = this.applyDraft(body, [face], pull, f.flip ? -a : a, ax.o, f.id);
     }
     return body;
+  }
+
+  // ---------- surfaces (FRS 9.11, FR-FT-100) ----------
+
+  /** The surface bodies: each child of the sheets compound, with its face names. */
+  private sheetList(sheets: Named | null): Named[] {
+    if (!sheets) return [];
+    const oc = this.oc, out: Named[] = [];
+    for (const it = new oc.TopoDS_Iterator_2(sheets.shape, true, true); it.More(); it.Next()) {
+      const s = it.Value();
+      const faces = this.sub(s, "FACE");
+      out.push({ shape: s, faces, names: faces.map((x, i) => { const j = sheets.faces.findIndex(g => g.IsSame(x)); return j >= 0 ? sheets.names[j] : `?:${i}`; }) });
+    }
+    return out;
+  }
+
+  /** Surface bodies back into the sheets compound (always a compound, so each child is one surface body). */
+  private sheetsOf(parts: Named[]): Named | null {
+    if (!parts.length) return null;
+    const oc = this.oc, bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+    bb.MakeCompound(comp);
+    for (const p of parts) bb.Add(comp, p.shape);
+    return { shape: comp, faces: parts.flatMap(p => p.faces), names: parts.flatMap(p => p.names) };
+  }
+
+  /** The connected pieces of a sewn shape (shells, then faces outside them), each named by `nameOf`. */
+  private sheetParts(shape: any, nameOf: (face: any, k: number) => string): Named[] {
+    const oc = this.oc, A = oc.TopAbs_ShapeEnum, out: Named[] = [];
+    let k = 0;
+    const add = (s: any) => { const faces = this.sub(s, "FACE"); out.push({ shape: s, faces, names: faces.map(x => nameOf(x, k++)) }); };
+    for (const ex = new oc.TopExp_Explorer_2(shape, A.TopAbs_SHELL, A.TopAbs_SHAPE); ex.More(); ex.Next()) add(ex.Current());
+    for (const ex = new oc.TopExp_Explorer_2(shape, A.TopAbs_FACE, A.TopAbs_SHELL); ex.More(); ex.Next()) add(ex.Current());
+    return out;
+  }
+
+  /** A face picked on a surface body or a solid. */
+  private resolveAny(body: Named | null, sheets: Named | null, ref: FaceRef): any {
+    return sheets && sheets.names.includes(ref.name) ? this.resolveFace(sheets, ref) : this.resolveFace(body, ref);
+  }
+
+  /** Which surface body holds a picked face. */
+  private sheetIndex(list: Named[], sheets: Named | null, ref: FaceRef): number {
+    if (!sheets || !sheets.names.includes(ref.name)) throw new FeatureError("E-SRF-PICK", "Pick a face of a surface body.");
+    const face = this.resolveFace(sheets, ref);
+    const i = list.findIndex(b => b.faces.some(x => x.IsSame(face)));
+    if (i < 0) throw new FeatureError("E-TN-LOST", `Reference lost: face ${ref.name}`);
+    return i;
+  }
+
+  /** Planar surface: the sketch's closed regions become flat surface bodies. */
+  private planeSurf(f: PlaneSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch with a closed contour");
+    const { faces } = this.profileFaces(sk, frame);
+    if (!faces.length) throw new FeatureError("E-SRF-EMPTY", "The sketch has no closed contour.");
+    return this.sheetsOf([...this.sheetList(sheets), ...faces.map((x, k) => ({ shape: x, faces: [x], names: [`${f.id}:face:${k}`] }))]);
+  }
+
+  /** Extruded surface: every sketch curve swept along the normal; touching sheets are sewn into one surface body. */
+  private extSurf(f: ExtrudeSurfFeature, doc: PartDoc, body: Named | null, sheets: Named | null, frames: Record<string, Frame>): Named | null {
+    const oc = this.oc;
+    const { sk, frame } = this.sketchOf(f.sketch, doc, body, frames, "a sketch");
+    const segs = sketchCurves(sk);
+    if (!segs.length) throw new FeatureError("E-SRF-EMPTY", "The sketch has no curves.");
+    const d = f.depth.v;
+    if (!(d > 1e-6)) throw new FeatureError("E-FT-ZERO", "The depth must be more than 0.");
+    const dir = mul(frame.n, f.flip ? -1 : 1);
+    const off: V3 = f.mid ? mul(dir, -d / 2) : [0, 0, 0];
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-6, true, true, true, false);
+    const pieces: [any, string][] = [];
+    for (const sg of segs) {
+      const prism = new oc.BRepPrimAPI_MakePrism_1(this.segEdge(sg, frame, off), this.V(mul(dir, d)), false, true).Shape();
+      for (const x of this.sub(prism, "FACE")) pieces.push([x, sg.ent]);
+      sew.Add(prism);
+    }
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const res = sew.SewedShape();
+    const after = pieces.map(([x, ent]) => [sew.IsModified(x) ? sew.Modified(x) : x, ent] as [any, string]);
+    const parts = this.sheetParts(res, (x, k) => { const p = after.find(([g]) => g.IsSame(x)); return p ? `${f.id}:side:${p[1]}` : `${f.id}:new:${k}`; });
+    return this.sheetsOf([...this.sheetList(sheets), ...parts]);
+  }
+
+  /** Offset surface: the picked faces (sewn where they touch) offset along their normals, or copied at 0. */
+  private offSurf(f: OffsetSurfFeature, body: Named | null, sheets: Named | null): Named | null {
+    const oc = this.oc;
+    if (!f.faces.length) throw new FeatureError("E-NOFACES", "Click the faces to offset.");
+    const src = f.faces.map(r => [this.resolveAny(body, sheets, r), r.name] as [any, string]);
+    const sew = new oc.BRepBuilderAPI_Sewing(1e-6, true, true, true, false);
+    for (const [x] of src) sew.Add(x);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const joined = sew.SewedShape();
+    const mid = src.map(([x, n]) => [sew.IsModified(x) ? sew.Modified(x) : x, n] as [any, string]);
+    const d = f.distance.v * (f.flip ? -1 : 1);
+    let mk: any;
+    if (Math.abs(d) < 1e-9) mk = new oc.BRepBuilderAPI_Copy_2(joined, true, false);
+    else {
+      mk = new oc.BRepOffsetAPI_MakeOffsetShape();
+      try { mk.PerformBySimple(joined, d); } catch { /* reported below */ }
+    }
+    if (!mk.IsDone()) throw new FeatureError("E-SRF-OFFSET", "The faces could not be offset: try a smaller distance.");
+    const res = mk.Shape();
+    const map: [any, string][] = [];
+    for (const [x, n] of mid) for (const m of this.list(mk.Modified(x))) map.push([m, n]);
+    // The simple offset keeps no history but builds the faces in the input's order.
+    const inF = this.sub(joined, "FACE"), outF = this.sub(res, "FACE");
+    if (!map.length && inF.length === outF.length) inF.forEach((x, i) => { const n = mid.find(([g]) => g.IsSame(x))?.[1]; if (n) map.push([outF[i], n]); });
+    const parts = this.sheetParts(res, (x, k) => { const p = map.find(([g]) => g.IsSame(x)); return p ? `${f.id}:off:${p[1]}` : `${f.id}:new:${k}`; });
+    if (!parts.length) throw new FeatureError("E-SRF-OFFSET", "The faces could not be offset: try a smaller distance.");
+    return this.sheetsOf([...this.sheetList(sheets), ...parts]);
+  }
+
+  /** Knit: sews surface bodies into one; with `solid`, a closed result becomes a new solid body. */
+  private knit(f: KnitFeature, body: Named | null, sheets: Named | null): { body: Named | null; sheets: Named | null } {
+    const oc = this.oc;
+    const list = this.sheetList(sheets);
+    const idx = [...new Set(f.surfaces.map(r => this.sheetIndex(list, sheets, r)))];
+    if (idx.length < (f.solid ? 1 : 2)) throw new FeatureError("E-KNIT-PICK", "Pick two or more surface bodies.");
+    const tol = f.tol.v;
+    if (!(tol > 0)) throw new FeatureError("E-FT-ZERO", "The tolerance must be more than 0.");
+    const sew = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
+    for (const i of idx) sew.Add(list[i].shape);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const res = sew.SewedShape();
+    const map: [any, string][] = idx.flatMap(i => list[i].faces.map((x, j) => [sew.IsModified(x) ? sew.Modified(x) : x, list[i].names[j]] as [any, string]));
+    const nameOf = (x: any, k: number) => map.find(([g]) => g.IsSame(x))?.[1] ?? `${f.id}:new:${k}`;
+    const rest = list.filter((_, i) => !idx.includes(i));
+    if (!f.solid) {
+      const parts = this.sheetParts(res, nameOf);
+      if (parts.length >= idx.length) throw new FeatureError("E-KNIT-GAP", "The surfaces do not meet: no edges were joined. Try a larger tolerance.");
+      return { body, sheets: this.sheetsOf([...rest, ...parts]) };
+    }
+    const shells = this.sheetParts(res, nameOf);
+    const solids: Named[] = [];
+    for (const sh of shells) {
+      if (sh.shape.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_SHELL || !oc.BRep_Tool.IsClosed_1(sh.shape)) throw new FeatureError("E-KNIT-OPEN", "The knitted surfaces do not close a volume, so no solid can be made. Try a larger tolerance.");
+      let solid = new oc.ShapeFix_Solid_1().SolidFromShell(oc.TopoDS.Shell_1(sh.shape));
+      if (this.volume(solid) < 0) solid = solid.Reversed();
+      const faces = this.sub(solid, "FACE");
+      solids.push({ shape: solid, faces, names: faces.map((x, k) => { const j = sh.faces.findIndex(g => g.IsSame(x)); return j >= 0 ? sh.names[j] : `${f.id}:new:${k}`; }) });
+    }
+    return { body: body ? this.compoundOf([...this.bodyList(body), ...solids]) : this.compoundOf(solids), sheets: this.sheetsOf(rest) };
+  }
+
+  /** Thicken: a surface body grown into a solid to one side, the other or both; merged with the solids unless `merge` is false. */
+  private thicken(f: ThickenFeature, body: Named | null, sheets: Named | null): { body: Named | null; sheets: Named | null } {
+    const oc = this.oc;
+    if (!f.surface) throw new FeatureError("E-THK-PICK", "Pick the surface to thicken.");
+    const list = this.sheetList(sheets);
+    const i = this.sheetIndex(list, sheets, f.surface);
+    const t = f.thickness.v;
+    if (!(t > 1e-6)) throw new FeatureError("E-FT-ZERO", "The thickness must be more than 0.");
+    let src = list[i];
+    if (f.side === "both") {
+      const off = new oc.BRepOffsetAPI_MakeOffsetShape();
+      try { off.PerformBySimple(src.shape, -t / 2); } catch { /* reported below */ }
+      if (!off.IsDone()) throw new FeatureError("E-THK-FAIL", "The surface could not be thickened: try a smaller thickness.");
+      const shape = off.Shape(), faces = this.sub(shape, "FACE");
+      const map = src.faces.flatMap((x, j) => this.list(off.Modified(x)).map(m => [m, src.names[j]] as [any, string]));
+      if (!map.length && faces.length === src.faces.length) faces.forEach((x, k) => map.push([x, src.names[k]]));
+      src = { shape, faces, names: faces.map((x, k) => map.find(([g]) => g.IsSame(x))?.[1] ?? `${f.id}:mid:${k}`) };
+    }
+    const mk = new oc.BRepOffsetAPI_MakeThickSolid();
+    try { mk.MakeThickSolidBySimple(src.shape, f.side === "other" ? -t : t); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-THK-FAIL", "The surface could not be thickened: try a smaller thickness.");
+    let shape = mk.Shape();
+    if (this.volume(shape) < 0) shape = shape.Reversed();
+    if (this.solids(shape) < 1 || Math.abs(this.volume(shape)) < 1e-9) throw new FeatureError("E-THK-FAIL", "The surface could not be thickened: try a smaller thickness.");
+    const faces = this.sub(shape, "FACE");
+    const names: (string | null)[] = faces.map(() => null);
+    src.faces.forEach((x, j) => {
+      const k = faces.findIndex(g => g.IsSame(x));
+      if (k >= 0) names[k] = src.names[j];
+      for (const m of [...this.list(mk.Modified(x)), ...this.list(mk.Generated(x))]) {
+        const q = faces.findIndex(g => g.IsSame(m));
+        if (q >= 0 && !names[q]) names[q] = k >= 0 ? `${f.id}:off:${src.names[j]}` : src.names[j];
+      }
+    });
+    let n = 0;
+    const solid: Named = { shape, faces, names: names.map(x => x ?? `${f.id}:new:${n++}`) };
+    const rest = this.sheetsOf(list.filter((_, j) => j !== i));
+    if (!body) return { body: solid, sheets: rest };
+    return { body: f.merge === false ? this.compoundOf([...this.bodyList(body), solid]) : this.bool("fuse", body, solid, f.id), sheets: rest };
+  }
+
+  /**
+   * Replace face (FR-FT-101): each picked flat face is pushed far out as a prism (its far end `fid:cap`),
+   * the extended body is split by the surface, and the pieces that reach a cap go. What is left meets the
+   * surface; the new faces take the first picked face's name and the prism sides merge into their neighbours.
+   */
+  private replaceFaces(f: ReplaceFaceFeature, prev: Named | null, sheets: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (!f.faces.length) throw new FeatureError("E-RPF-FACES", "Click the faces to replace.");
+    if (!f.surface) throw new FeatureError("E-RPF-SURF", "Pick the replacement surface.");
+    const list = this.sheetList(sheets);
+    const sheet = list[this.sheetIndex(list, sheets, f.surface)];
+    const big = this.size(prev.shape) * 2 + this.size(sheet.shape) + 100;
+    const targets = f.faces.map(r => this.resolveFace(prev, r));
+    let ext = prev, k = 0;
+    for (const face of targets) {
+      const pl = this.facePlane(face);
+      if (!pl) throw new FeatureError("E-RPF-FLAT", "Replace face works on flat faces.");
+      const mk = new oc.BRepPrimAPI_MakePrism_1(face, this.V(mul(pl.n, big)), false, true);
+      if (!mk.IsDone()) throw new FeatureError("E-RPF-FAIL", "The faces could not be replaced.");
+      let tool = mk.Shape();
+      if (this.volume(tool) < 0) tool = tool.Reversed();
+      const top = mk.LastShape(), faces = this.sub(tool, "FACE");
+      ext = this.bool("fuse", ext, { shape: tool, faces, names: faces.map(x => (x.IsSame(top) ? `${f.id}:cap` : `${f.id}:side:${k++}`)) }, f.id);
+    }
+    const sp = new oc.BRepAlgoAPI_Splitter_1();
+    const args = new oc.TopTools_ListOfShape_1(), tools = new oc.TopTools_ListOfShape_1();
+    args.Append_1(ext.shape);
+    tools.Append_1(sheet.shape);
+    sp.SetArguments(args);
+    sp.SetTools(tools);
+    sp.Build(new oc.Message_ProgressRange_1());
+    if (!sp.IsDone() || sp.HasErrors()) throw new FeatureError("E-RPF-FAIL", "The faces could not be replaced.");
+    const named: Named = { shape: sheet.shape, faces: sheet.faces, names: sheet.faces.map(() => f.faces[0].name) };
+    const pieces = this.bodyList(this.carry(sp, [ext, named], sp.Shape(), f.id));
+    const keep = pieces.filter(p => !p.names.includes(`${f.id}:cap`));
+    if (keep.length === pieces.length || !keep.length) throw new FeatureError("E-RPF-MISS", "The surface must cross the faces' whole outline: make it bigger, or extend it.");
+    return this.mergeSides(this.compoundOf(keep), f.id);
   }
 
   /**
@@ -1910,12 +2156,14 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
-  evaluate(doc: PartDoc): { body: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]> } {
+  evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]> } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
     doc = { ...doc, features: [...doc.features] };
     const sketches: Record<string, SketchFeature> = {};
     let body: Named | null = null;
+    // Surface bodies (FRS 9.11): open sheets, kept apart from the solids.
+    let sheets: Named | null = null;
     let chain = "";
     const statuses: FeatureStatus[] = [];
     const frames: Record<string, Frame> = {};
@@ -1939,6 +2187,7 @@ export class Modeller {
         if (hit.curve) this.curves.set(f.id, hit.curve);
         if (!hit.status.ok) failed.add(f.id);
         if (hit.body) body = hit.body;
+        sheets = hit.sheets;
         return;
       }
       let status: FeatureStatus = { id: f.id, ok: true };
@@ -1962,7 +2211,13 @@ export class Modeller {
           else if (f.type === "fillet" || f.type === "chamfer") body = this.round(f, body);
           else if (f.type === "shell") body = this.shell(f, body);
           else if (f.type === "delface") body = this.deleteFaces(f, body);
-          else if (f.type === "moveface") body = this.moveFaces(f, body);
+          else if (f.type === "moveface") body = this.moveFaces(f, body, frames);
+          else if (f.type === "planesurf") sheets = this.planeSurf(f, doc, body, sheets, frames);
+          else if (f.type === "extsurf") sheets = this.extSurf(f, doc, body, sheets, frames);
+          else if (f.type === "offsurf") sheets = this.offSurf(f, body, sheets);
+          else if (f.type === "knit") ({ body, sheets } = this.knit(f, body, sheets));
+          else if (f.type === "replaceface") body = this.replaceFaces(f, body, sheets);
+          else if (f.type === "thicken") ({ body, sheets } = this.thicken(f, body, sheets));
           else if (f.type === "draft") body = this.draft(f, body, frames);
           else if (f.type === "hole") { const h = this.hole(f, body, frames); body = h.body; frame = h.frame; frames[f.id] = frame; }
           else if (f.type === "mirror") body = this.mirror(f, doc, body, frames);
@@ -1994,12 +2249,12 @@ export class Modeller {
         }
       }
       statuses.push(status);
-      next.push({ key: chain, body, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id) });
+      next.push({ key: chain, body, sheets, status, frame: frame ?? frames[f.id], tools: this.tools.get(f.id), sketch: moved, curve: this.curves.get(f.id) });
     });
     this.cache = next;
     const curves: Record<string, V3[]> = {};
     for (const [id, c] of this.curves) curves[id] = c.pts;
-    return { body, statuses, frames, sketches, curves };
+    return { body, sheets, statuses, frames, sketches, curves };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */
