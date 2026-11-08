@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.205.0] - 2026-11-08
+## [1.207.0] - 2026-11-08
 
 ### Added
 
 - Centrelines and centre marks put in by hand on drawings (FR-DRW-023, SolidWorks' Centerline and Center Mark). Annotation → **Centerline** takes two parallel edges (the line halfway between them, over the length of both) or two points such as hole centres; **Center mark** puts a cross on a circle or an arc seen end-on, so rounded corners and slot ends can be marked too (the automatic marks cover full circles only). Both follow the model when it changes, are drawn on the CENTER layer in every export, and can be selected on their lines to change how far they run past the geometry.
+
+## [1.205.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
 
 ## [1.202.0] - 2026-11-08
 
@@ -1489,7 +1495,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.205.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.207.0...HEAD
+[1.207.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.207.0
 [1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
 [1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
