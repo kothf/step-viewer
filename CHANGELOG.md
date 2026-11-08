@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.212.0] - 2026-11-08
+## [1.216.0] - 2026-11-08
 
 ### Added
 
 - **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+
+## [1.215.0] - 2026-11-08
+
+### Added
+
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+- **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
 
 ## [1.211.0] - 2026-11-08
 
@@ -1517,8 +1524,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.212.0...HEAD
-[1.212.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.212.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.216.0...HEAD
+[1.216.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.216.0
+[1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
 [1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0
 [1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0

@@ -3100,6 +3100,61 @@ try {
     // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
     check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
       `model 1.167: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
+    // 1.215: a spline leaving a line's end takes Tangent and Equal curvature (FR-SK-050/051); Tangent turns its end along the line.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const q of [[14, -6], [20, -6], [20, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("spline"));
+    for (const q of [[20, -6], [26, -2.5], [32, -6], [32, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("select"));
+    await click([17, -6]);
+    const onSp = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); return l[Math.floor(l.length / 4)]; });
+    { const [x, y] = await toPage(onSp); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.keyboard.down("Control"); await mp.mouse.down(); await mp.mouse.up(); await mp.keyboard.up("Control"); await mp.waitForTimeout(150); }
+    const relBtns = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-rel]")].map(b => b.dataset.rel).join(","));
+    if (await mp.$('#mc-pm [data-rel="tangent"]')) await mp.click('#mc-pm [data-rel="tangent"]');
+    await mp.waitForTimeout(150);
+    const st = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); const d = [l[1][0] - l[0][0], l[1][1] - l[0][1]]; return { tan: ed.sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, slope: Math.round(Math.abs(d[1] / d[0]) * 1000) / 1000, dir: Math.sign(d[0]), ok: ed.info.status }; });
+    check(/tangent/.test(relBtns) && /curvature/.test(relBtns) && st.tan === 1 && st.slope < 0.01 && st.dir === 1 && st.ok === "ok",
+      `model 1.215: spline tangent to the line it leaves; Equal curvature offered (${relBtns}, ${JSON.stringify(st)})`);
+    await ctx.close();
+  }
+
+  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 30 × 20 block and a sketch on its top face.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -15), P("b", 20, -15), P("c", 20, 15), P("d", -20, 15), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }, { id: "t", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, hidden: false, rels: [], dims: [], ents: [P("q", 5, 0)] }); }); });
+    await idle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const x0 = await mp.evaluate(() => window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(","));
+    // Edit sketch plane → X axis → click the top edge on the +X side (it runs along Y) → OK.
+    await mp.evaluate(() => window.__sv.modeller.editSketchPlane("t"));
+    await idle();
+    await mp.click('#mc-pm [data-a="xpick"]');
+    const status = await mp.evaluate(() => document.querySelector("#mc-status")?.textContent ?? "");
+    const [ex, ey] = await world([20, 0, 20]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(80); await mp.mouse.down(); await mp.mouse.up();
+    await mp.waitForTimeout(300);
+    await idle();
+    const box = await mp.evaluate(() => document.querySelector('#mc-pm [data-a="xpick"]')?.textContent ?? "");
+    await mp.click('#mc-pm [data-a="ok"]');
+    await idle();
+    const after = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "t"); return { edge: f.xAxis?.edge?.faces?.slice().sort().join("+") ?? null, x: window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(",") }; });
+    check(x0 === "1,0,0" && /straight edge/.test(status) && box === "Edge" && after.edge === "x:end+x:side:l2" && after.x === "0,1,0",
+      `model 1.215: sketch X axis along a picked model edge (${x0} → ${after.x}, ${after.edge}, ${box}, ${status})`);
     await ctx.close();
   }
 
