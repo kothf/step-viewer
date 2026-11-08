@@ -7558,7 +7558,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 17 && mode === "note", `drawing: annotation tab shows the 17 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 19 && mode === "note", `drawing: annotation tab shows the 19 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8733,6 +8733,65 @@ try {
     await dp.waitForTimeout(100);
     const edge = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="carc"]'));
     check(arcs2 === 3 + 2 + 3 + 2 && !inside && edge, `drawing: revision cloud arc size, picked on its outline only (${arcs2}, inside ${inside}, edge ${edge})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: centreline and centre mark ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwcline", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        P("p5", 25, 0), { id: "c1", t: "circle", c: "p5", r: 8 }], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
+    // View i's model box on the sheet (sheet mm): placement maps view axes u, v to x + (u - uc)·s, y + (v - vc)·s.
+    const boxOf = i => dp.evaluate(k => { const v = window.__sv.drw.doc().sheets[0].views[k], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return { id: v.id, box: [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])], s: p.s }; }, i);
+    const centre = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "l" && p.layer === "CENTER").map(p => p.p.map(v => Math.round(v * 100) / 100)));
+    const fr = await boxOf(0), c0 = await centre();
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cline"]');
+    const xq = fr.box[0] + (fr.box[2] - fr.box[0]) * 0.2;
+    await clickSheet(xq, fr.box[3]); await clickSheet(xq, fr.box[1]);
+    await dp.waitForTimeout(150);
+    const c1 = await centre();
+    const cl = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline").map(a => ({ k: a.k, n: a.refs.length })));
+    const added = c1.filter(q => !c0.some(r => r.join() === q.join()));
+    const midY = (fr.box[1] + fr.box[3]) / 2;
+    const okLine = added.length === 1 && Math.abs(added[0][1] - midY) < 0.05 && Math.abs(added[0][3] - midY) < 0.05 && Math.abs(Math.min(added[0][0], added[0][2]) - (fr.box[0] - 2)) < 0.05 && Math.abs(Math.max(added[0][0], added[0][2]) - (fr.box[2] + 2)) < 0.05;
+    check(cl.length === 1 && cl[0].k === "line" && okLine, `drawing: centreline halfway between two parallel edges, 2 mm past both ends (${JSON.stringify({ cl, added, box: fr.box })})`);
+    await dp.keyboard.press("Escape");
+    // Centre mark on the hole seen end-on in the top view: a cross 2 mm past the circle.
+    const tp = await boxOf(1);
+    const hc = await dp.evaluate(id => { const p = window.__sv.drw.placement(id); return [p.x + (25 - p.uc) * p.s, p.y + (0 - p.vc) * p.s]; }, tp.id);
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="cmark"]');
+    await clickSheet(hc[0] + 8 * tp.s, hc[1]);
+    await dp.waitForTimeout(150);
+    const c2 = await centre(), marks = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(a => a.t === "cline" && a.k === "mark").length);
+    const cross = c2.length - c1.length;
+    check(marks === 1 && cross === 2, `drawing: centre mark on a hole seen end-on (${JSON.stringify({ marks, cross, hc })})`);
+    await dp.keyboard.press("Escape");
+    // Select the centreline on its line, set the extension to 5 mm.
+    await clickSheet(fr.box[0] + 1, midY);
+    await dp.waitForTimeout(100);
+    const sel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="cext"]'));
+    if (sel) { await dp.fill('#drw .drw-props [data-d="cext"]', "5"); await dp.press('#drw .drw-props [data-d="cext"]', "Enter"); await dp.waitForTimeout(150); }
+    const ext = await dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).find(a => a.t === "cline" && a.k === "line")?.ext);
+    const c3 = await centre();
+    const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
+    check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
     await ctx.close();
   }
 
