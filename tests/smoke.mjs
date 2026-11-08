@@ -3485,6 +3485,66 @@ try {
     await ctx.close();
   }
 
+  // --- PDM: drawing compare, an assembly added with its parts (FR-PDM-051, FR-PDM-003/020) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const vp = await ctx.newPage();
+    vp.on("pageerror", e => errors.push(e.message));
+    vp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const plate = { schema: 1, kind: "part", id: "plate", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } }] };
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_v", name: "Base", units: { length: "mm", decimals: 2 }, parts: { plate: { name: "Plate", file: "Plate.mcadprt", doc: plate } },
+      components: [{ id: "c1", name: "Plate<1>", part: "plate", tf: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], fixed: true }] };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const ab = zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }));
+    // A drawing of it (standard 3 views); version 2 loses the side view.
+    await vp.evaluate(b => window.__sv.asm.openFile({ name: "Base.mcadasm", data: new Uint8Array(b).buffer }), [...ab]);
+    await vp.waitForFunction(() => window.__sv.viewer.parts.length === 1, null, { timeout: 90000 });
+    await vp.click("#new-more"); await vp.click("#new-drawing");
+    await vp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    const d1 = await vp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.drw.doc())));
+    const d2 = { ...d1, sheets: [{ ...d1.sheets[0], views: d1.sheets[0].views.slice(0, 2) }] };
+    const dmf = { format: "mobiuscad", schema: 1, kind: "drawing", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const drw = d => [...zip(Object.entries({ "manifest.json": JSON.stringify(dmf), "drawing.json": JSON.stringify(d) }))];
+    await vp.click('#drw [data-a="back"]');
+    await vp.click("#t-vault");
+    await vp.waitForSelector("#v-name");
+    await vp.fill("#v-name", "Compare test");
+    await vp.click('#vault-panel [data-a="new-ws"]');
+    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    // The assembly with its embedded part: the part goes in as a file first and the assembly references it.
+    const refs = await vp.evaluate(async b => {
+      const p = window.__sv.vault;
+      await p.addFiles([new File([new Uint8Array(b)], "Base.mcadasm")], true);
+      const files = await p.vault.files();
+      const asm = files.find(f => f.path === "Base.mcadasm"), part = files.find(f => f.path === "Plate.mcadprt");
+      return { part: !!part, refs: asm ? p.vault.latest(asm).refs.map(r => [r.path, r.id === part?.id, r.qty]) : null };
+    }, [...ab]);
+    check(refs.part && JSON.stringify(refs.refs) === '[["Plate.mcadprt",true,1]]', `vault: adding an assembly adds its part and references it (${JSON.stringify(refs)})`);
+    // Two versions of the drawing, compared as an overlay: the side view's lines are only in v1.
+    const id = await vp.evaluate(async ([a, b]) => {
+      const p = window.__sv.vault, v = p.vault;
+      const f = await v.add("Base.mcaddrw", new Uint8Array(a));
+      await v.checkOut(f.id);
+      await v.saveWorking(f.id, new Uint8Array(b));
+      await v.checkIn(f.id, "no side view");
+      return f.id;
+    }, [drw(d1), drw(d2)]);
+    await vp.evaluate(i => window.__sv.vault.compareDlg(i, 1, 2), id);
+    await vp.waitForSelector("#vault-dlg .v-overlay", { timeout: 120000 });
+    const ov = await vp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-overlay")].map(x => [+x.dataset.removed, +x.dataset.added, x.querySelectorAll('[stroke="#d32f2f"]').length]));
+    check(ov.length === 1 && ov[0][0] >= 4 && ov[0][1] === 0 && ov[0][2] >= 4, `vault: drawing compare overlays the versions, the removed view in red (${JSON.stringify(ov)})`);
+    if (process.env.SMOKE_SHOTS) await vp.screenshot({ path: `${process.env.SMOKE_SHOTS}/vault-drawing-compare.png` });
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -4445,7 +4505,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.75: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
+  // --- 1.76: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -4504,7 +4564,7 @@ try {
     check(offer.legend && offer.hinge && offer.gear && offer.screw && !offer.slot && offer.ratio === "1"
       && hinge.type === "hinge" && hinge.refs && hinge.dof === 1 && JSON.stringify(hinge.at) === "[0,0,20]" && hinge.up === 1
       && JSON.stringify(clear.near) === "[4,4]" && clear.lines === 2 && /2 pairs/.test(clear.status ?? ""),
-      `asm 1.75: mechanical mates in the Mate panel (hinge: one turn left), clearance check below a minimum (FR-MATE-005, FR-ASM-021) (${JSON.stringify({ offer, hinge, clear })})`);
+      `asm 1.76: mechanical mates in the Mate panel (hinge: one turn left), clearance check below a minimum (FR-MATE-005, FR-ASM-021) (${JSON.stringify({ offer, hinge, clear })})`);
     await ctx.close();
   }
 
