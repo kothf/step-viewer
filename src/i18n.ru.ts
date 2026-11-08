@@ -2748,6 +2748,7 @@ export const RU: Record<string, string> = {
   "Aluminium (metric)": "Алюминий (метрический)",
   "Pick a straight edge of the sheet.": "Выберите прямое ребро листа.",
   "Flat pattern saved as DXF.": "Развёртка сохранена в DXF.",
+  "Flat pattern saved as DXF. Flatten the part first to include its cuts.": "Развёртка сохранена в DXF. Чтобы в неё попали вырезы, сначала разверните деталь.",
   "Base-Flange": "Базовая-кромка",
   "Edge-Flange": "Кромка",
   "Flat-Pattern": "Развёртка",

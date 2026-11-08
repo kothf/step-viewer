@@ -1844,7 +1844,10 @@ export class ModelController {
     const st = this.last?.sheet;
     if (!st) { toast(t("Make a base flange first."), true); return; }
     downloadBlob(new Blob([flatDxf(st, this.doc.name)], { type: "image/vnd.dxf" }), `${this.doc.name}-flat.dxf`);
-    toast(t("Flat pattern saved as DXF."));
+    // Cuts by later features reach the DXF through the flat pattern; folded, only the sheet outline is known.
+    const fs = this.doc.features, at = fs.findIndex(f => f.type === "smbase");
+    const cuts = !st.flatEdges && fs.slice(at + 1).some(f => !f.suppressed && !isSheet(f) && f.type !== "sketch" && f.type !== "plane");
+    toast(cuts ? t("Flat pattern saved as DXF. Flatten the part first to include its cuts.") : t("Flat pattern saved as DXF."));
   }
 
   /** The edge list a click toggles: fillet and chamfer edges, or a composite curve's (FR-FT-085). */

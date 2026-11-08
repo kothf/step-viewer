@@ -7339,6 +7339,22 @@ try {
     const tb1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
     check(tb0.title === "Tab" && tb0.type === "smtab" && tb0.sketch === "s3" && !tb1.bad && Math.abs(tb1.v - tv0 - 30 * 15 * T) < 1e-3,
       `sheet metal: Base Flange/Tab on a part with a base flange adds a tab beside a face (${JSON.stringify({ tb0, tb1, tv0 })})`);
+    // A hole cut through the plate by an ordinary extrude shows in the flat pattern and its DXF.
+    await smMenu("Flatten");
+    const hv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Flatten");
+    await mp.evaluate(() => window.__sv.model.store.change("Hole", d => {
+      const at = d.features.findIndex(f => f.type === "smflat");
+      d.features.splice(at, 0, { id: "s4", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "hc", t: "point", x: 30, y: 25 }, { id: "ho", t: "circle", c: "hc", r: 4 }] },
+        { id: "c4", type: "extrude", name: "Cut-Extrude1", sketch: "s4", op: "cut", end: "through2", depth: { v: 0 } });
+    }));
+    await settle();
+    await smMenu("Flatten");
+    const hv = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, circles: (window.__sv.model.last().sheet?.flatEdges ?? []).filter(e => e.kind === "circle").map(e => e.r), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    const [hdl] = await Promise.all([mp.waitForEvent("download"), smMenu("Flat pattern DXF")]);
+    const hdxf = (await import("node:fs")).readFileSync(await hdl.path(), "utf8");
+    check(!hv.bad && hv.circles.length === 1 && Math.abs(hv.circles[0] - 4) < 1e-6 && Math.abs(hv0 - hv.v - Math.PI * 16 * T) < 1e-3 && (hdxf.match(/\nCIRCLE\n/g) ?? []).length === 1,
+      `sheet metal: a hole cut after the sheet metal features shows in the flat pattern and its DXF (${JSON.stringify({ hv0, hv, circles: (hdxf.match(/\nCIRCLE\n/g) ?? []).length })})`);
     await ctx.close();
   }
 
