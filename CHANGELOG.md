@@ -11,6 +11,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: a Proximity result is drawn in the view as a dashed line between the two components' nearest points, moving with the playhead (FR-FT-122).
 
+## [1.251.0] - 2026-11-08
+
+### Added
+
+- **Automatic relations while drawing (FR-SK-052)**: besides horizontal and vertical, a line now snaps perpendicular to the line the chain came from, tangent to the arc it came from, and parallel or perpendicular to a line hovered on the way, and keeps that relation. A glyph by the cursor shows the relation the next click adds (also coincident and on curve). Hold Ctrl to place a point with no snapping or relations, as in SolidWorks; **Automatic relations** in the sketch panel turns them off.
+- **Relation glyphs (FR-SK-053)**: hovering a relation glyph lights up the entities it ties, and **Show relations** in the sketch panel hides the glyphs (a relation selected in the list still shows its own).
+
 ## [1.250.0] - 2026-11-08
 
 ### Added
@@ -1624,7 +1631,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.252.0...HEAD
-[1.252.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.252.0
+[1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
+[1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
 [1.248.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.248.0
 [1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0

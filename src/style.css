@@ -679,6 +679,8 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .sk-rel { transform: none; background: #e9f7ee; color: #1f6b33; border: 1px solid #9ad3ab; min-width: 16px; height: 16px; line-height: 14px; font-size: 10px; padding: 0 2px; text-align: center; }
 :root[data-theme="dark"] .sk-rel { background: #183324; color: #8ce0a6; border-color: #2f6b45; }
 :root[data-theme="dark"] .sk-dim.sel, :root[data-theme="dark"] .sk-rel.sel { background: #3a2a10; color: #ffc078; }
+.sk-infer { position: absolute; pointer-events: none; font: 600 10px var(--mono); min-width: 16px; height: 16px; line-height: 14px; padding: 0 2px; text-align: center; border-radius: 4px; background: #fff4e0; color: #8a4b00; border: 1px solid #f08c00; }
+:root[data-theme="dark"] .sk-infer { background: #3a2a10; color: #ffc078; border-color: #b8681a; }
 .sk-input { position: absolute; transform: translate(-50%, -50%); width: 110px; z-index: 5; pointer-events: auto; font: 600 13px var(--mono); padding: 3px 6px; border: 2px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--text); }
 /* Sizes typed while drawing (FR-UI-052): the field name, then its value box. */
 .sk-typed { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); pointer-events: auto; font-size: 12px; color: var(--text); }
