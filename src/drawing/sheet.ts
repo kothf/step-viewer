@@ -50,7 +50,7 @@ const CELLS: Cell[] = [
  * designation, name, letter/mass/scale, sheet/sheets, material and company on the right.
  * Value cells carry the field; label-only cells have no key.
  */
-interface GCell { x: number; y: number; w: number; h: number; key?: keyof Fields; label?: string; big?: boolean; thick?: boolean }
+interface GCell { x: number; y: number; w: number; h: number; key?: keyof Fields; label?: string; big?: boolean; thick?: boolean; /** One character of the value (the letter cells). */ ch?: number }
 const GOST: GCell[] = (() => {
   const cols = [0, 7, 17, 40, 55, 65], out: GCell[] = [];
   // Rows of 5 mm on the left: 4 change rows, the header row, then 6 signature rows.
@@ -61,7 +61,7 @@ const GOST: GCell[] = (() => {
   }
   const head = ["Chg.", "Sheet", "Doc. No.", "Sign.", "Date"];
   head.forEach((l, c) => { out.push({ x: cols[c], y: 30, w: cols[c + 1] - cols[c], h: 5, label: l }); });
-  const roles: [string, keyof Fields | undefined][] = [["Developed", "author"], ["Checked", "checked"], ["T. control", undefined], ["", undefined], ["N. control", undefined], ["Appr.", "approved"]];
+  const roles: [string, keyof Fields | undefined][] = [["Developed", "author"], ["Checked", "checked"], ["T. control", "tcontrol"], ["", undefined], ["N. control", "ncontrol"], ["Appr.", "approved"]];
   roles.forEach(([l, k], i) => {
     const y = 25 - i * 5;
     if (l) out.push({ x: 0, y, w: 17, h: 5, label: l });
@@ -72,7 +72,7 @@ const GOST: GCell[] = (() => {
     { x: 65, y: 40, w: 120, h: 15, key: "number", big: true, thick: true },
     { x: 65, y: 15, w: 70, h: 25, key: "title", big: true, thick: true },
     { x: 135, y: 35, w: 15, h: 5, label: "Lit." }, { x: 150, y: 35, w: 17, h: 5, label: "Mass" }, { x: 167, y: 35, w: 18, h: 5, label: "Scale" },
-    { x: 135, y: 20, w: 5, h: 15 }, { x: 140, y: 20, w: 5, h: 15 }, { x: 145, y: 20, w: 5, h: 15 },
+    { x: 135, y: 20, w: 5, h: 15, key: "litera", ch: 0 }, { x: 140, y: 20, w: 5, h: 15, key: "litera", ch: 1 }, { x: 145, y: 20, w: 5, h: 15, key: "litera", ch: 2 },
     { x: 150, y: 20, w: 17, h: 15, key: "mass" }, { x: 167, y: 20, w: 18, h: 15, key: "scale" },
     { x: 135, y: 15, w: 20, h: 5, key: "sheet", label: "Sheet" }, { x: 155, y: 15, w: 30, h: 5, key: "size", label: "No. of sheets" },
     { x: 65, y: 0, w: 70, h: 15, key: "material", big: true, thick: true },
@@ -86,7 +86,12 @@ export const EDITABLE: (keyof DrawingProps)[] = ["title", "number", "revision", 
 export const FIELD_LABEL: Record<keyof DrawingProps, string> = {
   title: "Title", number: "Drawing number", revision: "Rev", material: "Material", mass: "Mass", company: "Company",
   author: "Created by", checked: "Checked by", approved: "Approved by", date: "Date",
+  tcontrol: "Technical control", ncontrol: "Standards control", litera: "Drawing letter",
 };
+/** Fields only the GOST title block has. */
+export const GOST_EDITABLE: (keyof DrawingProps)[] = ["tcontrol", "ncontrol", "litera"];
+/** The fields a sheet's title block lets the user type. */
+export const editableOf = (s: Sheet): (keyof DrawingProps)[] => s.format === "gost" ? [...EDITABLE, ...GOST_EDITABLE] : EDITABLE;
 
 /** Bottom-left corner of the title block (it sits in the frame's bottom-right corner). */
 export function titleBlockAt(s: Sheet): [number, number] {
@@ -98,7 +103,7 @@ export function titleBlockAt(s: Sheet): [number, number] {
 export function fieldAt(s: Sheet, x: number, y: number): keyof DrawingProps | null {
   const [bx, by] = titleBlockAt(s);
   if (s.format === "gost") {
-    for (const c of GOST) if (c.key && x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (EDITABLE as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
+    for (const c of GOST) if (c.key && x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (editableOf(s) as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
     return null;
   }
   for (const c of CELLS) if (x >= bx + c.x && x <= bx + c.x + c.w && y >= by + c.y && y <= by + c.y + c.h) return (EDITABLE as string[]).includes(c.key) ? c.key as keyof DrawingProps : null;
@@ -178,7 +183,7 @@ function gostBlock(s: Sheet, f: Fields, label: (cellLabel: string) => string): P
     out.push(...rect(bx + c.x, by + c.y, c.w, c.h, c.thick ? "frame" : "thin", "FORMAT"));
     if (c.label) { const l = label(c.label); out.push({ t: "t", x: bx + c.x + (c.key ? 1 : c.w / 2), y: by + c.y + (c.key ? c.h - 2.6 : 1.4), s: l, h: c.key ? 1.8 : fitH(l, 2.5, c.w - 1), al: c.key ? "l" : "c", layer: "FORMAT" }); }
     if (!c.key) continue;
-    const v = c.key === "sheet" ? n ?? "" : c.key === "size" ? m ?? "" : String(f[c.key] ?? "");
+    const v = c.key === "sheet" ? n ?? "" : c.key === "size" ? m ?? "" : c.ch !== undefined ? [...String(f[c.key] ?? "")][c.ch] ?? "" : String(f[c.key] ?? "");
     if (!v) continue;
     const h = fitH(v, c.big ? 5 : c.h >= 10 ? 3.5 : 2.5, c.w - 2);
     const y = c.label ? by + c.y + 0.6 : by + c.y + c.h / 2 - h / 2;

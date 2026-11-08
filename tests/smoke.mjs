@@ -3458,6 +3458,18 @@ try {
     const hand = an.filter(a => a.t === "balloon" && a.view === top);
     const nums = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
     check(hand.length === 1 && hand[0].ref.e.startsWith("c2@") && nums === "1,2,2", `drawing: a balloon on a pin reads its item number 2 (${JSON.stringify(hand.map(a => a.ref.e))}; ${nums})`);
+    // Stack item 1 under the hand balloon: two circles share its leader.
+    [x, y] = await at(top, 55, 35);
+    await dp.mouse.click(x, y);
+    await dp.waitForSelector('#drw [data-d="bstack"]');
+    await dp.selectOption('#drw [data-d="bstack"]', "c1");
+    await dp.waitForTimeout(150);
+    an = await annots();
+    const stacked = an.find(a => a.t === "balloon" && a.view === top);
+    const circles = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "a" && p.layer === "ANNOT" && p.r === 5 && p.a1 - p.a0 > 6).length);
+    const nums2 = (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 5).map(p => p.s))).sort().join();
+    check(JSON.stringify(stacked?.stack) === '["c1"]' && circles === 4 && nums2 === "1,1,2,2", `drawing: stacked balloon adds item 1 under item 2 (${JSON.stringify(stacked?.stack)}; ${circles} circles; ${nums2})`);
+    await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
     await dp.click('#drw [data-a="back"]');

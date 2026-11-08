@@ -73,3 +73,4 @@ circle.drw-edge { fill: none; }
 .drw-tbl table { border-collapse: collapse; }
 .drw-tbl input { width: 84px; font: inherit; font-size: 12px; padding: 2px 4px; }
 .drw-tbl th input { font-weight: 600; }
+.drw-stack { align-items: center; justify-content: space-between; font-size: 12px; }
