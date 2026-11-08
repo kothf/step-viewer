@@ -4520,6 +4520,69 @@ try {
     await ctx.close();
   }
 
+  // --- 1.76: mechanical mates (FR-MATE-005), clearance check (FR-ASM-021) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    // A pin: Ø6 × 20 mm cylinder on the origin.
+    await mp.evaluate(() => window.__sv.model.store.change("Pin", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const pin = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    for (let k = 0; k < 3; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin); await shown(k + 1); }
+    // Pin 2 sideways and tilted, pin 3 with a 4 mm gap beside pin 1 (centres 10 mm apart).
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 30, 0, 0, -1, 15, 0, 1, 0, 5]; d.components[2].tf = [1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1, 0]; }));
+    await shown(3);
+    const faces = await mp.evaluate(() => { const a = window.__sv.asm, k = a.doc.components[0].part, g = [...a.geo.get(k).entries()]; return { side: g.find(([, x]) => x.k === "axis")?.[0], top: g.find(([, x]) => x.k === "plane" && x.n[2] > 0.99)?.[0], bottom: g.find(([, x]) => x.k === "plane" && x.n[2] < -0.99)?.[0] }; });
+    // Mate panel: two cylinders offer Hinge, Gear and Screw (not Slot); Gear shows its ratio (1: equal radii).
+    await mp.click('#asm-tools [data-ac="mate"]');
+    const offer = await mp.evaluate(f => {
+      const a = window.__sv.asm, c = a.doc.components;
+      Object.assign(a.mating, { a: { comp: c[0].id, face: f.side }, b: { comp: c[1].id, face: f.side } });
+      a.setMateType("gear");
+      const on = k => !document.querySelector(`#asm-pm [data-mt="${k}"]`)?.disabled;
+      return { legend: [...document.querySelectorAll("#asm-pm legend")].some(e => e.textContent === "Mechanical mates"), hinge: on("hinge"), gear: on("gear"), screw: on("screw"), slot: on("slot"), ratio: document.querySelector("#asm-pm [data-ratio]")?.value };
+    }, faces);
+    // Hinge: pin 2 on top of pin 1, sharing its axis, one turn left.
+    const hinge = await mp.evaluate(f => {
+      const a = window.__sv.asm, c = a.doc.components;
+      a.setMateType("hinge");
+      Object.assign(a.mating, { c: { comp: c[0].id, face: f.top }, d: { comp: c[1].id, face: f.bottom } });
+      a.okMate();
+      const m = a.doc.mates?.[0], t = a.doc.components[1].tf;
+      return { type: m?.type, refs: !!(m?.c && m?.d), dof: a.solved?.dof[c[1].id], at: [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4), up: Math.round(t[10] * 1e4) / 1e4 };
+    }, faces);
+    await mp.evaluate(() => window.__sv.asm.cancelMate());
+    await shown(3);
+    // Clearance check at 5 mm: pin 3 is 4 mm from pin 1 and from pin 2 above it; orange lines join the nearest points.
+    await mp.click('#asm-tools [data-ac="interfere"]');
+    await mp.waitForFunction(() => window.__sv.asm.interfere?.near, null, { timeout: 120000 });
+    await mp.fill("#asm-pm [data-clear]", "5");
+    await mp.press("#asm-pm [data-clear]", "Enter");
+    await mp.waitForFunction(() => window.__sv.asm.interfere?.clear === 5 && window.__sv.asm.interfere?.near, null, { timeout: 120000 });
+    const clear = await mp.evaluate(() => { const it = window.__sv.asm.interfere; return { near: it.near.map(p => Math.round(p.distance * 1000) / 1000), status: document.querySelector("#asm-pm [data-cstatus]")?.textContent, lines: window.__sv.asm.overlay.children.filter(o => o.isLine).length }; });
+    check(offer.legend && offer.hinge && offer.gear && offer.screw && !offer.slot && offer.ratio === "1"
+      && hinge.type === "hinge" && hinge.refs && hinge.dof === 1 && JSON.stringify(hinge.at) === "[0,0,20]" && hinge.up === 1
+      && JSON.stringify(clear.near) === "[4,4]" && clear.lines === 2 && /2 pairs/.test(clear.status ?? ""),
+      `asm 1.76: mechanical mates in the Mate panel (hinge: one turn left), clearance check below a minimum (FR-MATE-005, FR-ASM-021) (${JSON.stringify({ offer, hinge, clear })})`);
+    await ctx.close();
+  }
+
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

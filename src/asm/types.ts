@@ -63,7 +63,10 @@ export interface MateRef { comp: string; face: string }
 
 export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "distance" | "angle" | "lock"
   /** Advanced (FR-MATE-004): limits keep a distance or angle in [min, max]; symmetric uses c as the plane; width centres b (and d) between a and c. */
-  | "limitdist" | "limitangle" | "symmetric" | "width";
+  | "limitdist" | "limitangle" | "symmetric" | "width"
+  /** Mechanical (FR-MATE-005): hinge = concentric a/b + coincident c/d; slot = pin axis b centred between slot faces a and c;
+   * gear = rotations about axes a and b coupled by `ratio`; screw = concentric a/b and `ratio` mm of travel per turn. */
+  | "hinge" | "slot" | "gear" | "screw";
 
 export interface Mate {
   id: string;
@@ -87,6 +90,10 @@ export interface Mate {
   /** Limit distance (mm) or angle (rad) range. */
   min?: number;
   max?: number;
+  /** Gear: turns of b per turn of a; screw: travel per turn (mm). */
+  ratio?: number;
+  /** Gear and screw: a's and b's transforms when the mate was made (their motion is measured from there). */
+  t0?: [Tf, Tf];
 }
 
 /** Linear or circular pattern of components along a face's normal / cylinder axis. */

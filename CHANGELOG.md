@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.76.0] - 2026-11-08
+## [1.77.0] - 2026-11-08
 
 ### Added
 
@@ -14,6 +14,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Release files** (FR-PDM-036): releasing a drawing in the vault stores its PDF beside it, and releasing a part or an assembly stores its STEP, named `<part number>_rev<revision>`. This can be turned off in Vault settings. The new **PDF** button on a drawing makes its PDF; a drawing that is not released gets a faint NOT RELEASED across each sheet.
 - STEP files made by the vault carry the **revision** as the product definition formation id, and the part number and description in the product (FR-PDM-034).
 - **Full-text search** (FR-PDM-043): Advanced search has Text inside files, which searches drawing notes and tables, document properties, feature and component names, and the text of text files.
+
+## [1.76.0] - 2026-11-08
+
+### Added
+
+- **Mechanical mates** (FR-MATE-005), in a new group of the Mate panel:
+  - **Hinge**: concentric plus coincident in one mate. Click the two cylinders, then a flat face on each part.
+  - **Slot**: keeps a pin centred between the side faces of a slot, free to slide along it.
+  - **Gear**: couples the turns of two cylinders by a ratio. It starts at the radius ratio; Reverse is for internal gears.
+  - **Screw**: concentric, and the part moves along the axis by the distance per revolution as it turns.
+
+  Drag a part and the coupled one follows.
+- **Clearance check** (FR-ASM-021) in the Interference panel: set a minimum clearance, and every pair of components closer than that, without overlapping, is listed with its distance. An orange line joins the nearest points.
 
 ## [1.75.0] - 2026-11-08
 
@@ -738,7 +751,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.76.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.77.0...HEAD
+[1.77.0]: https://github.com/kothf/step-viewer/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/kothf/step-viewer/compare/v1.75.0...v1.76.0
 [1.75.0]: https://github.com/kothf/step-viewer/compare/v1.74.0...v1.75.0
 [1.74.0]: https://github.com/kothf/step-viewer/compare/v1.73.0...v1.74.0
