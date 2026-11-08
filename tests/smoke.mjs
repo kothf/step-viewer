@@ -5810,7 +5810,7 @@ try {
         bands: document.querySelectorAll(`#motion .mo-tlane[data-tlane="${tr0.id}"] .mo-aspan`).length, out: !!document.querySelector("#motion .mo-alert"),
         trip: m.tripAt(0, 2 * sfps)?.i, want: sfps + 1, fromOk: Math.abs(spans[0]?.[0] - (sfps + 1) / sfps) < 1e-9 };
       // Proximity: Add track… → Proximity measures the smallest gap between two components every frame; the panel
-      // switches the second component and the values follow; frame 0 matches the gap measured in the view there.
+      // switches the second component and the values follow; frame 0 matches the gap measured in the view there, drawn as a line.
       const gadd = document.querySelector('#motion select[data-mo="add"]'), gopt = [...gadd.options].some(o => o.value === "gap:");
       gadd.value = "gap:"; gadd.dispatchEvent(new Event("change"));
       const gt = m.study.traces.at(-1);
@@ -5819,6 +5819,10 @@ try {
       const prox = { gopt, pair: m.study.traces.at(-1).gap?.[1] === id, n: gv.length === path.length, ok: gv.every(v => Number.isFinite(v) && v >= 0),
         same: (m.seek(0), Math.abs(a.motionGap(gt.gap[0], id) - gv[0]) < 1e-6), row: !!document.querySelector(`#motion .mo-name[data-trace="${gt.id}"]`),
         read: /mm/.test(document.querySelector("#motion .mo-tread")?.textContent ?? "") };
+      // The view draws a line between the nearest points as long as the gap.
+      let gl = null; window.__sv.viewer.scene.traverse(o => { if (o.userData?.gapLine === gt.id) gl = o; });
+      const gpa = gl?.geometry.getAttribute("position");
+      prox.line = !!gpa && (gv[0] < 1e-6 || Math.abs(Math.hypot(gpa.getX(1) - gpa.getX(0), gpa.getY(1) - gpa.getY(0), gpa.getZ(1) - gpa.getZ(0)) - gv[0]) < 1e-3);
       m.deleteTrace(gt.id);
       const trace = { prox, sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
