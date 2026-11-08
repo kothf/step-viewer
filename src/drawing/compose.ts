@@ -13,14 +13,26 @@ import { boxInView, findView, lookDir, viewReq, viewDir, viewScale, viewScalePai
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
 
 /** Where a view's model coordinates land on the sheet. */
-export interface Placement { s: number; uc: number; vc: number; x: number; y: number; box: [number, number, number, number]; ready: boolean }
+export interface Placement {
+  s: number; uc: number; vc: number; x: number; y: number; box: [number, number, number, number]; ready: boolean;
+  /** A broken view (FR-DRW-015): model point → closed-up view axes, and back. `box`, `uc` and `vc` are closed up. */
+  sq?: (u: number, w: number) => [number, number];
+  unsq?: (u: number, w: number) => [number, number];
+}
 
 export function placement(sheet: Sheet, v: DrawingView, proj: Projection | undefined, modelBox: [V3, V3] | null): Placement {
   const s = viewScale(sheet, v);
   let box: [number, number, number, number];
   if (v.kind === "detail" && v.c && v.r) box = [v.c[0] - v.r, v.c[1] - v.r, v.c[0] + v.r, v.c[1] + v.r];
   else box = proj && (proj.vis.length || proj.hid.length) ? proj.box : modelBox ? boxInView(modelBox, viewDir(sheet, v)) : [-10, -10, 10, 10];
-  return { s, uc: (box[0] + box[2]) / 2, vc: (box[1] + box[3]) / 2, x: v.x, y: v.y, box, ready: !!proj };
+  const c = cropOf(v);
+  if (c) {
+    const b: [number, number, number, number] = [Math.max(box[0], c[0]), Math.max(box[1], c[1]), Math.min(box[2], c[2]), Math.min(box[3], c[3])];
+    box = b[0] < b[2] && b[1] < b[3] ? b : c;
+  }
+  const bm = breakMap(v, s);
+  if (bm) { const [u0, w0] = bm.fwd(box[0], box[1]), [u1, w1] = bm.fwd(box[2], box[3]); box = [u0, w0, u1, w1]; }
+  return { s, uc: (box[0] + box[2]) / 2, vc: (box[1] + box[3]) / 2, x: v.x, y: v.y, box, ready: !!proj, ...(bm ? { sq: bm.fwd, unsq: bm.inv } : {}) };
 }
 
 export function viewRect(p: Placement): [number, number, number, number] {
@@ -29,9 +41,141 @@ export function viewRect(p: Placement): [number, number, number, number] {
 }
 
 /** Model point of a view (its own axes) → sheet. */
-export const toSheet = (pl: Placement, u: number, w: number): [number, number] => [pl.x + (u - pl.uc) * pl.s, pl.y + (w - pl.vc) * pl.s];
+export const toSheet = (pl: Placement, u: number, w: number): [number, number] => {
+  if (pl.sq) [u, w] = pl.sq(u, w);
+  return [pl.x + (u - pl.uc) * pl.s, pl.y + (w - pl.vc) * pl.s];
+};
 /** Sheet point → model point of a view. */
-export const fromSheet = (pl: Placement, x: number, y: number): [number, number] => [pl.uc + (x - pl.x) / pl.s, pl.vc + (y - pl.y) / pl.s];
+export const fromSheet = (pl: Placement, x: number, y: number): [number, number] => {
+  const u = pl.uc + (x - pl.x) / pl.s, w = pl.vc + (y - pl.y) / pl.s;
+  return pl.unsq ? pl.unsq(u, w) : [u, w];
+};
+
+// ---------- crop and break views (FR-DRW-015) ----------
+
+/** The gap a break closes up to, on the sheet (mm). */
+export const BREAK_GAP = 6;
+
+/** A view's crop rectangle, ordered, or null. */
+export function cropOf(v: DrawingView): [number, number, number, number] | null {
+  const c = v.kind === "detail" ? undefined : v.crop;
+  if (!c) return null;
+  const r: [number, number, number, number] = [Math.min(c[0], c[2]), Math.min(c[1], c[3]), Math.max(c[0], c[2]), Math.max(c[1], c[3])];
+  return r[2] - r[0] > 1e-6 && r[3] - r[1] > 1e-6 ? r : null;
+}
+
+interface Band { a: number; b: number }
+/**
+ * How a broken view closes up: bands along u (axis 0) and v (axis 1), merged and sorted; `fwd` maps a model point to
+ * the closed-up axes (a point inside a band lands proportionally inside its gap, so `inv` undoes it exactly). Null without breaks.
+ */
+export function breakMap(v: DrawingView, s: number): { bands: [Band[], Band[]]; G: number; fwd: (u: number, w: number) => [number, number]; inv: (u: number, w: number) => [number, number] } | null {
+  if (v.kind === "detail" || !v.breaks?.length) return null;
+  const G = BREAK_GAP / s;
+  const bands: [Band[], Band[]] = [[], []];
+  for (const ax of [0, 1] as const) {
+    const list = v.breaks.filter(b => (b.axis === "u") === (ax === 0)).map(b => ({ a: Math.min(b.a, b.b), b: Math.max(b.a, b.b) })).sort((p, q) => p.a - q.a);
+    for (const b of list) { const last = bands[ax].at(-1); if (last && b.a <= last.b) last.b = Math.max(last.b, b.b); else bands[ax].push({ ...b }); }
+    bands[ax] = bands[ax].filter(b => b.b - b.a > G * 1.01);
+  }
+  if (!bands[0].length && !bands[1].length) return null;
+  const f = (x: number, list: Band[]) => {
+    let sh = 0;
+    for (const b of list) { if (x <= b.a) break; if (x < b.b) return b.a - sh + (x - b.a) / (b.b - b.a) * G; sh += b.b - b.a - G; }
+    return x - sh;
+  };
+  const g = (y: number, list: Band[]) => {
+    let sh = 0;
+    for (const b of list) { const a2 = b.a - sh; if (y <= a2) break; if (y < a2 + G) return b.a + (y - a2) / G * (b.b - b.a); sh += b.b - b.a - G; }
+    return y + sh;
+  };
+  return { bands, G, fwd: (u, w) => [f(u, bands[0]), f(w, bands[1])], inv: (u, w) => [g(u, bands[0]), g(w, bands[1])] };
+}
+
+/** The parts of segments on one side of the line u = at (axis 0) or v = at (axis 1). */
+export function clipHalf(segs: Seg2[], axis: 0 | 1, at: number, below: boolean): Seg2[] {
+  const inside = (x: number) => (below ? x <= at + 1e-9 : x >= at - 1e-9);
+  const out: Seg2[] = [];
+  const cut = (ax: number, ay: number, bx: number, by: number): [number, number] | null => {
+    const a = axis ? ay : ax, b = axis ? by : bx, ia = inside(a), ib = inside(b);
+    if (ia && ib) return [0, 1];
+    if (!ia && !ib) return null;
+    const t = (at - a) / (b - a);
+    return ia ? [0, t] : [t, 1];
+  };
+  for (const g of segs) {
+    if (g.k === "l") {
+      const t = cut(g.p[0], g.p[1], g.p[2], g.p[3]);
+      if (t) { const L = (k: number) => [g.p[0] + (g.p[2] - g.p[0]) * k, g.p[1] + (g.p[3] - g.p[1]) * k]; out.push({ ...g, p: [...L(t[0]), ...L(t[1])] as [number, number, number, number] }); }
+    } else if (g.k === "a") {
+      const d = (at - g.o[axis]) / g.r, cuts = [g.a0, g.a1];
+      if (Math.abs(d) < 1) {
+        const base = axis ? Math.asin(d) : Math.acos(d);
+        for (const a of axis ? [base, Math.PI - base] : [base, -base]) for (let k = -2; k <= 2; k++) { const x = a + k * 2 * Math.PI; if (x > g.a0 && x < g.a1) cuts.push(x); }
+      }
+      cuts.sort((p, q) => p - q);
+      for (let i = 0; i + 1 < cuts.length; i++) {
+        const m = (cuts[i] + cuts[i + 1]) / 2;
+        if (cuts[i + 1] - cuts[i] > 1e-9 && inside(g.o[axis] + g.r * (axis ? Math.sin(m) : Math.cos(m)))) out.push({ ...g, a0: cuts[i], a1: cuts[i + 1] });
+      }
+    } else {
+      let run: number[] = [];
+      const flush = () => { if (run.length >= 4) out.push({ k: "p", c: g.c, p: run }); run = []; };
+      for (let i = 0; i + 3 < g.p.length; i += 2) {
+        const t = cut(g.p[i], g.p[i + 1], g.p[i + 2], g.p[i + 3]);
+        if (!t) { flush(); continue; }
+        const P = (k: number) => [g.p[i] + (g.p[i + 2] - g.p[i]) * k, g.p[i + 1] + (g.p[i + 3] - g.p[i + 1]) * k];
+        if (t[0] > 1e-9) { flush(); run.push(...P(t[0])); } else if (!run.length) run.push(...P(0));
+        run.push(...P(t[1]));
+        if (t[1] < 1 - 1e-9) flush();
+      }
+      flush();
+    }
+  }
+  return out;
+}
+
+/** A view's segments (model view axes) cropped and broken: what is left, closed up. */
+export function trimSegs(v: DrawingView, s: number, segs: Seg2[]): Seg2[] {
+  const c = cropOf(v);
+  if (c) segs = clipHalf(clipHalf(clipHalf(clipHalf(segs, 0, c[0], false), 0, c[2], true), 1, c[1], false), 1, c[3], true);
+  const bm = breakMap(v, s);
+  if (!bm) return segs;
+  for (const ax of [0, 1] as const) for (const b of bm.bands[ax]) segs = [...clipHalf(segs, ax, b.a, true), ...clipHalf(segs, ax, b.b, false)];
+  // Each piece now lies between two bands: move it by that interval's shift.
+  return segs.map(g => {
+    const mid: [number, number] = g.k === "l" ? [(g.p[0] + g.p[2]) / 2, (g.p[1] + g.p[3]) / 2]
+      : g.k === "a" ? [g.o[0] + g.r * Math.cos((g.a0 + g.a1) / 2), g.o[1] + g.r * Math.sin((g.a0 + g.a1) / 2)]
+      : [(g.p[0] + g.p[2]) / 2, (g.p[1] + g.p[3]) / 2];
+    const [fu, fw] = bm.fwd(mid[0], mid[1]), du = fu - mid[0], dw = fw - mid[1];
+    if (Math.abs(du) < 1e-12 && Math.abs(dw) < 1e-12) return g;
+    if (g.k === "l") return { ...g, p: [g.p[0] + du, g.p[1] + dw, g.p[2] + du, g.p[3] + dw] as [number, number, number, number] };
+    if (g.k === "a") return { ...g, o: [g.o[0] + du, g.o[1] + dw] as [number, number] };
+    return { ...g, p: g.p.map((x, i) => x + (i % 2 ? dw : du)) };
+  });
+}
+
+/** Zig-zag break lines (ISO 128) at each closed-up band, across the view, in sheet mm. */
+function breakLines(v: DrawingView, pl: Placement): Prim[] {
+  const bm = breakMap(v, pl.s);
+  if (!bm) return [];
+  const out: Prim[] = [];
+  const r = viewRect(pl);
+  for (const ax of [0, 1] as const) {
+    let sh = 0;
+    for (const b of bm.bands[ax]) {
+      const a2 = b.a - sh;
+      sh += b.b - b.a - bm.G;
+      for (const at of [a2, a2 + bm.G]) {
+        const k = ax ? pl.y + (at - pl.vc) * pl.s : pl.x + (at - pl.uc) * pl.s;
+        const lo = (ax ? r[0] : r[1]) - 2, hi = (ax ? r[2] : r[3]) + 2, m = (lo + hi) / 2;
+        const pts = [[k, lo], [k, m - 1.5], [k + 1.2, m - 0.7], [k - 1.2, m + 0.7], [k, m + 1.5], [k, hi]];
+        out.push({ t: "p", p: pts.flatMap(([q, w]) => (ax ? [w, q] : [q, w])), pen: "thin", layer: "VISIBLE" });
+      }
+    }
+  }
+  return out;
+}
 
 // ---------- clipping to a circle (detail views) ----------
 
@@ -131,14 +275,14 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
   };
   let vis = proj.vis, hid = proj.hid;
   if (v.kind === "detail" && v.c && v.r) { vis = clipToCircle(vis, v.c, v.r); hid = clipToCircle(hid, v.c, v.r); }
+  vis = trimSegs(v, pl.s, vis); hid = trimSegs(v, pl.s, hid);
   if (proj.cut?.length) {
-    const loops = proj.cut.map(l => { const r: number[] = []; for (let i = 0; i < l.length; i += 2) r.push(X(l[i]), Y(l[i + 1])); return r; });
-    const hs = hatchOf(v), circ = v.kind === "detail" && v.r ? { c: [pl.x, pl.y] as [number, number], R: v.r * pl.s } : null;
-    for (const h of hatch(loops, hs.gap, hs.angle * Math.PI / 180)) {
-      if (!circ) { out.push({ t: "l", p: h, pen: "thin", layer: "HATCH" }); continue; }
-      const k = clipLine(h[0], h[1], h[2], h[3], circ.c, circ.R);
-      if (k) out.push({ t: "l", p: [h[0] + (h[2] - h[0]) * k[0], h[1] + (h[3] - h[1]) * k[0], h[0] + (h[2] - h[0]) * k[1], h[1] + (h[3] - h[1]) * k[1]], pen: "thin", layer: "HATCH" });
-    }
+    // Hatch lines are spaced on the sheet but made in model axes, so a detail circle, crop or break trims them like the lines.
+    const loops = proj.cut.map(l => l.map(x => x * pl.s));
+    const hs = hatchOf(v);
+    let hs2: Seg2[] = hatch(loops, hs.gap, hs.angle * Math.PI / 180).map(h => ({ k: "l", c: 0, p: h.map(x => x / pl.s) as [number, number, number, number] }));
+    if (v.kind === "detail" && v.c && v.r) hs2 = clipToCircle(hs2, v.c, v.r);
+    for (const g of trimSegs(v, pl.s, hs2)) put(g, "thin", "HATCH");
   }
   // Hidden lines first, so visible ones draw over them.
   if (style !== "hlr") for (const g of hid) {
@@ -150,6 +294,7 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
     else put(g, "thick", "VISIBLE");
   }
   if (v.kind === "detail" && v.r) out.push({ t: "a", o: [pl.x, pl.y], r: v.r * pl.s, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
+  out.push(...breakLines(v, pl));
   return out;
 }
 

@@ -12,7 +12,7 @@ import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from ".
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
-import { composeSheet, fromSheet, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
+import { BREAK_GAP, composeSheet, fromSheet, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
@@ -64,6 +64,10 @@ type Mode =
   | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null }
   /** Auxiliary view (FR-DRW-014): click a straight edge, then place the view square to it. */
   | { kind: "aux"; parent: string | null; line: Line4 | null; at: Pt | null }
+  /** Crop view (FR-DRW-015): two corners of the rectangle on the selected view (model view axes). */
+  | { kind: "crop"; view: string; p1: Pt | null; at: Pt | null }
+  /** Break view (FR-DRW-015): the two ends of the band to leave out, along u (vertical lines) or v. */
+  | { kind: "break"; view: string; axis: "u" | "v"; a: number | null; at: Pt | null }
   | AnnotMode;
 type Pt = [number, number];
 /** A pick for a dimension: a point (edge end or circle centre), a line or a circle, in a view. */
@@ -406,6 +410,8 @@ export class DrawingWorkspace {
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
     else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
+    else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
+    else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
@@ -595,6 +601,7 @@ export class DrawingWorkspace {
     const m = this.mode;
     if (m.kind === "model") { this.placeModel(m, p); return; }
     if (m.kind === "section" || m.kind === "detail" || m.kind === "aux") { this.kindClick(m, p); return; }
+    if (m.kind === "crop" || m.kind === "break") { this.trimClick(m, p); return; }
     if (isAnnotMode(m)) { this.annotClick(m, p); return; }
     if (m.kind === "projected") {
       if (!m.parent) { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; m.at = p; this.renderStatus(); this.renderOverlay(); } return; }
@@ -1389,7 +1396,7 @@ export class DrawingWorkspace {
       const [x, y] = toSheet(pl, u, w), d = Math.hypot(x - p[0], y - p[1]);
       if (d < bd) { bd = d; best = [u, w]; }
     };
-    tryPt(pl.uc, pl.vc);
+    tryPt(...(pl.unsq ? pl.unsq(pl.uc, pl.vc) : [pl.uc, pl.vc] as Pt));
     if (proj) for (const g of [...proj.vis, ...proj.hid]) {
       if (g.k === "l") { tryPt(g.p[0], g.p[1]); tryPt(g.p[2], g.p[3]); tryPt((g.p[0] + g.p[2]) / 2, (g.p[1] + g.p[3]) / 2); }
       else if (g.k === "a") { tryPt(g.o[0], g.o[1]); tryPt(g.o[0] + g.r * Math.cos(g.a0), g.o[1] + g.r * Math.sin(g.a0)); tryPt(g.o[0] + g.r * Math.cos(g.a1), g.o[1] + g.r * Math.sin(g.a1)); }
@@ -1506,9 +1513,60 @@ export class DrawingWorkspace {
     this.renderAll();
   }
 
+  // ---------- crop and break views (FR-DRW-015) ----------
+
+  private startTrim(kind: "crop" | "break", axis: "u" | "v" = "u") {
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    if (!v || v.kind === "detail" || !this.placements.get(v.id)) { toast(t("Select a view first.")); return; }
+    this.mode = kind === "crop" ? { kind, view: v.id, p1: null, at: null } : { kind, view: v.id, axis, a: null, at: null };
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private trimClick(m: Extract<Mode, { kind: "crop" | "break" }>, p: Pt) {
+    const pl = this.placements.get(m.view);
+    if (!pl) return;
+    const q = fromSheet(pl, p[0], p[1]);
+    if (m.kind === "crop") {
+      if (!m.p1) { m.p1 = q; this.renderStatus(); this.renderOverlay(); return; }
+      const c: [number, number, number, number] = [Math.min(m.p1[0], q[0]), Math.min(m.p1[1], q[1]), Math.max(m.p1[0], q[0]), Math.max(m.p1[1], q[1])];
+      if ((c[2] - c[0]) * pl.s < 2 || (c[3] - c[1]) * pl.s < 2) return;
+      this.mode = { kind: "none" };
+      this.setView("Crop view", v => { v.crop = c.map(x => round(x)) as [number, number, number, number]; });
+      return;
+    }
+    const k = m.axis === "u" ? q[0] : q[1];
+    if (m.a == null) { m.a = k; this.renderStatus(); this.renderOverlay(); return; }
+    const a = Math.min(m.a, k), b = Math.max(m.a, k);
+    if ((b - a) * pl.s <= BREAK_GAP) { toast(t("Make the break wider than the gap it closes to.")); return; }
+    const axis = m.axis;
+    this.mode = { kind: "none" };
+    this.setView("Break view", v => { (v.breaks ??= []).push({ axis, a: round(a), b: round(b) }); });
+  }
+
+  /** The crop rectangle or break band being drawn. */
+  private trimMarks(H: number): string {
+    const m = this.mode;
+    if (m.kind !== "crop" && m.kind !== "break") return "";
+    const pl = this.placements.get(m.view);
+    if (!pl) return "";
+    const r = viewRect(pl);
+    if (m.kind === "crop") {
+      if (!m.p1 || !m.at) return "";
+      const a = toSheet(pl, m.p1[0], m.p1[1]), b = m.at;
+      return `<rect class="drw-cut" x="${Math.min(a[0], b[0])}" y="${H - Math.max(a[1], b[1])}" width="${Math.abs(b[0] - a[0])}" height="${Math.abs(b[1] - a[1])}" fill="none"/>`;
+    }
+    const line = (k: number) => (m.axis === "u" ? `<line class="drw-cut" x1="${k}" y1="${H - r[1] + 3}" x2="${k}" y2="${H - r[3] - 3}"/>` : `<line class="drw-cut" x1="${r[0] - 3}" y1="${H - k}" x2="${r[2] + 3}" y2="${H - k}"/>`);
+    let s = "";
+    if (m.a != null) { const [x, y] = toSheet(pl, m.axis === "u" ? m.a : pl.uc, m.axis === "u" ? pl.vc : m.a); s += line(m.axis === "u" ? x : y); }
+    if (m.at) s += line(m.axis === "u" ? m.at[0] : m.at[1]);
+    return s;
+  }
+
   /** What a section/detail/aux command draws on the sheet before its view exists: the cutting line, circle or picked edge. */
   private modeMarks(H: number): string {
     const m = this.mode;
+    if (m.kind === "crop" || m.kind === "break") return this.trimMarks(H);
     if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
     const at = m.at;
     const id = at ? this.kindParent(m, at) : m.parent;
@@ -1624,6 +1682,14 @@ export class DrawingWorkspace {
           <label class="drw-chk"><input type="checkbox" data-v="label"${v.label ? " checked" : ""}> ${esc(t("Show the view label"))}</label>
           <label class="drw-chk"><input type="checkbox" data-v="marks"${v.marks !== false ? " checked" : ""}> ${esc(t("Centre marks and centrelines"))}</label>
         </fieldset>
+        ${v.kind === "detail" ? "" : `<fieldset class="pm-group drw-trim"><legend>${esc(t("Crop and break"))}</legend>
+          <div class="row">
+          <button class="btn small" data-a="crop" title="${esc(t("Crop view: click two corners; only what is inside stays"))}">${esc(t("Crop"))}</button>
+          <button class="btn small" data-a="vbreak" title="${esc(t("Break view: click the two ends of the part to leave out; vertical break lines"))}">${esc(t("Vertical break"))}</button>
+          <button class="btn small" data-a="hbreak" title="${esc(t("Break view: click the two ends of the part to leave out; horizontal break lines"))}">${esc(t("Horizontal break"))}</button>
+          </div>
+          ${v.crop || v.breaks?.length ? `<div class="row">${v.crop ? `<button class="btn small" data-a="uncrop">${esc(t("Remove crop"))}</button>` : ""}${v.breaks?.length ? `<button class="btn small" data-a="unbreak">${esc(t("Remove breaks"))}</button>` : ""}</div>` : ""}
+        </fieldset>`}
         <div class="row"><button class="btn small danger" data-a="del">${esc(t("Delete view"))}</button></div>`;
       return;
     }
@@ -1714,6 +1780,11 @@ export class DrawingWorkspace {
       case "detail": this.startKind("detail"); break;
       case "aux": this.startKind("aux"); break;
       case "flip": this.flipSel(); break;
+      case "crop": this.startTrim("crop"); break;
+      case "vbreak": this.startTrim("break", "u"); break;
+      case "hbreak": this.startTrim("break", "v"); break;
+      case "uncrop": this.setView("Remove crop", v => { delete v.crop; }); break;
+      case "unbreak": this.setView("Remove breaks", v => { delete v.breaks; }); break;
       case "dim": this.startAnnot("dim"); break;
       case "adel": this.deleteAnnot(); break;
       case "undo": this.store.undo(); break;
