@@ -2865,6 +2865,8 @@ export const RU: Record<string, string> = {
   "Path length {l} mm": "Длина траектории {l} мм",
   "Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)": "Сохранить траекторию в CSV (время, X, Y, Z, скорость, ускорение, угол)",
   "Acceleration": "Ускорение",
+  "Relative to": "Относительно",
+  "World": "Мир",
   "Component angle": "Угол компонента",
   "Angular speed": "Угловая скорость",
   "mm/s²": "мм/с²",

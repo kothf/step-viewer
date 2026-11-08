@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, pathLength, plotSvg, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -260,6 +260,17 @@ test("trace paths: points through the frames, speed, series, length, CSV and plo
   assert.deepEqual(traceAngles(frames, "missing"), [0, 0, 0]);
   const csv2 = traceCsv(line, 10, [0, 5, 10, 15]).trim().split("\n");
   assert.ok(csv2[0].endsWith(",angle (deg)") && csv2[2].endsWith(",5"));
+  // Relative to a component: a point riding on a turning, moving base stays put in the base's coordinates, and
+  // spinning together means no relative turn; a frame without the base keeps its last transform.
+  const tr = (a: number, x: number) => { const m = turn(a); m[3] = x; return m; };
+  const ride = [0, 1, 2, 3].map(k => ({ base: tr(k * 0.3, k * 5), pin: compose(tr(k * 0.3, k * 5), [1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, 4]) }));
+  const rel = relativeFrames(ride, "base");
+  tracePoints(rel, "pin", [0, 0, 0]).forEach(p => assert.ok(Math.hypot(p[0] - 2, p[1] - 3, p[2] - 4) < 1e-9, String(p)));
+  traceAngles(rel, "pin").forEach(v => assert.ok(Math.abs(v) < 1e-6));
+  assert.ok(Math.abs(traceAngles(ride, "pin")[3]) > 50);
+  const gap = relativeFrames([...ride, { pin: ride[3].pin }], "base");
+  assert.ok(Math.hypot(...tracePoints(gap, "pin", [0, 0, 0])[4].map((v, k) => v - [2, 3, 4][k])) < 1e-9);
+  assert.equal(relativeFrames([{ pin: ride[0].pin }], "base")[0].pin, ride[0].pin);
   const svg = plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance");
   assert.match(svg, /<polyline points="[^"]+"/);
   assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
