@@ -8,7 +8,7 @@ import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, bomMode, bomOf, compOfKey, type Bom, type BomMode } from "./bom";
+import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -192,9 +192,9 @@ export class DrawingWorkspace {
 
   private info: DrawingModel["info"] = {};
   /** The assembly's bill of materials (FR-DRW-030), for BOM tables and balloon numbers. */
-  private boms: Record<BomMode, Bom> | null = null;
+  private boms: Map<string, Bom> | null = null;
   /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
-  private bomFor(sh: Sheet): Bom | null { return this.boms ? this.boms[bomMode(sh)] : null; }
+  private bomFor(sh: Sheet): Bom | null { const src = this.doc.source; return this.boms && src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, this.boms) : null; }
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
@@ -218,7 +218,7 @@ export class DrawingWorkspace {
     this.renderStatus();
     try {
       this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
-      this.boms = src.kind === "asm" ? { top: bomOf(src.doc, src.flat, "top"), parts: bomOf(src.doc, src.flat, "parts") } : null;
+      this.boms = src.kind === "asm" ? new Map() : null;
       this.stale = false;
       this.renderAll();
       return this.facts;
@@ -1089,6 +1089,14 @@ export class DrawingWorkspace {
     this.store!.change("Delete annotation", d => { const S = d.sheets[this.sheetIdx]; S.annots = (S.annots ?? []).filter(a => a.id !== id); });
   }
 
+  /** The BOM's sub-assembly choice: the whole assembly or one top-level sub-assembly. */
+  private subRow(a: TableAnnot): string {
+    const src = this.doc.source;
+    const subs = src.kind === "asm" ? subsOf(src.doc) : [];
+    if (!subs.length) return "";
+    return `<label class="drw-f">${esc(t("Of"))}<select data-d="bsub"><option value="">${esc(t("The whole assembly"))}</option>${subs.map(c => `<option value="${esc(c.id)}"${a.sub === c.id ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+  }
+
   /** A balloon's stacked items (FR-DRW-030): each with a remove button, and a list of the items not shown yet. */
   private stackRows(a: BalloonAnnot): string {
     const bom = this.bom;
@@ -1150,14 +1158,15 @@ export class DrawingWorkspace {
     const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     if (a.t === "gtol") {
       const rows = a.rows.map((r, i) => `<fieldset class="pm-group drw-grow"><legend>${esc(t("Row {n}", { n: i + 1 }))}</legend>
-        <label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>
+        ${i > 0 && r.composite ? "" : `<label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>`}
         <label class="drw-f">${esc(t("Tolerance"))}<input data-d="g:${i}:tol" inputmode="decimal" value="${esc(r.tol)}" translate="no"></label>
         <label class="drw-chk"><input type="checkbox" data-d="g:${i}:dia"${r.dia ? " checked" : ""}> ${esc(t("Diameter zone (Ø)"))}</label>
         <label class="drw-f">${esc(t("Material condition"))}<select data-d="g:${i}:mod"><option value="">${esc(t("None"))}</option><option value="M"${r.mod === "M" ? " selected" : ""}>${esc(t("Maximum (M)"))}</option><option value="L"${r.mod === "L" ? " selected" : ""}>${esc(t("Least (L)"))}</option></select></label>
+        ${i > 0 ? `<label class="drw-chk"><input type="checkbox" data-d="g:${i}:comp"${r.composite ? " checked" : ""}> ${esc(t("Composite with the row above"))}</label>` : ""}
         <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
         ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
       </fieldset>`).join("");
-      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}</fieldset>${rows}
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p><label class="drw-chk"><input type="checkbox" data-d="gall"${a.around ? " checked" : ""}> ${esc(t("All around"))}</label>` : ""}</fieldset>${rows}
         <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
     }
     if (a.t === "datum") {
@@ -1185,7 +1194,7 @@ export class DrawingWorkspace {
       const head = a.cols.map((c, j) => `<label class="drw-f">${esc(t("Column {n}", { n: j + 1 }))}<input data-d="th:${j}" value="${esc(cellLabel(c, t))}" translate="no"></label>`).join("");
       return `<fieldset class="pm-group"><legend>${esc(t("Bill of materials"))}</legend>
         <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>
-        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${head}
+        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${this.subRow(a)}${head}
       </fieldset>${del}`;
     }
     if (a.t === "table") {
@@ -1221,11 +1230,14 @@ export class DrawingWorkspace {
         if (f === "sym") r.sym = val as GSym;
         else if (f === "tol") r.tol = val.trim().replace(",", ".") || "0";
         else if (f === "dia") { if ((el as HTMLInputElement).checked) r.dia = true; else delete r.dia; }
+        else if (f === "comp") { if ((el as HTMLInputElement).checked) { r.composite = true; r.sym = a.rows[+si - 1]?.sym ?? r.sym; } else delete r.composite; }
         else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
-      } else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      } else if (a.t === "gtol" && k === "gall") { if ((el as HTMLInputElement).checked) a.around = true; else delete a.around; }
+      else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
       else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
+      else if (a.t === "table" && a.kind === "bom" && k === "bsub") { if (val) a.sub = val; else delete a.sub; }
       else if (a.t === "table" && a.kind === "bom" && k === "bmode") { if (val === "parts") a.mode = "parts"; else delete a.mode; }
       else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
       else if (a.t === "table") {

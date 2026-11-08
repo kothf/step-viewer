@@ -2412,4 +2412,18 @@ export const RU: Record<string, string> = {
   "Latest and Latest released put those versions of the part files in place of the copies saved in the assembly.": "«Последние» и «Последние выпущенные» подставляют эти версии файлов деталей вместо копий, сохранённых в сборке.",
   "Opened with newer versions of: {files}": "Открыто с новыми версиями: {files}",
   "The parts are already the versions the assembly was checked in with.": "Детали уже в тех версиях, с которыми сборка была зарегистрирована.",
+  // 1.77.0: composite frames, sub-assembly BOM, release files, PDF watermark, full-text search.
+  "Composite with the row above": "Составной с верхней строкой",
+  "All around": "По контуру",
+  "Of": "Состав",
+  "The whole assembly": "Вся сборка",
+  "On release, store a PDF of drawings and a STEP of parts and assemblies": "При выпуске сохранять PDF чертежей и STEP деталей и сборок",
+  "Making the release files…": "Создаются файлы выпуска…",
+  "Stored {files}": "Сохранено: {files}",
+  "Could not make the release file of {path}: {err}": "Не удалось создать файл выпуска для {path}: {err}",
+  "{path} is in a state that cannot be changed.": "{path} в состоянии, которое нельзя изменить.",
+  "PDF": "PDF",
+  "Making the PDF…": "Создаётся PDF…",
+  "NOT RELEASED": "НЕ ВЫПУЩЕНО",
+  "Text inside files": "Текст внутри файлов",
 };

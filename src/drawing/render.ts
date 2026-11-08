@@ -2,7 +2,7 @@
 // drawing kernel, every sheet composed to primitives as the workspace draws it, and two versions
 // overlaid with what is only in the older one red and what is only in the newer one green.
 import { t } from "../i18n";
-import { bomOf } from "./bom";
+import { sheetBom, type Bom } from "./bom";
 import { DrawingKernel } from "./client";
 import { composeSheet } from "./compose";
 import { unpackDrawing } from "./file";
@@ -39,11 +39,10 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     const kg = pd?.material ? facts.volume * pd.material.density * 1e-6 : null;
     const mass = kg != null ? `${kg < 10 ? kg.toFixed(3) : kg.toFixed(2)} kg` : "";
     const label = (s: string, p?: Record<string, string>) => t(s, p);
-    const boms = src.kind === "asm" ? { top: bomOf(src.doc, src.flat, "top"), parts: bomOf(src.doc, src.flat, "parts") } : null;
+    const boms = new Map<string, Bom>();
     return doc.sheets.map(sh => {
       const [W, H] = sheetSize(sh);
-      const mode = (sh.annots ?? []).some(a => a.t === "table" && a.kind === "bom" && a.mode === "parts") ? "parts" : "top";
-      const ctx = { topo: facts.topo, holes: facts.holes, items: facts.items, box: facts.box, dec: ".", label, bom: boms ? boms[mode] : null };
+      const ctx = { topo: facts.topo, holes: facts.holes, items: facts.items, box: facts.box, dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null };
       return { name: sh.name, W, H, prims: composeSheet(sh, fieldsOf(doc, sh, mass), k.cache, facts.box, label, ctx).prims };
     });
   } finally { k.stop(); }

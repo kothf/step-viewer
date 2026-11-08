@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.77.0] - 2026-11-08
+
+### Added
+
+- **Composite feature control frames** (FR-DRW-023): in a geometric tolerance with more than one row, tick Composite with the row above. The rows then share one characteristic cell. **All around** puts the circle at the leader's bend.
+- **BOM of one sub-assembly** (FR-DRW-030): select the parts list and choose a sub-assembly under Of. The list and the sheet's balloons then cover just its parts.
+- **Release files** (FR-PDM-036): releasing a drawing in the vault stores its PDF beside it, and releasing a part or an assembly stores its STEP, named `<part number>_rev<revision>`. This can be turned off in Vault settings. The new **PDF** button on a drawing makes its PDF; a drawing that is not released gets a faint NOT RELEASED across each sheet.
+- STEP files made by the vault carry the **revision** as the product definition formation id, and the part number and description in the product (FR-PDM-034).
+- **Full-text search** (FR-PDM-043): Advanced search has Text inside files, which searches drawing notes and tables, document properties, feature and component names, and the text of text files.
+
 ## [1.76.0] - 2026-11-08
 
 ### Added
@@ -741,7 +751,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.76.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.77.0...HEAD
+[1.77.0]: https://github.com/kothf/step-viewer/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/kothf/step-viewer/compare/v1.75.0...v1.76.0
 [1.75.0]: https://github.com/kothf/step-viewer/compare/v1.74.0...v1.75.0
 [1.74.0]: https://github.com/kothf/step-viewer/compare/v1.73.0...v1.74.0

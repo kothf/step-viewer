@@ -154,7 +154,8 @@ export function sheetDxf(prims: Prim[], W: number, H: number): string {
 // ---------- PDF ----------
 
 /** Vector PDF of the sheets at their real size, with an embedded font (Cyrillic and drawing symbols work). */
-export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[], fontBytes: ArrayBuffer, title: string): Promise<Blob> {
+/** `watermark`: a large faint diagonal text across every sheet (FR-PDM-036 "Not released"). */
+export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[], fontBytes: ArrayBuffer, title: string, watermark?: string): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const first = sheets[0];
   const doc = new jsPDF({ unit: "mm", format: [first.W, first.H], orientation: first.W >= first.H ? "landscape" : "portrait", compress: true });
@@ -210,6 +211,21 @@ export async function sheetsPdf(sheets: { prims: Prim[]; W: number; H: number }[
           doc.text(p.s, p.x - w * Math.cos(a), H - (p.y - w * Math.sin(a)), { angle: p.rot, baseline: "alphabetic" });
         } else doc.text(p.s, p.x, H - p.y, { align: p.al === "l" ? "left" : p.al === "c" ? "center" : "right", baseline: "alphabetic" });
       }
+    }
+    if (watermark) {
+      // Faint red, corner to corner, under 1/8 of the sheet's diagonal per character.
+      const ang = Math.atan2(sh.H, sh.W), diag = Math.hypot(sh.W, sh.H);
+      const size = Math.min(diag * 0.7 / Math.max(watermark.length, 1) / 0.55, sh.H * 0.25);
+      const G = (doc as unknown as { GState: new (o: { opacity: number }) => unknown }).GState;
+      doc.saveGraphicsState();
+      (doc as unknown as { setGState(g: unknown): void }).setGState(new G({ opacity: 0.18 }));
+      doc.setTextColor(200, 30, 30);
+      doc.setFontSize(size / 0.3528);
+      const w = doc.getTextWidth(watermark), cx = sh.W / 2, cy = sh.H / 2;
+      // Start so the text's middle sits on the sheet's centre (jsPDF rotates about the start point).
+      doc.text(watermark, cx - Math.cos(ang) * w / 2 + Math.sin(ang) * size * 0.35, cy + Math.sin(ang) * w / 2 + Math.cos(ang) * size * 0.35, { angle: ang * 180 / Math.PI, baseline: "alphabetic" });
+      doc.restoreGraphicsState();
+      doc.setTextColor(0, 0, 0);
     }
   });
   return doc.output("blob");
