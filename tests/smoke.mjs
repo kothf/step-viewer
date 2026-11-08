@@ -2691,7 +2691,7 @@ try {
     await idle();
     const cut = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok) }; });
     const dT = Math.PI - 2 * Math.atan2(0.6, 0.8), half = 80 * (dT - Math.sin(dT)) * 2;
-    check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
+    check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
     // 1.35: a closed spline (FR-SK-019) from the Line flyout on the end face, cut through all.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [-15, 0, 5] } }, rels: [], dims: [], ents: [] }); }));
     await idle();
@@ -2708,7 +2708,7 @@ try {
     await idle();
     const cut3 = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), faces: window.__sv.viewer.parts[0]?.data.faces.length }; });
     const dSpl = cut.v - cut3.v;
-    check(lnFly === "Line|Spline" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
+    check(lnFly === "Line|Spline|Equation driven curve" && spl?.n === 4 && spl.closed && spl.dof === 8 && cut3.ok && dSpl > 42 * 5 && dSpl < 42 * 5 * 1.7, `model 1.35: a closed spline through four clicks, cut through the part (${lnFly}, ${JSON.stringify(spl)}, ${cut3.ok}, ${dSpl.toFixed(1)})`);
     await ctx.close();
   }
 
@@ -2993,6 +2993,92 @@ try {
     check(rfly === "Corner rectangle|Centre rectangle|3-point corner rectangle|3-point centre rectangle|Parallelogram|Polygon" && quads.n === 8 && quads.perp === 1 && quads.par >= 4 && quads.fourth.join(",") === "46,-16" && quads.ok === "ok",
       `model 1.152: 3-point rectangle and parallelogram (${rfly}, ${JSON.stringify(quads)})`);
     check(ru === "Добавить размеры", `model 1.144: Add dimensions in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Part modelling 1.157.0: conic, parabola and equation driven curve (FR-SK-021) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q", t: "point", x: 100, y: 100 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); v.camera.zoom = 1; });
+    // Circle ▾ lists Parabola and Conic after the ellipses; pick Conic.
+    await mp.click('#mc-tools [data-fly="circle"]');
+    const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(6)");
+    const picked = await mp.evaluate(() => window.__sv.model.editor().tool);
+    // Start (0, 0), end (40, 0), top vertex (20, 30), shoulder (20, 12): rho 0.4.
+    await click([0, 0]); await click([40, 0]); await click([20, 30]);
+    const [sx, sy] = await toPage([20, 12]);
+    await mp.mouse.move(sx, sy); await mp.waitForTimeout(80);
+    const label = await mp.evaluate(() => document.querySelector(".sk-cursor")?.textContent ?? "");
+    await click([20, 12]);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    await click([40, 0]); await click([0, 0]);
+    await mp.keyboard.press("Escape");
+    const con = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.find(e => e.kind === "conic"); return { rho: c?.rho, pts: c?.pts.length, lines: ed.sk.ents.filter(e => e.t === "line").length, ok: ed.info.status }; });
+    check(fly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
+      `model 1.157: Conic from the Circle menu: start, end, top vertex, rho from the fourth click (${fly}, ${picked}, ${label}, ${JSON.stringify(con)})`);
+    // The panel edits rho; the conic region extrudes exactly (rational quadratic edge).
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); ed.select([ed.sk.ents.find(e => e.kind === "conic").id]); window.__sv.modeller.renderPanel(); });
+    await mp.waitForSelector("#mc-pm [data-cq=rho]");
+    await mp.fill("#mc-pm [data-cq=rho]", "0.6");
+    await mp.dispatchEvent("#mc-pm [data-cq=rho]", "change");
+    const rho2 = await mp.evaluate(() => window.__sv.model.editor().sk.ents.find(e => e.kind === "conic")?.rho);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }); }));
+    await idle();
+    const vol = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0 }; });
+    // Area under the rational quadratic (0,0) (20,30) (40,0) with w = 0.6/0.4, by many samples.
+    const want = (() => { const w = 1.5, n = 20000; let a = 0, prev = [0, 0]; for (let i = 1; i <= n; i++) { const t = i / n, u = 1 - t, D = u * u + 2 * w * u * t + t * t; const q = [(2 * w * u * t * 20 + t * t * 40) / D, (2 * w * u * t * 30) / D]; a += (prev[0] * q[1] - q[0] * prev[1]) / 2; prev = q; } return Math.abs(a) * 5; })();
+    check(rho2 === 0.6 && vol.ok && Math.abs(vol.v - want) < want * 1e-4, `model 1.157: rho 0.6 from the panel; the conic region extrudes to ${want.toFixed(2)} mm³ (${rho2}, ${JSON.stringify(vol)})`);
+    // Sketch 2: a parabola by focus and vertex, and an equation driven curve from the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: 100, y: 100 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s2"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("parabola"));
+    // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
+    await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
+    const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
+    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
+    await mp.click('#mc-tools [data-fly="line"]');
+    const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.waitForSelector("#mc-pm [data-cq=add]");
+    await mp.selectOption("#mc-pm [data-cq=mode]", "param");
+    await mp.waitForSelector("#mc-pm [data-cq=x]");
+    await mp.fill("#mc-pm [data-cq=x]", "-30 + 10*cos(t)"); await mp.dispatchEvent("#mc-pm [data-cq=x]", "change");
+    await mp.fill("#mc-pm [data-cq=y]", "10*sin(t)"); await mp.dispatchEvent("#mc-pm [data-cq=y]", "change");
+    const ruAdd = await (async () => {
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      await mp.waitForTimeout(300);
+      const r = await mp.evaluate(() => document.querySelector("#mc-pm [data-cq=add]").textContent.trim());
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      await mp.waitForTimeout(300);
+      return r;
+    })();
+    await mp.click("#mc-pm [data-cq=add]");
+    const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
+    check(lfly === "Line|Spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
+      `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
+    check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
     await ctx.close();
   }
 

@@ -466,6 +466,28 @@ test("spline profiles extrude as one exact B-spline face (FR-SK-019)", async () 
   assert.equal(r.body!.faces.length, 4);
 });
 
+test("conic and equation curve profiles extrude (FR-SK-021)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  // Parabola y = x - x²/20 over the chord y = 0: area 2/3 · 20 · 5.
+  const para: SketchFeature = { id: "s1", type: "sketch", name: "s1", plane: { std: "XY" }, rels: [], dims: [],
+    ents: [P("a", 0, 0), P("v", 10, 10), P("b", 20, 0), { id: "c", t: "spline", pts: ["a", "v", "b"], kind: "parabola" }, { id: "l", t: "line", a: "b", b: "a" }] };
+  let r = run(m, doc([para, ex]));
+  close(r.props!.volume, (2 / 3) * 20 * 5 * 10, 1e-4);
+  // Quarter circle as a conic (w = cos 45°) plus the triangle to the centre.
+  const rho = Math.SQRT1_2 / (1 + Math.SQRT1_2);
+  const quarter: SketchFeature = { ...para, ents: [P("o", 0, 0), P("a", 10, 0), P("v", 10, 10), P("b", 0, 10), { id: "c", t: "spline", pts: ["a", "v", "b"], kind: "conic", rho },
+    { id: "l1", t: "line", a: "b", b: "o" }, { id: "l2", t: "line", a: "o", b: "a" }] };
+  r = run(m, doc([quarter, ex]));
+  close(r.props!.volume, (Math.PI * 100 / 4) * 10, 1e-4);
+  // Upper half circle from x(t), y(t), closed by its diameter.
+  const half: SketchFeature = { ...para, ents: [P("a", 10, 0), P("b", -10, 0), { id: "c", t: "spline", pts: ["a", "b"], kind: "eqn", eq: { mode: "param", x: "10*cos(t)", y: "10*sin(t)", t0: "0", t1: "pi" } },
+    { id: "l", t: "line", a: "b", b: "a" }] };
+  r = run(m, doc([half, ex]));
+  close(r.props!.volume, (Math.PI * 100 / 2) * 10, 1e-4);
+});
+
 test("modelled thread cuts a helical groove into a hole (FR-FT-055)", async () => {
   const m = new Modeller(await occ());
   const s1 = rect("s1", 0, 0, 40, 40);

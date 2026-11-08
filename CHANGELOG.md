@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Toolbox** (FR-ASM-028): the assembly's Fasteners command is now Toolbox, with standard parts grouped as screws, nuts, washers, pins, keys and bearings. New: countersunk socket screws (ISO 10642), set screws (ISO 4026), thin, nylon insert and flange nuts (ISO 4035, 7040, 4161), small and large washers (ISO 7092, 7093), dowel and spring pins (ISO 2338, 8752), square-ended parallel keys (DIN 6885 B) and deep groove ball bearings (625 to 6306). Every size is a configuration, as before. With Size from the hole on, clicking a hole picks the size that fits it: the largest screw, nut or washer that passes, the pin of that diameter, or the bearing whose outside diameter matches the bore. Countersunk and set screws, pins and bearings go in flush with the face around the hole; the seat is also found past a countersink.
 - **McMaster-Carr parts** (FR-ASM-028): the McMaster-Carr button opens their catalogue in a new tab. Download a part's 3-D STEP file there and drop it on the open assembly (dropping parts or STEP/IGES/BREP files on an assembly now inserts them as components). The part number and description come from the file name, and the BOM gets a Vendor column with a link to the product page (also in the CSV). The component menu gets Buy at McMaster-Carr. Nothing is fetched from McMaster-Carr's site, as their terms don't allow it.
 
+## [1.157.0] - 2026-11-08
+
+### Added
+
+- **Conic, parabola and equation driven curve (FR-SK-021)**: the Circle ▾ menu adds Parabola (focus, vertex, then the start and the end) and Conic (start, end, the top vertex where the end tangents meet, then a point that sets rho, shown at the cursor; rho can be changed in the panel). The Line ▾ menu adds Equation driven curve: y = f(x) or x(t), y(t) with a range, typed in the panel, added with fixed ends. Conics reach the kernel as exact rational curves, so their volumes and areas are exact; equation curves follow their two end points when moved, rotated, scaled or mirrored.
+
 ## [1.156.0] - 2026-11-08
 
 ### Added
@@ -1293,7 +1299,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.158.0...HEAD
-[1.158.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.158.0
+[1.158.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.158.0
+[1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
 [1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
