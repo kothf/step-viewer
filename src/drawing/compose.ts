@@ -8,7 +8,7 @@ import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, Sheet } from "./types";
 import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
-import { altReq, boxInView, cutLegs, findView, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
+import { altReq, boxInView, cutLegs, findView, isShaded, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
 
@@ -287,6 +287,12 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
     else { const p: number[] = []; for (let i = 0; i < g.p.length; i += 2) p.push(X(g.p[i]), Y(g.p[i + 1])); out.push({ t: "p", p, pen, layer }); }
   };
   let vis = proj.vis, hid = proj.hid;
+  const shaded = isShaded(v) && !!proj.shade;
+  if (shaded) {
+    out.push(...shadePrims(v, proj.shade!, pl));
+    hid = [];
+    if (style === "shaded") vis = [];
+  }
   if (v.kind === "detail" && v.c && v.r) { vis = clipToCircle(vis, v.c, v.r); hid = clipToCircle(hid, v.c, v.r); }
   vis = trimSegs(v, pl.s, vis); hid = trimSegs(v, pl.s, hid);
   if (proj.cut?.length) {
@@ -308,6 +314,28 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
   }
   if (v.kind === "detail" && v.r) out.push({ t: "a", o: [pl.x, pl.y], r: v.r * pl.s, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
   out.push(...breakLines(v, pl));
+  return out;
+}
+
+/**
+ * A shaded view's triangles on the sheet (FR-DRW-010). A detail view keeps the ones whose middle is inside its
+ * circle; crop and break views keep the ones whose middle survives, moved with it.
+ */
+export function shadePrims(v: DrawingView, tris: number[], pl: Placement): Prim[] {
+  const out: Prim[] = [];
+  const X = (u: number) => pl.x + (u - pl.uc) * pl.s, Y = (w: number) => pl.y + (w - pl.vc) * pl.s;
+  const det = v.kind === "detail" && v.c && v.r ? { c: v.c, r2: v.r * v.r } : null, trim = !!(v.crop || v.breaks?.length);
+  for (let i = 0; i + 6 < tris.length; i += 7) {
+    const cu = (tris[i] + tris[i + 2] + tris[i + 4]) / 3, cv = (tris[i + 1] + tris[i + 3] + tris[i + 5]) / 3;
+    if (det && (cu - det.c[0]) ** 2 + (cv - det.c[1]) ** 2 > det.r2) continue;
+    let du = 0, dv = 0;
+    if (trim) {
+      const kept = trimSegs(v, pl.s, [{ k: "l", c: 0, p: [cu, cv, cu + 1e-6, cv] }]);
+      if (!kept.length || kept[0].k !== "l") continue;
+      du = kept[0].p[0] - cu; dv = kept[0].p[1] - cv;
+    }
+    out.push({ t: "p", p: [X(tris[i] + du), Y(tris[i + 1] + dv), X(tris[i + 2] + du), Y(tris[i + 3] + dv), X(tris[i + 4] + du), Y(tris[i + 5] + dv)], pen: "thin", layer: "SHADE", fill: true, closed: true, gray: tris[i + 6] });
+  }
   return out;
 }
 

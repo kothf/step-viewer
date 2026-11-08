@@ -3060,4 +3060,6 @@ export const RU: Record<string, string> = {
   "Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.": "Щёлкните следующий угол: участки идут вдоль первого или перпендикулярно ему. Enter или повторный щелчок по последней точке завершают линию.",
   "Every leg of the cutting path must run along or square to the first.": "Каждый участок линии сечения должен идти вдоль первого или перпендикулярно ему.",
   "Don't cut": "Не разрезать",
+  // 1.117.0: shaded drawing views (FR-DRW-010).
+  "Shaded with edges": "Тонировка с рёбрами",
 };

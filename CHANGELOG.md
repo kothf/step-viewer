@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.117.0] - 2026-11-08
+
+### Added
+
+- **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
+
 ## [1.115.0] - 2026-11-08
 
 ### Added
@@ -1070,7 +1076,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.115.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.117.0...HEAD
+[1.117.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.117.0
 [1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0
 [1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0
