@@ -7914,9 +7914,16 @@ try {
     // Its weld symbol sits on the bead in the view; a click opens the bead for editing.
     const sym = await mp.evaluate(() => { const el = document.querySelector('#mc-layer .wld-sym[data-weld="w5"]'); const t = el?.textContent; el?.click(); return { t, mode: window.__sv.model.mode().kind, id: window.__sv.model.mode().draft?.id }; });
     await settle();
+    // All around and field flags show on the symbol while editing.
+    await mp.click('#mc-pm input[data-k="wAround"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wField"]');
+    await settle();
+    const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
+    check(symFlags === "○ ⚑ ◺ z4 50 (100)", `weldments: all-around and field weld flags on the symbol (${symFlags})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
