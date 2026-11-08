@@ -25,7 +25,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Curved structural members (FR-FT-121).** Arcs in a Structural Member's path sketch now make bent members: the profile is revolved along the arc, and the cut list gives the arc length. Where a line runs on smoothly from an arc nothing is cut. At a sharp corner the line runs through the arc, and two arcs meet in a mitre. The segment list and the Corners group show arcs as "Arc n" and lines as "Line n".
->>>>>>> origin/main
 
 ## [1.119.0] - 2026-11-08
 
