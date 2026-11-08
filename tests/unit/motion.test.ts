@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { pathLength, plotSvg, speeds, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, pathLength, plotSvg, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -242,8 +242,24 @@ test("trace paths: points through the frames, speed, series, length, CSV and plo
   assert.equal(pathLength(line), 3);
   const csv = traceCsv(line, 10).trim().split("\n");
   assert.equal(csv.length, 5);
-  assert.equal(csv[0], "t (s),x (mm),y (mm),z (mm),speed (mm/s)");
-  assert.equal(csv[2], "0.1,1,0,0,10");
+  assert.equal(csv[0], "t (s),x (mm),y (mm),z (mm),speed (mm/s),accel (mm/s^2)");
+  assert.equal(csv[2], "0.1,1,0,0,10,0");
+  // Acceleration: uniform speed has none; x = t² at 10 fps accelerates at 2 mm/s² … here x = k² mm per frame → 2·fps².
+  assert.deepEqual(accels(line, 10), [0, 0, 0, 0]);
+  const sq = [0, 1, 4, 9].map(v => [v, 0, 0] as [number, number, number]);
+  assert.deepEqual(accels(sq, 10), [200, 200, 200, 200]);
+  assert.deepEqual(traceSeries(sq, 10, "accel"), [200, 200, 200, 200]);
+  // Component angle: 45° per frame about Z, unwrapped past 180°; about -Z the sign is kept along the turn's own axis.
+  const turn = (a: number) => [Math.cos(a), -Math.sin(a), 0, 5, Math.sin(a), Math.cos(a), 0, 0, 0, 0, 1, 0];
+  const spin = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => ({ a: turn(k * Math.PI / 4) }));
+  const ang = traceAngles(spin, "a");
+  ang.forEach((v, k) => assert.ok(Math.abs(Math.abs(v) - 45 * k) < 1e-6, `angle ${k}: ${v}`));
+  assert.ok(ang.every((v, k) => k === 0 || Math.sign(v) === Math.sign(ang[1])));
+  assert.ok(Math.abs(Math.abs(rates(ang, 10)[3]) - 450) < 1e-6);
+  assert.deepEqual(traceSeries(sq, 10, "angle", [0, 1, 2, 3]), [0, 1, 2, 3]);
+  assert.deepEqual(traceAngles(frames, "missing"), [0, 0, 0]);
+  const csv2 = traceCsv(line, 10, [0, 5, 10, 15]).trim().split("\n");
+  assert.ok(csv2[0].endsWith(",angle (deg)") && csv2[2].endsWith(",5"));
   const svg = plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance");
   assert.match(svg, /<polyline points="[^"]+"/);
   assert.equal((svg.match(/<polyline points="([^"]+)"/)![1].split(" ")).length, 4);
