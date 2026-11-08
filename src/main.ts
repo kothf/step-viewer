@@ -898,7 +898,10 @@ vpEl.addEventListener("drop", e => {
   // A dropped folder (an assembly with its parts) is read through its entries.
   const entries = [...dt.items].map(i => i.webkitGetAsEntry?.()).filter((x): x is FileSystemEntry => !!x);
   if (entries.some(x => x.isDirectory)) { filesOf(entries).then(fs => { if (fs.length) openFiles(fs); }); return; }
-  if (dt.files.length) openFiles([...dt.files]);
+  const files = [...dt.files];
+  // On an open assembly, parts and STEP/IGES/BREP models (a McMaster-Carr download, say) become components.
+  if (files.length && asm.active && $("#app").classList.contains("asm") && files.every(f => /\.(step|stp|iges|igs|brep|mcadprt)$/i.test(f.name))) { void asm.dropFiles(files); return; }
+  if (files.length) openFiles(files);
 });
 
 /** Files in dropped entries, folders included (up to 2000 files, 8 levels). */

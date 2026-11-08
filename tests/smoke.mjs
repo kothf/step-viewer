@@ -5082,12 +5082,88 @@ try {
     await fp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
     await shown(5);
     const auto = await fp.evaluate(() => { const a = window.__sv.asm, c = a.doc.components, t = c[4].tf, r = v => Math.round(v * 1e3) / 1e3; return { mates: a.doc.mates.slice(4).map(m => [m.type, m.a.comp === c[0].id, m.b.comp === c[4].id]), at: [t[3], t[7], t[11]].map(r) }; });
-    check(panel.kinds === 6 && panel.sizes === 11 && panel.len === "12"
+    check(panel.kinds === 17 && panel.sizes === 11 && panel.len === "12"
       && /^ISO 4762 M6 x 12<1>$/.test(fast.names[1]) && /^ISO 4032 M6<1>$/.test(fast.names[2]) && JSON.stringify(fast.mates) === '["concentric","coincident","concentric","coincident"]'
-      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 fasteners placed/.test(fast.status ?? "") && fast.configs === 11
+      && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 parts placed/.test(fast.status ?? "") && fast.configs === 11
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
       `asm 1.79: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
+    await ctx.close();
+  }
+
+  // --- 1.149: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const tp = await ctx.newPage();
+    tp.on("pageerror", e => errors.push(e.message));
+    tp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await tp.goto(`${origin}/index.html?debug`);
+    await tp.waitForFunction(() => window.__sv);
+    // A 60 × 40 × 10 block with a Ø32 bearing bore at x = 20 and a Ø6 pin hole at x = 48.
+    await tp.click("#new-part");
+    await tp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+    await tp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), [
+      { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", 60, 0), pt("c", 60, 40), pt("d", 0, 40), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a"),
+        pt("h1", 20, 20), { id: "k1", t: "circle", c: "h1", r: 16 }, pt("h2", 48, 20), { id: "k2", t: "circle", c: "h2", r: 3 }] },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } }]);
+    await tp.waitForTimeout(150);
+    await tp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const block = [...await tp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => tp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await tp.click("#new-more");
+    await tp.click("#new-asm");
+    await tp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    await tp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "block.mcadprt")), block);
+    await shown(1);
+    await tp.click('#asm-tools [data-ac="fastener"]');
+    const hole = (x, r, z) => tp.evaluate(([x, r, z]) => {
+      const a = window.__sv.asm, d = window.__sv.viewer.parts[0].data;
+      const j = d.faces.findIndex(f => f.type === "cylinder" && Math.abs(f.center[0] - x) < 0.01 && Math.abs(f.center[1] - 20) < 0.01);
+      a.fastenHole(0, j, [x + r, 20, z]);
+    }, [x, r, z]);
+    // A 625 bearing picked, the Ø32 bore clicked near the top: the size follows the bore (62xx series kept: 6201).
+    const panel = await tp.evaluate(() => {
+      window.__sv.asm.setFastener({ kind: "bearing", size: "625" });
+      return { title: document.querySelector("#asm-pm h3")?.textContent, groups: document.querySelectorAll('#asm-pm select[data-f="kind"] optgroup').length, auto: !!document.querySelector('#asm-pm [data-a="auto"]')?.checked };
+    });
+    await hole(20, 16, 9.5);
+    await shown(2);
+    await tp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 2 && !window.__sv.asm.building, null, { timeout: 120000 });
+    // A dowel pin (size 2 picked) on the Ø6 hole: size 6, its top flush with the block.
+    await tp.evaluate(() => window.__sv.asm.setFastener({ kind: "iso2338", size: "2" }));
+    await hole(48, 3, 9.5);
+    await shown(3);
+    await tp.waitForFunction(() => window.__sv.asm.doc.mates?.length === 4 && !window.__sv.asm.building, null, { timeout: 120000 });
+    await shown(3);
+    const tb = await tp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components, r = v => Math.round(v * 1e3) / 1e3;
+      const at = k => { const t = c[k].tf; return [t[3], t[7], t[11], t[10]].map(r); };
+      return { names: c.map(x => x.name), mates: a.doc.mates.map(m => [m.type, m.align ?? ""]), brg: at(1), pin: at(2), dof: [a.solved?.dof[c[1].id], a.solved?.dof[c[2].id]] };
+    });
+    await tp.evaluate(() => window.__sv.asm.closeTools());
+    // McMaster-Carr: a downloaded STEP named "<part number>_<description>.STEP" keeps its part number and a buy link.
+    const cube = [...await readFile(join(fixtures, "cube-10x10mm/Cube 10x10.stp"))];
+    await tp.evaluate(b => window.__sv.asm.dropFiles([new File([new Uint8Array(b)], "91290A115_Black-Oxide Alloy Steel Socket Head Screw.STEP")]), cube);
+    await shown(4);
+    const mc = await tp.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components[3], pd = a.doc.parts[c.part].doc;
+      a.showBom();
+      const link = document.querySelector("#asm-bom-body a[data-buy]");
+      const row = link?.closest("tr")?.textContent ?? "";
+      document.querySelector("#asm-bom [data-a=close]").click();
+      return { pn: pd.props?.partNumber, desc: pd.props?.description, vendor: pd.props?.custom?.Vendor, href: link?.getAttribute("href"), target: link?.getAttribute("target"), row, csv: a.bomCsvText().split("\r\n").slice(0, 1)[0], csvRow: a.bomCsvText().split("\r\n").find(l => l.includes("91290A115")) };
+    });
+    check(panel.title === "Toolbox" && panel.groups === 6 && panel.auto
+      && /^Ball bearing 6201<1>$/.test(tb.names[1]) && /^ISO 2338 6 x \d+<1>$/.test(tb.names[2])
+      && JSON.stringify(tb.mates) === '[["concentric",""],["coincident","aligned"],["concentric",""],["coincident","aligned"]]'
+      && JSON.stringify(tb.brg) === "[20,20,10,1]" && JSON.stringify(tb.pin) === "[48,20,10,1]" && JSON.stringify(tb.dof) === "[1,1]"
+      && mc.pn === "91290A115" && mc.desc === "Black-Oxide Alloy Steel Socket Head Screw" && mc.vendor === "McMaster-Carr"
+      && mc.href === "https://www.mcmaster.com/91290A115/" && mc.target === "_blank" && mc.row.includes("91290A115")
+      && mc.csv.endsWith("Vendor,Vendor URL") && mc.csvRow?.endsWith("McMaster-Carr,https://www.mcmaster.com/91290A115/"),
+      `asm 1.149: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
     await ctx.close();
   }
 

@@ -17,7 +17,8 @@ import { refreshExprs } from "../model/params";
 import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
-import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
+import { MCMASTER, mcmasterPart, tagVendor, vendorOf } from "./vendor";
+import { FASTENERS, TOOLBOX_GROUPS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, sizeForHole, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
@@ -119,8 +120,8 @@ export class AsmController {
   /** Volume (mm³) of each part, from its shown mesh, for the BOM. */
   private volumes = new Map<string, number>();
   private mateDown: { x: number; y: number } | null = null;
-  /** Fastener panel (FR-ASM-028): the fastener a click on a hole inserts. */
-  fastening: { kind: FastenerKind; size: string; length: number; placed: number } | null = null;
+  /** Toolbox panel (FR-ASM-028): the standard part a click on a hole inserts; `auto` = its size follows the hole. */
+  fastening: { kind: FastenerKind; size: string; length: number; placed: number; auto: boolean } | null = null;
   /** Mate reference panel (FR-MATE-011): the component, the reference's name and its faces (up to three). */
   refing: { comp: string; name: string; faces: string[] } | null = null;
   /** Assembly feature panel (FR-ASM-027): the hole or cut being made or edited; `at`/`n`/`x` in `ref.comp`'s coordinates. */
@@ -481,7 +482,7 @@ export class AsmController {
       const v = this.volumes.get(k);
       return v !== undefined && p.doc.material ? (v / 1e6) * p.doc.material.density : null;
     };
-    const rows: { item: number; part: string; number: string; description: string; material: string; qty: number; mass: number | null }[] = [];
+    const rows: { item: number; part: string; number: string; description: string; material: string; qty: number; mass: number | null; vendor: string; url: string }[] = [];
     const at = new Map<string, number>(), same = new Map<string, string>();
     // Parts only: the same part used at the top and inside sub-assemblies is one row.
     const group = (k: string) => {
@@ -500,7 +501,8 @@ export class AsmController {
         const d = p.asm ? null : p.doc;
         i = rows.length;
         at.set(gk, i);
-        rows.push({ item: i + 1, part: p.name, number: d?.props?.partNumber ?? "", description: d?.props?.description ?? "", material: d?.material?.name ?? "", qty: 0, mass: unit(c.part) });
+        const vd = vendorOf(d);
+        rows.push({ item: i + 1, part: p.name, number: d?.props?.partNumber ?? "", description: d?.props?.description ?? "", material: d?.material?.name ?? "", qty: 0, mass: unit(c.part), vendor: vd?.vendor ?? "", url: vd?.url ?? "" });
       }
       rows[i].qty++;
     }
@@ -512,8 +514,9 @@ export class AsmController {
     const sel = dlg.querySelector<HTMLSelectElement>("#asm-bom-type");
     if (sel) { sel.value = this.bomMode; sel.onchange = () => { this.bomMode = sel.value as "top" | "parts"; dlg.close(); this.showBom(); }; }
     const kg = (m: number | null) => (m === null ? "" : m.toLocaleString(undefined, { maximumFractionDigits: 4 }));
-    $("#asm-bom-body").innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Part"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Material"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Mass (kg)"))}</th></tr></thead><tbody>`
-      + rows.map(r => `<tr><td>${r.item}</td><td translate="no">${esc(r.part)}</td><td translate="no">${esc(r.number)}</td><td translate="no">${esc(r.description)}</td><td>${esc(r.material ? t(r.material) : "")}</td><td>${r.qty}</td><td>${kg(r.mass)}</td></tr>`).join("") + `</tbody></table>`;
+    $("#asm-bom-body").innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Part"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Material"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Mass (kg)"))}</th><th>${esc(t("Vendor"))}</th></tr></thead><tbody>`
+      + rows.map(r => `<tr><td>${r.item}</td><td translate="no">${esc(r.part)}</td><td translate="no">${esc(r.number)}</td><td translate="no">${esc(r.description)}</td><td>${esc(r.material ? t(r.material) : "")}</td><td>${r.qty}</td><td>${kg(r.mass)}</td>`
+        + `<td translate="no">${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" data-buy>${esc(r.vendor)}</a>` : ""}</td></tr>`).join("") + `</tbody></table>`;
     const done = () => dlg.close();
     dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = done;
     dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => this.bomCsv();
@@ -523,8 +526,8 @@ export class AsmController {
   /** The BOM as CSV (English headers, like the other exports). */
   bomCsvText() {
     const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [["Item", "Part", "Part number", "Description", "Material", "Qty", "Mass (kg)"].join(",")];
-    for (const r of this.bom()) lines.push([r.item, r.part, r.number, r.description, r.material, r.qty, r.mass === null ? "" : r.mass.toFixed(6)].map(q).join(","));
+    const lines = [["Item", "Part", "Part number", "Description", "Material", "Qty", "Mass (kg)", "Vendor", "Vendor URL"].join(",")];
+    for (const r of this.bom()) lines.push([r.item, r.part, r.number, r.description, r.material, r.qty, r.mass === null ? "" : r.mass.toFixed(6), r.vendor, r.url].map(q).join(","));
     return `${lines.join("\r\n")}\r\n`;
   }
 
@@ -559,10 +562,13 @@ export class AsmController {
 
   // ---------- fastener library and mate references (FR-ASM-028, FR-MATE-011) ----------
 
+  /** Toolbox "Size from the hole", kept per browser. */
+  private get fastenAuto() { try { return localStorage.getItem("mc:toolboxAuto") !== "0"; } catch { return true; } }
+
   startFasteners() {
     if (!this.doc) return;
     this.closeTools();
-    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0 };
+    this.fastening = { kind: "iso4762", size: "M6", length: defaultLength("iso4762", "M6"), placed: 0, auto: this.fastenAuto };
     this.renderAll();
   }
 
@@ -623,23 +629,32 @@ export class AsmController {
       if (s < lo) lo = s;
       if (s > hi) hi = s;
     }
+    // The size follows the hole (or a bearing's bore), when the panel says so and one fits.
+    const f = this.fastening;
+    if (f.auto) {
+      const fit = sizeForHole(f.kind, 2 * g.r, f.size);
+      if (fit && fit !== f.size) this.setFastener({ size: fit });
+    }
     const tc = (hit.point[0] - g.p[0]) * g.d[0] + (hit.point[1] - g.p[1]) * g.d[1] + (hit.point[2] - g.p[2]) * g.d[2];
     const ends = Math.abs(tc - hi) <= Math.abs(tc - lo) ? [hi, lo] : [lo, hi];
     const tol = Math.max(1e-3, this.size() * 1e-5);
     for (const end of ends) {
       const out: V3 = end === hi ? g.d : [-g.d[0], -g.d[1], -g.d[2]];
       const at: V3 = [g.p[0] + g.d[0] * end, g.p[1] + g.d[1] * end, g.p[2] + g.d[2] * end];
-      // The flat face of the same component at that end, facing out.
-      let seat: string | null = null;
+      // The flat face of the same component at that end, facing out; or a little further out, past a
+      // countersink or chamfer (up to the hole's diameter), the nearest one.
+      let seat: string | null = null, ahead = Infinity;
       for (const [name, pg] of this.geo.get(c.part) ?? []) {
         if (pg.k !== "plane") continue;
         const w = placeGeo(pg, c.tf) as Geo & { k: "plane" };
         if (w.n[0] * out[0] + w.n[1] * out[1] + w.n[2] * out[2] < 0.999) continue;
-        if (Math.abs((w.p[0] - at[0]) * out[0] + (w.p[1] - at[1]) * out[1] + (w.p[2] - at[2]) * out[2]) > tol) continue;
+        const off = (w.p[0] - at[0]) * out[0] + (w.p[1] - at[1]) * out[1] + (w.p[2] - at[2]) * out[2];
+        if (off < -tol || off > 2 * g.r + tol || off >= ahead) continue;
         seat = name;
-        break;
+        ahead = Math.max(0, off);
       }
       if (!seat) continue;
+      for (let k = 0; k < 3; k++) at[k] += out[k] * ahead;
       // Z of the fastener along `out`, its origin on the axis at the seat.
       const u: V3 = Math.abs(out[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
       const xa = (() => { const k = u[0] * out[0] + u[1] * out[1] + u[2] * out[2]; const v: V3 = [u[0] - k * out[0], u[1] - k * out[1], u[2] - k * out[2]]; const l = Math.hypot(...v); return v.map(q => q / l) as V3; })();
@@ -657,16 +672,22 @@ export class AsmController {
     pm.dataset.id = "fastener";
     const info = fastenerInfo(f.kind);
     const opt = (v: string, label: string, on: boolean) => `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
-    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Fasteners"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
-      + `<fieldset class="pm-group"><legend>${esc(t("Fastener"))}</legend>`
-      + `<label class="pm-field"><span>${esc(t("Standard"))}</span><select data-f="kind">${FASTENERS.map(x => opt(x.kind, t(x.label), x.kind === f.kind)).join("")}</select></label>`
+    const kinds = TOOLBOX_GROUPS.map(gr => `<optgroup label="${esc(t(gr))}">${FASTENERS.filter(x => x.group === gr).map(x => opt(x.kind, t(x.label), x.kind === f.kind)).join("")}</optgroup>`).join("");
+    pm.innerHTML = `<div class="pm-head pm-top"><h3>${esc(t("Toolbox"))}</h3><span class="pm-okc"><button class="pm-ok" data-a="ok" title="${esc(t("OK (Enter)"))}" aria-label="${esc(t("OK (Enter)"))}">✓</button></span></div>`
+      + `<fieldset class="pm-group"><legend>${esc(t("Standard part"))}</legend>`
+      + `<label class="pm-field"><span>${esc(t("Standard"))}</span><select data-f="kind">${kinds}</select></label>`
       + `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-f="size" translate="no">${fastenerSizes(f.kind).map(x => opt(x, x, x === f.size)).join("")}</select></label>`
       + (info.screw ? `<label class="pm-field"><span>${esc(t("Length"))}</span><select data-f="length" translate="no">${fastenerLengths(f.kind, f.size).map(x => opt(String(x), `${x} mm`, x === f.length)).join("")}</select></label>` : "")
+      + (info.fit ? `<label class="pm-field pm-check"><input type="checkbox" data-a="auto"${f.auto ? " checked" : ""} /> ${esc(t("Size from the hole"))}</label>` : "")
       + `<p class="pm-help muted" translate="no">${esc(fastenerName(f.kind, f.size, f.length))}</p></fieldset>`
-      + `<p class="pm-help" role="status" data-fstatus>${esc(f.placed ? t("{n} fastener placed. Click more holes, or ✓ to finish.|{n} fasteners placed. Click more holes, or ✓ to finish.", { n: f.placed }) : t("Click the cylindrical face of a hole near the end the fastener goes in."))}</p>`
+      + `<p class="pm-help" role="status" data-fstatus>${esc(f.placed ? t("{n} part placed. Click more holes, or ✓ to finish.|{n} parts placed. Click more holes, or ✓ to finish.", { n: f.placed }) : info.fit ? t("Click the cylindrical face of a hole near the end the part goes in.") : t("Insert it without a hole, then mate it."))}</p>`
       + `<button class="btn small" data-a="insert">${esc(t("Insert without a hole"))}</button>`;
     pm.querySelector("[data-a=ok]")!.addEventListener("click", () => this.closeTools());
     pm.querySelector("[data-a=insert]")!.addEventListener("click", () => this.insertFastener());
+    pm.querySelector<HTMLInputElement>("[data-a=auto]")?.addEventListener("change", e => {
+      f.auto = (e.target as HTMLInputElement).checked;
+      try { localStorage.setItem("mc:toolboxAuto", f.auto ? "1" : "0"); } catch { /* per browser only */ }
+    });
     pm.querySelectorAll<HTMLSelectElement>("select[data-f]").forEach(sel => sel.addEventListener("change", () => this.setFastener({ [sel.dataset.f!]: sel.dataset.f === "length" ? Number(sel.value) : sel.value })));
   }
 
@@ -762,24 +783,25 @@ export class AsmController {
     const mates: Mate[] = [], left: typeof this.autoMates = [];
     const count: Record<string, number> = {};
     const named = (type: MateType) => { count[type] = (count[type] ?? (this.doc!.mates ?? []).filter(m => m.type === type).length) + 1; return `${MATE_LABEL[type]}${count[type]}`; };
-    const pair = (a: MateRef, b: MateRef, ga: Geo, gb: Geo) => {
+    const pair = (a: MateRef, b: MateRef, ga: Geo, gb: Geo, align: "anti" | "aligned" = "anti") => {
       const type: MateType = ga.k === "axis" && gb.k === "axis" ? "concentric" : "coincident";
-      mates.push({ id: uid("m_"), name: named(type), type, a, b, ...(type === "coincident" && ga.k === "plane" && gb.k === "plane" ? { align: "anti" as const } : {}) });
+      mates.push({ id: uid("m_"), name: named(type), type, a, b, ...(type === "coincident" && ga.k === "plane" && gb.k === "plane" ? { align } : {}) });
     };
     for (const q of this.autoMates) {
       const c = this.comp(q.comp), geo = c && this.geo.get(c.part);
       if (!c) continue;
       if (!geo) { left.push(q); continue; }
       if ("hole" in q) {
-        // The fastener's axis (its smallest cylinder on Z) and its seat (the flat face on z = 0 facing -Z).
-        let axis: string | null = null, r = Infinity, seat: string | null = null;
+        // The part's axis (its smallest cylinder on Z) and its seat: the flat face on z = 0 facing -Z, or,
+        // for parts that go in flush, the top face on z = 0 facing +Z (aligned with the hole's face).
+        let axis: string | null = null, r = Infinity, seat: string | null = null, flush: string | null = null;
         for (const [name, g] of geo) {
           if (g.k === "axis" && Math.abs(g.d[2]) > 0.999 && Math.hypot(g.p[0], g.p[1]) < 1e-6 && g.r < r) { axis = name; r = g.r; }
-          if (g.k === "plane" && g.n[2] < -0.999 && Math.abs(g.p[2]) < 1e-6) seat = name;
+          if (g.k === "plane" && Math.abs(g.p[2]) < 1e-6) { if (g.n[2] < -0.999) seat = name; else if (g.n[2] > 0.999) flush = name; }
         }
-        const ga = this.worldGeo(q.hole.axis), gs = this.worldGeo(q.hole.seat);
+        const ga = this.worldGeo(q.hole.axis), gs = this.worldGeo(q.hole.seat), face = seat ?? flush;
         if (axis && ga) pair(q.hole.axis, { comp: c.id, face: axis }, ga, geo.get(axis)!);
-        if (seat && gs) pair(q.hole.seat, { comp: c.id, face: seat }, gs, geo.get(seat)!);
+        if (face && gs) pair(q.hole.seat, { comp: c.id, face }, gs, geo.get(face)!, seat ? "anti" : "aligned");
         continue;
       }
       const tc = this.comp(q.target), tgeo = tc && this.geo.get(tc.part);
@@ -1535,6 +1557,24 @@ export class AsmController {
     }
   }
 
+  /**
+   * The McMaster-Carr catalogue in a new tab (FR-ASM-028). Their terms allow downloading a part's model to
+   * decide on and buy it, not fetching or framing their site, so the user downloads the 3-D STEP file there
+   * and drops it here.
+   */
+  openMcMaster() {
+    window.open("https://www.mcmaster.com/", "_blank", "noopener,noreferrer");
+    toast(t("Download a part's 3-D STEP file from {vendor} and drop it on the assembly.", { vendor: MCMASTER }));
+  }
+
+  /** Dropped files (FR-ASM-028): parts and STEP/IGES/BREP models become components, one after another. */
+  async dropFiles(files: File[]) {
+    for (const f of files) {
+      const src = await this.readSource(f);
+      if (src && this.doc) this.insertPart(src.pd, f.name, src.asm);
+    }
+  }
+
   /** A file as a component source: a part, an assembly (sub-assembly) or a foreign model as an imported part. */
   private async readSource(f: File): Promise<{ pd: PartDoc; asm?: AsmDoc } | null> {
     try {
@@ -1552,6 +1592,10 @@ export class AsmController {
         if (!r.faces) { toast(t("No faces or solids were found in the file."), true); return null; }
         const pd = newPart(f.name.replace(/\.[^.]+$/, ""));
         pd.features.push({ id: "i", type: "import", name: "Imported1", file: f.name, brep: r.brep, ...(r.solids ? {} : { heal: true, tol: { v: 0.1 } }) });
+        // A McMaster-Carr download keeps its part number and a link to buy it.
+        const head = /\.(step|stp)$/i.test(f.name) ? new TextDecoder().decode(await f.slice(0, 65536).arrayBuffer()) : "";
+        const v = mcmasterPart(f.name, head);
+        if (v) { tagVendor(pd, v); toast(t("{vendor} part {number}: the BOM lists it with a link to buy it.", { vendor: v.vendor, number: v.number })); }
         return { pd };
       }
       toast(t("Insert a MöbiusCAD part or assembly, or a STEP, IGES or BREP model."), true);
@@ -2074,7 +2118,8 @@ export class AsmController {
     const sep = `<div class="mc-sep"></div>`;
     // Assembly tab of the command bar (FR-UI-010): components, mates and moves, patterns and cuts, explode and motion, checks.
     $("#asm-tools").innerHTML = g(t("Components"), b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
-        + b("fastener", t("Fasteners"), t("Fastener library: ISO screws, nuts and washers, placed on a hole"), false, !!this.fastening)) + sep
+        + b("fastener", t("Toolbox"), t("Toolbox: standard screws, nuts, washers, pins, keys and bearings, placed on a hole"), false, !!this.fastening)
+        + b("mcmaster", t("McMaster-Carr"), t("Open the McMaster-Carr catalogue. Download a part's 3-D STEP file there and drop it on the assembly: it comes in with its part number and a link to buy it."))) + sep
       + g(t("Mate"), b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), n0 < 2, !!this.mating)
         + b("move", t("Move component"), t("Move or rotate the selected component (or drag it in the view)"), !sel || !!sel.fixed)
         + b("fix", sel?.fixed ? t("Float") : t("Fix"), t("Fix or float the selected component"), !sel)) + sep
@@ -2107,6 +2152,7 @@ export class AsmController {
     if (c === "insert") this.insertComponent();
     else if (c === "afeat") { if (this.featuring) this.closeTools(); else this.startFeature(); }
     else if (c === "fastener") { if (this.fastening) this.closeTools(); else this.startFasteners(); }
+    else if (c === "mcmaster") this.openMcMaster();
     else if (c === "mate") { if (this.mating) this.cancelMate(); else this.startMate(); }
     else if (c === "pattern") { if (this.patterning) this.closeTools(); else this.startPattern(); }
     else if (c === "explode") { if (this.exploding) this.closeTools(); else this.startExplode(); }
@@ -2266,6 +2312,7 @@ export class AsmController {
       [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
       [t("Replace component…"), () => this.replaceComponent(c.id)],
+      ...((v => (v ? [[t("Buy at {vendor}", { vendor: v.vendor }), () => window.open(v.url, "_blank", "noopener,noreferrer")] as [string, () => void]] : []))(vendorOf(this.doc?.parts[c.part]?.doc))),
       ...(this.doc?.parts[c.part]?.link ? [[t("Embed in the assembly"), () => this.setLink(c.part, null)], [t("Update links…"), () => this.updateLinks()]] as [string, () => void][]
         : [[t("Link to file…"), () => this.linkComponent(c.id)] as [string, () => void]]),
       [t("Delete"), () => void this.deleteComponent(c.id)],
@@ -2547,6 +2594,7 @@ const AI = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill=
 const ASM_ICONS: Record<string, string> = {
   insert: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M8 7v4M6 9h4"/>'),
   fastener: AI('<path d="M5 2.5h6v3H5z"/><path d="M6.5 5.5v8M9.5 5.5v8M6.5 7.5l3 1M6.5 10l3 1"/>'),
+  mcmaster: AI('<path d="M2 3h2l1.6 7.5h6.4L13.5 5H5"/><circle cx="6.5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/>'),
   mate: AI('<path d="M2 10h5v4H2zM9 2h5v4H9z"/><path d="M7 10 9 6"/>'),
   move: AI('<path d="M8 1.5v13M1.5 8h13M8 1.5 6.5 3M8 1.5 9.5 3M8 14.5 6.5 13M8 14.5 9.5 13M1.5 8 3 6.5M1.5 8 3 9.5M14.5 8 13 6.5M14.5 8 13 9.5"/>'),
   fix: AI('<path d="M5 7V5a3 3 0 0 1 6 0v2"/><path d="M3.5 7h9v7h-9z"/>'),
