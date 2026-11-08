@@ -2996,7 +2996,7 @@ try {
     await ctx.close();
   }
 
-  // --- Part modelling 1.154.0: conic, parabola and equation driven curve (FR-SK-021) ---
+  // --- Part modelling 1.157.0: conic, parabola and equation driven curve (FR-SK-021) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3033,7 +3033,7 @@ try {
     await mp.keyboard.press("Escape");
     const con = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.find(e => e.kind === "conic"); return { rho: c?.rho, pts: c?.pts.length, lines: ed.sk.ents.filter(e => e.t === "line").length, ok: ed.info.status }; });
     check(fly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
-      `model 1.154: Conic from the Circle menu: start, end, top vertex, rho from the fourth click (${fly}, ${picked}, ${label}, ${JSON.stringify(con)})`);
+      `model 1.157: Conic from the Circle menu: start, end, top vertex, rho from the fourth click (${fly}, ${picked}, ${label}, ${JSON.stringify(con)})`);
     // The panel edits rho; the conic region extrudes exactly (rational quadratic edge).
     await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); ed.select([ed.sk.ents.find(e => e.kind === "conic").id]); window.__sv.modeller.renderPanel(); });
     await mp.waitForSelector("#mc-pm [data-cq=rho]");
@@ -3047,7 +3047,7 @@ try {
     const vol = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0 }; });
     // Area under the rational quadratic (0,0) (20,30) (40,0) with w = 0.6/0.4, by many samples.
     const want = (() => { const w = 1.5, n = 20000; let a = 0, prev = [0, 0]; for (let i = 1; i <= n; i++) { const t = i / n, u = 1 - t, D = u * u + 2 * w * u * t + t * t; const q = [(2 * w * u * t * 20 + t * t * 40) / D, (2 * w * u * t * 30) / D]; a += (prev[0] * q[1] - q[0] * prev[1]) / 2; prev = q; } return Math.abs(a) * 5; })();
-    check(rho2 === 0.6 && vol.ok && Math.abs(vol.v - want) < want * 1e-4, `model 1.154: rho 0.6 from the panel; the conic region extrudes to ${want.toFixed(2)} mm³ (${rho2}, ${JSON.stringify(vol)})`);
+    check(rho2 === 0.6 && vol.ok && Math.abs(vol.v - want) < want * 1e-4, `model 1.157: rho 0.6 from the panel; the conic region extrudes to ${want.toFixed(2)} mm³ (${rho2}, ${JSON.stringify(vol)})`);
     // Sketch 2: a parabola by focus and vertex, and an equation driven curve from the panel.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: 100, y: 100 }] }); }));
     await idle();
@@ -3057,7 +3057,7 @@ try {
     // Focus (20, -8), vertex (20, -12): f = 4; ends over x = 10 and x = 35 → (10, -5.75), (35, 2.0625); tangents meet at (22.5, -21.375).
     await click([20, -8]); await click([20, -12]); await click([10, -15]); await click([35, -15]);
     const par = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "parabola"); return c ? c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" ") : ""; });
-    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.154: parabola from focus, vertex and two ends (${par})`);
+    check(par === "10,-5.75 22.5,-21.375 35,2.063", `model 1.157: parabola from focus, vertex and two ends (${par})`);
     await mp.click('#mc-tools [data-fly="line"]');
     const lfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.click("#mc-menu button:nth-child(3)");
@@ -3077,8 +3077,8 @@ try {
     await mp.click("#mc-pm [data-cq=add]");
     const eq = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "eqn"); return c ? { ends: c.pts.map(id => [P(id).x, P(id).y].map(v => Math.round(v * 1000) / 1000).join(",")).join(" "), fixes: sk.rels.filter(r => r.t === "fix").length, sel: [...ed.selection][0] === c.id, ok: ed.info.status, panel: !!document.querySelector("#mc-pm [data-cq=y]") } : null; });
     check(lfly === "Line|Spline|Equation driven curve" && eq && eq.ends === "-20,0 -40,0" && eq.fixes === 2 && eq.sel && eq.ok === "ok" && eq.panel,
-      `model 1.154: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
-    check(ruAdd === "Добавить кривую", `model 1.154: Add curve in Russian (${ruAdd})`);
+      `model 1.157: equation driven curve x(t), y(t) added from the panel with fixed ends (${lfly}, ${JSON.stringify(eq)})`);
+    check(ruAdd === "Добавить кривую", `model 1.157: Add curve in Russian (${ruAdd})`);
     await ctx.close();
   }
 
@@ -5427,16 +5427,51 @@ try {
       return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
-    let boxed = { err: "no track" };
+    let boxed = { err: "no track" }, stretched = { err: "no track" };
     if (pose.multi) {
       const laneEl = mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"]`);
       await laneEl.scrollIntoViewIfNeeded();
-      const lane = await laneEl.boundingBox();
-      await mp.mouse.move(lane.x + 1, lane.y + 1);
+      let lane = await laneEl.boundingBox();
+      const boxAll = async () => {
+        await laneEl.scrollIntoViewIfNeeded();
+        lane = await laneEl.boundingBox();
+        await mp.mouse.move(lane.x + 1, lane.y + 1);
+        await mp.mouse.down();
+        await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.up();
+      };
+      // Stretch: the three keys (frames 1, 46, 60) at a 50 % time scale stretch about the first one; Alt+dragging the last
+      // one to the end of the track stretches them back; a plain click then a Ctrl+drag of the first key copies it to 1 s.
+      const frames = () => mp.evaluate(() => { const m = window.__sv.motion; return m.study.tracks.find(k => k.kind === "pose").keys.map(k => Math.round(k.t * m.study.fps)); });
+      // The panel under the timeline changes with the selection, so the track is measured again before each drag.
+      const keyBox = async i => { await laneEl.scrollIntoViewIfNeeded(); lane = await laneEl.boundingBox(); return mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"] .mo-key`).nth(i).boundingBox(); };
+      await boxAll();
+      const scaleField = await mp.locator('#motion [data-p="scale"]').count();
+      await mp.locator('#motion [data-p="scale"]').fill("50");
+      await mp.locator('#motion [data-p="scale"]').press("Enter");
+      const half = await frames();
+      const k2 = await keyBox(2);
+      await mp.keyboard.down("Alt");
+      await mp.mouse.move(k2.x + k2.width / 2, k2.y + k2.height / 2);
       await mp.mouse.down();
-      await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
-      await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.move(lane.x + lane.width - 1, k2.y + k2.height / 2, { steps: 6 });
       await mp.mouse.up();
+      await mp.keyboard.up("Alt");
+      const back = await frames();
+      let k0 = await keyBox(0);
+      await mp.mouse.click(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      k0 = await keyBox(0);
+      await mp.keyboard.down("Control");
+      await mp.mouse.move(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      await mp.mouse.down();
+      await mp.mouse.move(lane.x + lane.width / 2, k0.y + k0.height / 2, { steps: 6 });
+      await mp.mouse.up();
+      await mp.keyboard.up("Control");
+      const copied = await frames();
+      const nSel = await mp.locator("#motion .mo-key.sel").count(), ghosts = await mp.locator("#motion .mo-ghost").count();
+      stretched = { scaleField, half, back, copied, nSel, ghosts };
+      await boxAll();
       boxed = await mp.evaluate(() => {
         const n = document.querySelectorAll("#motion .mo-key.sel").length, boxGone = !document.querySelector(".mo-box");
         document.querySelector("#motion .mo-key.sel")?.focus();
@@ -5447,8 +5482,12 @@ try {
     await mp.click('#motion [data-mo="close"]');
     const mu = pose.multi;
     check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
-      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 3 && boxed.boxGone && boxed.left === 0,
+      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 4 && boxed.boxGone && boxed.left === 0,
       `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
+    const st = stretched;
+    check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
+      && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
+      `motion study: a time scale and Alt+drag stretch selected keys, Ctrl+drag copies a key (FR-FT-122) (${JSON.stringify(st)})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
