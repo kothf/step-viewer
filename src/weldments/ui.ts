@@ -414,6 +414,21 @@ function rowsOf(items: CutItem[], density: number) {
   });
 }
 
+/**
+ * The Cut list folder of the Features tree (SolidWorks' "Cut list"): one row per item with its quantity;
+ * a click selects `cut:<i>`, which lights up the item's bodies.
+ */
+export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string): string {
+  if (!items?.length) return "";
+  let html = row("folder:cutlist", open ? "▾" : "▸", t("Cut list ({n})", { n: items.length }), "", " ft-bodies", ` aria-expanded="${open}"`);
+  if (!open) return html;
+  rowsOf(items, STEEL).forEach((r, i) => {
+    const len = r.length ? ` × ${r.length} ${units.current}` : "";
+    html += row(`cut:${i}`, items[i].kind === "member" ? "▭" : items[i].kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})`, "", " infolder ft-body");
+  });
+  return html;
+}
+
 /** The weldment cut list as CSV (English, like the other exports; lengths in mm). */
 export function cutListCsv(items: CutItem[], density: number): string {
   const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
