@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.203.0] - 2026-11-08
+## [1.206.0] - 2026-11-08
 
 ### Added
 
 - **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
+
+## [1.205.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Interference** check, as SolidWorks' Results → Interference Detection. It poses every frame of the study and lists the pairs of components that enter one another with the times (click a time to go there), marks those times in red on the ruler and saves the list as CSV. Pairs that already touch at the start, such as a pin in its hole, are left out unless **Treat coincidence as interference** is ticked (FR-FT-122).
 
 ## [1.202.0] - 2026-11-08
 
@@ -1489,8 +1495,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.203.0...HEAD
-[1.203.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.203.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.206.0...HEAD
+[1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0
+[1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
 [1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
 [1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
