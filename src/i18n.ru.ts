@@ -2972,6 +2972,8 @@ export const RU: Record<string, string> = {
   "Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2. With tangent propagation it follows on round corners.": "Щёлкните плоские или цилиндрические грани: шов идёт вдоль прямых и круговых рёбер, где набор 1 встречается с набором 2. С распространением по касательной он продолжается по скруглённым углам.",
   "Drag the arrow to change the thickness; click to type it": "Перетащите стрелку, чтобы изменить толщину; щёлкните, чтобы ввести значение",
   "Drag the arrow to change the flange length; click to type it": "Перетащите стрелку, чтобы изменить длину кромки; щёлкните, чтобы ввести её",
+  "Corner gap": "Зазор в углу",
+  "Flanges on edges that meet at a corner run on and are mitred, with this gap between them.": "Кромки на рёбрах, сходящихся в углу, продлеваются и стыкуются под углом с этим зазором между ними.",
   "Click two flat faces that meet at a corner, such as a beam and a post.": "Щёлкните две плоские грани, сходящиеся в углу, например балку и стойку.",
   "Corner treatment": "Обработка углов",
   "Corner type": "Тип угла",

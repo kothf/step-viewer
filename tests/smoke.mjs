@@ -8251,6 +8251,23 @@ try {
     const hdxf = (await import("node:fs")).readFileSync(await hdl.path(), "utf8");
     check(!hv.bad && hv.circles.length === 1 && Math.abs(hv.circles[0] - 4) < 1e-6 && Math.abs(hv0 - hv.v - Math.PI * 16 * T) < 1e-3 && (hdxf.match(/\nCIRCLE\n/g) ?? []).length === 1,
       `sheet metal: a hole cut after the sheet metal features shows in the flat pattern and its DXF (${JSON.stringify({ hv0, hv, circles: (hdxf.match(/\nCIRCLE\n/g) ?? []).length })})`);
+    // Edge flanges on the plate's front and right edges (they meet at a corner): mitred, with the corner gap in the panel.
+    await mp.evaluate(() => window.__sv.model.store.change("Mitre", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "fm", type: "smflange", name: "Edge-Flange9", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }, { faces: [`${b.id}:p0:top`, `${b.id}:p0:l2`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("fm"));
+    await settle();
+    const mt = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), mitres: (l.sheet?.panels ?? []).filter(p => p.outer.some(x => x.ent === "miter")).length, gap: document.querySelector('#mc-pm input[data-num="gap"]')?.value };
+    });
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(!mt.bad && mt.mitres === 2 && mt.size[0] === 100 && mt.size[1] === 50 && mt.size[2] === 20 && mt.gap === "0.1",
+      `sheet metal: edge flanges on two edges meeting at a corner are mitred, corner gap in the panel (${JSON.stringify(mt)})`);
     await ctx.close();
   }
 

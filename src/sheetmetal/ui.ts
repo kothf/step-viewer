@@ -148,7 +148,9 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
         + group(t("Custom bend radius"), `<label class="chk pm-chk"><input type="checkbox" data-sm="customR"${custom ? " checked" : ""} />${esc(t("Use custom bend radius"))}</label>` + (f.radius ? numField("radius", t("Bend radius"), f.radius, "length") : ""))
         + group(t("Custom width"), `<label class="chk pm-chk"><input type="checkbox" data-sm="offs"${offs ? " checked" : ""} />${esc(t("Offset from the edge ends"))}</label>`
           + (f.off0 ? numField("off0", t("Start offset"), f.off0, "length") : "") + (f.off1 ? numField("off1", t("End offset"), f.off1, "length") : "")
-          + (offs ? help(t("A flange shorter than its edge gets bend reliefs.")) : "")),
+          + (offs ? help(t("A flange shorter than its edge gets bend reliefs.")) : ""))
+        + (f.edges.length > 1 && !offs ? group(t("Corners"), numField("gap", t("Corner gap"), f.gap ?? { v: 0.1 }, "length")
+          + help(t("Flanges on edges that meet at a corner run on and are mitred, with this gap between them."))) : ""),
     };
   }
   if (f.type === "smhem") {
