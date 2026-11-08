@@ -2,12 +2,13 @@
 // demand. Projections are cached by direction; asking again for one in flight
 // shares the request.
 import { compile } from "../kernel/client";
-import type { Projection, V3, ViewDir } from "../kernel/drawing";
+import type { Projection, Topo, V3, ViewDir } from "../kernel/drawing";
+import type { HoleInfo, ModelItem } from "./items";
 import type { PartDoc } from "../model/types";
 import DrawingWorker from "./drawing.worker?worker";
 import { dirKey } from "./views";
 
-export interface ModelFacts { box: [V3, V3]; volume: number }
+export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[] }
 
 export class DrawingKernel {
   private worker: Worker | null = null;
@@ -60,7 +61,7 @@ export class DrawingKernel {
     this.gen++;
     this.cache.clear();
     this.inflight.clear();
-    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume }));
+    this.loaded = this.start().then(() => this.call<ModelFacts>({ type: "load", ...src })).then(r => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes }));
     return this.loaded;
   }
 

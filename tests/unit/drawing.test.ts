@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { project, bounds } from "../../src/kernel/drawing";
+import { project, bounds, type V3 } from "../../src/kernel/drawing";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
 import { occ } from "./occ";
 
@@ -146,4 +146,56 @@ test("detail clipping and section hatching", async () => {
   const sh = (letters: string[]) => [{ id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: letters.map((l, i) => ({ id: `v${i}`, name: "", x: 0, y: 0, letter: l })) }];
   assert.equal(nextLetter(sh([])), "A");
   assert.equal(nextLetter(sh(["A", "B", "C", "D", "E", "F", "G", "H"])), "J");
+});
+
+test("annotations: topology names, centre marks, dimensions, hole callout, model items", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { centreMarks, dimGeo, edgeRef, fmtNum, holeText, placeItems, projector, refEdge, dimText } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 100, 60);
+  s1.dims = [{ id: "d1", name: "D1", t: "hdistance", e: ["s1p1", "s1p2"], val: { v: 100 } }, { id: "d2", name: "D2", t: "vdistance", e: ["s1p2", "s1p3"], val: { v: 60 } }];
+  const hole: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { face: { name: "f1:end" } }, rels: [], dims: [{ id: "d3", name: "D3", t: "diameter", e: ["c1"], val: { v: 10 } }],
+    ents: [{ id: "c0", t: "point", x: 10, y: 0 }, { id: "c1", t: "circle", c: "c0", r: 5 }] };
+  const d = doc([s1, { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    hole, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }]);
+  const r = m.evaluate(d);
+  const oc = await occ();
+  const topo = topology(oc, r.body!.shape, r.body!.names);
+  const circles = topo.edges.filter(e => e.t === "c" && Math.abs(e.r! - 5) < 1e-9);
+  assert.ok(circles.length >= 2 && circles.every(e => e.k.includes("f2")), `hole circles named by their faces: ${circles.map(e => e.k)}`);
+  const cyl = topo.cyls.filter(c => Math.abs(c.r - 5) < 1e-9);
+  assert.ok(cyl.length >= 1 && Math.abs(cyl[0].v1 - cyl[0].v0 - 20) < 1e-6 && Math.abs(cyl.reduce((t, c) => t + c.sp, 0) - 2 * Math.PI) < 1e-6);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const view = (o: "top" | "front") => ({ id: o, name: o, orient: o, x: 0, y: 0 });
+  const top = projector(ORIENTS.top), front = projector(ORIENTS.front);
+  const cmTop = centreMarks(view("top"), pl, topo, top.P, top.n), cmFront = centreMarks(view("front"), pl, topo, front.P, front.n);
+  assert.equal(cmTop.length, 2, "a centre mark (two lines) on the hole seen from above");
+  assert.equal(cmFront.length, 1, "a centreline on the hole seen from the front");
+  assert.ok(cmFront[0].t === "l" && Math.abs(cmFront[0].p[0] - 10) < 1e-9 && Math.abs(cmFront[0].p[1] + 2) < 1e-9 && Math.abs(cmFront[0].p[3] - 22) < 1e-9);
+  // A horizontal dimension between the two ends of the front bottom edge, and the hole's diameter.
+  const bottom = topo.edges.find(e => e.t === "l" && Math.abs(e.a[2]) < 1e-9 && Math.abs(e.b[2]) < 1e-9 && Math.abs(e.a[1] + 30) < 1e-9 && Math.abs(e.b[1] + 30) < 1e-9)!;
+  const dim = { id: "x", t: "dim" as const, view: "front", k: "h" as const, refs: [edgeRef(bottom, "e")], pos: [0, -10] as [number, number] };
+  assert.equal(dimGeo(dim, front.P, topo)!.value, 100);
+  const dia = { id: "y", t: "dim" as const, view: "top", k: "dia" as const, refs: [edgeRef(circles[0], "e")], pos: [20, 10] as [number, number], tol: { t: "fit" as const, fit: "H7" } };
+  assert.equal(dimText(dia, dimGeo(dia, top.P, topo)!, ",").main, "Ø10H7");
+  assert.equal(fmtNum(12.5, undefined, ","), "12,5");
+  assert.equal(fmtNum(12, 2), "12.00");
+  // After the part gets wider the edge is found again by its faces' names, and measures anew.
+  const s1w = structuredClone(s1); (s1w.ents[1] as { x: number }).x = 70; (s1w.ents[2] as { x: number }).x = 70;
+  const r2 = m.evaluate(doc([s1w, ...d.features.slice(1)]));
+  const topo2 = topology(oc, r2.body!.shape, r2.body!.names);
+  assert.ok(refEdge(dim.refs[0], topo2));
+  assert.equal(dimGeo(dim, front.P, topo2)!.value, 120);
+  const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
+  assert.deepEqual(holeText(circles[0], ctx), ["Ø10 THRU"]);
+  // Model items: the sketch's 100 and 60 go to the top view, the depth 20 to the front view, the Ø10 to the top view; no duplicates the second time.
+  const { items } = modelItems(d, r.frames, r.sketches);
+  assert.deepEqual(items.map(i => `${i.src}=${i.value}`).sort(), ["f1:depth=20", "s1:d1=100", "s1:d2=60", "s2:d3=10"]);
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [view("front"), { ...view("top"), id: "top" }] as never[], annots: [] as never[] };
+  let n = 0;
+  const placed = placeItems(sheet, items, () => [-50, -30, 50, 30], () => `a${n++}`);
+  assert.deepEqual(placed.map(a => `${a.src}@${a.view}:${a.k}`).sort(), ["f1:depth@front:v", "s1:d1@top:h", "s1:d2@top:v", "s2:d3@top:dia"]);
+  assert.equal(placeItems({ ...sheet, annots: placed as never[] }, items, () => [-50, -30, 50, 30], () => "z").length, 0);
 });
