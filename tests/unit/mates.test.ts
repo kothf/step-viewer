@@ -40,6 +40,17 @@ test("AT-P4-1: concentric + coincident leaves the pin one rotation", () => {
   assert.equal(r2.dof.q, 0);
 });
 
+test("axes fitted to a tessellation (off by 1e-5 rad) still solve with flat-face mates (exam bug 28)", () => {
+  const tilt = 1.5e-5, saved = geos.pin.shank;
+  geos.pin.shank = { k: "axis", p: [0, 0, 0], d: [Math.sin(tilt), 0, Math.cos(tilt)], r: 3 };
+  try {
+    const r = solve({ doc: doc([conc, coin]), geo, size: 400 });
+    assert.ok(r.ok, JSON.stringify(r.bad));
+    const at = applyPoint(r.tfs.q, [0, 0, 10]);
+    assert.ok(Math.abs(at[0] - 20) < 0.01 && Math.abs(at[1] - 10) < 0.01 && Math.abs(at[2] - 5) < 0.01, String(at));
+  } finally { geos.pin.shank = saved; }
+});
+
 test("AT-P4-2: moving the hole in the part moves the pin", () => {
   const d = doc([conc, coin]);
   const r = solve({ doc: d, geo, size: 100 });

@@ -4636,7 +4636,7 @@ try {
     const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
     await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "Cube 10x10.stp")), cube);
     await shown(3);
-    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent }));
+    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent, exact: window.__sv.viewer.parts[0].data.faces.filter(f => f.surface === "plane").length }));
     // Move the second plate by typing its pose: X = 100, 90° about Z.
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
@@ -4665,7 +4665,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined" && a0.exact > 0
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -7500,6 +7500,14 @@ try {
     for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
     const back = await cam();
     check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // A command button keeps focus after its click; the arrows still turn the view (exam bug 29).
+    await np.focus("#lang-btn");
+    const cb0 = await cam();
+    await np.keyboard.press("ArrowLeft"); await settleCam();
+    const cb1 = await cam();
+    check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    await np.evaluate(() => document.activeElement?.blur());
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();

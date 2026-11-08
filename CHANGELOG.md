@@ -11,6 +11,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Intermittent fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' Intermittent weld option: welds of a set length every pitch (centre to centre) from the start of each run of edges, following round corners; **Staggered** starts every other run half a pitch on, so welds on two sides of a joint alternate. The cut list lists intermittent and staggered welds as their own rows with the weld length and pitch, and the length is the total weld actually laid.
 
+## [1.161.0] - 2026-11-08
+
+### Added
+
+- **Hole position table**: the Hole panel lists every hole centre with typed X/Y positions. On a face square to a world axis the columns are the two world axes in that face, so typed positions match the drawing.
+
+### Fixed
+
+Found while modelling the Leuenberger steam engine through the UI only:
+
+- Assemblies: placed parts never got exact geometry (their faces lost the face type when moved), so axes and radii came from the mesh and valid mates were refused as "over-defined". Parts now get exact faces again, and a solve that stalls within 1e-5 of the model size (mesh-only components) counts as solved.
+- Revolve accepts a profile line lying on the axis as the axis, as SolidWorks does.
+- Hole: counterbore, countersink and counterdrill sizes still at their automatic values follow a typed diameter (a Ø3.2 countersink kept the M6 head). Clicking a curved face says "Pick a flat face or a plane: this one is curved."
+- Sketcher: a typed line chain ending on the sketch origin joins it; typed sizes place dimensions clear of the geometry; sketch fillets work on construction corners and virtual sharps; tangency at a shared end counts once, so a fully dimensioned slot shows 0 DOF.
+- The arrow keys turn the view while a command button has focus (they did nothing after clicking Mate or Insert).
+
 ## [1.160.0] - 2026-11-08
 
 ### Added
@@ -1311,7 +1327,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.163.0...HEAD
-[1.163.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.163.0
+[1.163.0]: https://github.com/kothf/step-viewer/compare/v1.161.0...v1.163.0
+[1.161.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.161.0
 [1.160.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.160.0
 [1.158.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.158.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
