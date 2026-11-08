@@ -20,7 +20,8 @@ import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snaps
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId } from "./types";
 import { parseXyz } from "./curves";
-import type { FeatureFolder, ThreadFeature, CurveFeature, SweepSurfFeature, SweepPath,
+import { segPoints, solve3d } from "../sketch/sketch3d";
+import type { FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
@@ -130,7 +131,7 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
 const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -676,6 +677,9 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
+    } else if (type === "sketch3d") {
+      draft = { id, type: "sketch3d", name: nextName(d, "sketch3d"), pts: [], segs: [], rels: [], dims: [] } satisfies Sketch3dFeature;
+      this.sk3 = { id, tool: "line", plane: "XY", anchor: null, spline: null, sel: [] };
     } else if (type === "xyzcurve" || type === "compcurve" || type === "projcurve") {
       const cf: CurveFeature = { id, type: "curve", name: nextName(d, "curve"), kind: type === "xyzcurve" ? "xyz" : type === "compcurve" ? "composite" : "projected" };
       if (cf.kind === "xyz") cf.pts = [[0, 0, 0], [20, 10, 20], [40, 0, 40]];
@@ -763,7 +767,7 @@ export class ModelController {
       return { id, type: "loft", name: nextName(d, "loft", cut), op: cut ? "cut" : "boss", profiles: profs.map(s => s.id) } satisfies LoftFeature;
     }
     // The last helix or 3D curve is the likely path (FR-FT-083/085).
-    const helix = d.features.slice(0, end).filter(f => (f.type === "helix" || f.type === "curve") && !f.suppressed).at(-1);
+    const helix = d.features.slice(0, end).filter(f => (f.type === "helix" || f.type === "curve" || f.type === "sketch3d") && !f.suppressed).at(-1);
     const profile = (sel && closed(sel) ? sel : null) ?? free.filter(closed).at(-1);
     const pathSk = free.filter(s => s !== profile && !closed(s)).at(-1);
     const sw: SweepFeature = { id, type: "sweep", name: nextName(d, "sweep", cut), op: cut ? "cut" : "boss" };
@@ -850,6 +854,7 @@ export class ModelController {
     if (f.type === "cpattern" && !f.axis) { toast(t("Pick an axis: a round edge or face, a straight edge or a reference axis."), true); return; }
     if ((f.type === "sweep" || f.type === "sweepsurf") && !f.path) { toast(t("Pick a path: a sketch, a helix or a curve."), true); return; }
     if (f.type === "sweepsurf" && !f.profile) { toast(t("Pick a profile sketch."), true); return; }
+    if (f.type === "sketch3d" && !f.segs.length) { toast(t("Draw at least one line or spline."), true); return; }
     if (f.type === "curve" && f.kind === "xyz" && (f.pts?.length ?? 0) < 2) { toast(t("A curve needs at least two different points."), true); return; }
     if (f.type === "curve" && f.kind === "composite" && !f.edges?.length) { toast(t("Pick the edges to join."), true); return; }
     if (f.type === "curve" && f.kind === "projected" && !f.sketch) { toast(t("Pick a sketch to project."), true); return; }
@@ -998,9 +1003,9 @@ export class ModelController {
       this.store!.change(show ? `Show ${f.name}` : `Hide ${f.name}`, d => { (d.features.find(x => x.id === id) as SketchFeature).hidden = !show; });
       return;
     }
-    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point" && f?.type !== "csys" && f?.type !== "helix" && f?.type !== "curve") return;
+    if (f?.type !== "plane" && f?.type !== "axis" && f?.type !== "point" && f?.type !== "csys" && f?.type !== "helix" && f?.type !== "curve" && f?.type !== "sketch3d") return;
     this.store!.change(f.hidden ? `Show ${f.name}` : `Hide ${f.name}`, d => {
-      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature | CsysFeature | HelixFeature | CurveFeature;
+      const g = d.features.find(x => x.id === id) as PlaneFeature | AxisFeature | PointFeature | CsysFeature | HelixFeature | CurveFeature | Sketch3dFeature;
       if (g.hidden) delete g.hidden; else g.hidden = true;
     });
   }
@@ -1328,6 +1333,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.draft.kind) this.pickFaceSet(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
+      else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
         if (m.focus === "axis") this.pickAxis(e);
         else { const r = this.pickRef(e); if (r) { m.draft.base = r; if (m.draft.mode === "angle" && !m.draft.axis) m.focus = "axis"; this.draftChanged(); } }
@@ -1403,6 +1409,13 @@ export class ModelController {
       if (m.editor.key(e)) { stop(); this.renderBar(); return; }
       if (k === "escape") { stop(); void this.cancel(); }
       return;
+    }
+    if (m.kind === "feature" && m.draft.type === "sketch3d") {
+      // 3D sketch (FR-SK-080): Tab turns the sketch plane, Esc ends the chain, Delete removes the selection.
+      const s3 = this.s3(m.draft);
+      if (k === "tab") { stop(); s3.plane = s3.plane === "XY" ? "YZ" : s3.plane === "YZ" ? "ZX" : "XY"; this.renderPanel(); this.drawDecor(); return; }
+      if (k === "escape" && (s3.anchor || s3.tool)) { stop(); if (s3.anchor) { s3.anchor = null; s3.spline = null; } else s3.tool = null; this.renderPanel(); this.drawDecor(); return; }
+      if ((k === "delete" || k === "backspace") && s3.sel.length) { stop(); this.delete3d(m.draft); return; }
     }
     if (m.kind === "feature" || m.kind === "plane" || m.kind === "props" || m.kind === "eq" || m.kind === "cfg") {
       if (k === "escape") { stop(); void this.cancel(); }
@@ -1791,7 +1804,7 @@ export class ModelController {
       const free = sketches.filter(s => !used.has(s.id) && !this.doc.features.some(g => absorbs(g, s.id)) && chain(s));
       const sel = this.selected ? sketches.find(s => s.id === this.selected && chain(s)) : undefined;
       const end = this.doc.rollback ?? this.doc.features.length;
-      const curve = this.doc.features.slice(0, end).filter(g => (g.type === "helix" || g.type === "curve") && !g.suppressed).at(-1);
+      const curve = this.doc.features.slice(0, end).filter(g => (g.type === "helix" || g.type === "curve" || g.type === "sketch3d") && !g.suppressed).at(-1);
       const profile = sel ?? (curve ? free.at(-1) : free.at(-2) ?? free.at(-1));
       if (!profile) { toast(t("Draw a profile sketch first: one chain of curves, open or closed."), true); return null; }
       const pathSk = free.filter(s => s !== profile).at(-1);
@@ -2207,6 +2220,7 @@ export class ModelController {
       for (let i = 0; i + 1 < pts.length; i++) pos.push(...pts[i], ...pts[i + 1]);
       this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
     }
+    this.draw3dSketches();
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
@@ -3143,7 +3157,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3455,7 +3469,7 @@ export class ModelController {
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
-      if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
+      if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
       items.push([t("Roll back to here"), () => this.setRollback(i)]);
@@ -3817,6 +3831,7 @@ export class ModelController {
           + `<p class="pm-help muted">${esc(t("For the axis, click a round edge or face, a straight edge, or a reference axis in the tree."))}</p>`;
       }
     }
+    if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
     if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
@@ -4117,6 +4132,7 @@ export class ModelController {
       });
     }
     if (f.type === "curve") this.bindCurvePanel(pm, f, unit, upd);
+    if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
@@ -4471,7 +4487,7 @@ export class ModelController {
     const orient = (o: "follow" | "normal" | undefined) => sel("orient", t("Profile orientation"), `<option value="follow"${o === "normal" ? "" : " selected"}>${esc(t("Follow path"))}</option><option value="normal"${o === "normal" ? " selected" : ""}>${esc(t("Keep normal constant"))}</option>`);
     if (f.type === "sweep" || f.type === "sweepsurf") {
       const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
-      const curves = this.doc.features.slice(0, at).filter(g => g.type === "helix" || g.type === "curve");
+      const curves = this.doc.features.slice(0, at).filter(g => g.type === "helix" || g.type === "curve" || g.type === "sketch3d");
       const closed = sketches.filter(sketchProfileOk);
       const pathCur = f.path ? pathKey(f.path) : "";
       const paths = opt("", t("None"), pathCur) + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), pathCur)).join("") + sketches.filter(s => s.id !== f.profile).map(s => opt(`s:${s.id}`, featureLabel(s.name), pathCur)).join("");
@@ -4493,6 +4509,231 @@ export class ModelController {
       + sel(`lp${f.profiles.length}`, t("Add profile"), skOpts(closed.filter(s => !f.profiles.includes(s.id)), "", "—"));
     return { title: f.op === "cut" ? t("Cut-Loft") : t("Loft"), body: group(t("Profiles"), rows + `<p class="pm-help muted">${esc(t("Profiles are joined in this order. Each is one closed region, usually on parallel planes."))}</p>`)
       + group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : "")) };
+  }
+
+  /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
+  private sk3: { id: string; tool: "line" | "spline" | null; plane: "XY" | "YZ" | "ZX"; anchor: string | null; spline: string | null; sel: string[] } = { id: "", tool: null, plane: "XY", anchor: null, spline: null, sel: [] };
+  private s3(f: Sketch3dFeature) {
+    if (this.sk3.id !== f.id) this.sk3 = { id: f.id, tool: f.segs.length ? null : "line", plane: "XY", anchor: null, spline: null, sel: [] };
+    return this.sk3;
+  }
+
+  /** A change to the 3D sketch, then a solve; a change that leaves the relations unsolvable is undone (FR-SK-080). */
+  private change3d(f: Sketch3dFeature, fn: () => void) {
+    const before = JSON.stringify({ pts: f.pts, segs: f.segs, rels: f.rels, dims: f.dims });
+    fn();
+    const r = solve3d(f);
+    if (!r.ok) {
+      Object.assign(f, JSON.parse(before));
+      toast(t("The relations and dimensions conflict; the change was undone."), true);
+    } else for (const p of f.pts) p.p = r.pts[p.id];
+    const s3 = this.s3(f);
+    s3.sel = s3.sel.filter(id => f.pts.some(p => p.id === id) || f.segs.some(g => g.id === id));
+    this.renderPanel();
+    this.draftChanged();
+  }
+
+  /** Where a click in the view puts a 3D sketch point: an existing point, a snap point, a face, else the sketch plane through the last point. */
+  private click3d(e: PointerEvent, f: Sketch3dFeature): { id?: string; p?: V3 } | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; };
+    const near = f.pts.find(p => { const [x, y] = scr(p.p); return Math.hypot(x - e.clientX, y - e.clientY) < 8; });
+    if (near) return { id: near.id };
+    const snap = this.host.snapAt?.(e.clientX, e.clientY);
+    if (snap) return { p: snap.point };
+    const face = this.host.faceAt(e.clientX, e.clientY);
+    if (face) return { p: face.point };
+    const s3 = this.s3(f);
+    const o = (s3.anchor && f.pts.find(p => p.id === s3.anchor)?.p) || [0, 0, 0];
+    const n = s3.plane === "XY" ? [0, 0, 1] : s3.plane === "YZ" ? [1, 0, 0] : [0, 1, 0];
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), v.camera);
+    const hit = rc.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...n), new THREE.Vector3(...o)), new THREE.Vector3());
+    if (!hit) return null;
+    const q: V3 = [hit.x, hit.y, hit.z];
+    // The point stays on the plane: round the in-plane coordinates to 0.01 mm.
+    return { p: q.map((c, i) => n[i] ? o[i] : Math.round(c * 100) / 100) as V3 };
+  }
+
+  private pick3d(e: PointerEvent, f: Sketch3dFeature) {
+    const s3 = this.s3(f);
+    if (!s3.tool) {
+      // Select: a point, else the nearest segment on screen.
+      const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = (p: V3) => { const q = new THREE.Vector3(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; };
+      let id = f.pts.find(p => { const [x, y] = scr(p.p); return Math.hypot(x - e.clientX, y - e.clientY) < 8; })?.id;
+      if (!id) {
+        let bd = 6;
+        for (const sg of f.segs) {
+          const line = segPoints(f, sg).map(scr);
+          for (let i = 0; i + 1 < line.length; i++) {
+            const [ax, ay] = line[i], [bx, by] = line[i + 1], ux = bx - ax, uy = by - ay, l2 = ux * ux + uy * uy || 1e-9;
+            const tt = Math.max(0, Math.min(1, ((e.clientX - ax) * ux + (e.clientY - ay) * uy) / l2));
+            const d = Math.hypot(e.clientX - ax - ux * tt, e.clientY - ay - uy * tt);
+            if (d < bd) { bd = d; id = sg.id; }
+          }
+        }
+      }
+      if (!id) { s3.sel = []; } else s3.sel = s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id];
+      this.renderPanel(); this.drawDecor();
+      return;
+    }
+    const at = this.click3d(e, f);
+    if (!at) return;
+    this.change3d(f, () => {
+      let pid = at.id;
+      if (!pid) { pid = uid("p"); f.pts.push({ id: pid, p: at.p! }); }
+      const a = s3.anchor;
+      if (a && a !== pid) {
+        if (s3.tool === "line") f.segs.push({ id: uid("l"), t: "line", pts: [a, pid] });
+        else {
+          const sg = s3.spline ? f.segs.find(x => x.id === s3.spline) : undefined;
+          if (sg) sg.pts.push(pid); else { const sid = uid("s"); f.segs.push({ id: sid, t: "spline", pts: [a, pid] }); s3.spline = sid; }
+        }
+      }
+      s3.anchor = pid;
+    });
+  }
+
+  /** Deletes the selected points (with the segments on them) and segments, and the relations and dimensions on them. */
+  private delete3d(f: Sketch3dFeature) {
+    const s3 = this.s3(f), sel = new Set(s3.sel);
+    this.change3d(f, () => {
+      const gone = f.segs.filter(g => sel.has(g.id) || g.pts.some(q => sel.has(q)));
+      f.segs = f.segs.filter(g => !gone.includes(g));
+      // Points of removed segments go too when nothing else uses them.
+      const used = new Set(f.segs.flatMap(g => g.pts)), loose = new Set(gone.flatMap(g => g.pts).filter(q => !used.has(q)));
+      f.pts = f.pts.filter(p => !sel.has(p.id) && !loose.has(p.id));
+      const ids = new Set([...f.pts.map(p => p.id), ...f.segs.map(g => g.id)]);
+      f.rels = f.rels.filter(r => r.e.every(x => ids.has(x)));
+      f.dims = f.dims.filter(d => d.e.every(x => ids.has(x)));
+      s3.sel = [];
+      if (s3.anchor && !ids.has(s3.anchor)) { s3.anchor = null; s3.spline = null; }
+    });
+  }
+
+  /** 3D sketches in the view: shown ones in the sketch colour, the one being edited with its points, selection and plane. */
+  private draw3dSketches() {
+    const m = this.mode, dark = document.documentElement.dataset.theme === "dark";
+    const end = this.doc.rollback ?? this.doc.features.length;
+    const editing = m.kind === "feature" && m.draft.type === "sketch3d" ? m.draft : null;
+    const list = this.doc.features.slice(0, end).filter((g): g is Sketch3dFeature => g.type === "sketch3d" && !g.suppressed && !g.hidden && g.id !== editing?.id);
+    const segPos = (f: Sketch3dFeature, only?: (id: string) => boolean) => {
+      const pos: number[] = [];
+      for (const sg of f.segs) { if (only && !only(sg.id)) continue; const q = segPoints(f, sg); for (let i = 0; i + 1 < q.length; i++) pos.push(...q[i], ...q[i + 1]); }
+      return pos;
+    };
+    for (const f of list) this.lines(segPos(f), dark ? 0x8ab4ff : 0x1d4ed8, 1.6);
+    if (!editing) return;
+    const s3 = this.s3(editing), sel = new Set(s3.sel);
+    this.lines(segPos(editing, id => !sel.has(id)), dark ? 0x8ab4ff : 0x1d4ed8, 2);
+    this.lines(segPos(editing, id => sel.has(id)), 0xf08c00, 3.5);
+    const ptsGeo = (list: V3[]) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(list.flat(), 3)); return g; };
+    const dots = (list: V3[], color: number, size: number) => {
+      if (!list.length) return;
+      const o = new THREE.Points(ptsGeo(list), new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, transparent: true }));
+      o.renderOrder = 2600;
+      this.decor.add(o);
+    };
+    dots(editing.pts.filter(p => !sel.has(p.id) && !p.fixed).map(p => p.p), dark ? 0xe5e7eb : 0x111827, 6);
+    dots(editing.pts.filter(p => !sel.has(p.id) && p.fixed).map(p => p.p), 0x16a34a, 7);
+    dots(editing.pts.filter(p => sel.has(p.id)).map(p => p.p), 0xf08c00, 8);
+    if (s3.tool) {
+      // The sketch plane through the last point: a dashed square.
+      const o = (s3.anchor && editing.pts.find(p => p.id === s3.anchor)?.p) || [0, 0, 0];
+      const [u, w]: [V3, V3] = s3.plane === "XY" ? [[1, 0, 0], [0, 1, 0]] : s3.plane === "YZ" ? [[0, 1, 0], [0, 0, 1]] : [[0, 0, 1], [1, 0, 0]];
+      const h = 25, c = (a: number, b: number) => o.map((x, i) => x + a * h * u[i] + b * h * w[i]);
+      const sq = [c(-1, -1), c(1, -1), c(1, 1), c(-1, 1)];
+      const pos: number[] = [];
+      for (let i = 0; i < 4; i++) pos.push(...sq[i], ...sq[(i + 1) % 4]);
+      this.lines(pos, 0xf08c00, 1, true);
+    }
+  }
+
+  /** PropertyManager for the 3D sketch: tools and plane, points, segments, relations and dimensions (FR-SK-080). */
+  private sk3Panel(f: Sketch3dFeature, group: (legend: string, inner: string) => string): { title: string; body: string } {
+    const s3 = this.s3(f), u = UNITS[units.current].f, sel = new Set(s3.sel);
+    const pIdx = (id: string) => f.pts.findIndex(p => p.id === id) + 1;
+    const segName = (id: string) => { const sg = f.segs.find(g => g.id === id); if (!sg) return "?"; const k = f.segs.filter(g => g.t === sg.t).indexOf(sg) + 1; return sg.t === "line" ? t("Line {n}", { n: k }) : t("Spline {n}", { n: k }); };
+    const entName = (id: string) => f.pts.some(p => p.id === id) ? `P${pIdx(id)}` : segName(id);
+    const tb = (id: string, label: string, on: boolean) => `<button class="btn small${on ? " primary" : ""}" data-s3t="${id}" aria-pressed="${on}">${esc(label)}</button>`;
+    const tools = `<div class="pm-rels">${tb("select", t("Select"), !s3.tool)}${tb("line", t("Line"), s3.tool === "line")}${tb("spline", t("Spline"), s3.tool === "spline")}${s3.anchor ? `<button class="btn small" data-s3a="end">${esc(t("End chain"))}</button>` : ""}</div>`
+      + `<label class="pm-field"><span>${esc(t("Sketch plane"))}</span><select data-s3p translate="no">${(["XY", "YZ", "ZX"] as const).map(p => `<option value="${p}"${p === s3.plane ? " selected" : ""}>${p}</option>`).join("")}</select></label>`
+      + `<p class="pm-help muted">${esc(t("Click to place points; each click draws to the last one. Points land on model vertices and faces, else on the sketch plane through the last point. Tab turns the plane, Esc ends the chain."))}</p>`;
+    const rows = f.pts.map((p, i) => `<tr${sel.has(p.id) ? ' class="on"' : ""}><th scope="row"><button class="link" data-s3sel="${p.id}" translate="no">P${i + 1}</button></th>${p.p.map((v, j) => `<td><input type="text" inputmode="decimal" class="pm-n" data-s3x="${i}:${j}" value="${trimNum(v * u, 4)}" aria-label="${"XYZ"[j]}${i + 1}" /></td>`).join("")}<td><input type="checkbox" data-s3f="${i}"${p.fixed ? " checked" : ""} title="${esc(t("Fixed"))}" aria-label="${esc(t("Fixed"))} P${i + 1}" /></td></tr>`).join("");
+    const pts = f.pts.length ? `<table class="pm-pts"><thead><tr><th>#</th><th>X</th><th>Y</th><th>Z</th><th>${esc(t("Fixed"))}</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="pm-help muted">${esc(t("None yet."))}</p>`;
+    const L = (sg: Sketch3dFeature["segs"][number]) => { const a = f.pts.find(p => p.id === sg.pts[0])?.p, b = f.pts.find(p => p.id === sg.pts[sg.pts.length - 1])?.p; return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) : 0; };
+    const segs = f.segs.length ? `<ul class="pm-dims">${f.segs.map(sg => `<li><button class="link${sel.has(sg.id) ? " on" : ""}" data-s3sel="${sg.id}" aria-pressed="${sel.has(sg.id)}">${esc(segName(sg.id))}</button> <span class="muted" translate="no">${sg.pts.map(q => `P${pIdx(q)}`).join("–")}${sg.t === "line" ? ` · ${trimNum(L(sg) * u, 3)} ${units.current}` : ""}</span></li>`).join("")}</ul>` : "";
+    // Relations and dimensions that fit the selection.
+    const lines = s3.sel.filter(id => f.segs.find(g => g.id === id)?.t === "line"), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
+    const rb = (k: string, label: string) => `<button class="btn small" data-s3r="${k}">${esc(label)}</button>`;
+    let add = "";
+    if (lines.length === 1 && !points.length) add = rb("alongX", t("Along X")) + rb("alongY", t("Along Y")) + rb("alongZ", t("Along Z")) + (["XY", "YZ", "ZX"] as const).map(p => rb(`parallelPlane:${p}`, t("Parallel to {p}", { p }))).join("") + rb("dim:length", t("Length"));
+    if (lines.length === 2 && !points.length) add = rb("parallel", t("Parallel")) + rb("perpendicular", t("Perpendicular")) + rb("equal", t("Equal"));
+    if (points.length === 2 && !lines.length) add = rb("coincident", t("Coincident")) + rb("dim:distance", t("Distance"));
+    if (points.length && !lines.length) add += rb("fix", points.every(id => f.pts.find(p => p.id === id)?.fixed) ? t("Unfix") : t("Fix"));
+    if (s3.sel.length) add += `<button class="btn small danger" data-s3a="del">${esc(t("Delete"))}</button>`;
+    const relLabel = (r: Sk3Rel) => r.t === "alongX" ? t("Along X") : r.t === "alongY" ? t("Along Y") : r.t === "alongZ" ? t("Along Z") : r.t === "parallelPlane" ? t("Parallel to {p}", { p: r.plane ?? "XY" })
+      : r.t === "parallel" ? t("Parallel") : r.t === "perpendicular" ? t("Perpendicular") : r.t === "equal" ? t("Equal") : t("Coincident");
+    const rels = f.rels.map(r => `<li>${esc(relLabel(r))} <span class="muted" translate="no">${r.e.map(entName).join(", ")}</span> <button class="icon" data-s3rdel="${r.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
+    const dims = f.dims.map((d, i) => `<li><label class="pm-field"><span translate="no">D${i + 1} (${esc(d.e.map(entName).join(", "))})</span><input type="text" inputmode="decimal" class="pm-n" data-s3dim="${d.id}" value="${esc(d.val.expr ?? trimNum(d.val.v * u, 4))}" /></label> <button class="icon" data-s3ddel="${d.id}" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></li>`).join("");
+    const st = solve3d(f);
+    const status = !st.ok ? t("The relations and dimensions conflict.") : st.dof === 0 ? t("Fully defined") : t("{n} degree of freedom left|{n} degrees of freedom left", { n: st.dof });
+    return { title: t("3D Sketch"), body: group(t("Tools"), tools)
+      + group(t("Points"), pts)
+      + group(t("Lines and splines"), segs || `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
+      + group(t("Relations"), (add ? `<div class="pm-rels">${add}</div>` : `<p class="pm-help muted">${esc(t("Select a line, two lines or two points (in the view or above) to add relations and dimensions."))}</p>`) + (rels ? `<ul class="pm-dims">${rels}</ul>` : ""))
+      + group(t("Dimensions"), dims ? `<ul class="pm-dims">${dims}</ul>` : `<p class="pm-help muted">${esc(t("None yet."))}</p>`)
+      + `<p class="pm-help" role="status" data-s3status>${esc(status)}</p>` };
+  }
+
+  private bindSk3Panel(pm: HTMLElement, f: Sketch3dFeature, unit: string) {
+    const s3 = this.s3(f);
+    const num = (inp: HTMLInputElement): number | null => {
+      try { const v = evaluate(inp.value, "length", unit as never, evalVars(this.doc, unit as never).values); inp.removeAttribute("aria-invalid"); return v; }
+      catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return null; }
+    };
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3t]").forEach(b => b.addEventListener("click", () => { const k = b.dataset.s3t; s3.tool = k === "line" || k === "spline" ? k : null; s3.spline = null; if (!s3.tool) s3.anchor = null; this.renderPanel(); this.drawDecor(); }));
+    pm.querySelector<HTMLSelectElement>("[data-s3p]")?.addEventListener("change", ev => { s3.plane = (ev.target as HTMLSelectElement).value as "XY" | "YZ" | "ZX"; this.drawDecor(); });
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3sel]").forEach(b => b.addEventListener("click", () => { const id = b.dataset.s3sel!; s3.sel = s3.sel.includes(id) ? s3.sel.filter(x => x !== id) : [...s3.sel, id]; this.renderPanel(); this.drawDecor(); }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-s3x]").forEach(inp => {
+      const apply = () => { const [i, j] = inp.dataset.s3x!.split(":").map(Number); const v = num(inp); const p = f.pts[i]; if (v == null || !p || p.p[j] === v) return; this.change3d(f, () => { p.p = p.p.map((c, k) => k === j ? v : c) as V3; }); };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+    });
+    pm.querySelectorAll<HTMLInputElement>("input[data-s3f]").forEach(inp => inp.addEventListener("change", () => { const p = f.pts[+inp.dataset.s3f!]; if (p) this.change3d(f, () => { if (inp.checked) p.fixed = true; else delete p.fixed; }); }));
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3r]").forEach(b => b.addEventListener("click", () => {
+      const k = b.dataset.s3r!;
+      const lines = s3.sel.filter(id => f.segs.some(g => g.id === id)), points = s3.sel.filter(id => f.pts.some(p => p.id === id));
+      this.change3d(f, () => {
+        if (k === "fix") { const all = points.every(id => f.pts.find(p => p.id === id)?.fixed); for (const id of points) { const p = f.pts.find(q => q.id === id)!; if (all) delete p.fixed; else p.fixed = true; } return; }
+        if (k.startsWith("dim:")) {
+          const P = (id: string) => f.pts.find(p => p.id === id)!.p;
+          const sg = f.segs.find(g => g.id === lines[0]);
+          const [a, c] = k === "dim:length" && sg ? [P(sg.pts[0]), P(sg.pts[sg.pts.length - 1])] : [P(points[0]), P(points[1])];
+          f.dims.push({ id: uid("d"), t: k === "dim:length" ? "length" : "distance", e: k === "dim:length" ? [lines[0]] : points.slice(0, 2), val: { v: Math.round(Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]) * 1000) / 1000 } });
+          return;
+        }
+        const [tp, plane] = k.split(":");
+        const r: Sk3Rel = { id: uid("r"), t: tp as Sk3Rel["t"], e: tp === "coincident" ? points.slice(0, 2) : lines.slice(0, tp.startsWith("along") || tp === "parallelPlane" ? 1 : 2) };
+        if (plane) r.plane = plane as Sk3Rel["plane"];
+        f.rels.push(r);
+      });
+    }));
+    pm.querySelector("[data-s3a=end]")?.addEventListener("click", () => { s3.anchor = null; s3.spline = null; this.renderPanel(); this.drawDecor(); });
+    pm.querySelector("[data-s3a=del]")?.addEventListener("click", () => this.delete3d(f));
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3rdel]").forEach(b => b.addEventListener("click", () => this.change3d(f, () => { f.rels = f.rels.filter(r => r.id !== b.dataset.s3rdel); })));
+    pm.querySelectorAll<HTMLButtonElement>("[data-s3ddel]").forEach(b => b.addEventListener("click", () => this.change3d(f, () => { f.dims = f.dims.filter(d => d.id !== b.dataset.s3ddel); })));
+    pm.querySelectorAll<HTMLInputElement>("input[data-s3dim]").forEach(inp => {
+      const apply = () => {
+        const d = f.dims.find(x => x.id === inp.dataset.s3dim); const v = num(inp);
+        if (!d || v == null) return;
+        if (!(v > 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        this.change3d(f, () => { d.val = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() }; });
+      };
+      inp.addEventListener("change", apply);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+    });
   }
 
   /** PropertyManager for 3D curves (FR-FT-085): a point table with CSV import, picked edges, or a sketch projected onto faces. */
@@ -4727,6 +4968,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["loft", t("Loft"), t("Lofted boss: through two or more profiles")],
   ["loftcut", t("Cut-Loft"), t("Lofted cut: removes material through two or more profiles")],
   ["helix", t("Helix/Spiral"), t("Helix: a curve round a sketch circle, for springs and threads")],
+  ["sketch3d", t("3D Sketch"), t("3D sketch: lines and splines in space, for sweep paths")],
   ["xyzcurve", t("Curve Through XYZ Points"), t("3D curve through points typed in or read from a CSV file")],
   ["compcurve", t("Composite Curve"), t("Composite curve: model edges joined into one curve")],
   ["projcurve", t("Projected Curve"), t("Projected curve: a sketch projected onto faces")],
@@ -4746,7 +4988,7 @@ const P3_TOOLS = (): [string, string, string][] => [
 type SurfTool = "planesurf" | "extsurf" | "offsurf" | "knit" | "thicken" | "replaceface" | "revsurf" | "loftsurf" | "sweepsurf" | "trimsurf" | "fillsurf" | "extendsurf";
 const SURF_TYPES: ReadonlySet<string> = new Set(["planesurf", "extsurf", "offsurf", "knit", "thicken", "replaceface", "revsurf", "loftsurf", "sweepsurf", "trimsurf", "fillsurf", "extendsurf"]);
 /** The 3D curve commands in Sweep ▾ (FR-FT-085). */
-type CurveTool = "xyzcurve" | "compcurve" | "projcurve";
+type CurveTool = "xyzcurve" | "compcurve" | "projcurve" | "sketch3d";
 /** A sweep path's select value: h:/c:/s: + id. */
 const pathKey = (p: SweepPath) => `${"helix" in p ? "h" : "curve" in p ? "c" : "s"}:${pathId(p)}`;
 const pathOf = (v: string): SweepPath | null => !v ? null : v.startsWith("h:") ? { helix: v.slice(2) } : v.startsWith("c:") ? { curve: v.slice(2) } : { sketch: v.slice(2) };
@@ -4791,6 +5033,7 @@ const ICON_SVG: Record<string, string> = {
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),
+  sketch3d: S('<path d="M2 12l5 2 7-4M7 14V7l7-4M7 7L2 5"/><path d="M2 12V5" stroke-dasharray="1.5 1.5"/>'),
   xyzcurve: S('<path d="M2 13c3-1 3-7 6-7s3 5 6 3"/><circle cx="2" cy="13" r="1"/><circle cx="8" cy="6" r="1"/><circle cx="14" cy="9" r="1"/>'),
   compcurve: S('<path d="M2 12h5l3-6h4"/><circle cx="7" cy="12" r="1"/><circle cx="10" cy="6" r="1"/>'),
   projcurve: S('<path d="M3 3h10M5 3v6M11 3v6" stroke-dasharray="1.5 1.5"/><path d="M2 13c2-3 4-3 6-3s4 0 6 3"/>'),

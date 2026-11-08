@@ -5,6 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.83.0] - 2026-11-08
+
+### Added
+
+- **3D Sketch** (FR-SK-080) in Sweep ▾:
+  - Click to place points in space. Each click draws a line, or a spline with the Spline tool, from the last point.
+  - Points land on model vertices and faces. Otherwise they go on the sketch plane (XY, YZ or ZX) through the last point. Tab turns the plane and Esc ends the chain.
+  - The panel lists the points, which you can edit or fix, and the lines and splines.
+  - Select lines or points in the view or the panel to add relations: along X/Y/Z, parallel to a plane, parallel, perpendicular, equal and coincident. You can also add length and distance dimensions, which take expressions.
+  - A least-squares solver keeps everything satisfied and says how many degrees of freedom are left. A change that conflicts is undone.
+  - One chain of lines and splines is a **Sweep** or **Swept Surface** path.
+
+### Changed
+
+- Sweeps mitre sharp corners of their path instead of stretching the profile round them.
+
 ## [1.82.0] - 2026-11-08
 
 ### Added
@@ -814,7 +830,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.82.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.83.0...HEAD
+[1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0
 [1.82.0]: https://github.com/kothf/step-viewer/compare/v1.81.0...v1.82.0
 [1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0
 [1.80.0]: https://github.com/kothf/step-viewer/compare/v1.79.0...v1.80.0
