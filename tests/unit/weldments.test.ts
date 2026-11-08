@@ -56,6 +56,14 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   // Faces carry the member, segment and role.
   assert.ok(r.body!.names.includes("m:sl0:start") && r.body!.names.includes("m:sl0:end") && r.body!.names.some(n => n.startsWith("m:sl0:side:")));
 
+  // A 2 mm weld gap at every mitre: each end moves back 1 mm square to the mitre plane (√2 along the member).
+  const rg = run(m, doc([sk, { ...mem, gap: { v: 2 } }]));
+  near(rg.volume, A * (2000 - 8 * Math.SQRT2), 2e-4);
+  assert.deepEqual(rg.cut.map(c => [c.qty, c.length]), [[2, 637.2], [2, 437.2]]);
+  // One corner butted instead (the first line runs through), and a description for the cut list.
+  const ro = run(m, doc([sk, { ...mem, corners: { "sl0+sl1": "butt1" }, desc: "Frame tube" }]));
+  assert.deepEqual(ro.cut.map(c => [c.desc, c.qty, c.length, c.angle1, c.angle2]), [["Frame tube", 1, 640, 0, 45], ["Frame tube", 1, 640, 45, 45], ["Frame tube", 1, 440, 45, 45], ["Frame tube", 1, 400, 0, 45]]);
+
   // Butt joints: the first segment runs through the corner, the second stops at its face.
   const open = poly("o", [[0, 0], [500, 0], [500, 300]], false);
   const butt: MemberFeature = { ...mem, id: "b", segs: lines(open), corner: "butt1" };
@@ -63,6 +71,8 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   assert.deepEqual(rb.cut.map(c => [c.length, c.qty, c.angle1, c.angle2]), [[520, 1, 0, 0], [280, 1, 0, 0]]);
   const rb2 = run(m, doc([open, { ...butt, corner: "butt2" }]));
   assert.deepEqual(rb2.cut.map(c => c.length), [480, 320]);
+  // A gap: the butted member stops 3 mm short of the one running through.
+  assert.deepEqual(run(m, doc([open, { ...butt, gap: { v: 3 } }])).cut.map(c => c.length), [520, 277]);
   // An I-beam on its pierce point, turned 90°: still one body per segment.
   const ib = run(m, doc([open, { ...butt, profile: "ipe", size: "200", anchor: "b", angle: { v: Math.PI / 2 }, corner: "none" }]));
   assert.equal(ib.info.length, 2);
