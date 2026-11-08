@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.202.0] - 2026-11-08
+
+### Added
+
+- Revision clouds on drawing sheets (Annotation → **Revision cloud**): click the corners of the changed area, then the first corner again or Enter. The cloud takes the last revision letter from the revision table (shown in a triangle), its arc size and letter can be changed in the panel, and it is picked on its outline only, so views inside it stay draggable. It goes into every export like the rest of the sheet.
+
 ## [1.200.0] - 2026-11-08
 
 ### Added
@@ -1477,7 +1483,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.200.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.202.0...HEAD
+[1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
 [1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
 [1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0

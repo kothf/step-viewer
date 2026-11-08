@@ -3534,4 +3534,8 @@ export const RU: Record<string, string> = {
   "Link to property": "Ссылка на свойство",
   "Active ({name})": "Активная ({name})",
   "View configuration": "Конфигурация вида",
+  "Revision cloud": "Облако изменений",
+  "Arc size (mm)": "Размер дуги (мм)",
+  "Click the corners of the area to mark with a revision cloud.": "Щёлкните углы области, которую нужно отметить облаком изменений.",
+  "Click more corners; click the first corner or press Enter to close the cloud.": "Щёлкните ещё углы; щёлкните первый угол или нажмите Enter, чтобы замкнуть облако.",
 };
