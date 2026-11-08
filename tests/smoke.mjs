@@ -5578,7 +5578,18 @@ try {
       const angleEnd = angles.at(-1);
       const lines = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr0.id));
       const len = path.reduce((s2, q, k) => k ? s2 + Math.hypot(q[0] - path[k - 1][0], q[1] - path[k - 1][1], q[2] - path[k - 1][2]) : 0, 0);
-      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Relative to: the first pin's origin seen from the moving third pin. Its distance from the third pin's origin is
+      // the world distance in every frame; the path differs from the world one and is drawn in a group that moves with the pin.
+      m.addTrace(c[0].id, [0, 0, 0]);
+      const tr1 = m.study.traces.at(-1), world1 = m.tracePath(tr1.id).map(q => [...q]);
+      const relOpts = [...document.querySelectorAll('#motion select[data-tr="rel"] option')].map(o => o.value);
+      const rsel = document.querySelector('#motion select[data-tr="rel"]'); if (rsel) { rsel.value = id; rsel.dispatchEvent(new Event("change")); }
+      const relPath = m.tracePath(tr1.id);
+      const relDist = relPath.length === path.length && relPath.every((q, k) => Math.abs(Math.hypot(...q) - Math.hypot(...world1[k].map((v, j) => v - path[k][j]))) < 1e-6);
+      const relMoved = relPath.some((q, k) => Math.hypot(...q.map((v, j) => v - world1[k][j])) > 1);
+      const relGroup = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr1.id && x.userData.rel === id));
+      const relative = { stored: m.study.traces.at(-1).rel === id, noSelf: !relOpts.includes(c[0].id) && relOpts.includes(id) && relOpts[0] === "", relDist, relMoved, relGroup };
+      const trace = { relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5693,8 +5704,9 @@ try {
       && tc.start.every(v => Math.abs(v) < 0.01) && Math.abs(tc.end[0]) < 0.01 && Math.abs(tc.end[1]) < 0.01 && Math.abs(tc.end[2] - 20) < 0.01
       && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
       && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
-      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1,
-      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle) and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
+      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1
+      && Object.values(tc.relative).every(v => v === true),
+      `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
       && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,

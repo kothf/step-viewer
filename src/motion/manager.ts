@@ -15,7 +15,7 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
-import { TRACE_COLORS, TRACE_PLOTS, accels, pathLength, plotSvg, plotUnit, rates, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { TRACE_COLORS, TRACE_PLOTS, accels, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -23,6 +23,8 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;
 const fmt = (v: number, d = 2) => String(Math.round(v * 10 ** d) / 10 ** d);
 const num = (s: string) => Number(s.trim().replace(",", "."));
 const DEG = Math.PI / 180;
+/** A rigid 3×4 transform as a three.js matrix. */
+const tfMatrix = (m: Tf) => new THREE.Matrix4().set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], 0, 0, 0, 1);
 
 /** The selected key (by index into the track's sorted keys) or motor bar. */
 type Sel = { track: string; key?: number } | null;
@@ -395,13 +397,17 @@ export class MotionManager {
       this.traceKey = key;
       this.tracePts.clear();
       this.traceAng.clear();
-      for (const c of [...g.children]) { c.removeFromParent(); const o = c as THREE.Line; o.geometry?.dispose(); (o.material as THREE.Material)?.dispose(); }
+      for (const c of [...g.children]) {
+        c.removeFromParent();
+        c.traverse(o => { const m = o as THREE.Line; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); });
+      }
       const all: Record<string, Tf>[] = [];
       for (let k = 0; k < n; k++) all.push(this.tfsAt(k));
       for (const x of tr) {
-        const pts = tracePoints(all, x.comp, x.p);
+        // Relative to a component: the path is kept in its coordinates and drawn in a group that moves with it.
+        const fr = x.rel ? relativeFrames(all, x.rel) : all, pts = tracePoints(fr, x.comp, x.p);
         this.tracePts.set(x.id, pts);
-        this.traceAng.set(x.id, traceAngles(all, x.comp));
+        this.traceAng.set(x.id, traceAngles(fr, x.comp));
         if (x.off || pts.length < 1) continue;
         const geo = new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(q[0], q[1], q[2])));
         const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: x.color, depthTest: false, transparent: true }));
@@ -411,13 +417,24 @@ export class MotionManager {
           new THREE.PointsMaterial({ color: x.color, size: x.id === this.selTrace ? 9 : 7, sizeAttenuation: false, depthTest: false, transparent: true }));
         dot.renderOrder = 999;
         dot.userData.dot = x.id;
-        g.add(line, dot);
+        const sub = new THREE.Group();
+        sub.userData.trace = x.id;
+        sub.userData.rel = x.rel;
+        sub.matrixAutoUpdate = false;
+        sub.add(line, dot);
+        g.add(sub);
       }
     }
     if (!g.parent) this.viewer.scene.add(g);
-    for (const c of g.children) {
-      const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
-      if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+    const now = tr.some(x => x.rel) ? this.tfsAt(i) : null;
+    for (const sub of g.children) {
+      const rel = sub.userData.rel as string | undefined, r = rel && now?.[rel];
+      sub.matrix.copy(r ? tfMatrix(r) : new THREE.Matrix4());
+      sub.matrixWorldNeedsUpdate = true;
+      for (const c of sub.children) {
+        const id = c.userData.dot as string | undefined, pts = id ? this.tracePts.get(id) : null;
+        if (pts?.length) { const q = pts[Math.min(pts.length - 1, Math.max(0, i))]; c.position.set(q[0], q[1], q[2]); }
+      }
     }
     this.updatePlot(i);
   }
@@ -444,11 +461,19 @@ export class MotionManager {
   private traceProps(x: TracePath): string {
     const pts = this.tracePts.get(x.id) ?? [], i = Math.round(this.time * this.study.fps);
     return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${TRACE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+      + this.relField(x)
       + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
       + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
+  }
+
+  /** "Relative to": world, or another top-level component the path is seen from (it then moves with that component). */
+  private relField(x: TracePath): string {
+    const own = x.comp.split("/")[0], comps = (this.asm.doc?.components ?? []).filter(c => !c.suppressed && c.id !== own);
+    return `<label class="mo-f"><span>${esc(t("Relative to"))}</span><select data-tr="rel"><option value="">${esc(t("World"))}</option>`
+      + comps.map(c => `<option value="${esc(c.id)}" translate="no"${x.rel === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("") + `</select></label>`;
   }
 
   private setCamera(k: CamKey) {
@@ -824,6 +849,7 @@ export class MotionManager {
     on(".mo-name[data-trace]", "click", (e, el) => { if ((e.target as HTMLElement).closest("input, button")) return; this.sel = null; this.selTrace = el.dataset.trace!; this.render(); this.showAt(this.time); });
     on("input[data-ton]", "change", (_e, el) => { const v = (el as HTMLInputElement).checked; this.setTrace(el.dataset.ton!, x => { if (v) delete x.off; else x.off = true; }); });
     on("select[data-tr=plot]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value as TracePlot; this.setTrace(this.selTrace!, x => { if (v === "dist") delete x.plot; else x.plot = v; }); });
+    on("select[data-tr=rel]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; this.setTrace(this.selTrace!, x => { if (v) x.rel = v; else delete x.rel; }); });
     on("input[data-tr=color]", "change", (_e, el) => { const v = (el as HTMLInputElement).value; this.setTrace(this.selTrace!, x => { x.color = v; }); });
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
     on("button[data-tr=csv]", "click", () => {

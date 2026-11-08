@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.191.0] - 2026-11-08
+
+### Added
+
+- Motion studies: a trace path can be traced **Relative to** another component, as in SolidWorks' Trace Path. The path is then the one seen from that component (the shape a cam or slot would need), drawn moving with it, and its plots and CSV are in that component's coordinates (FR-FT-122).
+
 ## [1.190.0] - 2026-11-08
 
 ### Added
@@ -1441,7 +1447,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.190.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.191.0...HEAD
+[1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0
 [1.190.0]: https://github.com/kothf/step-viewer/compare/v1.189.0...v1.190.0
 [1.189.0]: https://github.com/kothf/step-viewer/compare/v1.187.0...v1.189.0
 [1.187.0]: https://github.com/kothf/step-viewer/compare/v1.184.0...v1.187.0
