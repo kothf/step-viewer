@@ -326,3 +326,29 @@ test("drawing compare: unchanged, removed and added primitives (FR-PDM-051)", as
   assert.ok(o.svg.includes("#d32f2f") && o.svg.includes("#1b8a3a") && o.removed === 2 && o.added === 2);
   assert.equal(overlaySvg({ name: "S", W: 20, H: 20, prims: a }, { name: "S", W: 20, H: 20, prims: a }).added, 0);
 });
+
+test("composite feature control frame, all around, and the BOM of one sub-assembly", async () => {
+  const { gtolPrims } = await import("../../src/drawing/gdt");
+  const { bomOf, bomCells, sheetBom, subsOf } = await import("../../src/drawing/bom");
+  const g = { id: "g", t: "gtol" as const, pos: [0, 0] as [number, number], rows: [{ sym: "pos" as const, tol: "0.5", dia: true, datums: ["A", "B"] }, { sym: "flat" as const, tol: "0.1", dia: true, datums: ["A"], composite: true }], around: true };
+  const r = gtolPrims(g, [0, 0], [40, -30], ".");
+  // One symbol for both rows: the second row draws no characteristic of its own (no flatness line).
+  const one = gtolPrims({ ...g, rows: [g.rows[0]] }, [0, 0], null, ".").prims.length;
+  const two = gtolPrims({ ...g, rows: [g.rows[0], { ...g.rows[1], composite: undefined }] }, [0, 0], null, ".").prims.length;
+  const comp = gtolPrims(g, [0, 0], null, ".").prims.length;
+  assert.ok(comp < two && comp > one);
+  assert.ok(r.prims.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9));
+  // Sub-assembly BOM.
+  const part = (id: string, pn: string) => ({ name: id, file: `${id}.mcadprt`, doc: { ...doc([]), id, props: { partNumber: pn } } });
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  const top = { schema: 1 as const, kind: "assembly" as const, id: "a", name: "A", units: { length: "mm" as const, decimals: 2 }, parts: { plate: part("plate", "PL-1"), sub: { ...part("sub", ""), asm: {} as never } },
+    components: [{ id: "c1", name: "Plate<1>", part: "plate", tf: I }, { id: "c3", name: "Hinge<1>", part: "sub", tf: I }] };
+  const flat = { ...top, parts: { plate: top.parts.plate, "sub/p": part("pin", "PN-7"), "sub/l": part("leaf", "LF-2") },
+    components: [top.components[0], { id: "c3/a", name: "a", part: "sub/l", tf: I }, { id: "c3/b", name: "b", part: "sub/l", tf: I }, { id: "c3/p", name: "p", part: "sub/p", tf: I }] };
+  assert.deepEqual(subsOf(top), [{ id: "c3", name: "Hinge<1>" }]);
+  assert.deepEqual(bomCells(bomOf(top, flat, "top", "c3")), [["1", "LF-2", "", "2"], ["2", "PN-7", "", "1"]]);
+  const sheet = { annots: [{ id: "t", t: "table", kind: "bom", pos: [0, 0], cols: [], rows: [], sub: "c3" }] };
+  const b = sheetBom(sheet as never, top, flat);
+  assert.equal(b.itemOf("c3/p"), 2);
+  assert.equal(b.itemOf("c1"), null);
+});

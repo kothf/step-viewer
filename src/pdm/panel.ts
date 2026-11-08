@@ -185,6 +185,25 @@ export class VaultPanel {
     });
   }
 
+  /** The drawing's latest version as a PDF; one that is not released says so across every sheet (FR-PDM-036). */
+  async pdfOf(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    const f = this.rec(id);
+    try {
+      toast(t("Making the PDF…"));
+      const { drawingPdf } = await import("./outputs");
+      const released = v.stateOf(f.state).released;
+      const name = f.path.split("/").pop()!.replace(/\.[^.]+$/, "");
+      const pdf = await drawingPdf(await v.versionBytes(id, v.latest(f).n), name, released ? undefined : t("NOT RELEASED"));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+      a.download = `${name}${f.revision ? `_rev${f.revision}` : ""}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    } catch (e) { toast(errText(e), true); }
+  }
+
   /** How to open an assembly's components (FR-PDM-022), or null when cancelled. */
   private async askResolve(): Promise<Resolve | null> {
     const r = await this.form(t("Open assembly"), `<label class="v-lbl">${esc(t("Components"))}<select name="mode" autofocus>${([["built", "As checked in"], ["latest", "Latest"], ["released", "Latest released"]] as const).map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label><p class="muted">${esc(t("Latest and Latest released put those versions of the part files in place of the copies saved in the assembly."))}</p>`, t("Open"));
@@ -442,6 +461,17 @@ export class VaultPanel {
       const rev = labels[id];
       toast(rev ? t("{name}: {state}, revision {rev}", { name: f.path, state: tn(tr.to), rev }) : t("{name}: {state}", { name: f.path, state: tn(tr.to) }), "success");
     });
+    // FR-PDM-036: the release's PDF / STEP files, made after the state change so a failure there undoes nothing.
+    if (v.info.outputs !== false && v.stateOf(tr.to).released) {
+      const { releaseOutputKind, releaseOutputs } = await import("./outputs");
+      if (ids.some(x => releaseOutputKind(this.rec(x)?.path ?? ""))) {
+        toast(t("Making the release files…"));
+        const r = await releaseOutputs(v, ids);
+        await this.refresh();
+        if (r.made.length) toast(t("Stored {files}", { files: r.made.join(", ") }), "success");
+        for (const x of r.failed) toast(t("Could not make the release file of {path}: {err}", { path: x.path, err: x.error }), true);
+      }
+    }
     if (this.openId && ids.includes(this.openId)) await this.openFile(this.openId);
   }
 
@@ -650,6 +680,7 @@ export class VaultPanel {
     const body = `${saved.length ? `<p class="v-h">${esc(t("Saved searches"))}</p><div class="v-list">${saved.map((s, i) => `<button class="btn small" data-saved="${i}" translate="no">${esc(s.name)}</button>`).join("")}</div>` : ""}
       <div class="v-form">
       <label><span>${esc(t("Name or any field"))}</span><input name="text" maxlength="80" /></label>
+      <label><span>${esc(t("Text inside files"))}</span><input name="content" maxlength="80" /></label>
       <label><span>${esc(t("State"))}</span><select name="state"><option value=""></option>${v.workflow.states.map(s => `<option value="${esc(s.name)}">${esc(tn(s.name))}</option>`).join("")}</select></label>
       <label><span>${esc(t("Revision"))}</span><input name="revision" maxlength="10" /></label>
       <label><span>${esc(t("Checked out by"))}</span><input name="by" maxlength="40" /></label>
@@ -666,11 +697,11 @@ export class VaultPanel {
     if (await d.done !== "ok") return;
     if (pick) { await this.find(pick, pickName); return; }
     const val = (n: string) => d.el.querySelector<HTMLInputElement>(`[name="${CSS.escape(n)}"]`)?.value.trim() ?? "";
-    const q: SearchQuery = { text: val("text"), state: val("state"), revision: val("revision"), checkedOutBy: val("by"), kind: val("kind"), from: val("from"), to: val("to"), fields: Object.fromEntries(fields.map(fd => [fd.name, val(`f:${fd.name}`)]).filter(([, x]) => x)) };
+    const q: SearchQuery = { text: val("text"), content: val("content"), state: val("state"), revision: val("revision"), checkedOutBy: val("by"), kind: val("kind"), from: val("from"), to: val("to"), fields: Object.fromEntries(fields.map(fd => [fd.name, val(`f:${fd.name}`)]).filter(([, x]) => x)) };
     if (val("cv")) q.contains = { field: val("cf"), value: val("cv") };
     const name = val("save");
     if (name) await this.run(() => v.saveSettings({ searches: [...saved.filter(s => s.name !== name), { name, q }] }, "saved search"));
-    await this.find(q, name || q.text || t("Advanced search"));
+    await this.find(q, name || q.text || q.content || t("Advanced search"));
   }
 
   // ---------- settings (FR-PDM-030/037/040/041) ----------
@@ -691,6 +722,7 @@ export class VaultPanel {
       <label><span>${esc(t("Numbering pattern"))}</span><input name="pattern" value="${esc(nb.pattern)}" maxlength="60" translate="no"${dis} /></label>
       <label class="chk"><input type="checkbox" name="onAdd"${nb.onAdd ? " checked" : ""}${dis} /> ${esc(t("Number new files when they are added"))}</label>
       <label class="chk"><input type="checkbox" name="commentRequired"${v.info.commentRequired ? " checked" : ""}${dis} /> ${esc(t("Check-in needs a comment"))}</label>
+      <label class="chk"><input type="checkbox" name="outputs"${v.info.outputs !== false ? " checked" : ""}${dis} /> ${esc(t("On release, store a PDF of drawings and a STEP of parts and assemblies"))}</label>
       </div>
       <p class="muted">${esc(t("Pattern tokens: {YYYY} {YY} {MM} for the date, {0000} for the counter, {Project} or any data card field."))}</p>
       <label class="v-lbl">${esc(t("Data card fields, one per line: name | type | options;… | required | property"))}<textarea name="cards" rows="5" translate="no"${dis}>${esc(cards)}</textarea></label>
@@ -712,6 +744,7 @@ export class VaultPanel {
         revScheme: { kind: g("kind").value as "letters", skip: g("skip").checked, pre: g("pre").value as "none", labels: g("labels").value.split(",").map(x => x.trim()).filter(Boolean) },
         numbering: { pattern: g("pattern").value.trim() || "MC-{0000}", onAdd: g("onAdd").checked },
         commentRequired: g("commentRequired").checked,
+        outputs: g("outputs").checked,
         cards: { ...(v.info.cards ?? {}), "*": fields },
         shared: g("shared").checked,
         roles: roleMap,
@@ -942,6 +975,7 @@ export class VaultPanel {
         ${st?.mine ? `<button class="btn small" data-a="ci">${esc(t("Check in"))}</button><button class="btn small" data-a="undo">${esc(t("Undo check-out"))}</button>` : ""}
         <button class="btn small" data-a="latest">${esc(t("Get latest"))}</button>
         <button class="btn small" data-a="hist">${esc(t("History"))}</button>
+        ${sel.kind === "drawing" ? `<button class="btn small" data-a="pdf">${esc(t("PDF"))}</button>` : ""}
         </div>
         ${trs.length ? `<div class="row v-trs"><span class="muted">${esc(t("Change state"))}:</span>${trs.map(x => `<button class="btn small" data-tr="${esc(x.name)}">${esc(tn(x.name))}</button>`).join("")}</div>` : ""}
         <div class="row">
@@ -1008,6 +1042,7 @@ export class VaultPanel {
         case "latest": if (id) void this.getLatest(id); break;
         case "hist": if (id) void this.history(id); break;
         case "card": if (id) void this.dataCard(id); break;
+        case "pdf": if (id) void this.pdfOf(id); break;
         case "contains": if (id) void this.containsDlg(id); break;
         case "used": if (id) void this.whereUsedDlg(id); break;
         case "rename": if (id) void this.renameDlg(id); break;

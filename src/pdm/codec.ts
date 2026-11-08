@@ -87,6 +87,34 @@ export async function embedDocs(bytes: Uint8Array, parts: Map<string, unknown>, 
   return rezip(m);
 }
 
+const TEXTY = /\.(txt|md|csv|json|xml|html?|dxf|svg|step|stp|igs|iges|gbr|drl|nc)$/i;
+/** Keys whose string values are words a person typed (notes, tables, names, properties), not ids or geometry. */
+const WORDS = new Set(["text", "txt", "title", "name", "description", "partNumber", "author", "revision", "material", "company", "checked", "approved", "date", "method", "letter", "pre", "suf", "tcontrol", "ncontrol", "litera", "comment", "note", "label"]);
+
+/**
+ * The searchable text of a file (FR-PDM-043): for MöbiusCAD documents the words people typed (notes, table cells,
+ * properties, feature and component names), for text formats the text itself (first 4 MB).
+ */
+export async function docText(path: string, bytes: Uint8Array): Promise<string> {
+  if (TEXTY.test(path)) return dec.decode(bytes.subarray(0, 4 * 1024 ** 2));
+  if (!isDoc(path)) return "";
+  const m = await entries(bytes);
+  if (!m) return "";
+  const out: string[] = [];
+  const walk = (v: unknown, key: string, depth: number) => {
+    if (depth > 40 || out.length > 20000) return;
+    if (typeof v === "string") { if (WORDS.has(key) || key === "cell") out.push(v); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, key === "rows" || key === "cols" || key === "cell" ? "cell" : key, depth + 1); return; }
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+      // Embedded geometry, pictures and a drawing's copy of its model are not its text.
+      if (k === "brep" || k === "thumbnail" || k === "flat" || k === "source") continue;
+      walk(x, key === "custom" || k === "custom" ? (k === "custom" ? "custom" : "text") : k, depth + 1);
+    }
+  };
+  for (const name of ["document.json", "drawing.json"]) { const j = readJson(m, name); if (j) walk(j, "", 0); }
+  return out.join("\n");
+}
+
 /** A document's own JSON (`document.json` for parts and assemblies), or null. */
 export async function docJson(bytes: Uint8Array): Promise<Record<string, unknown> | null> {
   const m = await entries(bytes);

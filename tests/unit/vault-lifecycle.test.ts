@@ -216,3 +216,25 @@ test("vault: an assembly's embedded parts are its references; open as checked in
   const j = await docJson(await v.versionBytes(top.id, v.latest(t2).n)) as { parts: { pin: { file: string } } };
   assert.equal(j.parts.pin.file, "Dowel.mcadprt");
 });
+
+test("vault: full-text search in notes and drawing text; STEP stamped with the revision (FR-PDM-043/034)", async () => {
+  const { docText } = await import("../../src/pdm/codec");
+  const { stampStep } = await import("../../src/pdm/stepStamp");
+  const v = await Vault.create(memDir("T"), "T", "Andrey", "pc1");
+  const drawing = await zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 1, kind: "drawing" }) },
+    { name: "drawing.json", data: JSON.stringify({ kind: "drawing", props: { title: "Bracket" }, sheets: [{ name: "Sheet1", annots: [{ t: "note", text: "Deburr all edges", pos: [0, 0] }, { t: "table", cols: ["Rev."], rows: [["A", "Fixture holes moved"]], pos: [0, 0] }], views: [{ id: "v1", orient: "front" }] }], source: { kind: "file", name: "x.step" } }) }]);
+  assert.match(await docText("d/Bracket.mcaddrw", drawing), /Deburr all edges[\s\S]*Fixture holes moved/);
+  await v.add("d/Bracket.mcaddrw", drawing);
+  await v.add("d/readme.txt", enc.encode("Anodise black after machining"));
+  await v.add("d/other.txt", enc.encode("nothing here"));
+  assert.deepEqual((await v.search({ content: "deburr" })).map(f => f.path), ["d/Bracket.mcaddrw"]);
+  assert.deepEqual((await v.search({ content: "ANODISE" })).map(f => f.path), ["d/readme.txt"]);
+  assert.deepEqual((await v.search({ content: "fixture holes", kind: "drawing" })).map(f => f.path), ["d/Bracket.mcaddrw"]);
+  // STEP: the product gets the part number, its formation the revision; other products stay.
+  const step = "DATA;\n#10=PRODUCT('Bracket','Bracket','',(#3));\n#11=PRODUCT_DEFINITION_FORMATION('','',#10);\n#20=PRODUCT('Bolt','Bolt','',(#3));\n#21=PRODUCT_DEFINITION_FORMATION('','',#20);\nENDSEC;";
+  const s = stampStep(step, { name: "Bracket", revision: "B", number: "BR-001", description: "Main bracket" });
+  assert.match(s, /#10=PRODUCT\('BR-001','Bracket','Main bracket'/);
+  assert.match(s, /#11=PRODUCT_DEFINITION_FORMATION\('B','',#10\)/);
+  assert.match(s, /#21=PRODUCT_DEFINITION_FORMATION\('','',#20\)/);
+  assert.match(stampStep("#1=PRODUCT('P','P','',(#2));#2=PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE('','',#1,.NOT_KNOWN.);", { revision: "Ä" }), /SOURCE\('\\X2\\00C4\\X0\\'/);
+});
