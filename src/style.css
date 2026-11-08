@@ -948,6 +948,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-tn { overflow: hidden; text-overflow: ellipsis; }
 .motion .mo-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
 .motion .mo-acts .mo-ib { width: 20px; height: 18px; font-size: 10px; }
+.motion .mo-tlw { overflow-x: auto; overflow-y: hidden; min-width: 0; }
 .motion .mo-tl { position: relative; min-width: 240px; margin: 0 10px; }
 .motion .mo-ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: col-resize; touch-action: none; }
 .motion .mo-tick { position: absolute; top: 3px; transform: translateX(-50%); color: var(--muted); font-family: var(--mono); pointer-events: none; }

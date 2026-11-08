@@ -2716,6 +2716,9 @@ export const RU: Record<string, string> = {
   "Add key here": "Добавить ключ здесь",
   "Paste here": "Вставить здесь",
   "Key point": "Ключевая точка",
+  "Zoom in on the timeline": "Увеличить шкалу времени",
+  "Zoom out on the timeline": "Уменьшить шкалу времени",
+  "Fit the whole study": "Показать всё исследование",
   "Constant speed": "Постоянная скорость",
   "Oscillating": "Колебательный",
   "Amplitude": "Амплитуда",
@@ -3130,4 +3133,6 @@ export const RU: Record<string, string> = {
   "Close document": "Закрыть документ",
   "Open document: {name}": "Открытый документ: {name}",
   "Browse…": "Обзор…",
+  // 1.122.0: shaded drawing views (FR-DRW-010).
+  "Shaded with edges": "Тонировка с рёбрами",
 };

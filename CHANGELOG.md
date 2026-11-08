@@ -5,6 +5,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.129.0] - 2026-11-08
+
+### Added
+
+- **Document tabs** (FR-DOC-003, FR-UI-120): every part, assembly, drawing and model file you open or make gets a tab at the bottom of the window, as in SolidWorks.
+  - A click switches documents; each keeps its undo history.
+  - A drawing's tab shows the sheet over the model it was made from, and the model's tab takes you back to it.
+  - ✕ or a middle click closes a tab and asks first when it has unsaved changes.
+  - New drawing on a model whose drawing is already open goes to that drawing's tab.
+- **Insert component from open documents**: in an assembly, Insert component lists the parts open in other tabs, then Browse….
+- **Make assembly from part** keeps the part open in its own tab.
+
+## [1.125.0] - 2026-11-08
+
+### Added
+
+- Motion studies: zoom the timeline in and out (⊕ / ⊖, the + and − keys, or Ctrl+wheel about the pointer) to place keys a frame apart in long studies, and ⤢ fits the whole study again, as SolidWorks' timeline zoom buttons do. The ruler ticks follow the zoom, and the zoomed timeline scrolls to keep the playhead in view while it plays (FR-FT-122).
+
+## [1.122.0] - 2026-11-08
+
+### Added
+
+- **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
 ## [1.121.0] - 2026-11-08
 
 ### Added
@@ -1115,7 +1138,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.121.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.129.0...HEAD
+[1.129.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.129.0
+[1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0
 [1.120.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.120.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0

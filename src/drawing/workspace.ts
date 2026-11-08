@@ -127,6 +127,8 @@ const ICON = {
   hlv: I('<rect x="2.5" y="2.5" width="11" height="11"/><path d="M6 2.5v11" stroke-dasharray="1.6 1.2"/>'),
   hlr: I('<rect x="2.5" y="2.5" width="11" height="11"/>'),
   wire: I('<rect x="2.5" y="2.5" width="11" height="11"/><path d="M6 2.5v11"/>'),
+  shaded: I('<rect x="2.5" y="2.5" width="11" height="11" fill="currentColor" fill-opacity=".45" stroke="none"/>'),
+  shadedEdges: I('<rect x="2.5" y="2.5" width="11" height="11" fill="currentColor" fill-opacity=".45"/>'),
   ok: I('<path d="m3 8.5 3.2 3L13 4.5"/>'),
   section: I('<rect x="3" y="3.5" width="10" height="9"/><path d="M3 12.5l4-9M6.5 12.5l4-9M10 12.5l3-6.5" stroke-width="1"/><path d="M1 8h14" stroke-dasharray="3 1.2 1 1.2"/>'),
   detail: I('<circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/>'),
@@ -2021,7 +2023,7 @@ export class DrawingWorkspace {
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Display style"))}</legend>
           <div class="seg drw-seg" role="radiogroup" aria-label="${esc(t("Display style"))}">
-            ${(["hlv", "hlr", "wire"] as DisplayStyle[]).map(s => `<button role="radio" aria-checked="${s === style}" class="${s === style ? "on" : ""}" data-style="${s}" title="${esc(t(STYLE_NAMES[s]))}" aria-label="${esc(t(STYLE_NAMES[s]))}">${ICON[s]}</button>`).join("")}
+            ${(["hlv", "hlr", "wire", "shaded", "shadedEdges"] as DisplayStyle[]).filter(s => v.kind !== "section" || !s.startsWith("shaded")).map(s => `<button role="radio" aria-checked="${s === style}" class="${s === style ? "on" : ""}" data-style="${s}" title="${esc(t(STYLE_NAMES[s]))}" aria-label="${esc(t(STYLE_NAMES[s]))}">${ICON[s]}</button>`).join("")}
           </div>
           <label class="drw-f">${esc(t("Tangent edges"))}<select data-v="tangent">${(["visible", "thin", "hidden"] as TangentEdges[]).map(s => `<option value="${s}"${s === tan ? " selected" : ""}>${esc(t(TAN_NAMES[s]))}</option>`).join("")}</select></label>
           <label class="drw-chk"><input type="checkbox" data-v="label"${v.label ? " checked" : ""}> ${esc(t("Show the view label"))}</label>
@@ -2469,7 +2471,7 @@ export class DrawingWorkspace {
   }
 }
 
-const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe" };
+const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe", shaded: "Shaded", shadedEdges: "Shaded with edges" };
 const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
 const ARROW_NAMES: Record<NonNullable<DraftStyle["arrow"]>, string> = { filled: "Filled", open: "Open", dot: "Dot", tick: "Oblique stroke" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };
