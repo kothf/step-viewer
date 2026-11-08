@@ -1344,3 +1344,47 @@ test("parting line draft, rib draft, loft start/end normal to profile (FR-FT-061
   assert.equal(inside(plain, -9.7), false);
   assert.equal(inside(normal, -9.7), true);
 });
+
+test("indent: the target takes the tool's shape, with a wall or as a cut (FR-BODY-007)", async () => {
+  const m = new Modeller(await occ());
+  // A 100 × 100 × 5 plate and a 20 × 20 block from z = 1 to 21, kept as its own body.
+  const sp = rect("sp", 0, 0, 100, 100), st = rect("st", 0, 0, 20, 20, { std: "XY" });
+  const plate: Feature = { id: "p", type: "extrude", name: "P", sketch: "sp", op: "boss", end: "blind", depth: { v: 5 } };
+  const block: Feature = { id: "b", type: "extrude", name: "B", sketch: "st", op: "boss", end: "blind", depth: { v: 20 }, startOffset: { v: 1 }, start: "offset", merge: false } as Feature;
+  let r = run(m, doc([sp, st, plate, block]));
+  assert.equal(r.props!.bodies, 2);
+  const base = r.props!.volume;
+  close(base, 50000 + 8000);
+  const ind = (o: object): Feature => ({ id: "i", type: "indent", name: "I", main: { name: "p:end" }, tools: [{ name: "b:end" }], thickness: { v: 2 }, clearance: { v: 0 }, ...o } as Feature);
+  // Cut: the 20 × 20 × 4 overlap comes out of the plate; the block stays.
+  r = run(m, doc([sp, st, plate, block, ind({ cut: true })]));
+  close(r.props!.volume, base - 1600, 1e-6);
+  assert.equal(r.props!.bodies, 2);
+  // Indent 2: the pocket plus a wall under it, 24 × 24 with round corners, from z = −1 to 0.
+  r = run(m, doc([sp, st, plate, block, ind({})]));
+  const add = r.props!.volume - (base - 1600);
+  assert.ok(add > 400 && add < 576, `wall ${add}`);
+  // Clearance 1 takes more out than the cut.
+  const c1 = run(m, doc([sp, st, plate, block, ind({ cut: true, clearance: { v: 1 } })]));
+  assert.ok(c1.props!.volume < base - 1600 - 300, `${c1.props!.volume}`);
+  // A tool that does not touch the target fails.
+  const far = rect("st", 200, 0, 20, 20, { std: "XY" });
+  const bad = m.evaluate(doc([sp, far, plate, block, ind({})]));
+  assert.equal(bad.statuses[4].ok, false);
+});
+
+test("sweep start tangency: path tangent turns the profile square to the path (FR-FT-080 P5)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // A straight path 40 long at 45° in Front (XZ), from the origin; a 6 × 4 profile flat on Top.
+  const s = 40 / Math.SQRT2;
+  const path: SketchFeature = { id: "ps", type: "sketch", name: "Path", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", s, s), { id: "pl", t: "line", a: "a", b: "b" }] };
+  const prof = rect("pr", 0, 0, 6, 4);
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "ps" }, orient: "normal" };
+  // Without it the profile keeps its tilt: an oblique prism, 24 × 40 · cos 45°.
+  const r0 = run(m, doc([path, prof, sw]));
+  close(r0.props!.volume, 24 * 40 / Math.SQRT2, 1e-4);
+  // Path tangent: the section square to the path is the whole profile, 24 × 40.
+  const r1 = run(m, doc([path, prof, { ...sw, orient: undefined, startTangent: true } as Feature]));
+  close(r1.props!.volume, 24 * 40, 1e-4);
+});
