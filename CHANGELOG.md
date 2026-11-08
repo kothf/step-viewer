@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.254.0] - 2026-11-08
+
+### Added
+
+- **Datum targets on drawings (ISO 5459, FR-DRW-023)**: Annotate ▾ Datum target (also on the Annotation tab) marks where a part rests on a datum. Click a point on an edge, then place the frame circle: the lower half shows the target label (A1, A2… after the last datum letter), the upper half the area size. In the panel the target can be a point (a cross), a line (a cross on a phantom line of the length you type) or a hatched area of the diameter you type. The target follows the model like the other annotations and is framed in orange when its edge is gone.
+
 ## [1.252.0] - 2026-11-08
 
 ### Added
@@ -1630,7 +1636,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.252.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.254.0...HEAD
+[1.254.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.254.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0
