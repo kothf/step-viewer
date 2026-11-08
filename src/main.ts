@@ -6,6 +6,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
+import { bindNavigation } from "./viewer/navigation";
 import { SurfaceAnalysis } from "./viewer/Analysis";
 import { SectionManager, type SectionPlane } from "./viewer/Section";
 import { profileDrawing, toDxf, toSvg } from "./tools/profileExport";
@@ -1805,6 +1806,34 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
   if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
 }));
+/** World box of the picked face, edge or parts, for Zoom to selection (FR-UI-103). */
+function selectionBox(): THREE.Box3 | null {
+  const s = state.selection;
+  const b = new THREE.Box3();
+  if (s?.face) {
+    const g = s.part.mesh.geometry, pos = g.attributes.position, idx = g.index;
+    const v = new THREE.Vector3();
+    for (let i = s.face.triStart * 3; i < (s.face.triStart + s.face.triCount) * 3; i++) b.expandByPoint(v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(s.part.mesh.matrixWorld));
+    return b;
+  }
+  if (s?.edge) {
+    const v = new THREE.Vector3(), q = s.edge.pts;
+    for (let i = 0; i + 2 < q.length; i += 3) b.expandByPoint(v.set(q[i], q[i + 1], q[i + 2]).applyMatrix4(s.part.mesh.matrixWorld));
+    return b;
+  }
+  if (s) return b.expandByPoint(s.point.clone());
+  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : [];
+  parts.forEach(p => b.expandByObject(p.mesh));
+  return parts.length ? b : null;
+}
+const nav = bindNavigation({
+  viewer,
+  views: VIEWS,
+  active: () => !drawing.open && !isPcbMode() && viewer.parts.length + (modeller.active ? 1 : 0) > 0,
+  normalTo: () => normalTo(),
+  selectionBox,
+});
+void nav;
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;
 function normalTo(given?: [number, number, number]) {
