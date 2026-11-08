@@ -356,7 +356,25 @@ export class SketchEditor {
 
   pointerUp(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
-    if (this.box) { this.box = null; this.render(); this.emitSel(); return true; }
+    if (this.box) {
+      const b = this.box;
+      this.box = null;
+      // A click (no box drawn) on a model edge or vertex (FR-SK-064): its reference copy is selected, so
+      // relations such as parallel, tangent or coincident can be added against the model directly.
+      const p = this.uv(e);
+      if (p && Math.abs(e.clientX - b.x0) <= 4 && Math.hypot(p[0] - b.a[0], p[1] - b.a[1]) <= this.px(p) * 4) {
+        const ms = this.modelSnapAt(p, false);
+        if (ms) {
+          const r = this.materialize(ms);
+          const id = r.id ?? r.curve;
+          if (id) {
+            this.selection.add(id);
+            this.commit("Reference model edge");
+          }
+        }
+      }
+      this.render(); this.emitSel(); return true;
+    }
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
