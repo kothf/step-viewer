@@ -2347,6 +2347,7 @@ export class Modeller {
     const mk = new oc.BRepOffsetAPI_ThruSections(true, !!f.ruled, 1e-6);
     let firstEdges: [any, string][] = [];
     const wires: any[] = [];
+    const starts: (V3 | undefined)[] = [];
     f.profiles.forEach((id, k) => {
       const { sk, frame } = this.sketchOf(id, doc, prev, frames, "the profile sketches");
       const { faces, edgeEnt } = this.profileFaces(sk, frame);
@@ -2354,7 +2355,17 @@ export class Modeller {
       const w = oc.BRepTools.OuterWire(faces[0]);
       if (k === 0) firstEdges = edgeEnt;
       wires.push(w);
+      const cid = f.connectors?.[k];
+      const cp = cid ? sk.ents.find(e => e.id === cid && e.t === "point") : undefined;
+      if (cp && cp.t === "point") starts[k] = add(add(frame.o, mul(frame.x, cp.x)), mul(frame.y, cp.y));
     });
+    // Connectors (FR-FT-082): each profile starts at its picked point, all wound the same way, so the loft
+    // joins those points instead of letting OCCT line the profiles up.
+    const connected = starts.some(Boolean);
+    if (connected) {
+      const d = sub3(this.wireCentre(wires[wires.length - 1]), this.wireCentre(wires[0]));
+      wires.forEach((w, k) => { wires[k] = this.startWire(w, starts[k] ?? null, d); });
+    }
     if (f.close && wires.length >= 3) wires.push(wires[0]);
     // Guide curves (FR-FT-082, P5): sections of the free loft between the profiles, stretched to the guides.
     const guided = !!f.guides?.length && !f.ruled && !f.close;
@@ -2383,7 +2394,7 @@ export class Modeller {
       if (last) wires.splice(wires.length - 1, 0, last);
     }
     for (const w of wires) mk.AddWire(w);
-    mk.CheckCompatibility(true);
+    mk.CheckCompatibility(!connected);
     mk.Build(new oc.Message_ProgressRange_1());
     if (!mk.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
     let shape = mk.Shape();
@@ -2403,6 +2414,41 @@ export class Modeller {
     let k = 0;
     const tool: Named = { shape, faces, names: names.map(n => n ?? `${f.id}:new:${k++}`) };
     return this.applyTool(f, [tool], prev);
+  }
+
+  /**
+   * A closed wire rebuilt to start at the vertex nearest `at` (when given) and to wind counter-clockwise
+   * about `d`, keeping its edges (so names from them still resolve).
+   */
+  private startWire(w: any, at: V3 | null, d: V3): any {
+    const oc = this.oc;
+    let edges: any[] = [], verts: V3[] = [];
+    for (const ex = new oc.BRepTools_WireExplorer_2(w); ex.More(); ex.Next()) { edges.push(ex.Current()); verts.push(this.xyz(oc.BRep_Tool.Pnt(ex.CurrentVertex()))); }
+    if (edges.length < 2) return w;
+    // Winding from the polygon of the vertices and the edge middles (arcs count).
+    const pts: V3[] = [];
+    edges.forEach((e, i) => {
+      pts.push(verts[i]);
+      const c = new oc.BRepAdaptor_Curve_2(e), u = (c.FirstParameter() + c.LastParameter()) / 2;
+      pts.push(this.xyz(c.Value(u)));
+    });
+    let area: V3 = [0, 0, 0];
+    for (let i = 0; i < pts.length; i++) area = add(area, cross(pts[i], pts[(i + 1) % pts.length]));
+    if (dot(area, d) < 0) {
+      // Reverse: the edges in the other order, each reversed; edge i then starts where it used to end.
+      const n = edges.length;
+      const rev = edges.map((_, i) => edges[n - 1 - i].Reversed());
+      const rv = edges.map((_, i) => verts[(n - i) % n]);
+      edges = rev.map(e => oc.TopoDS.Edge_1(e)); verts = rv;
+    }
+    if (at) {
+      let k = 0;
+      verts.forEach((v, i) => { if (d3(v, at) < d3(verts[k], at)) k = i; });
+      edges = [...edges.slice(k), ...edges.slice(0, k)];
+    }
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    for (const e of edges) mw.Add_1(e);
+    return mw.IsDone() ? mw.Wire() : w;
   }
 
   /** The centre of a wire's length. */
@@ -2442,7 +2488,7 @@ export class Modeller {
     // The free loft the sections are cut from.
     const free = new oc.BRepOffsetAPI_ThruSections(true, false, 1e-6);
     for (const w of wires) free.AddWire(w);
-    free.CheckCompatibility(true);
+    free.CheckCompatibility(!f.connectors?.some(Boolean));
     free.Build(new oc.Message_ProgressRange_1());
     if (!free.IsDone()) throw new FeatureError("E-LOFT-FAIL", "The loft failed. Do the profiles twist, or cross each other?");
     const solid = free.Shape();

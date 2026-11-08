@@ -3141,4 +3141,9 @@ export const RU: Record<string, string> = {
   "There is no body to check.": "Нет тела для проверки.",
   // 1.122.0: shaded drawing views (FR-DRW-010).
   "Shaded with edges": "Тонировка с рёбрами",
+  // 1.131.0: loft connectors (FR-FT-082).
+  "Connectors": "Соединители",
+  "Start point": "Начальная точка",
+  "Automatic": "Автоматически",
+  "The loft joins the start points of the profiles. Pick matching corners to stop it twisting.": "Лофт соединяет начальные точки профилей. Выберите соответствующие углы, чтобы он не закручивался.",
 };

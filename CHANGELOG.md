@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.131.0] - 2026-11-08
+
+### Added
+
+- **Loft connectors (FR-FT-082)**: the Loft panel has a Connectors group with a start point per profile. The loft joins the picked points, so matching corners stop a loft from twisting and a corner further round twists it on purpose. Automatic keeps the old behaviour. This completes the loft options of FR-FT-082.
+
 ## [1.129.0] - 2026-11-08
 
 ### Added
@@ -1145,7 +1151,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.129.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.131.0...HEAD
+[1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
 [1.129.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.129.0
 [1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0
 [1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
