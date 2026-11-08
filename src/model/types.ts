@@ -60,11 +60,20 @@ export interface SkDim {
   ord?: boolean;
 }
 
-/** Plane of a sketch or a reference: a standard plane, a planar face of the model, or a reference plane feature. */
+/** Plane of a sketch or a reference: a standard plane, a planar face of the model, a reference plane feature, or a face of another component (in-context). */
 export type PlaneRef =
   | { std: "XY" | "XZ" | "YZ" }
   | { face: FaceRef; offset?: number }
-  | { plane: string };
+  | { plane: string }
+  | { ctx: CtxRef };
+
+/**
+ * External reference (FR-ASM-030): a flat face of another component of an assembly, made while editing
+ * this part in context. `host` is the component this part was edited as; `p`/`n` are the face's plane in
+ * this part's coordinates as last seen, so the part builds on its own. The assembly updates them when the
+ * components move, unless `locked`.
+ */
+export interface CtxRef { comp: string; face: string; host: string; label?: string; p: V3; n: V3; locked?: boolean }
 
 /** World frame of a sketch plane: origin, x and y directions, normal. */
 export interface Frame { o: V3; x: V3; y: V3; n: V3 }
@@ -855,6 +864,8 @@ export interface PartDoc {
   /** The active configuration's name. */
   config?: string;
   /** Standard planes hidden in the view (they are shown by default). */
+  /** Lock external references (FR-ASM-030): in-context planes keep their stored values. */
+  ctxLocked?: boolean;
   stdHidden?: ("XY" | "XZ" | "YZ")[];
   /** Bodies folder (FR-BODY-001): per body key (see `Modeller.bodyInfo`), a name, hidden, colour. */
   bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
