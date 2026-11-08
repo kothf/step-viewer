@@ -1052,7 +1052,7 @@ export class DrawingWorkspace {
   }
 
   /** The point, line or circle of a view's model under a sheet point (points first), within the snap distance. */
-  private pickAt(viewId: string, p: Pt, only?: "circle"): Pick | null {
+  private pickAt(viewId: string, p: Pt, only?: "circle", first = false): Pick | null {
     const v = findView(this.sheet, viewId), pl = this.placements.get(viewId), topo = this.factsOf(viewId)?.topo;
     if (!v || !pl || !topo) return null;
     const { P, n } = projector(viewDir(this.sheet, v));
@@ -1089,7 +1089,10 @@ export class DrawingWorkspace {
         if ((d < bd - 1e-6 || tie) && inDetail(fromSheet(pl, p[0], p[1]))) { bd = Math.min(bd, d); best = { kind: "circle", ref: edgeRef(e, "e"), e }; }
       }
     }
-    if (pt && !(best?.kind === "circle" && bd < tol * 0.3 && pd > bd + tol * 0.3)) return pt;
+    // A first dimension pick on a circle takes the circle even when another edge ends on it there (a cross hole's
+    // intersection curve on a shaft): a lone point makes no dimension.
+    const onCircle = best?.kind === "circle" && bd < tol * 0.3;
+    if (pt && !(onCircle && (pd > bd + tol * 0.3 || (first && pt.e !== best!.e && pt.e.t !== "c")))) return pt;
     return best;
   }
 
@@ -1171,7 +1174,7 @@ export class DrawingWorkspace {
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
-      const pick = this.pickAt(vid, p);
+      const pick = this.pickAt(vid, p, undefined, !m.picks.length);
       const same = (a: Pick, b: Pick) => JSON.stringify(a.ref) === JSON.stringify(b.ref);
       if (!m.picks.length) { if (!pick) return; m.view = vid; m.picks = [pick]; }
       else if (pick && m.picks.length === 1 && !same(pick, m.picks[0]) && !(m.picks[0].kind === "circle" && pick.kind === "circle" && pick.e === m.picks[0].e)) m.picks.push(pick);
@@ -1393,7 +1396,7 @@ export class DrawingWorkspace {
     let s = "";
     if (m.kind === "dim") {
       for (const pk of m.picks) s += show(pk, "drw-edge on");
-      const hov = this.pickAt(vid, at);
+      const hov = this.pickAt(vid, at, undefined, !m.picks.length);
       if (hov && !(m.picks.length >= 2)) s += show(hov, "drw-edge");
       if (m.picks.length) {
         const d = this.buildDim(vid, m.picks, at), g = d && dimGeo(d, P, this.factsOf(vid)?.topo ?? null);

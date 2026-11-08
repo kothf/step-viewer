@@ -304,8 +304,8 @@ function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims:
       const s0 = add2(start, dir, txt.main ? mainW + 0.6 : 0);
       const big = !txt.main;
       const hh = big ? h * 0.8 : small;
-      if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.5); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
-      if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.1); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+      if (txt.up) { const p = add2(s0, up, big ? h * 0.55 : h * 0.6); out.push({ t: "t", x: p[0], y: p[1], s: txt.up, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
+      if (txt.lo) { const p = add2(s0, up, big ? -h * 0.45 : -h * 0.25); out.push({ t: "t", x: p[0], y: p[1], s: txt.lo, h: hh, al: "l", layer: "ANNOT", rot: rot || undefined }); }
     }
     return textBox(start[0], start[1], "x".repeat(Math.max(1, Math.round(totalW / (h * 0.85)))), h, "l", rot);
   };
