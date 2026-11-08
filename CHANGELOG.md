@@ -5,11 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.228.0] - 2026-11-08
+## [1.232.0] - 2026-11-08
 
 ### Added
 
 - **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in SolidWorks. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
+
+## [1.231.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace paths and mate value results work as **sensors**, like SolidWorks' motion study sensors. Set **Alert below** and/or **Alert above** on the plotted quantity: the out-of-range times show as orange bands in the result's timeline row and the readout says Out of range; with **Stop playback** ticked, playing stops at the frame where the value goes out of range (FR-FT-122).
+
+## [1.229.0] - 2026-11-08
+
+### Fixed
+
+- The 3D view no longer stays blank after the graphics card resets (a lost WebGL context, which can happen while switching between heavy document tabs). The view and the view cube draw again as soon as the browser gives the context back, with the lighting rebuilt; if it does not come back, a message says to save and reload instead of leaving an empty view with only the X/Y/Z labels.
+- A part opened after a STEP file in another tab no longer shows that STEP file's header (protocol, author, CAD system) in Properties.
 
 ## [1.226.0] - 2026-11-08
 
@@ -1537,8 +1550,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.228.0...HEAD
-[1.228.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.228.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.232.0...HEAD
+[1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
+[1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
+[1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0
 [1.226.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.226.0
 [1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
 [1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0

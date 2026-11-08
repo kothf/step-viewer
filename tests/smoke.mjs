@@ -3120,7 +3120,7 @@ try {
     await ctx.close();
   }
 
-  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.228.0 pierce (FR-SK-051) ---
+  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.232.0 pierce (FR-SK-051) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3175,7 +3175,7 @@ try {
       return { w: w.join(","), edge: r?.ext?.faces?.slice().sort().join("+") ?? null };
     });
     check(!!pierceBtn && /pierces/.test(pStatus) && pierced.w === "20,0,20" && pierced.edge === "x:end+x:side:l2",
-      `model 1.228: Pierce puts the point where the picked edge crosses the sketch plane (${!!pierceBtn}, ${pierced.w}, ${pierced.edge}, ${pStatus})`);
+      `model 1.232: Pierce puts the point where the picked edge crosses the sketch plane (${!!pierceBtn}, ${pierced.w}, ${pierced.edge}, ${pStatus})`);
     await ctx.close();
   }
 
@@ -5719,7 +5719,18 @@ try {
         a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
       document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
       mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
-      const trace = { mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Sensor: Alert above 10 mm on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
+      // shows Out of range at the end, and with Stop playback the trip is the first frame past 1 s.
+      m.sel = null; m.selTrace = tr0.id; m.render(); m.showAt(m.time);
+      plotAs("dist");
+      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10"; amax.dispatchEvent(new Event("change"));
+      const astop = document.querySelector('#motion input[data-tr="astop"]'); astop.checked = true; astop.dispatchEvent(new Event("change"));
+      m.seek(2);
+      const spans = m.alertSpansOf(tr0.id), sfps = m.study.fps;
+      const sensor = { alert: m.study.traces.find(x => x.id === tr0.id).alert, spans, from: spans[0]?.[0], to: spans[0]?.[1], one: spans.length === 1,
+        bands: document.querySelectorAll(`#motion .mo-tlane[data-tlane="${tr0.id}"] .mo-aspan`).length, out: !!document.querySelector("#motion .mo-alert"),
+        trip: m.tripAt(0, 2 * sfps)?.i, want: sfps + 1, fromOk: Math.abs(spans[0]?.[0] - (sfps + 1) / sfps) < 1e-9 };
+      const trace = { sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5872,6 +5883,8 @@ try {
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false
+      && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
@@ -8704,6 +8717,62 @@ try {
     const ru = await dp.evaluate(() => ({ nav: document.querySelector("#doc-tabs").getAttribute("aria-label"), x: document.querySelector("#doc-tabs .dt-x").getAttribute("aria-label") }));
     await dp.click("#lang-btn");
     check(asked && t4.join() === "*Assembly1.mcadasm,Assembly1.mcaddrw" && ru.nav === "Открытые документы" && /^Закрыть /.test(ru.x), `tabs: closing a changed part asks first; Russian labels (${t4}; ${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- Several part tabs next to a STEP tab: each tab shows its own body; a lost WebGL context comes back ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&nokernel`);
+    await dp.waitForFunction(() => window.__sv);
+    await dp.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const plate = async w => {
+      await dp.click("#new-part");
+      await dp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.last());
+      await dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
+        const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -10), P("b", w / 2, -10), P("c", w / 2, 10), P("d", -w / 2, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+          { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+      }), w);
+      await dp.waitForTimeout(150);
+      await idle();
+    };
+    await plate(40);
+    await plate(80);
+    // What the view shows: the open part's name, the body's width and whether the STEP header leaked into Properties.
+    const shown = () => dp.evaluate(() => {
+      const ps = window.__sv.viewer.parts, d = ps.length === 1 ? ps[0].data : null;
+      return { name: window.__sv.model.store?.doc.name, w: d ? Math.round(d.bboxMax[0] - d.bboxMin[0]) : -ps.length, step: /AP203/.test(document.querySelector("#props")?.textContent ?? "") };
+    });
+    const seen = [];
+    for (const i of [1, 2, 0, 1, 2, 1]) {
+      await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+      if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+      else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+      const s = await shown();
+      seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
+    }
+    check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
+    const lost = await dp.evaluate(async () => {
+      const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");
+      if (!ext) return "no extension";
+      const env0 = v.scene.environment;
+      ext.loseContext();
+      await new Promise(r => setTimeout(r, 300));
+      const was = v.contextLost;
+      ext.restoreContext();
+      await new Promise(r => setTimeout(r, 800));
+      // three.js starts a fresh renderer.info on restore, so any frame counted now was drawn on the new context.
+      const msg = [...document.querySelectorAll("#toasts .toast")].map(x => x.textContent).join(" | ");
+      return { was, back: !v.contextLost, drew: v.renderer.info.render.frame > 0 && v.renderer.info.render.triangles > 0, env: v.scene.environment !== env0, msg };
+    });
+    check(lost.was && lost.back && lost.drew && lost.env && /restored/.test(lost.msg), `viewer: a lost WebGL context is redrawn when it comes back, with a fresh environment map (${JSON.stringify(lost)})`);
     await ctx.close();
   }
 

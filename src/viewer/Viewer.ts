@@ -77,8 +77,7 @@ export class Viewer {
     this.persp.position.set(200, -300, 200);
     this.camera = this.persp;
 
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.makeEnvironment();
     this.scene.environmentIntensity = 0.55;
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x404650, 0.6));
     this.scene.add(this.headlight, this.headlight.target);
@@ -107,6 +106,32 @@ export class Viewer {
     this.resizeObs.observe(container);
     this.resize();
     this.renderer.setAnimationLoop(t => this.tick(t));
+    // A lost WebGL context (GPU reset, driver hiccup, too much GPU memory) leaves the canvas blank while the HTML
+    // labels stay. three.js restores its own state, but the environment map is rendered on the GPU and the view only
+    // draws when invalidated, so both are redone here; until then the page says what happened.
+    const cv = this.renderer.domElement;
+    cv.addEventListener("webglcontextlost", () => { this.contextLost = true; for (const f of this.contextListeners) f(true); });
+    cv.addEventListener("webglcontextrestored", () => {
+      this.contextLost = false;
+      this.makeEnvironment();
+      this.resize();
+      this.invalidate();
+      for (const f of this.contextListeners) f(false);
+    });
+  }
+
+  /** True while the WebGL context is lost (the view is blank until the browser gives it back). */
+  contextLost = false;
+  private contextListeners: ((lost: boolean) => void)[] = [];
+  /** Called when the WebGL context is lost (true) and when it comes back (false). */
+  onContext(fn: (lost: boolean) => void) { this.contextListeners.push(fn); }
+
+  private makeEnvironment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const old = this.scene.environment;
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    old?.dispose();
+    pmrem.dispose();
   }
 
   onRender(fn: () => void) { this.listeners.push(fn); }
