@@ -997,6 +997,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-key.sel, .motion .mo-bar.sel { background: var(--accent); }
 .mo-box { position: fixed; z-index: 60; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); pointer-events: none; }
 .motion .mo-multi { font-weight: 600; }
+.motion .mo-key.mo-ghost { opacity: 0.55; pointer-events: none; outline: 1px dashed var(--accent); }
 .motion .mo-key.i-snap { rotate: 0deg; border-radius: 0; }
 .motion .mo-key.i-easein, .motion .mo-key.i-easeout, .motion .mo-key.i-ease { border-radius: 50%; }
 .motion .mo-key.i-easein { border-left-width: 4px; }

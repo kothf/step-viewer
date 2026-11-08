@@ -5341,16 +5341,51 @@ try {
       return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
     }).catch(e => ({ err: String(e) }));
     // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
-    let boxed = { err: "no track" };
+    let boxed = { err: "no track" }, stretched = { err: "no track" };
     if (pose.multi) {
       const laneEl = mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"]`);
       await laneEl.scrollIntoViewIfNeeded();
-      const lane = await laneEl.boundingBox();
-      await mp.mouse.move(lane.x + 1, lane.y + 1);
+      let lane = await laneEl.boundingBox();
+      const boxAll = async () => {
+        await laneEl.scrollIntoViewIfNeeded();
+        lane = await laneEl.boundingBox();
+        await mp.mouse.move(lane.x + 1, lane.y + 1);
+        await mp.mouse.down();
+        await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+        await mp.mouse.up();
+      };
+      // Stretch: the three keys (frames 1, 46, 60) at a 50 % time scale stretch about the first one; Alt+dragging the last
+      // one to the end of the track stretches them back; a plain click then a Ctrl+drag of the first key copies it to 1 s.
+      const frames = () => mp.evaluate(() => { const m = window.__sv.motion; return m.study.tracks.find(k => k.kind === "pose").keys.map(k => Math.round(k.t * m.study.fps)); });
+      // The panel under the timeline changes with the selection, so the track is measured again before each drag.
+      const keyBox = async i => { await laneEl.scrollIntoViewIfNeeded(); lane = await laneEl.boundingBox(); return mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"] .mo-key`).nth(i).boundingBox(); };
+      await boxAll();
+      const scaleField = await mp.locator('#motion [data-p="scale"]').count();
+      await mp.locator('#motion [data-p="scale"]').fill("50");
+      await mp.locator('#motion [data-p="scale"]').press("Enter");
+      const half = await frames();
+      const k2 = await keyBox(2);
+      await mp.keyboard.down("Alt");
+      await mp.mouse.move(k2.x + k2.width / 2, k2.y + k2.height / 2);
       await mp.mouse.down();
-      await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
-      await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.move(lane.x + lane.width - 1, k2.y + k2.height / 2, { steps: 6 });
       await mp.mouse.up();
+      await mp.keyboard.up("Alt");
+      const back = await frames();
+      let k0 = await keyBox(0);
+      await mp.mouse.click(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      k0 = await keyBox(0);
+      await mp.keyboard.down("Control");
+      await mp.mouse.move(k0.x + k0.width / 2, k0.y + k0.height / 2);
+      await mp.mouse.down();
+      await mp.mouse.move(lane.x + lane.width / 2, k0.y + k0.height / 2, { steps: 6 });
+      await mp.mouse.up();
+      await mp.keyboard.up("Control");
+      const copied = await frames();
+      const nSel = await mp.locator("#motion .mo-key.sel").count(), ghosts = await mp.locator("#motion .mo-ghost").count();
+      stretched = { scaleField, half, back, copied, nSel, ghosts };
+      await boxAll();
       boxed = await mp.evaluate(() => {
         const n = document.querySelectorAll("#motion .mo-key.sel").length, boxGone = !document.querySelector(".mo-box");
         document.querySelector("#motion .mo-key.sel")?.focus();
@@ -5361,8 +5396,12 @@ try {
     await mp.click('#motion [data-mo="close"]');
     const mu = pose.multi;
     check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
-      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 3 && boxed.boxGone && boxed.left === 0,
+      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 4 && boxed.boxGone && boxed.left === 0,
       `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
+    const st = stretched;
+    check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
+      && st.copied?.length === 4 && st.copied[0] === 1 && Math.abs(st.copied[1] - 30) <= 1 && st.nSel === 1 && st.ghosts === 0,
+      `motion study: a time scale and Alt+drag stretch selected keys, Ctrl+drag copies a key (FR-FT-122) (${JSON.stringify(st)})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
