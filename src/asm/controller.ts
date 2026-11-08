@@ -37,6 +37,8 @@ export interface AsmHost {
   leaveOthers(): void;
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
   editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void): void;
+  /** The part open in the modeller, if any (Make assembly from part). */
+  openPart?(): { doc: PartDoc; fileName: string } | null;
   appVersion: string;
 }
 
@@ -150,6 +152,18 @@ export class AsmController {
     toast(t("New assembly: insert a part or a STEP model as the first component; it is fixed at the origin."));
   }
 
+  /** Make assembly from part (SolidWorks File → Make Assembly from Part): a new assembly with the open part fixed at the origin. */
+  fromPart() {
+    const open = this.host.openPart?.();
+    if (!open) return;
+    const pd = JSON.parse(JSON.stringify(open.doc)) as PartDoc;
+    const file = open.fileName || `${pd.name}.mcadprt`;
+    this.load({ schema: 1, kind: "assembly", id: uid("a_"), name: "Assembly1", units: { length: "mm", decimals: 2 }, components: [], parts: {} }, "", null);
+    this.insertPart(pd, file);
+    this.undoStack = [];
+    toast(t("New assembly with {name} fixed at the origin. Insert more components from the Assembly tab.", { name: file }));
+  }
+
   async openFile(file: File | { name: string; data: ArrayBuffer }, handle: FileSystemFileHandle | null = null) {
     const buf = file instanceof File ? await file.arrayBuffer() : file.data;
     try { this.load(await unpackAsm(buf), file.name, handle); }
@@ -204,6 +218,7 @@ export class AsmController {
     this.host.viewer.emptySize = 1;
     $("#t-asm").hidden = true;
     $("#asm-bar").hidden = true;
+    $("#asm-quick").hidden = true;
     this.host.selectLeftTab("tree");
   }
 
@@ -1794,6 +1809,8 @@ export class AsmController {
       if (!menu.hidden) { shut(); return; }
       const r = more.getBoundingClientRect();
       menu.style.left = `${Math.max(4, r.right - 190)}px`;
+      const fp = document.getElementById("new-asm-part");
+      if (fp) fp.hidden = !this.host.openPart?.();
       menu.style.top = `${r.bottom + 4}px`;
       menu.hidden = false;
       more.setAttribute("aria-expanded", "true");
@@ -1803,6 +1820,7 @@ export class AsmController {
     menu?.addEventListener("keydown", e => { if (e.key === "Escape") { shut(); more?.focus(); } });
     document.getElementById("new-menu-part")?.addEventListener("click", () => { shut(); document.getElementById("new-part")?.click(); });
     document.getElementById("new-asm")?.addEventListener("click", () => { shut(); this.newAssembly(); });
+    document.getElementById("new-asm-part")?.addEventListener("click", () => { shut(); this.fromPart(); });
     document.getElementById("empty-asm")?.addEventListener("click", () => this.newAssembly());
     document.addEventListener("keydown", e => {
       if (this.doc && this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
@@ -1936,22 +1954,28 @@ export class AsmController {
     bar.hidden = !this.doc;
     if (!this.doc) return;
     const sel = this.comp(this.selected);
-    const b = (c: string, label: string, title: string, dis = false) => `<button class="mc-b" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}><span class="mc-l">${esc(label)}</span></button>`;
-    $("#asm-tools").innerHTML = b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
-      + b("fastener", t("Fasteners"), t("Fastener library: ISO screws, nuts and washers, placed on a hole"))
-      + b("afeat", t("Assembly cut"), t("Assembly feature: a hole or cut extrude through several components, kept in the assembly only"), !this.doc.components.length)
-      + b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), this.doc.components.length < 2)
-      + b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !this.doc.components.length)
-      + b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !this.doc.components.length)
-      + b("motion", t("Motion study"), t("Motion study: animate mates with keys and motors, explode and camera, record a video"), !this.doc.components.length)
-      + b("interfere", t("Interference"), t("Interference detection: components whose solids overlap"), this.doc.components.length < 2)
-      + b("bom", t("BOM"), t("Bill of materials: parts and quantities, CSV export"), !this.doc.components.length)
-      + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !this.doc.components.length)
-      + b("move", t("Move component"), t("Move or rotate the selected component (or drag it in the view)"), !sel || !!sel.fixed)
-      + b("fix", sel?.fixed ? t("Float") : t("Fix"), t("Fix or float the selected component"), !sel)
-      + b("undo", t("Undo"), t("Undo (Ctrl+Z)"), !this.undoStack.length) + b("redo", t("Redo"), t("Redo (Ctrl+Y)"), !this.redoStack.length)
-      + b("save", t("Save"), t("Save the assembly (.mcadasm)"));
+    const n0 = this.doc.components.length;
+    const b = (c: string, label: string, title: string, dis = false, on = false) => `<button class="mc-b${on ? " on" : ""}" data-ac="${c}" title="${esc(title)}"${dis ? " disabled" : ""}${on ? ' aria-pressed="true"' : ""}><span class="mc-i" aria-hidden="true">${ASM_ICONS[c] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
+    const g = (label: string, inner: string) => `<div class="mc-g" role="group" aria-label="${esc(label)}">${inner}</div>`;
+    const sep = `<div class="mc-sep"></div>`;
+    // Assembly tab of the command bar (FR-UI-010): components, mates and moves, patterns and cuts, explode and motion, checks.
+    $("#asm-tools").innerHTML = g(t("Components"), b("insert", t("Insert component"), t("Insert component: a part, STEP, IGES or BREP model"))
+        + b("fastener", t("Fasteners"), t("Fastener library: ISO screws, nuts and washers, placed on a hole"), false, !!this.fastening)) + sep
+      + g(t("Mate"), b("mate", t("Mate"), t("Mate: pick two faces to position components relative to each other"), n0 < 2, !!this.mating)
+        + b("move", t("Move component"), t("Move or rotate the selected component (or drag it in the view)"), !sel || !!sel.fixed)
+        + b("fix", sel?.fixed ? t("Float") : t("Fix"), t("Fix or float the selected component"), !sel)) + sep
+      + g(t("Features"), b("pattern", t("Pattern"), t("Component pattern: linear or circular copies of components"), !n0, !!this.patterning)
+        + b("afeat", t("Assembly cut"), t("Assembly feature: a hole or cut extrude through several components, kept in the assembly only"), !n0, !!this.featuring)) + sep
+      + g(t("Presentation"), b("explode", t("Explode"), t("Exploded view: move components apart in steps"), !n0, !!this.exploding)
+        + b("motion", t("Motion study"), t("Motion study: animate mates with keys and motors, explode and camera, record a video"), !n0)) + sep
+      + g(t("Check"), b("interfere", t("Interference"), t("Interference detection: components whose solids overlap"), n0 < 2, !!this.interfere)
+        + b("bom", t("BOM"), t("Bill of materials: parts and quantities, CSV export"), !n0));
     $("#asm-tools").querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
+    const q = $("#asm-quick");
+    q.hidden = false;
+    q.innerHTML = b("undo", t("Undo"), t("Undo (Ctrl+Z)"), !this.undoStack.length) + b("redo", t("Redo"), t("Redo (Ctrl+Y)"), !this.redoStack.length) + sep
+      + b("save", t("Save"), t("Save the assembly (.mcadasm)")) + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !n0);
+    q.querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
     const n = this.doc.components.length;
     $("#asm-status").textContent = n ? `${t("{n} component|{n} components", { n })} · ${t(this.defState())}` : t("Insert a part or a STEP model to start.");
   }
@@ -2403,3 +2427,23 @@ export class AsmController {
 function needsSolve(d: AsmDoc) {
   return !!d.mates?.length || d.components.some(c => c.flexible && !!d.parts[c.part]?.asm?.mates?.length);
 }
+
+/** Assembly command icons (FR-UI-015): MöbiusCAD's own stroke icons, 16 px, currentColor. */
+const AI = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ASM_ICONS: Record<string, string> = {
+  insert: AI('<path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5l-5.5-3z"/><path d="M8 7v4M6 9h4"/>'),
+  fastener: AI('<path d="M5 2.5h6v3H5z"/><path d="M6.5 5.5v8M9.5 5.5v8M6.5 7.5l3 1M6.5 10l3 1"/>'),
+  mate: AI('<path d="M2 10h5v4H2zM9 2h5v4H9z"/><path d="M7 10 9 6"/>'),
+  move: AI('<path d="M8 1.5v13M1.5 8h13M8 1.5 6.5 3M8 1.5 9.5 3M8 14.5 6.5 13M8 14.5 9.5 13M1.5 8 3 6.5M1.5 8 3 9.5M14.5 8 13 6.5M14.5 8 13 9.5"/>'),
+  fix: AI('<path d="M5 7V5a3 3 0 0 1 6 0v2"/><path d="M3.5 7h9v7h-9z"/>'),
+  pattern: AI('<path d="M2 5h3v3H2zM6.5 5h3v3h-3zM11 5h3v3h-3z"/><path d="M2 11h12" stroke-dasharray="2 1.5"/>'),
+  afeat: AI('<path d="M2 4h12v8H2z"/><circle cx="8" cy="8" r="2"/><path d="M8 1v3M8 12v3"/>'),
+  explode: AI('<path d="M6 6h4v4H6z"/><path d="M2 2l2.5 2.5M14 2l-2.5 2.5M2 14l2.5-2.5M14 14l-2.5-2.5"/>'),
+  motion: AI('<circle cx="8" cy="8" r="6"/><path d="M6.5 5.5v5l4-2.5z"/>'),
+  interfere: AI('<path d="M2 3h7v7H2zM7 6h7v7H7z"/><path d="M7 6h2v4H7z" fill="currentColor" fill-opacity=".35"/>'),
+  bom: AI('<path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/>'),
+  undo: AI('<path d="M5 3 2 6l3 3"/><path d="M2 6h7.5a4 4 0 0 1 0 8H7"/>'),
+  redo: AI('<path d="M11 3l3 3-3 3"/><path d="M14 6H6.5a4 4 0 0 0 0 8H9"/>'),
+  save: AI('<path d="M2.5 2.5h9l2 2v9h-11z"/><path d="M5 2.5v3.5h5V2.5M5 13.5v-4h6v4"/>'),
+  step: AI('<path d="M8 10V2.5M5 5.5l3-3 3 3"/><path d="M2.5 9.5v4h11v-4"/>'),
+};

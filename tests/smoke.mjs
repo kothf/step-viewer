@@ -108,6 +108,32 @@ const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
 const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
 if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
 const inShard = k => (k - 1) % shardN + 1 === shardI;
+/**
+ * Runs a part command by its label from the command bar (FR-UI-010): looks through the part's tabs and
+ * their flyouts, picks the tab, then the button or the flyout entry (exact label first, else one starting with it).
+ */
+async function runCmd(pg, label) {
+  // Exact label first, on every tab and flyout; then the first label that starts with it.
+  for (const exact of [true, false]) {
+    const pick = async sel => {
+      const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
+      return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
+    };
+    for (const tab of ["features", "surfaces", "weldments", "sketch"]) {
+      if (!(await pg.$(`#cm-t-${tab}`))) continue;
+      await pg.click(`#cm-t-${tab}`);
+      const i = await pick("#mc-tools [data-c]");
+      if (i >= 0) { await pg.locator("#mc-tools [data-c]").nth(i).click(); return; }
+      for (const key of await pg.$$eval("#mc-tools [data-fly]", els => els.map(e => e.dataset.fly))) {
+        await pg.click(`#mc-tools [data-fly="${key}"]`);
+        const j = await pick("#mc-menu button");
+        if (j >= 0) { await pg.locator("#mc-menu button").nth(j).click(); return; }
+        await pg.keyboard.press("Escape");
+      }
+    }
+  }
+  throw new Error(`No command labelled ${label}`);
+}
 const started = Date.now();
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
@@ -140,23 +166,26 @@ try {
   check(brand.title === "Cube 10x10.stp · MöbiusCAD" && brand.txt === "MöbiusCAD", `app is named MöbiusCAD (${brand.title} / ${brand.txt})`);
   check(brand.logo && brand.icons && brand.man === "MöbiusCAD" && brand.manIcons, "header logo, favicons and manifest icons load");
 
-  // --- header tools: every measuring tool and right-panel page is on screen at every width, no scrolling;
-  //     one header row from 1366 px up, a second row only on narrower windows ---
+  // --- command bar (FR-UI-010): the Evaluate tab holds every measuring tool on one row under a one-row header;
+  //     the right panel's pages are tabs at its top. Phones may scroll the command row sideways. ---
   for (const [w, h] of [[1920, 1080], [1440, 900], [1366, 768], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(150);
     const r = await page.evaluate(() => {
       const inView = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.left >= 0 && b.right <= innerWidth + 0.5 && b.top >= 0 && b.bottom <= innerHeight; };
-      const tb = document.querySelector(".topbar");
-      const btns = [...document.querySelectorAll("#tools button, #rp-tabs [role=tab]")];
+      const tb = document.querySelector(".topbar"), cm = document.querySelector("#cm");
+      const tools = [...document.querySelectorAll("#tools button")], pages = [...document.querySelectorAll("#rp-tabs [role=tab]")];
       return {
-        n: btns.length, off: btns.filter(b => !inView(b)).map(b => b.dataset.tool ?? b.dataset.tab),
-        named: btns.every(b => b.textContent.trim().length > 1 && b.title),
+        n: tools.length, off: tools.filter(b => !inView(b)).map(b => b.dataset.tool), tab: document.querySelector("#cm-tabs [aria-selected=true]")?.dataset.cm,
+        pages: pages.length, pagesOff: pages.filter(b => !inView(b)).map(b => b.dataset.tab),
+        named: [...tools, ...pages].every(b => b.textContent.trim().length > 1 && b.title),
         over: tb.scrollWidth - tb.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
-        rows: tb.classList.contains("tb-wrap") ? 2 : 1, h: Math.round(tb.getBoundingClientRect().height),
+        h: Math.round(tb.getBoundingClientRect().height), cmH: Math.round(cm.getBoundingClientRect().height),
       };
     });
-    check(r.n === 17 && r.off.length === 0 && r.named && r.over <= 1 && r.page <= 0 && (w < 1366 || (r.rows === 1 && r.h <= 48)), `header tools ${w}px: 12 tools + 5 panel pages on screen, no scrolling${w >= 1366 ? ", one row" : ""} (${JSON.stringify(r)})`);
+    check(r.n === 12 && r.pages === 5 && r.tab === "evaluate" && r.named && r.over <= 1 && r.page <= 0 && (w < 1024 || r.h <= 48) && r.cmH <= 80
+      && (w < 1024 || r.off.length === 0) && (w < 1280 || r.pagesOff.length === 0),
+      `command bar ${w}px: Evaluate holds the 12 tools${w >= 1024 ? " on screen" : ""}, ${w >= 1280 ? "5 panel pages in view, " : ""}one-row header (${JSON.stringify(r)})`);
   }
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.waitForTimeout(150);
@@ -171,11 +200,12 @@ try {
     }, [tab, ctl]);
   }
   check(Object.values(pages).every(Boolean), `right panel: each page opens from the tool strip with its controls in view (${JSON.stringify(pages)})`);
-  // Clicking the open page hides the panel; another page brings it back. A new section plane shows the Section page.
-  await page.click("#rt-props");
-  const hiddenPanel = await page.evaluate(() => document.querySelector("#app").classList.contains("no-right"));
+  // The panel button hides the panel and brings it back on the page it had. A new section plane shows the Section page.
   await page.click("#rt-mass");
-  const shownPanel = await page.evaluate(() => !document.querySelector("#app").classList.contains("no-right"));
+  await page.click("#panel-toggle");
+  const hiddenPanel = await page.evaluate(() => document.querySelector("#app").classList.contains("no-right"));
+  await page.click("#panel-toggle");
+  const shownPanel = await page.evaluate(() => !document.querySelector("#app").classList.contains("no-right") && document.querySelector("#rp-mass").classList.contains("on"));
   await page.click("#rt-props");
   await page.$eval("#sec-add [data-sec=z]", el => el.click());
   const secShown = await page.evaluate(() => document.querySelector("#rp-section").classList.contains("on"));
@@ -195,7 +225,7 @@ try {
   await page.click("#tools [data-tool=radius]");
   const pressed = await page.evaluate(() => [...document.querySelectorAll("#tools button")].filter(b => b.getAttribute("aria-pressed") === "true").map(b => b.dataset.tool));
   await page.keyboard.press("Escape");
-  check(hiddenPanel && shownPanel && secShown && pressed.join() === "radius", `tool strip: open page toggles the panel, a new plane shows Section, aria-pressed on the active tool (${JSON.stringify({ hiddenPanel, shownPanel, secShown, pressed })})`);
+  check(hiddenPanel && shownPanel && secShown && pressed.join() === "radius", `tool strip: the panel button hides and shows the panel, a new plane shows Section, aria-pressed on the active tool (${JSON.stringify({ hiddenPanel, shownPanel, secShown, pressed })})`);
   const cube =await page.evaluate(() => {
     const { viewer, state, handlePick, setTool } = window.__sv;
     const p = viewer.parts[0];
@@ -1452,7 +1482,7 @@ try {
     const iso = () => mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
 
     await mp.click("#new-part");
-    await mp.waitForSelector("#mc-bar:not([hidden])");
+    await mp.waitForSelector("#mc-tools:not([hidden])");
     const start = await mp.evaluate(() => ({ tab: document.querySelector("#t-features").getAttribute("aria-selected"), rows: [...document.querySelectorAll("#mc-tree .ft-name")].map(e => e.textContent) }));
     check(start.tab === "true" && start.rows.join("|") === "Part1|Material <not specified>|Configuration: Default|Equations|Top (XY)|Front (XZ)|Right (YZ)|Origin", `model: New part opens the Features tab with the origin planes (${JSON.stringify(start)})`);
     // Sketch on Top: corner rectangle from the origin, then 100 × 60 by dimensions (AT-P1-1 style).
@@ -1472,7 +1502,7 @@ try {
     const undone = await sketchInfo();
     await mp.keyboard.press("Control+y");
     const redone = await sketchInfo();
-    check(undone.dims.join() === "100,50" && redone.dims.join() === "100,60" && redone.dof === 0, `model sketch: Ctrl+Z / Ctrl+Y step the dimension value back and forth (${undone.dims} → ${redone.dims})`);
+    check(undone.dims.map(v => +v.toFixed(3)).join() === "100,50" && redone.dims.join() === "100,60" && redone.dof === 0, `model sketch: Ctrl+Z / Ctrl+Y step the dimension value back and forth (${undone.dims} → ${redone.dims})`);
     await mp.keyboard.press("Enter");
     await idle();
     // Extrude 20 mm: the 100 × 60 × 20 block.
@@ -1613,7 +1643,7 @@ try {
     // 1.44: the save made a snapshot; after suppressing the fillet, Restore brings the saved part back, Open as copy opens it under a new id.
     await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.type === "fillet"); window.__sv.modeller.toggleSuppress(f.id); });
     await idle();
-    await mp.click('#mc-tools [data-fly="save"]');
+    await mp.click('#mc-quick [data-fly="save"]');
     await mp.click('#mc-menu button:has-text("Snapshots…")');
     await mp.waitForSelector("#mc-snaps[open] [data-snap-restore]");
     const snapRows = await mp.evaluate(() => document.querySelectorAll("#mc-snaps tbody tr").length);
@@ -1624,7 +1654,7 @@ try {
     await idle();
     const restored = await last();
     const idBefore = await mp.evaluate(() => window.__sv.model.store.doc.id);
-    await mp.click('#mc-tools [data-fly="save"]');
+    await mp.click('#mc-quick [data-fly="save"]');
     await mp.click('#mc-menu button:has-text("Snapshots…")');
     await mp.waitForSelector("#mc-snaps[open] [data-snap-copy]");
     await mp.click('#mc-snaps [data-snap-copy="0"]');
@@ -1652,11 +1682,11 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(200);
     const leftRu = await mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
-      for (const root of document.querySelectorAll("#tab-features, #mc-bar, #mc-confirm, #sk-layer, #t-features")) {
+      for (const root of document.querySelectorAll("#tab-features, #mc-bar, #cm, #mc-confirm, #sk-layer, #t-features")) {
         const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let n = w.nextNode(); n; n = w.nextNode()) if (!skip(n.parentElement)) test(n.data, "text");
         for (const e of [root, ...root.querySelectorAll("[title], [aria-label]")]) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && !skip(e)) test(v, a); }
@@ -1906,11 +1936,11 @@ try {
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
     const ax1 = await axe();
     const ruScan = () => mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
-      for (const root of document.querySelectorAll("#tab-features, #mc-bar, #mc-confirm, #sk-layer, #mc-layer, #mc-menu, #t-features")) {
+      for (const root of document.querySelectorAll("#tab-features, #mc-bar, #cm, #mc-confirm, #sk-layer, #mc-layer, #mc-menu, #t-features")) {
         const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let n = w.nextNode(); n; n = w.nextNode()) if (!skip(n.parentElement)) test(n.data, "text");
         for (const e of [root, ...root.querySelectorAll("[title], [aria-label]")]) for (const a of ["title", "aria-label"]) { const v = e.getAttribute(a); if (v && !skip(e)) test(v, a); }
@@ -2237,7 +2267,7 @@ try {
     await mp.keyboard.press("Escape");
     await mp.click('#mc-filter [data-f="clear"]');
     await mp.keyboard.press("F5");
-    const filterOff = await mp.evaluate(() => !document.querySelector("#mc-filter") && [...document.querySelectorAll("#mc-tools [data-c=filter]")].every(b => !b.classList.contains("on")));
+    const filterOff = await mp.evaluate(() => !document.querySelector("#mc-filter") && [...document.querySelectorAll("#mc-quick [data-c=filter]")].every(b => !b.classList.contains("on")));
     check(filterBar && fState === "edges" && faceFiltered === null && /^Fillet/.test(edgeStill ?? "") && filterOff, `model 1.22: the selection filter limits picks to edges (${fState}, face → ${faceFiltered}, edge → ${edgeStill}, ${filterOff})`);
     // 1.22: Select other: Alt+click on the top face picks the back face behind it (the ray leaves through y = 30), and the context bar follows.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
@@ -3934,8 +3964,7 @@ try {
     }));
     await settle();
     const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Rib")');
+    await runCmd(mp, "Rib");
     await settle();
     const r0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { type: m.draft?.type, sketch: m.draft?.sketch, title: document.querySelector("#mc-pm h3")?.textContent, live: window.__sv.model.last().props.volume }; });
     await mp.fill('#mc-pm input[data-num="thickness"]', "4");
@@ -3951,8 +3980,7 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "cs", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 20, y: 15 }, { id: "k", t: "circle", c: "o", r: 6 }] }); }));
     await settle();
     const nf0 = await mp.evaluate(() => window.__sv.model.last().faceNames.length);
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Split Line")');
+    await runCmd(mp, "Split Line");
     await settle();
     const sp0 = await mp.evaluate(() => ({ sketch: window.__sv.model.mode().draft?.sketch, count: document.querySelector("#mc-pm .pm-count")?.textContent, faces: window.__sv.model.last().faceNames.length }));
     await mp.click("#mc-ok");
@@ -3990,7 +4018,7 @@ try {
         { id: "p", type: "plane", name: "Plane1", base: { std: "YZ" }, mode: "offset", offset: { v: 5 } });
     }));
     await settle();
-    const menu = async label => { await mp.click('#mc-tools [data-fly="sweep"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${label}$`) }).click(); await settle(); };
+    const menu = async label => { await runCmd(mp, label); await settle(); };
     // Split: the plane picked (as a click on it would), previewed as two bodies.
     await menu("Split");
     await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.plane = { plane: "p" }; m.focus = "bodies"; window.__sv.modeller.draftChanged(); });
@@ -4107,8 +4135,7 @@ try {
     check(boxes.join() === "fs1,fc,fs2" && pv > 0 && !fr.bad && Math.abs(fr.v - wantFr) < 0.05,
       `model 1.59: Full round fillet replaces the top of a 4 mm wall with a half round, previewed live (FR-FT-032) (${boxes}, ${pv}, ${JSON.stringify(fr)} vs ${wantFr.toFixed(3)})`);
     // Scale ×2 about the origin from the Sweep ▾ menu: volume ×8.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Scale$/ }).click();
+    await runCmd(mp, "Scale");
     await settle();
     await mp.selectOption('#mc-pm select[data-k="about"]', "origin");
     await mp.fill('#mc-pm input[data-num="factor"]', "2");
@@ -4197,8 +4224,17 @@ try {
     await mp.waitForTimeout(150);
     await idle();
     const part = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    // Make assembly from part: the open part becomes the first, fixed component.
+    await mp.click("#new-more");
+    const fpShown = await mp.isVisible("#new-asm-part");
+    await mp.click("#new-asm-part");
+    await mp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 1, null, { timeout: 120000 });
+    const fp = await mp.evaluate(() => { const d = window.__sv.asm.doc; const c = d.components[0]; return { fixed: !!c.fixed, feats: d.parts[c.part].doc.features.length, model: document.querySelector("#app").classList.contains("model") }; });
+    check(fpShown && fp.fixed && fp.feats >= 2 && !fp.model, `assembly: Make assembly from part puts the open part in a new assembly, fixed (${JSON.stringify({ fpShown, ...fp })})`);
     // New assembly closes the part; the Assembly tab and bar take over.
     await mp.click("#new-more");
+    const fpHidden = await mp.isHidden("#new-asm-part");
+    check(fpHidden, "assembly: Make assembly from part is offered only while a part is open");
     await mp.click("#new-asm");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
     const swap = await mp.evaluate(() => ({ model: document.querySelector("#app").classList.contains("model"), tab: document.querySelector("#t-asm").getAttribute("aria-selected"), bar: !document.querySelector("#asm-bar").hidden, partBar: !document.querySelector("#mc-bar").hidden || !document.querySelector("#mc-empty").hidden }));
@@ -5202,8 +5238,7 @@ try {
     }));
     await settle();
     // Move Face from the Sweep ▾ menu: the top 5 mm out (the pocket walls grow with it, so it is 10 mm deep).
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Move Face$/ }).click();
+    await runCmd(mp, "Move Face");
     await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); });
     await settle();
     const pv = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, count: document.querySelector("#mc-pm .pm-count")?.textContent, v: window.__sv.model.last().props.volume }));
@@ -5212,8 +5247,7 @@ try {
     await settle();
     const mv = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, f: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     // Delete Face: the pocket's floor and walls go, and the top closes over it.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Delete Face$/ }).click();
+    await runCmd(mp, "Delete Face");
     await mp.evaluate(() => { const m = window.__sv.model, names = m.last().faceNames ?? []; m.mode().draft.faces = [...new Set(names.filter(n => n.startsWith("f2:")))].map(name => ({ name })); m.panel(); void m.rebuild(); });
     await settle();
     await mp.click("#mc-ok");
@@ -5244,7 +5278,7 @@ try {
         { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
     }));
     await settle();
-    const open = async () => { await mp.click('#mc-tools [data-fly="sweep"]'); await mp.locator("#mc-menu button", { hasText: /^Move Face$/ }).click(); await settle(); await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); }); await settle(); };
+    const open = async () => { await runCmd(mp, "Move Face"); await settle(); await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); }); await settle(); };
     const vol = () => mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
     // Translate (7, 0, 5): only the 5 mm along the top's normal counts.
     await open();
@@ -5281,8 +5315,7 @@ try {
         { id: "f9", type: "planesurf", name: "Surface-Plane1", sketch: "s2" });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="surf"]');
-    await mp.locator("#mc-menu button", { hasText: /^Replace Face$/ }).click();
+    await runCmd(mp, "Replace Face");
     await settle();
     await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.faces = [{ name: "f1:end" }]; f.surface = { name: "f9:face:0" }; m.panel(); void m.rebuild(); });
     await settle();
@@ -5306,7 +5339,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
     const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
-    const surf = async name => { await mp.click('#mc-tools [data-fly="surf"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${name}$`) }).click(); await settle(); };
+    const surf = async name => { await runCmd(mp, name); await settle(); };
     const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
     // A vertical line beside a construction axis on the front plane, and two 20 mm lines 10 mm apart.
     await mp.evaluate(() => window.__sv.model.store.change("Sketches", d => {
@@ -5348,8 +5381,7 @@ try {
         { id: "f9", type: "extrude", name: "Extrude1", sketch: "s9", op: "boss", end: "blind", depth: { v: 10 } });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Delete Face$/ }).click();
+    await runCmd(mp, "Delete Face");
     await settle();
     await mp.selectOption('#mc-pm select[data-k="dfmode"]', "delete");
     await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f9:end" }]; m.panel(); void m.rebuild(); });
@@ -5397,7 +5429,7 @@ try {
       d.features.push({ id, type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -20, -10), P(2, 20, -10), P(3, 20, 10), P(4, -20, 10), { id: "l1", t: "line", a: "s1p1", b: "s1p2" }, { id: "l2", t: "line", a: "s1p2", b: "s1p3" }, { id: "l3", t: "line", a: "s1p3", b: "s1p4" }, { id: "l4", t: "line", a: "s1p4", b: "s1p1" }] });
     }));
     await settle();
-    const surf = async name => { await mp.click('#mc-tools [data-fly="surf"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${name}$`) }).click(); await settle(); };
+    const surf = async name => { await runCmd(mp, name); await settle(); };
     const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
     // Extruded surface: the rectangle's four sides, 10 mm tall, no volume.
     await surf("Extruded Surface");
@@ -5469,8 +5501,7 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "c0", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "c0", r: 10 }] }); }));
     await settle();
     // Helix from the flyout: on the circle sketch, drawn in the view while the panel is open.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Helix/Spiral")');
+    await runCmd(mp, "Helix/Spiral");
     await settle();
     await mp.fill('#mc-pm input[data-num="pitch"]', "5");
     await mp.press('#mc-pm input[data-num="pitch"]', "Tab");
@@ -5482,8 +5513,7 @@ try {
     await settle();
     check(hx.type === "helix" && hx.sketch === "s1" && hx.title === "Helix/Spiral" && hx.n > 100 && Math.abs(hx.top - 50) < 1e-6 && hx.drawn > 0, `model 1.55: Helix/Spiral on a sketch circle, previewed in the view (FR-FT-083) (${JSON.stringify(hx)})`);
     // Sweep: along the helix with a circular profile Ø2 (a spring, AT-P3-1).
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Sweep")');
+    await runCmd(mp, "Sweep");
     await settle();
     const sw0 = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { path: m.draft?.path, circ: m.draft?.circular?.v }; });
     await mp.fill('#mc-pm input[data-num="circular"]', "2");
@@ -5505,8 +5535,7 @@ try {
     }));
     await settle();
     const v0 = await mp.evaluate(() => window.__sv.model.last().props.volume);
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Loft")');
+    await runCmd(mp, "Loft");
     await settle();
     const lp = await mp.evaluate(() => ({ profiles: window.__sv.model.mode().draft?.profiles, rows: document.querySelectorAll('#mc-pm select[data-k^="lp"]').length }));
     await mp.click("#mc-ok");
@@ -5546,8 +5575,7 @@ try {
     }));
     await settle();
     // Curve Through XYZ Points: the table, then points from a CSV file (a 30 mm vertical line at x = 50).
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Curve Through XYZ Points")');
+    await runCmd(mp, "Curve Through XYZ Points");
     await settle();
     const rows0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, rows: document.querySelectorAll("#mc-pm input[data-cx]").length, drawn: window.__sv.modeller.decor.children.length }));
     const chooser = mp.waitForEvent("filechooser");
@@ -5561,8 +5589,7 @@ try {
     check(rows0.title === "Curve Through XYZ Points" && rows0.rows === 9 && rows0.drawn > 0 && xyz.pts.length === 4 && Math.abs(len(xyz.curve) - 30) < 1e-6,
       `model 1.82: Curve Through XYZ Points from a table and a CSV file, drawn in the view (FR-FT-085) (${JSON.stringify({ rows0, n: xyz.pts.length, len: len(xyz.curve) })})`);
     // Sweep picks the curve as its path: a Ø4 rod 30 long beside the block.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Sweep")');
+    await runCmd(mp, "Sweep");
     await settle();
     const swPath = await mp.evaluate(() => window.__sv.model.mode().draft?.path);
     await mp.fill('#mc-pm input[data-num="circular"]', "4");
@@ -5573,8 +5600,7 @@ try {
     const rod = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
     check(swPath?.curve === xyz.id && Math.abs(rod.v - (32000 + Math.PI * 4 * 30)) < 1e-3 && !rod.bad, `model 1.82: Sweep along the XYZ curve (${JSON.stringify({ swPath, rod })})`);
     // Composite curve: two top edges of the block joined (an L of 80 mm).
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Composite Curve")');
+    await runCmd(mp, "Composite Curve");
     await settle();
     const comp = await mp.evaluate(async () => {
       const md = window.__sv.modeller, m = window.__sv.model.mode();
@@ -5595,8 +5621,7 @@ try {
         { id: "k", type: "sketch", name: "Sketch2", plane: { plane: "p1" }, rels: [], dims: [], ents: [{ id: "ka", t: "point", x: -10, y: 0 }, { id: "kb", t: "point", x: 10, y: 5 }, { id: "kl", t: "line", a: "ka", b: "kb" }] });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Projected Curve")');
+    await runCmd(mp, "Projected Curve");
     await settle();
     const pj = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { title: document.querySelector("#mc-pm h3")?.textContent, sketch: m.draft.sketch, pts: window.__sv.model.last().curves?.[m.draft.id] ?? [] }; });
     await mp.click("#mc-ok");
@@ -5608,8 +5633,7 @@ try {
       d.features.push({ id: "sp", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "sa", t: "point", x: 45, y: 10 }, { id: "sb", t: "point", x: 55, y: 10 }, { id: "sl", t: "line", a: "sa", b: "sb" }] });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="surf"]');
-    await mp.click('#mc-menu button:has-text("Swept Surface")');
+    await runCmd(mp, "Swept Surface");
     await settle();
     const ss0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, profile: window.__sv.model.mode().draft?.profile }));
     await mp.selectOption('#mc-pm select[data-k="swPath"]', `c:${xyz.id}`);
@@ -5643,8 +5667,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
     await settle();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("3D Sketch")');
+    await runCmd(mp, "3D Sketch");
     await settle();
     // Screen position of a world point.
     const scr = p => mp.evaluate(p => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const V = v.camera.position.constructor; const q = new V(...p).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, p);
@@ -5676,8 +5699,7 @@ try {
     await mp.click("#mc-ok");
     await settle();
     // Sweep with a Ø4 circular profile along the 3D sketch: the path is picked by default.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Sweep")');
+    await runCmd(mp, "Sweep");
     await settle();
     const swPath = await mp.evaluate(() => window.__sv.model.mode().draft?.path);
     await mp.fill('#mc-pm input[data-num="circular"]', "4");
@@ -5726,8 +5748,7 @@ try {
     }));
     await settle();
     // Variable pitch helix: tick the box, set pitch 2 at the bottom and 6 at the top (and Ø30), add a row and remove it.
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Helix/Spiral")');
+    await runCmd(mp, "Helix/Spiral");
     await settle();
     await mp.check('#mc-pm input[data-k="vpitchOn"]');
     await settle();
@@ -5808,8 +5829,7 @@ try {
         { ...sq("b", 5, 35), name: "Sketch2" }, { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 10 }, merge: false });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Intersect$/ }).click();
+    await runCmd(mp, "Intersect");
     await settle();
     const i0 = await state();
     const rows = await mp.evaluate(() => ({ n: document.querySelectorAll("#mc-pm input[data-rgn]").length, v: (window.__sv.model.last().regions?.[window.__sv.model.mode().draft.id] ?? []).map(r => Math.round(r.v)) }));
@@ -5840,8 +5860,7 @@ try {
     await settle();
     const area = () => mp.evaluate(() => { const l = window.__sv.model.last(), p = window.__sv.viewer.parts[0]?.data; const i = l.faceNames.indexOf("ps:face:0"); return i >= 0 && p ? Math.round(p.faces[i].area * 10) / 10 : -1; });
     const a0 = await area();
-    await mp.click('#mc-tools [data-fly="surf"]');
-    await mp.locator("#mc-menu button", { hasText: /^Untrim Surface$/ }).click();
+    await runCmd(mp, "Untrim Surface");
     await settle();
     await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.surface = { name: "ps:face:0" }; m.panel(); void m.rebuild(); });
     await settle();
@@ -5949,8 +5968,7 @@ try {
     }));
     await settle();
     const r0 = await state();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Recognize Holes$/ }).click();
+    await runCmd(mp, "Recognize Holes");
     await settle();
     await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "delface"), null, { timeout: 60000 });
     await settle();
@@ -5981,8 +5999,7 @@ try {
         { id: "g1", type: "curve", name: "Curve1", kind: "xyz", pts: [[5, 0, 0], [8, 0, 20], [5, 0, 40]] });
     }));
     await settle();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Loft$/ }).click();
+    await runCmd(mp, "Loft");
     await settle();
     await mp.selectOption('#mc-pm select[data-k="lp0"]', "Sketch1");
     await settle();
@@ -6026,8 +6043,7 @@ try {
     }));
     await settle();
     const s0 = await state();
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.locator("#mc-menu button", { hasText: /^Indent$/ }).click();
+    await runCmd(mp, "Indent");
     await settle();
     const focus0 = await mp.evaluate(() => window.__sv.model.mode().focus);
     await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.main = { name: "ea:end" }; f.tools = [{ name: "eb:end" }]; m.panel(); void m.rebuild(); });
@@ -6134,8 +6150,7 @@ try {
     }));
     await settle();
     const before = (await state()).v;
-    await mp.click('#mc-tools [data-fly="sweep"]');
-    await mp.click('#mc-menu button:has-text("Loft")');
+    await runCmd(mp, "Loft");
     await settle();
     await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.profiles = ["q1", "q2"]; m.panel(); void m.rebuild(); });
     await settle();
@@ -6761,7 +6776,7 @@ try {
     await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
     await cp.click("#mc-ok");
     await settle();
-    const tip = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    const tip = await cp.getAttribute('#mc-quick [data-c="undo"]', "title");
     check((await nf()) === 2 && /Extrude1/.test(tip), `commands: the Undo button names the step it undoes (${tip})`);
     // Enter with no command running repeats the last one.
     await cp.evaluate(() => document.activeElement?.blur());
@@ -6779,7 +6794,7 @@ try {
     check(rep === "feature:extrude" && menu[0]?.includes("OK") && menu[1]?.includes("Cancel") && afterCancel === "none" && (await nf()) === 2,
       `commands: Enter repeats Extrude, a right-click offers OK / Cancel and Cancel closes it (${rep}, [${menu.join(", ")}], ${afterCancel})`);
     // Undo ▾ lists the steps newest first; picking the second undoes both.
-    await cp.click('#mc-tools [data-fly="undo"]');
+    await cp.click('#mc-quick [data-fly="undo"]');
     const list = await cp.evaluate(() => [...document.querySelectorAll("#mc-menu:not([hidden]) button")].map(b => b.textContent.trim()));
     await cp.locator("#mc-menu button").nth(1).click();
     await settle();
@@ -6826,9 +6841,80 @@ try {
     check(/What's wrong/.test(wrongHead) && rows.includes("fbad") && sel === rows[0], `commands: What's wrong lists the failing fillet and selects it (${wrongHead}; ${rows.join(",")}; ${sel})`);
     await cp.evaluate(() => window.__sv.model.store.undo());
     await settle();
+    // Command search (Ctrl+K): typing "fill" finds Fillet; Enter runs it.
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("Control+k");
+    await cp.waitForSelector("#mc-cmdk input");
+    await cp.keyboard.type("fill");
+    const found = await cp.evaluate(() => [...document.querySelectorAll("#mc-cmdk [data-id]")].map(li => li.dataset.id));
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(200);
+    const ran = await mode();
+    await cp.keyboard.press("Escape");
+    await cp.waitForTimeout(150);
+    check(found[0] === "fillet" && ran === "feature:fillet" && !(await cp.evaluate(() => !!document.querySelector("#mc-cmdk"))), `commands: Ctrl+K finds and runs Fillet ([${found.join(", ")}], ${ran})`);
+    // Check sketch for feature (FR-SK-073): an open L lists both open ends for Extrude, Show selects the point, and it is a good rib.
+    await cp.evaluate(() => window.__sv.model.store.change("Sketch", d => {
+      const P = (k, x, y) => ({ id: `s9p${k}`, t: "point", x, y });
+      d.features.push({ id: "s9", type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, 0, 0), P(2, 30, 0), P(3, 30, 15), { id: "s9l1", t: "line", a: "s9p1", b: "s9p2" }, { id: "s9l2", t: "line", a: "s9p2", b: "s9p3" }] });
+    }));
+    await settle();
+    await cp.evaluate(() => window.__sv.modeller.editFeature("s9"));
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "sketch");
+    await cp.click("#mc-pm [data-a=check]");
+    const chk = await cp.evaluate(() => ({ head: document.querySelector("#mc-pm .pm-check-r")?.textContent ?? "", n: document.querySelectorAll("#mc-pm .pm-check-l li").length }));
+    await cp.click("#mc-pm .pm-check-l [data-chk]");
+    const chkSel = await cp.evaluate(() => [...window.__sv.model.mode().editor.selection].sort().join(","));
+    await cp.selectOption("#mc-pm [data-a=chkuse]", "open");
+    await cp.click("#mc-pm [data-a=check]");
+    const ribOk = await cp.evaluate(() => document.querySelector("#mc-pm .pm-check-r.ok")?.textContent ?? "");
+    check(chk.n === 2 && /2 problems/.test(chk.head) && /s9p1|s9p3/.test(chkSel) && /open chain of 2/.test(ribOk), `commands: Check sketch for feature lists both open ends, Show selects one, and the L is a good rib (${chk.head}; ${chkSel}; ${ribOk})`);
+    await cp.evaluate(() => window.__sv.modeller.cancel());
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await cp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Typed sizes while drawing (FR-UI-052): a digit after the first click opens the size box; Enter steps to the next size.
+    await cp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s8", type: "sketch", name: "Sketch8", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await settle();
+    await cp.evaluate(() => window.__sv.modeller.editFeature("s8"));
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "sketch");
+    await cp.waitForTimeout(500);
+    await cp.evaluate(() => document.activeElement?.blur());
+    await cp.keyboard.press("l");
+    await cp.mouse.move(560, 520); await cp.mouse.click(560, 520);
+    await cp.mouse.move(700, 470, { steps: 4 });
+    await cp.keyboard.type("25");
+    const typedLab = await cp.evaluate(() => document.querySelector(".sk-typed")?.textContent ?? "");
+    await cp.keyboard.press("Enter");
+    await cp.keyboard.type("0");
+    await cp.keyboard.press("Enter");
+    await cp.keyboard.press("Escape");
+    await cp.keyboard.press("r");
+    await cp.mouse.click(560, 380);
+    await cp.mouse.move(640, 300, { steps: 4 });
+    await cp.keyboard.type("40");
+    await cp.keyboard.press("Enter");
+    await cp.keyboard.type("20");
+    await cp.keyboard.press("Enter");
+    await cp.waitForTimeout(150);
+    const typed = await cp.evaluate(() => {
+      const sk = window.__sv.model.editor().sk;
+      const P = id => sk.ents.find(e => e.id === id);
+      const len = l => Math.hypot(P(l.b).x - P(l.a).x, P(l.b).y - P(l.a).y);
+      const lines = sk.ents.filter(e => e.t === "line");
+      return { lens: lines.map(l => +len(l).toFixed(3)), dims: sk.dims.map(d => +d.val.v.toFixed(3)).sort((a, b) => a - b), horiz: sk.rels.filter(r => r.t === "horizontal").length };
+    });
+    check(/Length/.test(typedLab) && typed.lens[0] === 25 && typed.lens.length === 5 && typed.lens.slice(1).sort().join() === "20,20,40,40" && typed.dims.join() === "20,25,40" && typed.horiz >= 3,
+      `commands: sizes typed while drawing place a 25 mm horizontal line and a 40 × 20 rectangle with dimensions (${typedLab}; ${JSON.stringify(typed)})`);
+    // Leaving the changed sketch asks first; don't await cancel() (it waits for the answer), answer Discard.
+    await cp.evaluate(() => { void window.__sv.modeller.cancel(); });
+    await cp.click("#confirm[open] [data-a=ok]");
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    await cp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // Russian: the named Undo tooltip and the pushpin are translated.
     await cp.click("#lang-btn");
-    const ru = await cp.getAttribute('#mc-tools [data-c="undo"]', "title");
+    const ru = await cp.getAttribute('#mc-quick [data-c="undo"]', "title");
     await cp.click("#lang-btn");
     check(/^Отменить: /.test(ru) && !/Add|Extrude/.test(ru), `commands: the Undo tooltip is translated (${ru})`);
     await ctx.close();
@@ -6851,8 +6937,7 @@ try {
     // A 600 × 400 frame sketched on XY, then Structural Member from the Weldments flyout.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Frame", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 600, 0), P("c", 600, 400), P("d", 0, 400), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }); }); });
     await settle();
-    await mp.click('#mc-tools [data-fly="weld"]');
-    await mp.click('#mc-menu button:has-text("Structural Member")');
+    await runCmd(mp, "Structural Member");
     await settle();
     const p0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, segs: window.__sv.model.mode().draft?.segs?.length, bodies: window.__sv.model.last().bodies?.length, boxes: document.querySelectorAll("#mc-pm input[data-wseg]").length }));
     // Live preview follows the panel: a bigger tube, then untick one line.
@@ -6870,8 +6955,7 @@ try {
       && JSON.stringify(r.cut) === JSON.stringify([["SHS 50x50x4", 2, 650, 45, 45], ["SHS 50x50x4", 2, 450, 45, 45]]),
       `weldments: Structural Member along a sketch, mitred corners, live preview, cut list (FR-FT-121) (${JSON.stringify({ p0, p1, r })})`);
     // Cut List… opens a table: two member rows and the total mass (steel assumed).
-    await mp.click('#mc-tools [data-fly="weld"]');
-    await mp.click('#mc-menu button:has-text("Cut List")');
+    await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
     const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     await mp.click('#wld-cut [data-a="close"]');
@@ -6879,8 +6963,7 @@ try {
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();
-    await mp.click('#mc-tools [data-fly="weld"]');
-    await mp.click('#mc-menu button:has-text("End Cap")');
+    await runCmd(mp, "End Cap");
     await settle();
     await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.faces = [{ name: "m2:k1:start" }]; window.__sv.modeller.draftChanged(); });
     await settle();
@@ -6981,8 +7064,7 @@ try {
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();
-    await mp.click('#mc-tools [data-fly="weld"]');
-    await mp.click('#mc-menu button:has-text("Structural Member")');
+    await runCmd(mp, "Structural Member");
     await settle();
     const bl = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft?.segs?.map(s => s.ent), labels: [...document.querySelectorAll("#mc-pm input[data-wseg]")].map(e => e.closest("label")?.textContent?.trim()) }));
     await mp.click("#mc-ok");
