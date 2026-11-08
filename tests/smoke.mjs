@@ -3655,6 +3655,12 @@ try {
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
     const dxfT = (await readFile(await dl.path())).toString();
+    // DXF 2000 (FR-DRW-030): AC1015 with handles, LWPOLYLINE and the same layers; Cyrillic kept as \U+ escapes.
+    await dp.click('#drw [data-a="export"]');
+    const [dl2] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf2000"]')]);
+    const dxf2 = (await readFile(await dl2.path())).toString();
+    check(/\nAC1015\n/.test(dxf2) && /\nLWPOLYLINE\n/.test(dxf2) && /\nHATCH\n/.test(dxf2) && /\*Model_Space/.test(dxf2) && !/[^\x00-\x7f]/.test(dxf2),
+      `drawing: DXF 2000 export (AC1015, LWPOLYLINE, HATCH layer, ASCII only; ${dxf2.length} bytes)`);
     await dp.evaluate(() => document.querySelector("#lang-btn").click());
     await dp.waitForTimeout(200);
     const ru = await dp.evaluate(() => ({ t: window.__sv.drw.prims().filter(x => x.t === "t").map(x => x.s), tb: document.querySelector('#drw [data-a="section"]').textContent }));

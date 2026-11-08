@@ -15,7 +15,7 @@ import { DrawingKernel, type ModelFacts } from "./client";
 import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { sheetDxf, sheetDxf2000, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
@@ -398,8 +398,10 @@ export class DrawingWorkspace {
           <div class="drw-dd"><button class="btn small" data-a="export" aria-haspopup="menu" aria-expanded="false" title="${esc(t("PDF, SVG, DXF, PNG or print"))}">${ICON.exp}<span>${esc(t("Export"))}</span> ▾</button>
             <div class="drw-menu right" role="menu" hidden>
               <button role="menuitem" data-x="pdf">${esc(t("PDF (all sheets)"))}</button>
+              <button role="menuitem" data-x="pdf1">${esc(t("PDF (this sheet)"))}</button>
               <button role="menuitem" data-x="svg">${esc(t("SVG (this sheet)"))}</button>
               <button role="menuitem" data-x="dxf">${esc(t("DXF (this sheet)"))}</button>
+              <button role="menuitem" data-x="dxf2000">${esc(t("DXF 2000 (this sheet)"))}</button>
               <button role="menuitem" data-x="png">${esc(t("PNG 300 dpi (this sheet)"))}</button>
               <button role="menuitem" data-x="print">${esc(t("Print… (Ctrl+P)"))}</button>
             </div></div>
@@ -2512,7 +2514,7 @@ export class DrawingWorkspace {
     return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p), this.ctx(sh));
   }
 
-  async exportAs(kind: "pdf" | "svg" | "dxf" | "png" | "print") {
+  async exportAs(kind: "pdf" | "pdf1" | "svg" | "dxf" | "dxf2000" | "png" | "print") {
     if (!this.store) return;
     const sheets = kind === "pdf" || kind === "print" ? this.doc.sheets : [this.sheet];
     try {
@@ -2523,15 +2525,16 @@ export class DrawingWorkspace {
     const out = sheets.map(sh => { const [W, H] = sheetSize(sh); return { prims: this.composed(sh).prims, W, H }; });
     try {
       if (kind === "svg") this.host.download(new Blob([sheetSvg(out[0].prims, out[0].W, out[0].H)], { type: "image/svg+xml" }), `${base}-${this.sheet.name}.svg`);
+      else if (kind === "dxf2000") this.host.download(new Blob([sheetDxf2000(out[0].prims, out[0].W, out[0].H)], { type: "application/dxf" }), `${base}-${this.sheet.name}.dxf`);
       else if (kind === "dxf") this.host.download(new Blob([sheetDxf(out[0].prims, out[0].W, out[0].H)], { type: "application/dxf" }), `${base}-${this.sheet.name}.dxf`);
       else if (kind === "png") {
         const font = await (await fetch(fontUrl)).arrayBuffer();
         const r = await sheetPng(out[0].prims, out[0].W, out[0].H, font, 300);
         this.host.download(r.blob, `${base}-${this.sheet.name}.png`);
         if (r.dpi < 300) toast(t("The sheet is large: PNG saved at {dpi} dpi.", { dpi: r.dpi }));
-      } else if (kind === "pdf") {
+      } else if (kind === "pdf" || kind === "pdf1") {
         const font = await (await fetch(fontUrl)).arrayBuffer();
-        this.host.download(await sheetsPdf(out, font, this.fields().title), `${base}.pdf`);
+        this.host.download(await sheetsPdf(out, font, this.fields().title), kind === "pdf1" ? `${base}-${this.sheet.name}.pdf` : `${base}.pdf`);
       } else { printSheets(out, base); return; }
       toast(t("Exported {kind}", { kind: kind.toUpperCase() }), "success");
     } catch (err) { toast(t("Export failed: {err}", { err: (err as Error).message }), true); }
