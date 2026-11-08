@@ -2630,6 +2630,9 @@ export const RU: Record<string, string> = {
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
   // Motion studies (FR-FT-122)
+  "Appearance": "Внешний вид",
+  "Hidden": "Скрыт",
+  "Shown": "Показан",
   "Make an exploded view first (Explode).": "Сначала создайте вид с разнесением (Разнести).",
   "This browser cannot record video; save a GIF instead.": "Этот браузер не умеет записывать видео; сохраните GIF.",
   "Recording frame {i} of {n}…": "Запись кадра {i} из {n}…",
@@ -2907,7 +2910,7 @@ export const RU: Record<string, string> = {
   "The faces could not be copied: pick all the faces of one boss or cut.": "Не удалось скопировать грани: выберите все грани одной бобышки или выреза.",
   "The coordinate system is missing or has an error.": "Система координат отсутствует или содержит ошибку.",
   "The sketch has no free points away from the seed.": "В эскизе нет свободных точек вне исходного элемента.",
-  // 1.98.0: up to body, hole types and end conditions (FR-FT-012, FR-FT-050).
+  // 1.100.0: up to body, hole types and end conditions (FR-FT-012, FR-FT-050).
   "Up to body": "До тела",
   "Body of {name}": "Тело элемента {name}",
   "Click any face of the body the extrusion stops at.": "Щёлкните любую грань тела, у которого заканчивается вытягивание.",
@@ -2927,7 +2930,7 @@ export const RU: Record<string, string> = {
   "There is no material under the hole's face.": "Под гранью отверстия нет материала.",
   "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.": "Ступень должна быть шире отверстия и мельче его, с углом от 6° до 174°.",
   "The slot length must be more than 0.": "Длина паза должна быть больше 0.",
-  // 1.98.0: vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060).
+  // 1.100.0: vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060).
   "Offset face": "Смещение грани",
   "Distance 3": "Расстояние 3",
   "Face {n}": "Грань {n}",
@@ -2947,7 +2950,7 @@ export const RU: Record<string, string> = {
   "A face to remove cannot have its own thickness.": "У удаляемой грани не может быть своей толщины.",
   "A multi-thickness face has no wall of its own.": "У грани с разной толщиной нет своей стенки.",
   "Multi-thickness faces must be flat.": "Грани с разной толщиной должны быть плоскими.",
-  // 1.98.0: parting line draft, rib draft, loft start/end constraints (FR-FT-061, FR-FT-062, FR-FT-082).
+  // 1.100.0: parting line draft, rib draft, loft start/end constraints (FR-FT-061, FR-FT-062, FR-FT-082).
   "Type of draft": "Тип уклона",
   "Parting line": "Линия разъёма",
   "Direction of pull": "Направление извлечения",
