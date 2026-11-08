@@ -1,3 +1,8 @@
+/* Cyrillic fallbacks for systems without Segoe UI / Roboto (Linux): only Cyrillic code points use
+   them (unicode-range), so Latin text keeps its metrics. */
+@font-face { font-family: "UI Cyrillic"; src: local("Noto Sans"), local("DejaVu Sans"), local("Liberation Sans"), local("Ubuntu"), local("Arial"); unicode-range: U+0400-052F, U+1C80-1C8F, U+2DE0-2DFF, U+A640-A69F; }
+@font-face { font-family: "UI Cyrillic Mono"; src: local("DejaVu Sans Mono"), local("Noto Sans Mono"), local("Liberation Mono"), local("Consolas"); unicode-range: U+0400-052F, U+1C80-1C8F, U+2DE0-2DFF, U+A640-A69F; }
+
 :root {
   /* Design tokens. Every text/background pair meets WCAG 2.1 AA (4.5:1) in both themes. */
   --bg: #eef1f5;
@@ -14,7 +19,7 @@
   --danger: #d32f2f;
   --warn-text: #8a5600;
   --scrim: rgba(15, 20, 30, 0.45);
-  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "DejaVu Sans", "Liberation Sans", Ubuntu, Arial, sans-serif;
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "UI Cyrillic", sans-serif;
   --fs-caption: 12px;
   --fs-body: 14px;
   --fs-subtitle: 18px;
@@ -23,7 +28,7 @@
   --vp-top: #f8fafc;
   --vp-bottom: #c9d2de;
   --shadow: 0 6px 24px rgba(20, 30, 50, 0.12);
-  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", monospace;
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, "UI Cyrillic Mono", monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
