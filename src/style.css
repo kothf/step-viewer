@@ -1070,3 +1070,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 /* Over a drawing the tabs stay at the bottom of the window. */
 #app.drawing .doc-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1060; }
 #app.drawing.has-doc-tabs .drw { bottom: 30px; }
+
+/* Weldment cut list: editable item properties. */
+#wld-cut .wld-cp { width: 100%; min-width: 7em; font: inherit; padding: 2px 4px; }
