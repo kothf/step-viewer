@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in SolidWorks. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
 
+## [1.233.0] - 2026-11-08
+
+### Changed
+
+- **Embossed text and other many-region extrudes build several times faster.** The regions of one sketch are now joined in a single boolean operation instead of one after another, and a boss that only stands on the body (its sketch plane is the body's outer face, as with a nameplate's lettering) is glued on without intersecting the faces that lie on each other. The Leuenberger nameplate (a 25-letter emboss, 441 faces) builds in 2.8 s instead of 16 s, with the same faces, names, volume and area. A boss that reaches into the body still takes the full boolean.
+
 ## [1.232.0] - 2026-11-08
 
 ### Changed
@@ -1557,7 +1563,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.234.0...HEAD
-[1.234.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.234.0
+[1.234.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.234.0
+[1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
 [1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
 [1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0

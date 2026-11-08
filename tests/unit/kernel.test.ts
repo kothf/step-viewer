@@ -1751,3 +1751,24 @@ test("pierce: a sketch point where a model edge crosses the sketch plane (FR-SK-
   assert.equal(r.sketches.s3.rels[0].dangling, true);
   assert.equal(r.statuses.find(s => s.id === "s3")?.code, "warning");
 });
+
+test("a boss standing on the body is glued on, one standing in it is fused (nameplate speed-up)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Three pads on the top face: they only touch the block, so they are glued on.
+  const top = { face: { name: "f1:end" } };
+  const pads: SketchFeature = { ...rect("s2", -30, 0, 10, 10, top), ents: [...rect("s2", -30, 0, 10, 10, top).ents, ...rect("s3", 10, 0, 10, 10, top).ents, ...rect("s4", 30, 0, 10, 10, top).ents] };
+  const ex2: Feature = { id: "f2", type: "extrude", name: "Pads", sketch: "s2", op: "boss", end: "blind", depth: { v: 5 } };
+  const r = run(m, doc([s1, ex, pads, ex2]));
+  close(r.props!.volume, 120000 + 3 * 500);
+  assert.equal(r.body!.names.filter(n => n === "f2:end").length, 3);
+  assert.equal(r.body!.names.filter(n => n.startsWith("f2:side:")).length, 12);
+  assert.equal(r.body!.faces.length, 6 + 15);
+  // Direction 2 sinks the pads into the block: no longer only touching, so a plain fuse.
+  const r2 = run(m, doc([s1, ex, pads, { ...ex2, depth2: { v: 2 } } as Feature]));
+  close(r2.props!.volume, 120000 + 3 * 500);
+  // Reversed into the block: nothing added.
+  const r3 = run(m, doc([s1, ex, pads, { ...ex2, flip: true } as Feature]));
+  close(r3.props!.volume, 120000);
+});
