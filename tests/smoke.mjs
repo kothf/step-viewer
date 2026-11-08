@@ -8491,6 +8491,20 @@ try {
     await settle();
     const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
     check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
+    // Trim/Extend to a reference plane chosen in the panel (no face picked): Beam A cut at x = 2200.
+    await mp.evaluate(() => window.__sv.model.store.change("Plane", d => { d.features.push({ id: "xpl", type: "plane", name: "Cut plane", base: { std: "YZ" }, mode: "offset", offset: { v: 2200 } }); d.rollback = null; }));
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wplane"]', "plane:xpl");
+    await settle();
+    const noFaceBox = await mp.evaluate(() => !document.querySelector('#mc-pm [data-k="wbound"]'));
+    await mp.click("#mc-ok");
+    await settle();
+    const tp = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { plane: f.plane, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 200) < 0.01).map(c => c.qty) }; });
+    check(noFaceBox && tp.plane?.plane === "xpl" && !tp.bad && JSON.stringify(tp.rows) === "[1]", `weldments: Trim/Extend to a reference plane (${JSON.stringify({ noFaceBox, tp })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
