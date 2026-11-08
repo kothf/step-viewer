@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
+## [1.119.0] - 2026-11-08
+
+### Added
+
+- **Loft guide curves (FR-FT-082).** The Loft panel has a Guide curves group: pick open sketches or curves that touch every profile, and the loft's sections grow and shrink to pass through them, like SolidWorks. One guide scales the sections evenly; two or more stretch them towards each guide, so two guides on the sides of a rectangle widen it without making it taller. A guide that misses a profile is reported.
 
 ## [1.118.0] - 2026-11-08
 
@@ -1090,7 +1095,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.122.0...HEAD
-[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.122.0
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.122.0
+[1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
 [1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
 [1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0

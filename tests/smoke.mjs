@@ -5969,6 +5969,49 @@ try {
     await ctx.close();
   }
 
+  // --- 1.119: Loft guide curves (FR-FT-082) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), types: window.__sv.model.store.doc.features.map(f => f.type).join(",") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two Ø10 circles 40 apart and a curve bowing out to radius 8 half way.
+    await mp.evaluate(() => window.__sv.model.store.change("Profiles and guide", d => {
+      const circ = (id, plane) => ({ id, type: "sketch", name: id, plane, rels: [], dims: [], ents: [{ id: id + "o", t: "point", x: 0, y: 0 }, { id: id + "c", t: "circle", c: id + "o", r: 5 }] });
+      d.features.push(circ("Sketch1", { std: "XY" }), { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } }, circ("Sketch2", { plane: "p1" }),
+        { id: "g1", type: "curve", name: "Curve1", kind: "xyz", pts: [[5, 0, 0], [8, 0, 20], [5, 0, 40]] });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Loft$/ }).click();
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="lp0"]', "Sketch1");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="lp1"]', "Sketch2");
+    await settle();
+    const free = await state();
+    const hasGroup = await mp.locator('#mc-pm select[data-k="lg0"]').count();
+    await mp.selectOption('#mc-pm select[data-k="lg0"]', "c:g1");
+    await settle();
+    const guided = await state();
+    const noEnds = await mp.locator('#mc-pm select[data-k="startC"]').count();
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await state();
+    const cyl = Math.PI * 25 * 40;
+    check(hasGroup === 1 && Math.abs(free.v - cyl) < 10 && guided.v > cyl * 1.5 && !guided.bad && noEnds === 0 && done.v === guided.v && done.types.endsWith("loft") && !done.bad,
+      `model 1.119: a guide curve makes the loft between two circles bulge out to it (FR-FT-082) (${JSON.stringify({ free, guided, hasGroup, noEnds, done })})`);
+    await ctx.close();
+  }
+
   // --- 1.108: Indent a plate with a tool body, with a wall and as a cut (FR-BODY-007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
