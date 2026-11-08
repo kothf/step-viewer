@@ -12,6 +12,9 @@ import { Assembler } from "./assembly";
 import type { AsmDoc } from "../asm/types";
 import { analyzeMesh } from "../topology";
 import { applyPatch, probe } from "./patch";
+import { transformPart } from "../asm/light";
+import { invert } from "../asm/math";
+import type { PartData } from "../topology";
 import type { PartDoc } from "../model/types";
 import parasolidWasm from "../sw/parasolid.wasm?url";
 
@@ -44,6 +47,8 @@ function parasolidReader() {
 let kernel: Kernel | null = null;
 let modeller: Modeller | null = null;
 let assembler: Assembler | null = null;
+/** Analysed part meshes in part coordinates, by evaluated source (FR-ASM-031). */
+let shared: WeakMap<object, { quality: number; data: PartData }> | null = null;
 /** The last evaluated body, for STEP export. */
 let lastBody: { shape: unknown; faces: unknown[] } | null = null;
 let heap: () => number = () => 0;
@@ -144,6 +149,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
+      shared ??= new WeakMap();
       const t0 = performance.now();
       const { placed, statuses } = assembler.evaluate(r.doc, r.quality);
       const parts = [];
@@ -152,11 +158,18 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         const comp = r.doc.components.find(c => c.id === p.id)!;
         if (comp.hidden) continue;
         const color = (comp.color ?? r.doc.parts[p.part].doc.color ?? [0.72, 0.74, 0.78]) as [number, number, number];
-        const data = analyzeMesh(p.mesh());
-        data.name = p.name;
-        data.color = color;
         kernel.meshes.push({ shape: p.body.shape, faces: p.body.faces, name: p.name, color, solid: true });
-        applyPatch(data, kernel.exact(kernel.meshes.length - 1, probe(data)));
+        // Instances share one analysis of their part (FR-ASM-031), moved to where they are.
+        const base = shared.get(p.src);
+        let data: PartData;
+        if (base && base.quality === r.quality) data = transformPart(base.data, p.tf, p.name);
+        else {
+          data = analyzeMesh(p.mesh());
+          data.name = p.name;
+          applyPatch(data, kernel.exact(kernel.meshes.length - 1, probe(data)));
+          shared.set(p.src, { quality: r.quality, data: transformPart(data, invert(p.tf)) });
+        }
+        data.color = color;
         parts.push({ id: p.id, data, faces: p.body.names });
       }
       post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });

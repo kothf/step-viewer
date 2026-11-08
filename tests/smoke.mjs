@@ -4371,6 +4371,80 @@ try {
     await ctx.close();
   }
 
+  // --- 1.74: flexible sub-assemblies (FR-ASM-006), linked components (FR-ASM-003, FR-IO-011) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const cubePart = async h => {
+      await mp.evaluate(h => window.__sv.model.store.change("Part", d => {
+        const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+        d.features = [{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", 10, 0), P("c", 10, 10), P("d", 0, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+          { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: h } }];
+      }), h);
+      await mp.waitForTimeout(150);
+      await mp.waitForFunction(h => document.querySelector("#mc-busy").hidden && Math.abs((window.__sv.model.last()?.props?.volume ?? 0) - 100 * h) < 1e-6, h, { timeout: 120000 });
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const tall = await cubePart(20);
+    const box = await cubePart(10);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    const newAsm = async () => { await mp.click("#new-more"); await mp.click("#new-asm"); await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length); };
+    const insert = (b, name) => mp.evaluate(([b, name]) => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], name)), [b, name]);
+    // Sub-assembly A: a fixed box and a floating box 20 mm along X.
+    await newAsm();
+    await insert(box, "box.mcadprt");
+    await shown(1);
+    await insert(box, "box.mcadprt");
+    await shown(2);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 20, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    const A = [...await mp.evaluate(async () => [...await window.__sv.asm.bytes()])];
+    // Parent: a fixed box, A 50 mm along Y, made flexible; A's floating box is put on top of the parent box.
+    await newAsm();
+    await insert(box, "box.mcadprt");
+    await shown(1);
+    await insert(A, "A.mcadasm");
+    await shown(3);
+    const ids = await mp.evaluate(() => { const a = window.__sv.asm; a.change(d => { d.components[1].tf = [1, 0, 0, 0, 0, 1, 0, 50, 0, 0, 1, 0]; d.components[1].fixed = true; }); return { top: a.doc.components[0].id, sub: a.doc.components[1].id, kid: a.doc.parts[a.doc.components[1].part].asm.components[1].id }; });
+    await shown(3);
+    const zOf = () => mp.evaluate(id => { const i = window.__sv.asm.shownIds.indexOf(id); return Math.round(window.__sv.viewer.parts[i].data.bboxMin[2] * 1000) / 1000; }, `${ids.sub}/${ids.kid}`);
+    await mp.evaluate(ids => window.__sv.asm.setFlexible(ids.sub, true), ids);
+    await shown(3);
+    await mp.evaluate(ids => window.__sv.asm.change(d => { d.mates = [{ id: "m1", name: "Coincident1", type: "coincident", align: "anti", a: { comp: ids.top, face: "x:end" }, b: { comp: `${ids.sub}/${ids.kid}`, face: "x:start" } }]; }), ids);
+    await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id); return !a.building && i >= 0 && Math.abs(window.__sv.viewer.parts[i].data.bboxMin[2] - 10) < 1e-3; }, `${ids.sub}/${ids.kid}`, { timeout: 120000 });
+    const flex = { z: await zOf(), mark: await mp.evaluate(() => document.querySelector("#asm-tree .ft-flexible .ft-flex")?.textContent ?? null), ok: await mp.evaluate(() => !!window.__sv.asm.solved?.ok) };
+    // Rigid again: the box goes back where A has it, and the mate cannot reach it.
+    await mp.evaluate(ids => window.__sv.asm.setFlexible(ids.sub, false), ids);
+    await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id); return !a.building && i >= 0 && Math.abs(window.__sv.viewer.parts[i].data.bboxMin[2]) < 1e-3; }, `${ids.sub}/${ids.kid}`, { timeout: 120000 });
+    const rigid = { z: await zOf(), missing: await mp.evaluate(() => window.__sv.asm.solved?.missing ?? []) };
+    check(flex.z === 10 && flex.mark === "flexible" && flex.ok && rigid.z === 0 && rigid.missing.includes("m1"),
+      `asm 1.74: flexible sub-assembly solves its parts with the parent's mates; rigid puts them back (FR-ASM-006) (${JSON.stringify({ flex, rigid })})`);
+    // Linked component: link the top box to box.mcadprt, change the file to a 20 mm tall box and update links from the folder.
+    await mp.evaluate(ids => window.__sv.asm.change(d => { delete d.mates; }), ids);
+    await mp.evaluate(([b, id]) => window.__sv.asm.linkComponent(id, new File([new Uint8Array(b)], "box.mcadprt")), [box, ids.top]);
+    await mp.waitForFunction(() => Object.values(window.__sv.asm.doc.parts).some(p => p.link));
+    await mp.evaluate(([b]) => { const f = new File([new Uint8Array(b)], "box.mcadprt"); Object.defineProperty(f, "webkitRelativePath", { value: "proj/parts/box.mcadprt" }); window.__sv.asm.updateLinks([f, new File(["x"], "other.txt")]); }, [tall]);
+    await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id); return !a.building && i >= 0 && Math.abs(window.__sv.viewer.parts[i].data.bboxMax[2] - 20) < 1e-3; }, ids.top, { timeout: 120000 });
+    const linked = await mp.evaluate(id => { const a = window.__sv.asm, c = a.doc.components.find(x => x.id === id), p = a.doc.parts[c.part]; return { path: p.link?.path, hash: p.link?.hash?.length, row: !!document.querySelector(`#asm-tree [data-id="${id}"] .ft-link`) }; }, ids.top);
+    // A folder without the file: the link is marked missing and the last copy stays.
+    await mp.evaluate(() => window.__sv.asm.updateLinks([new File(["x"], "other.txt")]));
+    await mp.waitForFunction(id => !!document.querySelector(`#asm-tree [data-id="${id}"] .ft-link.ft-err`), ids.top);
+    const gone = await mp.evaluate(() => window.__sv.viewer.parts.length);
+    // Saved and opened again, the link is kept; Embed drops it.
+    const re = await mp.evaluate(async id => { const a = window.__sv.asm, b = await a.bytes(); await a.openFile({ name: "p.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); const c = a.doc.components.find(x => x.id === id); const kept = !!a.doc.parts[c.part].link; a.setLink(c.part, null); return { kept, embedded: !a.doc.parts[c.part].link }; }, ids.top);
+    check(linked.path === "parts/box.mcadprt" && linked.hash === 64 && linked.row && gone === 3 && re.kept && re.embedded,
+      `asm 1.74: linked component reads its file again when it changed, marks it missing, embeds (FR-ASM-003, FR-IO-011) (${JSON.stringify({ linked, gone, re })})`);
+    await ctx.close();
+  }
+
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -12,7 +12,8 @@ import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
-import { autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, topOf, type Expanded } from "./patterns";
+import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
+import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
 import type { AsmComponentStatus, AsmDoc, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
@@ -246,10 +247,10 @@ export class AsmController {
       $("#asm-busy").hidden = true;
       this.building = false;
       // A part's geometry may have changed under its mates (AT-P4-2): solve again, as part of the same state.
-      if (this.doc?.mates?.length) {
+      if (this.doc && needsSolve(this.doc)) {
         const r = this.solveDoc(this.doc);
         this.solved = r;
-        if (r.ok && r.moved) { for (const c of this.doc.components) c.tf = r.tfs[c.id]; this.renderTree(); this.rebuild(); return; }
+        if (r.ok && r.moved) { applySolved(this.doc, r.tfs); this.renderTree(); this.rebuild(); return; }
       }
       // Patterns whose direction was learnt only now: build again with their instances.
       const before = this.expanded?.bad.length ?? 0;
@@ -694,16 +695,27 @@ export class AsmController {
   }
 
   private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
-  private solveDoc(doc: AsmDoc, extra: Mate[] = [], start?: Record<string, Tf>) {
+  private solveDoc(doc0: AsmDoc, extra: Mate[] = [], start0?: Record<string, Tf>) {
+    // Flexible sub-assemblies (FR-ASM-006) put their own components and mates into the solve.
+    const doc = solveView(doc0);
+    let start = start0;
+    if (start0 && doc !== doc0) {
+      start = { ...start0 };
+      for (const c of doc0.components) {
+        if (!c.flexible || !start0[c.id]) continue;
+        const move = compose(start0[c.id], invert(c.tf));
+        for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
+      }
+    }
     return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size() });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
   private applySolve(d: AsmDoc) {
-    if (!d.mates?.length) { this.solved = null; return; }
+    if (!needsSolve(d)) { this.solved = null; return; }
     const r = this.solveDoc(d);
     this.solved = r;
-    if (r.ok) for (const c of d.components) c.tf = r.tfs[c.id];
+    if (r.ok) applySolved(d, r.tfs);
   }
 
   /** Alt-drag drop (FR-MATE-007): a cylinder on a cylinder makes a concentric mate, a flat face on a flat face a coincident one. */
@@ -730,7 +742,7 @@ export class AsmController {
     const start = { ...dropped };
     const r = this.solveDoc(this.doc, [mate], start);
     if (!r.ok) { toast(t("This mate cannot be solved with the others: the assembly would be over-defined."), true); return false; }
-    this.change(d => { d.mates ??= []; d.mates.push(mate); for (const c of d.components) if (r.tfs[c.id]) c.tf = r.tfs[c.id]; });
+    this.change(d => { d.mates ??= []; d.mates.push(mate); applySolved(d, r.tfs); });
     toast(t("{name} added.", { name: mate.name }));
     return true;
   }
@@ -779,7 +791,7 @@ export class AsmController {
   }
 
   private worldGeo(ref: MateRef): Geo | null {
-    const c = this.comp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
+    const c = this.anyComp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
     return c && g ? placeGeo(g, c.tf) : null;
   }
 
@@ -812,7 +824,7 @@ export class AsmController {
     const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type].replace(/ (\w)/g, (_, c: string) => c.toUpperCase())}${n}`, type: m.type, a: m.a, b: m.b };
     if (m.align) mate.align = m.align;
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
-    if (m.type === "lock") { const a = this.comp(m.a.comp), b = this.comp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
+    if (m.type === "lock") { const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
     if (m.type === "limitdist" || m.type === "limitangle") { mate.min = m.min ?? 0; mate.max = Math.max(mate.min, m.max ?? mate.min); if (m.flip) mate.flip = true; }
     if (m.type === "symmetric" || m.type === "width") {
       if (!m.c || (m.type === "width" && this.worldGeo(m.b)?.k === "plane" && !m.d)) return null;
@@ -864,8 +876,10 @@ export class AsmController {
     const m = this.mating;
     const hit = this.host.partAt(x, y);
     if (!m || !hit) return;
-    const id = this.shownIds[hit.idx], c = this.comp(id), face = this.faceNames[hit.idx]?.[hit.face];
-    if (!c && this.comp(topOf(id))) { toast(t("Mate to faces of part components: sub-assemblies are rigid."), true); return; }
+    const id = this.shownIds[hit.idx], face = this.faceNames[hit.idx]?.[hit.face];
+    // A flexible sub-assembly's own components can be mated (FR-ASM-006); a rigid one cannot.
+    const c = this.comp(id) ?? (this.flexChild(id) ? this.anyComp(id) : null);
+    if (!c && this.comp(topOf(id))) { toast(t("Mate to faces of part components, or make the sub-assembly flexible."), true); return; }
     if (!c || !face) return;
     if (!this.geo.get(c.part)?.get(face)) { toast(t("Pick a flat or cylindrical face."), true); return; }
     const ref = { comp: id, face };
@@ -1057,6 +1071,86 @@ export class AsmController {
     inp.click();
   }
 
+  // ---------- linked components (FR-ASM-003, FR-IO-011) ----------
+
+  /** Parts whose linked file was not found the last time links were updated (view state). */
+  private missingLinks = new Set<string>();
+  private linkCount() { return Object.values(this.doc?.parts ?? {}).filter(p => p.link).length; }
+  private pickFile(run: (f: File) => void) {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
+    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) run(f); });
+    inp.click();
+  }
+
+  /** Link a component's part to a file: its document is read from the file now and on every Update links. */
+  linkComponent(id: string, file?: File) {
+    const run = async (f: File) => {
+      const c = this.comp(id);
+      if (!c || !this.doc) return;
+      const hash = await hashBytes(await f.arrayBuffer());
+      const src = await this.readSource(f);
+      if (!src || !this.doc) return;
+      if (!!this.doc.parts[c.part]?.asm !== !!src.asm) { toast(t("Link a part to a part file and a sub-assembly to an assembly file."), true); return; }
+      const path = folderPath((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
+      this.missingLinks.delete(c.part);
+      this.change(d => {
+        const p = d.parts[c.part];
+        if (!p) return;
+        p.doc = src.pd;
+        if (src.asm) p.asm = src.asm;
+        p.file = f.name;
+        p.link = { path, hash };
+      });
+      toast(t("{name} is linked to {file}.", { name: c.name, file: path }));
+    };
+    if (file) void run(file); else this.pickFile(f => void run(f));
+  }
+
+  /** Embed: the part keeps its current document and forgets the file. */
+  setLink(key: string, link: { path: string; hash: string } | null) {
+    this.missingLinks.delete(key);
+    this.change(d => { const p = d.parts[key]; if (!p) return; if (link) p.link = link; else delete p.link; });
+    this.renderTree();
+  }
+
+  /**
+   * Update links (FR-IO-011): pick the assembly's folder; each linked file is found by its path (or by its
+   * name), read again when its content changed, and marked missing when it is not there.
+   */
+  updateLinks(files?: File[]) {
+    const run = async (list: File[]) => {
+      if (!this.doc) return;
+      const want = new Set(Object.values(this.doc.parts).filter(p => p.link).map(p => p.link!.path.split("/").at(-1)!.toLowerCase()));
+      let found: (LinkFile & { file: File })[] = [];
+      $("#asm-busy").hidden = false;
+      try {
+        // Only files that could be a link are read and hashed.
+        found = await Promise.all(list.filter(f => want.has(f.name.toLowerCase())).map(async f =>
+          ({ path: folderPath((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name), hash: await hashBytes(await f.arrayBuffer()), file: f })));
+      } finally { $("#asm-busy").hidden = true; }
+      const plan = planLinks(this.doc.parts, found);
+      const fresh = new Map<string, { pd: PartDoc; asm?: AsmDoc; link: LinkFile; name: string }>();
+      for (const [key, lf] of plan.update) {
+        const f = found.find(x => x.path === lf.path)!.file;
+        const src = await this.readSource(f);
+        if (src && this.doc && !!src.asm === !!this.doc.parts[key]?.asm) fresh.set(key, { ...src, link: lf, name: f.name });
+        else plan.missing.push(key);
+      }
+      this.missingLinks = new Set(plan.missing);
+      if (fresh.size) this.change(d => { for (const [key, v] of fresh) { const p = d.parts[key]; if (!p) continue; p.doc = v.pd; if (v.asm) p.asm = v.asm; p.file = v.name; p.link = v.link; } });
+      else this.renderTree();
+      toast(t("Links: {u} updated, {s} unchanged, {m} missing.", { u: fresh.size, s: plan.same.length, m: plan.missing.length }), plan.missing.length ? "warn" : undefined);
+    };
+    if (files) { void run(files); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    (inp as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+    inp.addEventListener("change", () => { if (inp.files?.length) void run([...inp.files]); });
+    inp.click();
+  }
+
   setSuppressed(id: string, on: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (on) c.suppressed = true; else delete c.suppressed; } }); }
   /** Transparency (FR-ASM-025): the shown parts of each component take its opacity. */
   private applyOpacity() {
@@ -1136,9 +1230,19 @@ export class AsmController {
   }
 
   private comp(id: string | null) { return id ? this.doc?.components.find(c => c.id === id) ?? null : null; }
+  /** A direct component of a flexible sub-assembly (`<comp>/<child>`): mates and drags can reach it. */
+  private flexChild(id: string) {
+    const [top, child, more] = id.split("/");
+    const c = this.comp(top), sub = c?.flexible ? this.doc?.parts[c.part]?.asm : undefined;
+    return !more && !!sub?.components.some(x => x.id === child);
+  }
   /** A component or a pattern instance. */
   private anyComp(id: string | null) { return id ? this.comp(id) ?? this.expanded?.doc.components.find(c => c.id === id) ?? null : null; }
 
+  /** Flexible sub-assembly (FR-ASM-006): its own mates solve in this assembly; rigid puts its parts back where it has them. */
+  setFlexible(id: string, on: boolean) {
+    this.change(d => { const c = d.components.find(x => x.id === id); if (!c || !d.parts[c.part]?.asm) return; if (on) c.flexible = true; else { delete c.flexible; delete c.subTfs; } });
+  }
   setFixed(id: string, fixed: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (fixed) c.fixed = true; else delete c.fixed; } }); }
   setHidden(id: string, hidden: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } }); }
 
@@ -1404,7 +1508,11 @@ export class AsmController {
       const err = s && !s.ok ? `<span class="ft-err" title="${esc(s.message ?? "")}" role="img" aria-label="${esc(t("Error"))}: ${esc(s.message ?? "")}">⚠</span>` : "";
       const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="hide" title="${esc(c.hidden ? t("Show component") : t("Hide component"))}" aria-label="${esc(c.hidden ? t("Show component") : t("Hide component"))}">${c.hidden ? "◌" : "◉"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const sub = !!doc.parts[c.part]?.asm;
-      html += row(c.id, sub ? "◫" : "▣", mark + c.name, `${c.hidden || c.suppressed ? " sup" : ""} ft-comp${sub ? " ft-sub" : ""}`, err + tools);
+      const lk = doc.parts[c.part]?.link, gone = this.missingLinks.has(c.part);
+      const ltxt = lk ? (gone ? t("Linked file not found: {file}. The last loaded copy is shown.", { file: lk.path }) : t("Linked to {file}", { file: lk.path })) : "";
+      const link = lk ? `<span class="ft-link${gone ? " ft-err" : " muted"}" title="${esc(ltxt)}" role="img" aria-label="${esc(ltxt)}">${gone ? "⚠" : "⛓"}</span>` : "";
+      const flex = sub && c.flexible ? `<span class="ft-flex muted" title="${esc(t("Flexible: its own mates solve in this assembly"))}">${esc(t("flexible"))}</span>` : "";
+      html += row(c.id, sub ? (c.flexible ? "⬚" : "◫") : "▣", mark + c.name, `${c.hidden || c.suppressed ? " sup" : ""} ft-comp${sub ? " ft-sub" : ""}${sub && c.flexible ? " ft-flexible" : ""}`, link + flex + err + tools);
       if (sub) {
         const kids = (this.expanded?.doc.components ?? []).filter(k => k.id.startsWith(`${c.id}/`) && !k.id.slice(c.id.length + 1).includes("/"));
         if (kids.length) html += `<div class="ft-group" role="group">${kids.map(k => row(k.id, "▣", k.name, " ft-inst")).join("")}</div>`;
@@ -1415,7 +1523,7 @@ export class AsmController {
       html += `<div class="ft-group" role="group">`;
       for (const m of doc.mates) {
         const sv = this.solved, bad = !!sv && (sv.bad.includes(m.id) || sv.missing.includes(m.id));
-        const names = `${this.comp(m.a.comp)?.name ?? "?"}, ${this.comp(m.b.comp)?.name ?? "?"}`;
+        const names = `${this.anyComp(m.a.comp)?.name ?? "?"}, ${this.anyComp(m.b.comp)?.name ?? "?"}`;
         const msg = sv?.missing.includes(m.id) ? t("A face of this mate is missing.") : t("This mate cannot be solved with the others: the assembly would be over-defined.");
         const err = bad ? `<span class="ft-err" title="${esc(msg)}" role="img" aria-label="${esc(t("Error"))}: ${esc(msg)}">⚠</span>` : "";
         const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
@@ -1472,7 +1580,8 @@ export class AsmController {
         if (c) this.menu(c, e.clientX, e.clientY);
         const ds = this.doc?.states?.find(x => x.id === id);
         if (ds) { this.popup([[t("Activate"), () => this.activateDisplayState(id)], [t("Rename"), () => this.renameState(id)], [t("Add display state"), () => this.addDisplayState()], [t("Delete"), () => this.deleteDisplayState(id)]], e.clientX, e.clientY); return; }
-        if (id === "asm" || id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
+        if (id === "asm") { this.popup([[t("Add display state"), () => this.addDisplayState()], ...(this.linkCount() ? [[t("Update links…"), () => this.updateLinks()] as [string, () => void]] : [])], e.clientX, e.clientY); return; }
+        if (id === "folder:states") { this.popup([[t("Add display state"), () => this.addDisplayState()]], e.clientX, e.clientY); return; }
         const pt = this.doc?.patterns?.find(x => x.id === id), xv = this.doc?.explodes?.find(x => x.id === id);
         if (pt) this.popup([[t("Edit pattern"), () => this.startPattern(pt)], [pt.suppressed ? t("Unsuppress") : t("Suppress"), () => this.change(d => { const q = d.patterns?.find(x => x.id === id); if (q) { if (q.suppressed) delete q.suppressed; else q.suppressed = true; } })], [t("Delete"), () => this.deletePattern(id)]], e.clientX, e.clientY);
         else if (xv) this.popup([[this.exploded === id ? t("Collapse") : t("Explode"), () => this.toggleExplode(id)], [t("Edit exploded view"), () => this.startExplode(xv)], [t("Delete"), () => this.deleteExplode(id)]], e.clientX, e.clientY);
@@ -1488,7 +1597,7 @@ export class AsmController {
 
   private menu(c: Component, x: number, y: number) {
     this.popup([
-      ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
+      ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],
       ...(c.fixed ? [] : [[t("Move component"), () => this.moveComponent(c.id)] as [string, () => void]]),
       [c.hidden ? t("Show component") : t("Hide component"), () => this.setHidden(c.id, !c.hidden)],
@@ -1497,6 +1606,8 @@ export class AsmController {
       [c.opacity !== undefined && c.opacity < 1 ? t("Make opaque") : t("Change transparency"), () => this.setOpacity(c.id, c.opacity !== undefined && c.opacity < 1 ? null : 0.35)],
       ...(c.color ? [[t("Reset colour"), () => this.setColor(c.id, null)] as [string, () => void]] : []),
       [t("Replace component…"), () => this.replaceComponent(c.id)],
+      ...(this.doc?.parts[c.part]?.link ? [[t("Embed in the assembly"), () => this.setLink(c.part, null)], [t("Update links…"), () => this.updateLinks()]] as [string, () => void][]
+        : [[t("Link to file…"), () => this.linkComponent(c.id)] as [string, () => void]]),
       [t("Delete"), () => void this.deleteComponent(c.id)],
     ], x, y);
   }
@@ -1569,7 +1680,7 @@ export class AsmController {
 
   private refText(ref?: MateRef) {
     if (!ref) return t("Click a face");
-    const c = this.comp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
+    const c = this.anyComp(ref.comp), g = c && this.geo.get(c.part)?.get(ref.face);
     return `${c?.name ?? "?"}: ${g?.k === "axis" ? t("Cylindrical face") : t("Flat face")}`;
   }
 
@@ -1632,4 +1743,9 @@ export class AsmController {
     });
     vi?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); vi.dispatchEvent(new Event("change")); this.okMate(); } });
   }
+}
+
+/** The mates need solving: the assembly has some, or a flexible sub-assembly brings its own (FR-ASM-006). */
+function needsSolve(d: AsmDoc) {
+  return !!d.mates?.length || d.components.some(c => c.flexible && !!d.parts[c.part]?.asm?.mates?.length);
 }

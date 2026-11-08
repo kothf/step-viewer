@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.74.0] - 2026-11-08
+
+### Added
+
+- **Flexible sub-assemblies** (FR-ASM-006): right-click a sub-assembly → **Make flexible**. Its own mates then solve inside the parent assembly, and the parent can mate its parts to the sub-assembly's parts (a piston that follows a crank). **Make rigid** puts them back where the sub-assembly has them. Flexible sub-assemblies are marked in the tree.
+- **Linked components** (FR-ASM-003, FR-IO-011): right-click a component → **Link to file…**. The assembly keeps the file's path and the SHA-256 of its content, plus the last loaded copy. **Update links…** asks for the project folder, reads again every linked file whose content changed (found by its path, or by its name anywhere in the folder) and marks missing files with ⚠; those components keep showing their last copy. **Embed in the assembly** drops the link.
+
+### Changed
+
+- Faster assemblies with repeated parts (FR-ASM-031): each part is analysed once (B-rep faces, edges and exact values) and every component of it gets a moved copy, instead of analysing each instance's mesh again.
+
 ## [1.73.0] - 2026-11-08
 
 ### Added
@@ -710,7 +721,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.73.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.74.0...HEAD
+[1.74.0]: https://github.com/kothf/step-viewer/compare/v1.73.0...v1.74.0
 [1.73.0]: https://github.com/kothf/step-viewer/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/kothf/step-viewer/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/kothf/step-viewer/compare/v1.70.0...v1.71.0

@@ -85,3 +85,26 @@ test("AT-P4-4: interference finds a 1 mm overlap with the right volume; touching
   const touching = a.interference(placed, true);
   assert.equal(touching.length, 2);
 });
+
+test("FR-ASM-031: instances share one analysis of their part, moved rigidly", async () => {
+  const { analyzeMesh } = await import("../../src/topology");
+  const { transformPart } = await import("../../src/asm/light");
+  const a = new Assembler(await occ());
+  const { placed } = a.evaluate(asm());
+  // The two blocks share a source; the second is turned 90° about Z and moved.
+  assert.equal(placed[1].src, placed[2].src);
+  const first = analyzeMesh(placed[1].mesh() as never), direct = analyzeMesh(placed[2].mesh() as never);
+  const shared = transformPart(transformPart(first, invert(placed[1].tf)), placed[2].tf);
+  const near = (p: number[], q: number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-4;
+  assert.ok(near(shared.bboxMin, direct.bboxMin) && near(shared.bboxMax, direct.bboxMax), JSON.stringify([shared.bboxMin, direct.bboxMin]));
+  assert.equal(shared.faces.length, direct.faces.length);
+  assert.equal(shared.edges.length, direct.edges.length);
+  shared.faces.forEach((f, i) => {
+    const g = direct.faces[i];
+    assert.equal(f.type, g.type);
+    assert.ok(near(f.centroid, g.centroid) && Math.abs(f.area - g.area) < 1e-6, `face ${i}`);
+    if (f.normal) assert.ok(near(f.normal, g.normal!), `normal ${i}`);
+  });
+  shared.edges.forEach((e, i) => assert.ok(near(e.mid, direct.edges[i].mid) && Math.abs(e.length - direct.edges[i].length) < 1e-6, `edge ${i}`));
+  assert.ok(Math.abs(shared.volume - direct.volume) < 1e-6 && near(shared.com, direct.com));
+});

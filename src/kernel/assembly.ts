@@ -7,7 +7,8 @@ import type { BodyProps, V3 } from "../model/types";
 
 interface Source { json: string; modeller: Modeller; body: Named | null; error?: string; mesh?: ModelMesh; quality?: number }
 
-export interface Placed { id: string; name: string; part: string; tf: Tf; body: Named; mesh: () => ModelMesh }
+/** `src` is the evaluated source (same object while the part is unchanged), so callers can share work between its instances. */
+export interface Placed { id: string; name: string; part: string; tf: Tf; body: Named; src: object; mesh: () => ModelMesh }
 
 export class Assembler {
   private sources = new Map<string, Source>();
@@ -51,7 +52,7 @@ export class Assembler {
       const body: Named = { shape: s.body.shape.Moved(loc, false), faces: s.body.faces.map(f => f.Moved(loc, false)), names: s.body.names };
       const src = s;
       placed.push({
-        id: c.id, name: c.name, part: c.part, tf: t, body,
+        id: c.id, name: c.name, part: c.part, tf: t, body, src,
         mesh: () => {
           if (!src.mesh || src.quality !== quality) { src.mesh = src.modeller.mesh(src.body!, doc.parts[c.part].name, [0.72, 0.74, 0.78], quality); src.quality = quality; }
           return transformMesh(src.mesh, t, c.name);
