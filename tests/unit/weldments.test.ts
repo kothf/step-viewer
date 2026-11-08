@@ -39,9 +39,14 @@ test("profile library: every size builds; areas match the standard tables", () =
     ["shs", "40x40x3", 4.21], ["shs", "100x100x5", 18.4], ["rhs", "100x50x4", 10.9], ["chs", "48.3x3.2", 4.53],
     ["angle", "50x50x5", 4.80], ["angle", "100x100x10", 19.2], ["upn", "100", 13.5], ["upn", "200", 32.2],
     ["ipe", "200", 28.5], ["ipe", "300", 53.8], ["hea", "200", 53.8], ["flat", "40x5", 2.0], ["bar", "20", 3.14],
+    ["uangle", "60x40x5", 4.79], ["uangle", "100x50x8", 11.4], ["uangle", "120x80x10", 19.1], ["heb", "200", 78.1], ["heb", "300", 149],
+    ["sqbar", "20", 4.0],
   ];
   for (const [type, size, cm2] of table) near(profileArea(profileShape(type, size)!) / 100, cm2, 0.012);
   assert.equal(profileShape("shs", "41x41x3"), null);
+  // An unequal angle stands on its short leg: the long leg is the height of its box.
+  const ua = profileShape("uangle", "75x50x6")!;
+  assert.deepEqual([ua.w, ua.h], [50, 75]);
 });
 
 test("structural members: a mitred rectangular frame and its cut list (FR-FT-121)", async () => {
