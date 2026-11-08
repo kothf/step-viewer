@@ -72,6 +72,8 @@ export class MotionManager {
   private clashOpen = false;
   /** Count pairs that already touch at the start (SolidWorks: treat coincidence as interference). */
   clashAll = false;
+  /** Pause playback where an interference from the last check starts (view-only, like the check itself). */
+  clashStop = false;
   /** The selected key or motor; setting it drops the other selected keys. */
   get sel(): Sel { return this._sel; }
   set sel(v: Sel) { this._sel = v; this.more = []; if (v) { this.selTrace = null; this.clashOpen = false; } }
@@ -382,6 +384,7 @@ export class MotionManager {
     return `<strong>${esc(t("Interference"))}</strong> `
       + `<span class="muted">${esc(c.items.length ? t("{n} pairs of components interfere.", { n: c.items.length }) : t("No interference found."))}${c.ignored ? " " + esc(t("{n} pairs touching at the start left out.", { n: c.ignored })) : ""}${stale ? " " + esc(t("The study changed since the check.")) : ""}</span>`
       + `<label class="mo-f"><input type="checkbox" data-mo="clashall"${this.clashAll ? " checked" : ""} /><span>${esc(t("Treat coincidence as interference"))}</span></label>`
+      + `<label class="mo-f" title="${esc(t("Pause playback where an interference starts"))}"><input type="checkbox" data-mo="clashstop"${this.clashStop ? " checked" : ""} /><span>${esc(t("Stop playback"))}</span></label>`
       + `<button class="btn small" data-mo="clash">${esc(t("Check again"))}</button>`
       + (c.items.length ? `<button class="btn small" data-mo="clashcsv" title="${esc(t("Save the interfering pairs and times as CSV"))}">CSV</button>` : "")
       + `<button class="btn small" data-mo="clashclose">${esc(t("Close"))}</button>`
@@ -576,14 +579,22 @@ export class MotionManager {
   }
 
   /** The earliest frame in (i0, i1] where a stopping sensor trips. */
-  private tripAt(i0: number, i1: number): { i: number; x: TracePath } | null {
-    let best: { i: number; x: TracePath } | null = null;
+  private tripAt(i0: number, i1: number): { i: number; x?: TracePath } | null {
+    let best: { i: number; x?: TracePath } | null = null;
+    for (const k of this.clashStarts()) if (k > i0 && k <= i1 && (!best || k < best.i)) best = { i: k };
     for (const x of this.traces) {
       if (!x.alert?.stop) continue;
       const k = tripFrame(this.seriesOf(x), x.alert, i0, i1);
       if (k >= 0 && (!best || k < best.i)) best = { i: k, x };
     }
     return best;
+  }
+
+  /** Frames where an interference starts, when playback should stop there (the last check is for this study and still current). */
+  private clashStarts(): number[] {
+    const c = this.clash;
+    if (!this.clashStop || !c || c.study !== this.study.id || c.key !== this.clashKey()) return [];
+    return c.items.flatMap(it => it.spans.map(([a]) => Math.round(a * this.study.fps)));
   }
 
   private plotBody(x: TracePath, i: number): string {
@@ -663,8 +674,9 @@ export class MotionManager {
     this.playing = true;
     this.playStart = performance.now();
     this.playFrom = this.time;
-    const sensors = this.traces.find(x => x.alert?.stop);
-    if (sensors) this.tracePath(sensors.id);
+    const stopper = this.traces.find(x => x.alert?.stop);
+    if (stopper) this.tracePath(stopper.id);
+    const sensors = !!stopper || this.clashStarts().length > 0;
     let last = Math.round(this.time * s.fps);
     const step = () => {
       if (!this.playing) return;
@@ -675,7 +687,7 @@ export class MotionManager {
         this.time = trip.i / this.study.fps;
         this.showAt(this.time);
         this.pause();
-        toast(t("Sensor tripped at {t} s", { t: fmt(this.time) }));
+        toast(trip.x ? t("Sensor tripped at {t} s", { t: fmt(this.time) }) : t("Interference at {t} s", { t: fmt(this.time) }));
         return;
       }
       this.time = p.t;
@@ -1038,6 +1050,7 @@ export class MotionManager {
       else if (a === "clashcsv" && this.clash) download(new Blob([clashCsv(this.clash.items, id => this.compName(id))], { type: "text/csv" }), `${this.fileBase()}-interference.csv`);
     });
     on("input[data-mo=clashall]", "change", (_e, el) => { this.clashAll = (el as HTMLInputElement).checked; this.checkInterference(); });
+    on("input[data-mo=clashstop]", "change", (_e, el) => { this.clashStop = (el as HTMLInputElement).checked; });
     on("button[data-clt]", "click", (_e, el) => this.seek(Number(el.dataset.clt)));
     on("select[data-mo=study]", "change", (_e, el) => { this.stop(); this.studyId = (el as HTMLSelectElement).value; this.sel = null; this.render(); this.showAt(0); });
     on("select[data-mo=add]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; if (v === "trace:") { (el as HTMLSelectElement).value = ""; this.startTrace(); } else if (v.startsWith("mplot:")) this.addMatePlot(v.slice(6)); else if (v) this.addTrack(v); });

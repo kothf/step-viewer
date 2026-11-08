@@ -735,6 +735,21 @@ test("revision cloud: scallops bulge outwards whichever way the corners go", asy
   assert.ok(rv.prims.some(p => p.t === "t" && p.s === "B"));
 });
 
+test("text widths follow DejaVu Sans; long title block values break into two lines", async () => {
+  const { textWidth } = await import("../../src/drawing/textWidth");
+  const { cellText } = await import("../../src/drawing/sheet");
+  assert.ok(Math.abs(textWidth("Ø12H7", 3.5) - 16.7) < 0.1, String(textWidth("Ø12H7", 3.5)));
+  assert.ok(textWidth("WWW", 1, true) > textWidth("WWW", 1));
+  const title = "1 CYLINDER HORIZONTAL DOUBLE ACTING STEAM ENGINE WITH REVERSER (B=25 S=40)";
+  const ps = cellText(title, 140, 30, 5, 78, 11, true) as any[];
+  assert.equal(ps.length, 2);
+  for (const p of ps) assert.ok(textWidth(p.s, p.h, true) <= 78 + 1e-9 && p.h >= 2, `${p.s} ${p.h}`);
+  assert.equal(ps.map(p => p.s).join(" "), title);
+  assert.ok(ps[0].y > ps[1].y);
+  const one = cellText("BASE PLATE", 140, 30, 5, 78, 11, true) as any[];
+  assert.equal(one.length, 1); assert.equal(one[0].h, 5);
+});
+
 test("centreline: halfway between two parallel edges over both, centre mark on an arc", async () => {
   const { clineSegs } = await import("../../src/drawing/annot");
   const pl = { s: 2, uc: 0, vc: 0, x: 100, y: 100, box: [0, 0, 0, 0] as [number, number, number, number], ready: true };
