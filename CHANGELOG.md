@@ -5,11 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.196.0] - 2026-11-08
+## [1.199.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: **Mate value** results (Add track… → Mate value), as SolidWorks' Results → Plot of a mate. The distance or the angle between a mate's two faces is plotted over the study, or how fast it changes; the angle keeps counting past full turns, so a crank's angle reads 360, 720 and so on. The values save as CSV (FR-FT-122).
+
+## [1.197.0] - 2026-11-08
+
+### Added
+
+- Drawing notes can link to sheet properties (FR-DRW-023): `$PRP:"Material"` (also `$PRPSHEET:`) shows the title block's value, so the note follows the model and the sheet. The Note panel's **Link to property** list inserts one. Unknown names stay as typed.
+
+## [1.196.0] - 2026-11-08
+
+### Fixed
+
+- **↑ and ↓ did nothing in the Top and Bottom views.** Tilting the view from Top or Bottom (to look down a hole, say) silently did nothing, because the tilt axis was taken from the world's up direction, which has no sideways part when looking straight down. They now tilt about the screen's horizontal axis. Turning up from Front also went over the top and back; it now stops at the top, as intended.
 
 ## [1.194.0] - 2026-11-08
 
@@ -1459,7 +1471,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.196.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.199.0...HEAD
+[1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
+[1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
 [1.196.0]: https://github.com/kothf/step-viewer/compare/v1.194.0...v1.196.0
 [1.194.0]: https://github.com/kothf/step-viewer/compare/v1.191.0...v1.194.0
 [1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0

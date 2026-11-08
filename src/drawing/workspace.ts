@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, dimGeo, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, dimGeo, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -58,6 +58,9 @@ export interface DrawingHost {
   beforeOpen?(): void;
   opened?(label: string): void;
 }
+
+/** Title block fields a note can link to with $PRP:"key" (FR-DRW-023). */
+const NOTE_PROP_KEYS: [string, string][] = [["title", "Title"], ["number", "Part number"], ["revision", "Revision"], ["material", "Material"], ["mass", "Mass"], ["company", "Company"], ["author", "Author"], ["checked", "Checked"], ["approved", "Approved"], ["date", "Date"], ["scale", "Scale"], ["sheet", "Sheet"], ["size", "Size"]];
 
 type Mode =
   | { kind: "none" }
@@ -974,7 +977,7 @@ export class DrawingWorkspace {
 
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
-    if (this.store) useStyle(this.doc.style);
+    if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
     return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh) };
   }
 
@@ -1513,6 +1516,7 @@ export class DrawingWorkspace {
     if (a.t !== "note") return del;
     return `<fieldset class="pm-group"><legend>${esc(t("Note"))}</legend>
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
+      <label class="drw-f">${esc(t("Link to property"))}<select data-d="nprop"><option value="">—</option>${NOTE_PROP_KEYS.map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label>
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
     </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
   }
@@ -1530,6 +1534,7 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
+      else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "gtol" && k.startsWith("g:")) {

@@ -3765,6 +3765,15 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
+    dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');
+    [x, y] = await dp.evaluate(() => window.__sv.drw.sheetPt(40, 75));
+    await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await dp.waitForTimeout(150);
+    tx = await texts();
+    const scaleNote = tx.find(s => s.startsWith("SCALE "));
+    check(scaleNote && !scaleNote.includes("$PRP") && /^SCALE \d+:\d+$/.test(scaleNote), `drawing: a note's $PRP:"Scale" link shows the sheet scale (${scaleNote})`);
     // Ordinate and chain dimensions (FR-DRW-021): base corner, hole centre, far corner; one click adds each dimension.
     const clicks = async (id, pts) => { for (const [u, w] of pts) { const [cx, cy] = await at(id, u, w); await dp.mouse.move(cx + 2, cy); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); } };
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="ord"]');
@@ -7676,6 +7685,20 @@ try {
     await np.keyboard.press("ArrowRight"); await settleCam();
     const cq1 = await cam();
     check(Math.abs(ang(cq0, cq1) - 15) < 0.5, `navigation: an arrow pressed mid-move turns from where the move ends (${ang(cq0, cq1).toFixed(2)}°)`);
+    // From Top and Bottom, ↑/↓ tilt the view (they did nothing there), and turning up from Front stops at the pole (exam bug 33).
+    const polar = c => { const u = c.p.map((x, i) => x - c.t[i]); return Math.acos(Math.max(-1, Math.min(1, u[2] / Math.hypot(...u)))) * 180 / Math.PI; };
+    await np.keyboard.press("Control+5"); await settleCam();
+    await np.keyboard.press("ArrowUp"); await settleCam();
+    const pt = polar(await cam());
+    await np.keyboard.press("Control+6"); await settleCam();
+    await np.keyboard.press("ArrowDown"); await settleCam();
+    const pb = polar(await cam());
+    await np.keyboard.press("Control+1"); await settleCam();
+    const ys = [];
+    for (let i = 0; i < 8; i++) { await np.keyboard.press("ArrowDown"); await settleCam(); const c = await cam(); ys.push(c.p[1] - c.t[1]); }
+    const pf = polar(await cam());
+    check(Math.abs(pt - 15) < 0.5 && Math.abs(pb - 165) < 0.5 && pf < 0.5 && ys.every(y => y <= 1e-6),
+      `navigation: ↑ from Top and ↓ from Bottom tilt 15°, ↓ from Front stops at the top without going over (${pt.toFixed(2)}°, ${pb.toFixed(2)}°, ${pf.toFixed(2)}°, ${JSON.stringify(ys.map(y => +y.toFixed(1)))})`);
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();

@@ -422,7 +422,7 @@ function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Draws a note (multi-line text) and its leader. */
 export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: Prim[]; box: [number, number, number, number] } {
-  const out: Prim[] = [], h = a.h ?? TEXT_H, lines = a.text.split("\n");
+  const out: Prim[] = [], h = a.h ?? TEXT_H, lines = expandProps(a.text).split("\n");
   lines.forEach((s, i) => out.push({ t: "t", x: at[0], y: at[1] - i * h * 1.5, s, h, al: "l", layer: "ANNOT" }));
   const w = Math.max(1, ...lines.map(s => textW(s, h)));
   if (leaderTo) {
@@ -431,6 +431,26 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
     out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
   return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
+}
+
+// ---------- property links in notes (FR-DRW-023) ----------
+
+/** The drawing's properties that notes link to with $PRP:"name" (set from the title block fields before composing). */
+let NOTE_PROPS: Record<string, string> = {};
+/** SolidWorks property names that mean one of our fields. */
+const PROP_ALIAS: Record<string, string> = { description: "title", partno: "number", partnumber: "number", weight: "mass", drawnby: "author", swsheetscale: "scale", sheetscale: "scale", sheetformatsize: "size", swsheetformatsize: "size" };
+
+export function useProps(fields: Record<string, string | undefined>) {
+  NOTE_PROPS = {};
+  for (const [k, v] of Object.entries(fields)) if (typeof v === "string") NOTE_PROPS[k.toLowerCase()] = v;
+}
+
+/** $PRP:"Material" (or $PRPSHEET:"…") → the property's value; an unknown name stays as typed so it can be seen and fixed. */
+export function expandProps(text: string, props: Record<string, string> = NOTE_PROPS): string {
+  return text.replace(/\$PRP(?:SHEET)?:"([^"]*)"/g, (m, name: string) => {
+    const k = name.toLowerCase().replace(/[^a-z0-9]/g, ""), v = props[PROP_ALIAS[k] ?? k];
+    return v ?? m;
+  });
 }
 
 // ---------- hole table (FR-DRW-024) ----------
