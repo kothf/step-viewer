@@ -5839,7 +5839,7 @@ try {
     const back = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].tb ?? null);
     check(pvImg && fmt.name === "Smoke block" && fmt.label === "Firma" && fmt.logo && fmt.img && fmt.lib === 1 && fmt.opt === 1 && back === null,
       `drawing: a user title block with a logo is saved to the library and used on the sheet; ISO puts the standard one back (${JSON.stringify([pvImg, fmt, back])})`);
-    // 1.95.0 broken-out section (FR-DRW-015): outline an area of the projected view, Enter cuts it to the middle and hatches the floor.
+    // 1.96.0 broken-out section (FR-DRW-015): outline an area of the projected view, Enter cuts it to the middle and hatches the floor.
     await ap.keyboard.press("Escape");
     const tv = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, uc: pl.uc, vc: pl.vc, w: (pl.box[2] - pl.box[0]) / pl.s, h: (pl.box[3] - pl.box[1]) / pl.s }; }, pv0.id);
     const at2 = (u, v) => clickAt(tv.x + (u - tv.uc) * tv.s, tv.y + (v - tv.vc) * tv.s);

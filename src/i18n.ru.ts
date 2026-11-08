@@ -2801,7 +2801,7 @@ export const RU: Record<string, string> = {
   "H": "В",
   "X": "X",
   "Y": "Y",
-  // 1.95.0: broken-out section (FR-DRW-015).
+  // 1.96.0: broken-out section (FR-DRW-015).
   "Click the corners of the area to cut away on the view.": "Щёлкайте по углам области, которую нужно вырезать на виде.",
   "Click more corners; click the first corner or press Enter to cut.": "Добавьте углы; щёлкните по первому углу или нажмите Enter, чтобы вырезать.",
   "Select a model, projected or auxiliary view first.": "Сначала выберите основной, проекционный или дополнительный вид.",
