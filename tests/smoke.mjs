@@ -8468,6 +8468,28 @@ try {
     await mp.evaluate(() => window.__sv.modeller.cancel());
     check(!mt.bad && mt.mitres === 2 && mt.size[0] === 100 && mt.size[1] === 50 && mt.size[2] === 20 && mt.gap === "0.1",
       `sheet metal: edge flanges on two edges meeting at a corner are mitred, corner gap in the panel (${JSON.stringify(mt)})`);
+    // Break Corner: click the thickness edge at the plate's (100, 0) corner, chamfer it 10 mm; the flat pattern follows.
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+    }));
+    await settle();
+    const bcv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Break Corner");
+    const [bx, by] = await scr([100, 0, T / 2]);
+    await mp.mouse.click(bx, by);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "chamfer");
+    await settle();
+    await mp.fill('#mc-pm input[data-num="size"]', "10");
+    await mp.press('#mc-pm input[data-num="size"]', "Tab");
+    await settle();
+    const bc0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, edges: window.__sv.model.mode().draft?.edges.map(e => e.faces.slice().sort().join("|")) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const bc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, segs: l.sheet?.panels[0].outer.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(bc0.title === "Break Corner" && bc0.edges?.length === 1 && /:p0:l1\|.*:p0:l2$/.test(bc0.edges[0]) && !bc1.bad && bc1.segs === 5 && Math.abs(bcv0 - bc1.v - 50 * T) < 1e-3,
+      `sheet metal: Break Corner chamfers the picked thickness edge's corner, in the flat outline too (${JSON.stringify({ bc0, bc1, bcv0 })})`);
     await ctx.close();
   }
 
