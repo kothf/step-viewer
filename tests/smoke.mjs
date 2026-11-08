@@ -2712,6 +2712,53 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.137.0: sketch text (FR-SK-020), embossed by Extrude ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    // The Point flyout holds Text; the panel takes the text and height before the click.
+    await mp.click('#mc-tools [data-fly="point"]');
+    const ptFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.waitForSelector("#mc-pm [data-tx=text]");
+    await mp.evaluate(() => { const set = (k, v) => { const el = document.querySelector(`#mc-pm [data-tx=${k}]`); el.value = v; el.dispatchEvent(new Event("change")); }; set("text", "MC"); set("h", "10"); });
+    await click([5, 5]);
+    await mp.waitForFunction(() => window.__sv.model.editor().sk.ents.some(e => e.t === "text" && e.gl), null, { timeout: 30000 });
+    const tx = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "text"), p = ed.sk.ents.find(x => x.id === e.p); return { text: e.text, h: e.h, at: [p.x, p.y].map(v => Math.round(v * 10) / 10), dof: ed.info.dof }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 2 } }); }));
+    await idle();
+    const emb = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), solids: r.props?.bodies }; });
+    // The text panel in Russian, with the text selected.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.select([ed.sk.ents.find(x => x.t === "text").id]); window.__sv.modeller.renderPanel(); });
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .pm-text h4, #mc-pm .pm-text label, #mc-pm .pm-text .pm-help")].map(e => e.textContent.trim()).join("|"));
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ptFly === "Point|Text" && tx.text === "MC" && tx.h === 10 && Math.abs(tx.at[0] - 5) < 1.5 && Math.abs(tx.at[1] - 5) < 1.5 && tx.dof === 2 && emb.ok && emb.v > 2 * 25 && emb.v < 2 * 160, `model 1.137: Text tool from the Point flyout, embossed 2 mm (${ptFly}, ${JSON.stringify(tx)}, ${JSON.stringify(emb)})`);
+    check(/Шрифт/.test(ru) && /Жирный/.test(ru) && /Высота/.test(ru) && /заглавной/.test(ru) && !/Font|Bold|capital/.test(ru), `model 1.137: the text panel in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
