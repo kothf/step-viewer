@@ -3046,4 +3046,13 @@ export const RU: Record<string, string> = {
   "Click where the hole table goes.": "Щёлкните, где разместить таблицу отверстий.",
   "Click the origin of the hole table on a view: a corner or a circle centre.": "Щёлкните начало координат таблицы отверстий на виде: угол или центр окружности.",
   "This view shows no holes end-on.": "На этом виде нет отверстий, видимых с торца.",
+  // 1.114.0: offset and half sections, components left uncut (FR-DRW-012).
+  "Offset section": "Ступенчатый разрез",
+  "Half section": "Половинный разрез",
+  "Click the centre: the cut stops there.": "Щёлкните центр: разрез заканчивается там.",
+  "Click where the step ends, square to the cut.": "Щёлкните конец уступа, перпендикулярно разрезу.",
+  "Click the end of the first cut.": "Щёлкните конец первого секущего участка.",
+  "Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.": "Щёлкните следующий угол: участки идут вдоль первого или перпендикулярно ему. Enter или повторный щелчок по последней точке завершают линию.",
+  "Every leg of the cutting path must run along or square to the first.": "Каждый участок линии сечения должен идти вдоль первого или перпендикулярно ему.",
+  "Don't cut": "Не разрезать",
 };

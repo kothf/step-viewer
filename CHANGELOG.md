@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.114.0] - 2026-11-08
+
+### Added
+
+- **Offset and half sections** in drawings (FR-DRW-012, Section ▾). Offset section takes a cutting path: after the first leg, each click adds a leg along or square to it (Enter or a second click on the last point ends it). Every leg along the first cuts, the square legs step between them, and the cut faces on all those planes are hatched. Half section takes the start, the centre and the end of the step and cuts only up to the centre, so half the view stays whole. The cutting path is drawn with thick ends and bends, with arrows at its ends (only at the start for a half section).
+- **Components left uncut** in assembly sections (FR-DRW-012): a section's panel lists the assembly's components under Don't cut, plus a Fasteners box that ticks every fastener from the library at once. Those components are drawn whole in the section.
+
 ## [1.112.0] - 2026-11-08
 
 ### Added
@@ -1054,7 +1061,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.112.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.114.0...HEAD
+[1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0
 [1.110.0]: https://github.com/kothf/step-viewer/compare/v1.108.0...v1.110.0
 [1.108.0]: https://github.com/kothf/step-viewer/compare/v1.107.0...v1.108.0

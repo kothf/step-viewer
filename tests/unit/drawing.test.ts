@@ -429,3 +429,45 @@ test("geometry compare of two versions: removed and added material by booleans (
   const same = geometryDiff(oc, ext(20), ext(20));
   assert.ok(same.removed.volume < 1e-6 && same.added.volume < 1e-6);
 });
+
+test("offset and half sections: the staircase cutter, hatched faces on every cut plane (FR-DRW-012)", async () => {
+  const { section } = await import("../../src/kernel/drawing");
+  const { cutLegs, staircase, viewReq, viewDir, FAR } = await import("../../src/drawing/views");
+  assert.equal(cutLegs([0, 0, 10, 0, 15, 5]), null, "a leg at 45° is refused");
+  assert.equal(cutLegs([0, 0, 10, 0, 10, 5, 0, 5]), null, "a cut may not run back");
+  const st = staircase(cutLegs([0, 0, 10, 0, 10, -5, 20, -5])!, [0, -1]);
+  assert.deepEqual(st.offs, [0, 5]);
+  assert.deepEqual(st.pts, [-FAR, FAR, -FAR, 0, 10, 0, 10, 5, FAR, 5, FAR, FAR]);
+  assert.deepEqual(staircase(cutLegs([0, 0, 10, 0, 10, 8])!, [0, -1]).pts, [-FAR, FAR, -FAR, 0, 10, 0, 10, FAR], "a half section stops at the step");
+  const { oc, shape } = await block();
+  const area = (l: number[]) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return a / 2; };
+  const parent = { id: "t", name: "Top", orient: "top", x: 100, y: 200 };
+  const cutArea = (path: number[]) => {
+    for (const look of [1, -1] as const) {
+      const v = { id: "s", name: "A", kind: "section", parent: "t", line: path.slice(0, 4), path, look, x: 100, y: 80 };
+      const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "third", views: [parent, v], annots: [] } as never;
+      if (viewDir(sheet, v as never).dir[1] > -0.9) continue;
+      const req = viewReq(sheet, v as never);
+      assert.ok(req.stair && req.key.includes("|st|"));
+      const s = section(oc, shape, req.view, req.p!, 0.02, undefined, { stair: req.stair });
+      return s.cut!.reduce((t, l) => t + Math.abs(area(l)), 0);
+    }
+    throw new Error("no front-facing look");
+  };
+  // Offset: y = 10 left of x = 0, then y = 0 through the hole (x 5..15).
+  const off = cutArea([-60, 10, 0, 10, 0, 0, 60, 0]);
+  assert.ok(Math.abs(off - (50 * 20 + 50 * 20 - 10 * 20)) < 1e-4, `offset cut area ${off}`);
+  // Half: y = 0 up to x = 10 (half the hole), then the step: the right part stays whole.
+  const half = cutArea([-60, 0, 10, 0, 10, -40]);
+  assert.ok(Math.abs(half - (60 * 20 - 5 * 20)) < 1e-4, `half cut area ${half}`);
+  // The cutting path on the parent: thick at the ends and bends, arrows at both ends, only at the start for a half section.
+  const { childMarks, placement } = await import("../../src/drawing/compose");
+  const marks = (path: number[]) => {
+    const v = { id: "s", name: "A", kind: "section", parent: "t", line: path.slice(0, 4), path, look: 1, letter: "A", x: 100, y: 80 };
+    const sheet = { id: "sh", name: "S", size: "A3", scale: [1, 1], projection: "third", views: [parent, v], annots: [] } as never;
+    const pr = childMarks(sheet, parent as never, placement(sheet, parent as never, undefined, [[-50, -30, 0], [50, 30, 20]]));
+    return { arrows: pr.filter(p => p.t === "p").length, thick: pr.filter(p => p.t === "l" && p.pen === "frame").length, letters: pr.filter(p => p.t === "t" && p.s === "A").length };
+  };
+  assert.deepEqual(marks([-60, 10, 0, 10, 0, 0, 60, 0]), { arrows: 2, thick: 6, letters: 2 });
+  assert.deepEqual(marks([-60, 0, 10, 0, 10, -40]), { arrows: 1, thick: 4, letters: 1 });
+});
