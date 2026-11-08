@@ -106,7 +106,8 @@ function build(sk: SketchFeature, extra: Term[] = []): System {
     add(e.id, term([C, A, B], x => dot(sub(A(x), C(x)), sub(B(x), C(x))) / nrm(sub(A(x), C(x)))));
     for (const q of [e.p0, e.p1]) if (q) { const Q = P(sys, q); add(e.id, onEllipse(C, A, B, Q)); }
   }
-  for (const r of sk.rels) for (const t of relTerms(sys, ents, r)) add(r.id, t);
+  const relMap = new Map(sk.rels.map(r => [r.id, r] as const));
+  for (const r of sk.rels) for (const t of relTerms(sys, ents, r, relMap)) add(r.id, t);
   for (const d of sk.dims) if (!d.driven) { const t = dimTerm(sys, ents, d); if (t) add(d.id, t); }
   for (const t of extra) add("drag", t);
   return sys;
@@ -165,7 +166,7 @@ const nrm = (a: V2) => Math.hypot(a[0], a[1]) || 1e-12;
 const lineDist = (p: V2, a: V2, b: V2) => cross(sub(b, a), sub(p, a)) / nrm(sub(b, a));
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
+function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel, rels: Map<string, SkRel> = new Map()): Term[] {
   const E = (i: number) => ents.get(r.e[i]);
   const kind = (i: number) => (r.e[i] === ORIGIN ? "point" : E(i)?.t);
   switch (r.t) {
@@ -255,6 +256,36 @@ function relTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel): Term[] {
         term([p, q, a, b], x => dot(sub(q(x), p(x)), sub(b(x), a(x))) / nrm(sub(b(x), a(x)))),
       ]);
     }
+    case "offset": {
+      // Signed offset of a curve from its source: line from line, or radius difference of concentric curves.
+      const offOf = (src: string, dst: string): Sc | null => {
+        const a = ents.get(src), b = ents.get(dst);
+        if (!a || !b) return null;
+        if (a.t === "line" && b.t === "line") {
+          const [p, q] = ends(sys, ents, src), [c] = ends(sys, ents, dst);
+          const f = ((x: Float64Array) => lineDist(c(x), p(x), q(x))) as Sc; f.vars = [...new Set([...p.vars, ...q.vars, ...c.vars])]; return f;
+        }
+        if ((a.t === "arc" || a.t === "circle") && (b.t === "arc" || b.t === "circle")) {
+          const r0 = R(sys, ents, src), r1 = R(sys, ents, dst);
+          const f = ((x: Float64Array) => r1(x) - r0(x)) as Sc; f.vars = [...new Set([...r0.vars, ...r1.vars])]; return f;
+        }
+        return null;
+      };
+      const out: Term[] = [];
+      // Open chain ends: the offset end lies on the normal to the source through the source end.
+      const s = ents.get(r.e[0]);
+      for (let k = 2; k + 1 < r.e.length; k += 2) {
+        const Ps = P(sys, r.e[k]), Pd = P(sys, r.e[k + 1]);
+        if (s?.t === "line") { const [a, b] = ends(sys, ents, r.e[0]); out.push(term([Ps, Pd, a, b], x => dot(sub(Pd(x), Ps(x)), sub(b(x), a(x))) / nrm(sub(b(x), a(x))))); }
+        else if (s?.t === "arc" || s?.t === "circle") { const c = P(sys, s.c); out.push(term([Ps, Pd, c], x => cross(sub(Ps(x), c(x)), sub(Pd(x), c(x))) / (nrm(sub(Ps(x), c(x))) + nrm(sub(Pd(x), c(x)))))); }
+      }
+      const lead = r.of ? rels.get(r.of) : undefined;
+      if (lead) {
+        const A = offOf(r.e[0], r.e[1]), B = offOf(lead.e[0], lead.e[1]);
+        if (A && B) out.push(term([A, B], x => Math.abs(A(x)) - Math.abs(B(x))));
+      }
+      return out;
+    }
     case "fix": case "pierce": return [];
   }
 }
@@ -340,14 +371,14 @@ function jointTerms(sys: System, ents: Map<string, SkEnt>, r: SkRel, curvature: 
 }
 
 /** Current value of a dimension (for driven ones, and to start new ones). */
-export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip" | "dia">): number {
+export function measureDim(sk: SketchFeature, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off">): number {
   const sys = build({ ...sk, rels: [], dims: [] });
   const ents = new Map(sk.ents.map(e => [e.id, e] as const));
   const f = dimFn(sys, ents, d);
   return f ? f(sys.x) : NaN;
 }
 
-function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia">): Sc | null {
+function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" | "flip" | "dia" | "off">): Sc | null {
   const kind = (i: number) => (d.e[i] === ORIGIN ? "point" : ents.get(d.e[i])?.t);
   const mk = (parts: { vars: number[] }[], f: (x: Float64Array) => number) => { const g = f as Sc; g.vars = [...new Set(parts.flatMap(p => p.vars))]; return g; };
   switch (d.t) {
@@ -373,6 +404,9 @@ function dimFn(sys: System, ents: Map<string, SkEnt>, d: Pick<SkDim, "t" | "e" |
         const [a, b] = ends(sys, ents, d.e[li]), p = center(sys, ents, d.e[1 - li]);
         const k = d.dia ? 2 : 1;
         return mk([a, b, p], x => k * Math.abs(lineDist(p(x), a(x), b(x))));
+      } else if (d.off) {
+        const r0 = R(sys, ents, d.e[0]), r1 = R(sys, ents, d.e[1]);
+        return mk([r0, r1], x => Math.abs(r1(x) - r0(x)));
       } else { A = center(sys, ents, d.e[0]); B = center(sys, ents, d.e[1]); }
       if (d.t === "hdistance") return mk([A, B], x => Math.abs(B(x)[0] - A(x)[0]));
       if (d.t === "vdistance") return mk([A, B], x => Math.abs(B(x)[1] - A(x)[1]));
