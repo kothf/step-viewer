@@ -5870,6 +5870,78 @@ try {
     await ctx.close();
   }
 
+  // --- 1.108: Indent a plate with a tool body, with a wall and as a cut (FR-BODY-007) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bodies: l.props?.bodies ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 20 × 5 plate and a 10 × 10 block from z = 1 to 21 as its own body: they share 400 mm³.
+    await mp.evaluate(() => window.__sv.model.store.change("Plate and punch", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, x0, x1, y0, y1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + "1", x0, y0), P(id + "2", x1, y0), P(id + "3", x1, y1), P(id + "4", x0, y1), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push({ ...sq("a", -20, 20, -10, 10), name: "Sketch1" }, { id: "ea", type: "extrude", name: "Boss-Extrude1", sketch: "a", op: "boss", end: "blind", depth: { v: 5 } },
+        { ...sq("b", -5, 5, -5, 5), name: "Sketch2" }, { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 20 }, start: "offset", startOffset: { v: 1 }, merge: false });
+    }));
+    await settle();
+    const s0 = await state();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.locator("#mc-menu button", { hasText: /^Indent$/ }).click();
+    await settle();
+    const focus0 = await mp.evaluate(() => window.__sv.model.mode().focus);
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.main = { name: "ea:end" }; f.tools = [{ name: "eb:end" }]; m.panel(); void m.rebuild(); });
+    await settle();
+    const w = await state();
+    await mp.check('#mc-pm input[data-k="cut"]');
+    await settle();
+    const c = await state();
+    const thick = await mp.locator('#mc-pm input[data-num="thickness"]').count();
+    await mp.uncheck('#mc-pm input[data-k="cut"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await state();
+    const wall = w.v - 5600;
+    check(s0.v === 6000 && s0.bodies === 2 && focus0 === "main" && w.title === "Indent" && !w.bad && wall > 100 && wall < 196 && c.v === 5600 && thick === 0 && done.v === w.v && done.bodies === 2 && !done.bad,
+      `model 1.108: Indent cuts the punch out of the plate with a wall under it, or as a cut (FR-BODY-007) (${JSON.stringify({ s0, focus0, w, c, thick, done })})`);
+    // Sweep start tangency: a 6 × 4 profile flat on Top swept along a 40 mm line at 45°, away from the plate.
+    await mp.evaluate(() => window.__sv.model.store.change("Tilted sweep", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b }), s = 40 / Math.SQRT2;
+      d.features.push({ id: "sp", type: "sketch", name: "Sketch3", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("sp1", 100, 0), P("sp2", 100 + s, s), Ln("spl", "sp1", "sp2")] },
+        { id: "sr", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [P("sr1", 97, -2), P("sr2", 103, -2), P("sr3", 103, 2), P("sr4", 97, 2), Ln("sra", "sr1", "sr2"), Ln("srb", "sr2", "sr3"), Ln("src", "sr3", "sr4"), Ln("srd", "sr4", "sr1")] },
+        { id: "sw", type: "sweep", name: "Sweep1", op: "boss", profile: "sr", path: { sketch: "sp" }, orient: "normal" });
+    }));
+    await settle();
+    const t0 = await state();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("sw"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="orient"]', "follow").catch(() => {});
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="startTan"]', "path");
+    await settle();
+    const t1 = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const tan = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "sw").startTangent);
+    check(Math.abs(t0.v - done.v - 960 / Math.SQRT2) < 2 && Math.abs(t1.v - done.v - 960) < 2 && tan === true && !t1.bad,
+      `model 1.108: sweep start tangency Path tangent turns the profile square to the path (FR-FT-080) (${JSON.stringify({ base: done.v, t0, t1, tan })})`);
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "indent").id));
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Вдавливание" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm|Enter|Esc/g, "")), `model 1.108: Indent panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   // --- 1.98: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
