@@ -200,6 +200,46 @@ test("annotations: topology names, centre marks, dimensions, hole callout, model
   assert.equal(placeItems({ ...sheet, annots: placed as never[] }, items, () => [-50, -30, 50, 30], () => "z").length, 0);
 });
 
+test("cosmetic threads and shown sketches come from the part (FR-DRW-017)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { modelItems } = await import("../../src/drawing/items");
+  const { threadPrims, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const oc = await occ(), m = new Modeller(oc);
+  const s1 = rect("s1", 100, 60);
+  const hole: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { face: { name: "f1:end" } }, rels: [], dims: [],
+    ents: [{ id: "c0", t: "point", x: 10, y: 0 }, { id: "c1", t: "circle", c: "c0", r: 5 }] };
+  const loose: SketchFeature = { id: "s3", type: "sketch", name: "Loose", plane: { face: { name: "f1:end" } }, rels: [], dims: [],
+    ents: [{ id: "q0", t: "point", x: -40, y: -20 }, { id: "q1", t: "point", x: -20, y: -20 }, { id: "q2", t: "line", a: "q0", b: "q1" }] };
+  const d = doc([s1, { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    hole, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }, loose,
+    { id: "t", type: "thread", name: "Thread1", edge: { faces: ["f1:end", "f2:side:c1"] }, size: "M12", pitch: 1.75, diameter: { v: 12 }, length: { v: 8 }, internal: true } as never]);
+  const r = m.evaluate(d);
+  const body = r.body!;
+  const edgeCircle = (ref: never) => {
+    const ad = new oc.BRepAdaptor_Curve_2(m.resolveEdge(body, ref));
+    const ci = ad.Circle(), l = ci.Location(), dd = ci.Axis().Direction();
+    return { c: [l.X(), l.Y(), l.Z()] as V3, ax: [dd.X(), dd.Y(), dd.Z()] as V3, r: ci.Radius() };
+  };
+  const mi = modelItems(d, r.frames, r.sketches, edgeCircle);
+  assert.deepEqual(mi.sketches.map(s => s.id), ["s3"], "only the sketch no feature uses is shown");
+  assert.deepEqual(mi.sketches[0].lines[0].map(p => p.map(x => Math.round(x))), [[-40, -20, 20], [-20, -20, 20]]);
+  assert.equal(mi.threads.length, 1);
+  const th = mi.threads[0];
+  assert.ok(Math.abs(th.c[2] - 20) < 1e-6 && Math.abs(th.r - 5) < 1e-6 && th.internal);
+  const topo = topology(oc, body.shape, body.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  // From the top the thread starts on the near face: a thin ¾ circle of Ø12; from the front, dashed lines down to z = 12.
+  const top = projector(ORIENTS.top), front = projector(ORIENTS.front);
+  const pt = threadPrims({ id: "top", name: "top", orient: "top", x: 0, y: 0 }, pl, mi.threads, topo, top.P, top.n);
+  assert.ok(pt.length === 1 && pt[0].t === "a" && pt[0].pen === "thin" && Math.abs(pt[0].r - 6) < 1e-9);
+  const pf = threadPrims({ id: "front", name: "front", orient: "front", x: 0, y: 0 }, pl, mi.threads, topo, front.P, front.n);
+  assert.equal(pf.length, 3);
+  assert.ok(pf.every(p => p.t === "l" && p.pen === "hidden"));
+  const lim = pf.find(p => p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-9)!;
+  assert.ok(lim.t === "l" && Math.abs(lim.p[1] - 12) < 1e-6, `limit line at z = 12: ${JSON.stringify(lim)}`);
+});
+
 test("GD&T, datums, surface finish, tables, GOST title block, dangling annotations", async () => {
   const { symbolPrims, gtolPrims, datumPrims, surfPrims, tablePrims, GSYMS } = await import("../../src/drawing/gdt");
   const { formatPrims, frameOf, titleBlockAt } = await import("../../src/drawing/sheet");

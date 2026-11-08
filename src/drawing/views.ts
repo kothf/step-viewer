@@ -88,6 +88,7 @@ export function viewScalePair(sheet: Sheet, v: DrawingView, depth = 0): [number,
 
 /** Projected views stay lined up with their parent: same y (left/right) or same x (above/below). */
 export function alignAxis(v: DrawingView): "x" | "y" | [number, number] | null {
+  if (v.free) return null;
   if (v.kind === "section" || v.kind === "aux") return v.line ? lookDir(v) : null;
   if (!v.parent || !v.side) return null;
   if (v.side[0] && !v.side[1]) return "y";

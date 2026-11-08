@@ -49,6 +49,12 @@ export interface DrawingView {
   /** Break view (FR-DRW-015): bands between `a` and `b` along the view's u (vertical break lines) or v axis
    * (horizontal break lines), in model mm, are left out and the rest closes up to a 6 mm gap on the sheet. */
   breaks?: ViewBreak[];
+  /** Cosmetic threads (FR-DRW-017, ISO 6410 thin lines and a ¾ circle); false hides them. */
+  threads?: boolean;
+  /** Show the sketches that are shown in the model, as thin lines (FR-DRW-017). */
+  sketches?: boolean;
+  /** Alignment with the parent broken (FR-DRW-017): the view moves on its own and stays put when the parent moves. */
+  free?: boolean;
 }
 
 export interface ViewBreak { axis: "u" | "v"; a: number; b: number }

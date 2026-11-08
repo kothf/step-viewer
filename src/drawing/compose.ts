@@ -155,6 +155,19 @@ export function trimSegs(v: DrawingView, s: number, segs: Seg2[]): Seg2[] {
   });
 }
 
+/** Extra lines of a view in its model axes (threads, sketches), clipped and closed up like its edges. */
+export function decorPrims(v: DrawingView, pl: Placement, segs: Seg2[], pen: Pen, layer: Layer): Prim[] {
+  if (v.kind === "detail" && v.c && v.r) segs = clipToCircle(segs, v.c, v.r);
+  const X = (u: number) => pl.x + (u - pl.uc) * pl.s, Y = (w: number) => pl.y + (w - pl.vc) * pl.s;
+  const out: Prim[] = [];
+  for (const g of trimSegs(v, pl.s, segs)) {
+    if (g.k === "l") out.push({ t: "l", p: [X(g.p[0]), Y(g.p[1]), X(g.p[2]), Y(g.p[3])], pen, layer });
+    else if (g.k === "a") out.push({ t: "a", o: [X(g.o[0]), Y(g.o[1])], r: g.r * pl.s, a0: g.a0, a1: g.a1, pen, layer });
+    else { const p: number[] = []; for (let i = 0; i < g.p.length; i += 2) p.push(X(g.p[i]), Y(g.p[i + 1])); out.push({ t: "p", p, pen, layer }); }
+  }
+  return out;
+}
+
 /** Zig-zag break lines (ISO 128) at each closed-up band, across the view, in sheet mm. */
 function breakLines(v: DrawingView, pl: Placement): Prim[] {
   const bm = breakMap(v, pl.s);
