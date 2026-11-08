@@ -40,6 +40,8 @@ export interface MemberFeature {
    * Segments in no group are group 1 and use the feature's `anchor`/`angle`/`mirror`.
    */
   groups?: MemberGroup[];
+  /** Merge arc segment bodies: an arc and the segments that run on tangent from it become one body (one cut list item, bent length). */
+  mergeArcs?: boolean;
 }
 
 /** A group of a Structural Member's segments placed with its own profile settings. */

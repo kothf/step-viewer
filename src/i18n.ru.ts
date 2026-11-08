@@ -2980,6 +2980,7 @@ export const RU: Record<string, string> = {
   "Intermittent weld": "Прерывистый шов",
   "Show weld symbol": "Показывать обозначение шва",
   "Weld all around": "Шов по замкнутому контуру",
+  "Merge arc segment bodies": "Объединять тела с дугами",
   "Field weld": "Монтажный шов",
   "Weld symbol: click to edit the bead": "Обозначение шва: щелчок открывает шов для правки",
   "Weld length": "Длина шва",

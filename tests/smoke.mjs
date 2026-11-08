@@ -7958,8 +7958,19 @@ try {
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
-    // Groups: the last line of that member in a new group, turned 90° on its own.
+    // Merge arc segment bodies: the line, arc and line become one body, one cut list item of the whole bent length (300 + 157.1 + 300).
     const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wMergeArcs"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const merged = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.kind === "member" && c.length > 700).map(c => [c.qty, c.length]) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(!merged.bad && JSON.stringify(merged.rows) === "[[1,757.1]]", `weldments: merged arc segment bodies (${JSON.stringify(merged)})`);
+    // Groups: the last line of that member in a new group, turned 90° on its own.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
     await settle();
     await mp.selectOption('#mc-pm select[data-k="wgroup:j3"]', "new");
