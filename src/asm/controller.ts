@@ -9,7 +9,7 @@ import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
 import { confirmModal, toast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
-import { IDENTITY, applyDir, applyPoint, compose, eulerXYZ, fromPose, invert, translation } from "./math";
+import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
@@ -83,6 +83,8 @@ export class AsmController {
   private selected: string | null = null;
   /** The move panel's component, when open. */
   private moving: string | null = null;
+  /** The rotation angles last typed in the Move panel, per component (kept while they still give its rotation). */
+  private typedAngles = new Map<string, V3>();
   private building = false;
   private again = false;
   private gen = 0;
@@ -2347,7 +2349,7 @@ export class AsmController {
     const c = this.comp(this.moving);
     pm.hidden = !c;
     if (!c) { pm.innerHTML = ""; delete pm.dataset.id; return; }
-    const p: V3 = [c.tf[3], c.tf[7], c.tf[11]], r = eulerXYZ(c.tf);
+    const p: V3 = [c.tf[3], c.tf[7], c.tf[11]], r = poseAngles(c.tf, this.typedAngles.get(c.id));
     const now: Record<string, number> = { x: p[0], y: p[1], z: p[2], rx: r[0], ry: r[1], rz: r[2] };
     const fmt = (v: number) => String(Math.round(v * 1e6) / 1e6);
     // The same component: refresh the values in place, so typing on into the next box is not lost.
@@ -2381,6 +2383,7 @@ export class AsmController {
           vals[i.dataset.pose!] = v;
         }
         const tf = fromPose([vals.x, vals.y, vals.z], [vals.rx, vals.ry, vals.rz]);
+        this.typedAngles.set(c.id, [vals.rx, vals.ry, vals.rz]);
         this.change(d => { const x = d.components.find(k => k.id === c.id); if (x) x.tf = tf; });
       };
       inp.addEventListener("change", apply);
