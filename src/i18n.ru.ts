@@ -2356,4 +2356,14 @@ export const RU: Record<string, string> = {
   "Pick the surface to extend.": "Выберите поверхность для удлинения.",
   "Extend works on surface bodies of one face.": "Удлинение работает с поверхностными телами из одной грани.",
   "The surface could not be extended.": "Не удалось удлинить поверхность.",
+  // Drawings 1.73.0: BOM parts mode, stacked balloons, GOST signature cells.
+  "Technical control": "Технический контроль",
+  "Standards control": "Нормоконтроль",
+  "List": "Список",
+  "Drawing letter": "Литера",
+  "Top-level only": "Только верхний уровень",
+  "Remove from the stack": "Убрать из стопки",
+  "Stack another item": "Добавить позицию в стопку",
+  "Stacked balloons": "Стопка позиций",
+  "Stacked balloon": "Стопка позиций",
 };

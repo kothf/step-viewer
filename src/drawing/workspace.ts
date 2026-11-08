@@ -8,7 +8,7 @@ import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
 import { dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
-import { BOM_COLS, autoBalloons, bomOf, compOfKey, type Bom } from "./bom";
+import { BOM_COLS, autoBalloons, bomMode, bomOf, compOfKey, type Bom, type BomMode } from "./bom";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
@@ -17,8 +17,8 @@ import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
-import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import { FIELD_LABEL, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
+import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import "./drawing.css";
@@ -192,7 +192,10 @@ export class DrawingWorkspace {
 
   private info: DrawingModel["info"] = {};
   /** The assembly's bill of materials (FR-DRW-030), for BOM tables and balloon numbers. */
-  private bom: Bom | null = null;
+  private boms: Record<BomMode, Bom> | null = null;
+  /** The BOM a sheet's balloons and parts list follow (its BOM table's mode). */
+  private bomFor(sh: Sheet): Bom | null { return this.boms ? this.boms[bomMode(sh)] : null; }
+  private get bom(): Bom | null { return this.bomFor(this.sheet); }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
     this.store = new DrawingStore(doc);
@@ -215,7 +218,7 @@ export class DrawingWorkspace {
     this.renderStatus();
     try {
       this.facts = await this.kernel.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: this.model! } });
-      this.bom = src.kind === "asm" ? bomOf(src.doc, src.flat) : null;
+      this.boms = src.kind === "asm" ? { top: bomOf(src.doc, src.flat, "top"), parts: bomOf(src.doc, src.flat, "parts") } : null;
       this.stale = false;
       this.renderAll();
       return this.facts;
@@ -408,6 +411,7 @@ export class DrawingWorkspace {
       title: p.title || i.title || this.doc.name, number: p.number || i.number || this.doc.name, revision: p.revision || i.revision || "",
       material: p.material || i.material || "", mass: p.mass || (massKg != null ? `${massKg < 10 ? massKg.toFixed(3) : massKg.toFixed(2)} kg` : ""),
       company: p.company || "", author: p.author || i.author || "", checked: p.checked || "", approved: p.approved || "", date: p.date || "",
+      tcontrol: p.tcontrol || "", ncontrol: p.ncontrol || "", litera: p.litera || "",
       scale: scaleText(sheet.scale), sheet: `${this.doc.sheets.indexOf(sheet) + 1}/${this.doc.sheets.length}`,
       size: sheet.size === "custom" ? `${sheetSize(sheet).map(v => Math.round(v)).join("×")}` : sheet.size.replace("ANSI ", ""), units: "mm",
     };
@@ -772,9 +776,9 @@ export class DrawingWorkspace {
 
   // ---------- annotations: dimensions, hole callouts, notes (FR-DRW-020..023) ----------
 
-  private ctx(): AnnotCtx {
+  private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
-    return { topo: f?.topo ?? null, holes: f?.holes ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bom };
+    return { topo: f?.topo ?? null, holes: f?.holes ?? [], items: f?.items ?? [], box: f?.box ?? null, dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh) };
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -1085,6 +1089,19 @@ export class DrawingWorkspace {
     this.store!.change("Delete annotation", d => { const S = d.sheets[this.sheetIdx]; S.annots = (S.annots ?? []).filter(a => a.id !== id); });
   }
 
+  /** A balloon's stacked items (FR-DRW-030): each with a remove button, and a list of the items not shown yet. */
+  private stackRows(a: BalloonAnnot): string {
+    const bom = this.bom;
+    if (!bom) return "";
+    const item = (c: string) => bom.itemOf(c);
+    const own = "e" in a.ref ? compOfKey(a.ref.e) : null;
+    const used = new Set([own, ...(a.stack ?? [])].map(c => (c ? item(c) : null)));
+    const rows = (a.stack ?? []).map((c, i) => `<div class="row drw-stack"><span>${esc(t("item {n}", { n: item(c) ?? "?" }))}</span><button class="btn small" data-unstack="${i}" aria-label="${esc(t("Remove from the stack"))}">✕</button></div>`).join("");
+    const free = bom.rows.filter(r => !used.has(r.item) && r.comp);
+    const add = free.length ? `<label class="drw-f">${esc(t("Stack another item"))}<select data-d="bstack"><option value="">—</option>${free.map(r => `<option value="${esc(r.comp)}">${r.item} · ${esc(r.part)}</option>`).join("")}</select></label>` : "";
+    return rows || add ? `<p class="drw-note">${esc(t("Stacked balloons"))}</p>${rows}${add}` : "";
+  }
+
   private setAnnot(label: string, fn: (a: Annot) => void) {
     const id = this.selA;
     if (!id) return;
@@ -1161,12 +1178,14 @@ export class DrawingWorkspace {
       return `<fieldset class="pm-group"><legend>${esc(t("Balloon"))}</legend>
         ${comp ? `<p class="drw-note">${esc(t("Component"))}: <b translate="no">${esc(comp)}</b>${item ? ` · ${esc(t("item {n}", { n: item }))}` : ""}</p>` : ""}
         <label class="drw-f">${esc(t("Text instead of the item number"))}<input data-d="btxt" value="${esc(a.txt ?? "")}" translate="no"></label>
+        ${this.stackRows(a)}
       </fieldset>${del}`;
     }
     if (a.t === "table" && a.kind === "bom") {
       const head = a.cols.map((c, j) => `<label class="drw-f">${esc(t("Column {n}", { n: j + 1 }))}<input data-d="th:${j}" value="${esc(cellLabel(c, t))}" translate="no"></label>`).join("");
       return `<fieldset class="pm-group"><legend>${esc(t("Bill of materials"))}</legend>
-        <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>${head}
+        <p class="drw-note">${esc(t("The rows come from the assembly and follow it."))}</p>
+        <label class="drw-f">${esc(t("List"))}<select data-d="bmode"><option value="top"${a.mode !== "parts" ? " selected" : ""}>${esc(t("Top-level only"))}</option><option value="parts"${a.mode === "parts" ? " selected" : ""}>${esc(t("Parts only"))}</option></select></label>${head}
       </fieldset>${del}`;
     }
     if (a.t === "table") {
@@ -1206,6 +1225,8 @@ export class DrawingWorkspace {
         else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
       } else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
       else if (a.t === "balloon" && k === "btxt") { if (val.trim()) a.txt = val.trim(); else delete a.txt; }
+      else if (a.t === "balloon" && k === "bstack") { if (val) a.stack = [...(a.stack ?? []), val]; }
+      else if (a.t === "table" && a.kind === "bom" && k === "bmode") { if (val === "parts") a.mode = "parts"; else delete a.mode; }
       else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
       else if (a.t === "table") {
         // Headers and the title keep their English key while unchanged, so they follow the language.
@@ -1504,7 +1525,7 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Sheet format"))}<select data-s="format"><option value="iso"${sh.format === "iso" ? " selected" : ""}>ISO 7200</option><option value="ansi"${sh.format === "ansi" ? " selected" : ""}>ANSI Y14.1</option><option value="gost"${sh.format === "gost" ? " selected" : ""}>GOST 2.104</option></select></label>
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
-        ${EDITABLE.map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}" translate="no"></label>`).join("")}
+        ${editableOf(sh).map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}"${k === "litera" ? ' maxlength="3"' : ""} translate="no"></label>`).join("")}
       </fieldset>
       <div class="row"><button class="btn small" data-a="addsheet">${esc(t("Add sheet"))}</button>${this.doc.sheets.length > 1 ? `<button class="btn small danger" data-a="delsheet">${esc(t("Delete sheet"))}</button>` : ""}</div>`;
   }
@@ -1531,6 +1552,11 @@ export class DrawingWorkspace {
     if (b.dataset.grow) {
       const g = b.dataset.grow;
       this.setAnnot(g === "+" ? "Add row" : "Remove row", a => { if (a.t !== "gtol") return; if (g === "+") a.rows.push({ sym: "flat", tol: "0.05", datums: [] }); else a.rows.splice(-+g, 1); });
+      return;
+    }
+    if (b.dataset.unstack !== undefined) {
+      const i = +b.dataset.unstack;
+      this.setAnnot("Stacked balloon", a => { if (a.t !== "balloon" || !a.stack) return; a.stack.splice(i, 1); if (!a.stack.length) delete a.stack; });
       return;
     }
     if (b.dataset.trow || b.dataset.tcol) {
@@ -1730,7 +1756,7 @@ export class DrawingWorkspace {
   }
 
   private composed(sh: Sheet) {
-    return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p), this.ctx());
+    return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p), this.ctx(sh));
   }
 
   async exportAs(kind: "pdf" | "svg" | "dxf" | "png" | "print") {

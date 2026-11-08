@@ -267,3 +267,47 @@ test("assembly BOM: items in first-use order, pattern and sub-assembly instances
   const proj = { vis: [{ k: "l" as const, c: "sharp" as never, p: [0, 0, 10, 0] as [number, number, number, number] }, { k: "a" as const, c: "sharp" as never, o: [20, 0] as [number, number], r: 5, a0: 0, a1: Math.PI }], hid: [], box: [0, -5, 25, 5] as [number, number, number, number], ms: 0 };
   assert.ok(onVisible(proj, [5, 0.001], 0.01) && onVisible(proj, [20, 5], 0.01) && !onVisible(proj, [20, -5], 0.01));
 });
+
+test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST signature cells", async () => {
+  const { bomOf, bomCells, bomMode, balloonPrims } = await import("../../src/drawing/bom");
+  const { rotatePrims, rotateBox } = await import("../../src/drawing/prims");
+  const { formatPrims, fieldAt, titleBlockAt } = await import("../../src/drawing/sheet");
+  const part = (id: string, pn?: string) => ({ name: id, file: `${id}.mcadprt`, doc: { ...doc([]), id, props: pn ? { partNumber: pn } : {} } });
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  const pin = part("pin", "PN-7");
+  const top = { schema: 1 as const, kind: "assembly" as const, id: "a", name: "A", units: { length: "mm" as const, decimals: 2 }, parts: { plate: part("plate"), pin, sub: { ...part("sub"), asm: {} as never } },
+    components: [{ id: "c1", name: "plate<1>", part: "plate", tf: I }, { id: "c2", name: "pin<1>", part: "pin", tf: I }, { id: "c3", name: "sub<1>", part: "sub", tf: I }] };
+  // The sub-assembly holds the same pin document and a washer.
+  const flat = { ...top, parts: { plate: top.parts.plate, pin, "sub/p": { ...pin, name: "pin copy" }, "sub/w": part("washer", "W-3") },
+    components: [top.components[0], top.components[1], { id: "c3/p", name: "p", part: "sub/p", tf: I }, { id: "c3/w", name: "w", part: "sub/w", tf: I }] };
+  const b = bomOf(top, flat, "parts");
+  assert.equal(b.mode, "parts");
+  assert.deepEqual(bomCells(b), [["1", "plate", "", "1"], ["2", "PN-7", "", "2"], ["3", "W-3", "", "1"]]);
+  assert.equal(b.itemOf("c3/p"), 2);
+  assert.equal(b.itemOf("c3/w"), 3);
+  assert.equal(b.rows[2].comp, "c3/w");
+  assert.equal(bomOf(top, flat, "top").itemOf("c3/w"), 3);
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: 1, projection: "first" as const, format: "gost" as const, views: [], annots: [{ id: "t", t: "table" as const, kind: "bom" as const, pos: [0, 0] as [number, number], cols: [], rows: [], mode: "parts" as const }] };
+  assert.equal(bomMode(sheet as never), "parts");
+  assert.equal(bomMode({ ...sheet, annots: [] } as never), "top");
+  // Stacked: three circles one under the other, the leader from the bottom one when the tip is below.
+  const st = balloonPrims([0, 20], [0, -30], "1", ["2", "3"]);
+  assert.equal(st.prims.filter(p => p.t === "a").length, 3);
+  assert.deepEqual(st.prims.filter(p => p.t === "t").map(p => p.t === "t" && p.s), ["1", "2", "3"]);
+  const ld = st.prims.find(p => p.t === "l");
+  assert.ok(ld && ld.t === "l" && Math.abs(ld.p[1] - (20 - 20 - 5)) < 1e-9);
+  assert.ok(st.box[1] < 0 && st.box[3] === 25);
+  // Turning by 90°: a line along x stands along y, text turns with it.
+  const r = rotatePrims([{ t: "l", p: [0, 0, 10, 0], pen: "thin", layer: "ANNOT" }, { t: "t", x: 10, y: 0, s: "Ra", h: 2.5, al: "l", layer: "ANNOT" }], [0, 0], Math.PI / 2);
+  assert.ok(r[0].t === "l" && Math.abs(r[0].p[3] - 10) < 1e-9 && Math.abs(r[0].p[2]) < 1e-9);
+  assert.ok(r[1].t === "t" && Math.abs((r[1].rot ?? 0) - 90) < 1e-9);
+  assert.deepEqual(rotateBox([0, 0, 10, 2], [0, 0], Math.PI).map(v => Math.round(v)), [-10, -2, 0, 0]);
+  // GOST: the control signatures and the letter are typed fields.
+  const f = { title: "T", number: "N", revision: "", material: "", mass: "", company: "", author: "", checked: "", approved: "", date: "", tcontrol: "Petrov", ncontrol: "Sidorov", litera: "O1", scale: "1:1", sheet: "1/1", size: "1", units: "mm" };
+  const texts = formatPrims(sheet as never, f, s => s).filter(p => p.t === "t").map(p => p.t === "t" ? p.s : "");
+  assert.ok(texts.includes("Petrov") && texts.includes("Sidorov") && texts.includes("O") && texts.includes("1"));
+  const [bx, by] = titleBlockAt(sheet as never);
+  assert.equal(fieldAt(sheet as never, bx + 20, by + 17), "tcontrol");
+  assert.equal(fieldAt(sheet as never, bx + 20, by + 7), "ncontrol");
+  assert.equal(fieldAt(sheet as never, bx + 142, by + 25), "litera");
+});

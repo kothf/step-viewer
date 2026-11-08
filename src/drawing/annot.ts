@@ -6,7 +6,7 @@
 import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem } from "./items";
-import type { Prim } from "./prims";
+import { rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
@@ -363,7 +363,8 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
     } else if (a.t === "balloon") {
       // The tip stays on the edge's middle; the number is the component's item in the BOM.
       const e = refEdge(a.ref, ctx.topo), c = "e" in a.ref ? compOfKey(a.ref.e) : null, item = c && ctx.bom ? ctx.bom.itemOf(c) : null;
-      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"));
+      const more = (a.stack ?? []).map(sc => String(ctx.bom?.itemOf(sc) ?? "?"));
+      r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more);
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
     } else if (a.t === "surf") {
       const T = toSheet(pl, a.pos[0], a.pos[1]);
@@ -396,7 +397,16 @@ export function edgeFoot(ref: GeoRef, topo: Topo | null, P: (p: V3) => P2, pl: P
 
 /** A surface finish symbol: on the edge when `pos` is close to it, else at `pos` with a leader to the edge. */
 function surfOn(a: SurfAnnot, T: P2, f: { at: P2; d: P2 } | null, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
-  if (!f || d2(f.at, T) < 2) return surfPrims(a, f ? f.at : T, dec);
+  if (!f) return surfPrims(a, T, dec);
+  if (d2(f.at, T) < 2) {
+    // On the edge (ISO 1302): stood on it, readable from the bottom or the right of the sheet.
+    let ang = Math.atan2(f.d[1], f.d[0]);
+    while (ang > Math.PI / 2 + 1e-9) ang -= Math.PI;
+    while (ang <= -Math.PI / 2 + 1e-9) ang += Math.PI;
+    if (Math.abs(ang) < 1e-6) ang = 0;
+    const r = surfPrims(a, f.at, dec);
+    return { prims: rotatePrims(r.prims, f.at, ang), box: rotateBox(r.box, f.at, ang) };
+  }
   const r = surfPrims(a, T, dec), u = unit2([f.at[0] - T[0], f.at[1] - T[1]]);
   r.prims.push(thin(T, f.at), arrowHead(f.at[0], f.at[1], u[0], u[1], ARROW, 1));
   return r;
