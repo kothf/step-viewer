@@ -16,6 +16,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Export format / Import format… share a format as a small JSON file.
   - The logo is drawn on screen and in PDF, SVG and PNG exports; DXF leaves it out.
 
+## [1.88.0] - 2026-11-08
+
+### Added
+
+- **Intersect** (FR-BODY-007) in Sweep ▾: picked solids and surfaces (or all of them) cut each other into closed regions.
+  - The panel lists the regions by volume. Untick the ones to leave out.
+  - The kept regions replace the picked solids, merged into one body unless **Merge result** is off.
+  - **Consume surfaces** removes the surfaces used. Faces keep the names of the faces they came from, so later features stay attached.
+- **Untrim Surface** (FR-FT-100) in Surface ▾: a one-face surface goes back to the bounds of its underlying surface, or only its holes are filled.
+
 ## [1.87.0] - 2026-11-08
 
 ### Added
@@ -882,7 +892,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
-[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.90.0
+[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.90.0
+[1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
