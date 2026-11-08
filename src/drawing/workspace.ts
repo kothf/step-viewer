@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, dimGeo, factsCtx, holeEdges, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -97,6 +97,8 @@ type AnnotMode =
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
   | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
+  /** Revision cloud: corners clicked on the sheet; the first corner again or Enter closes it. */
+  | { kind: "cloud"; view: null; pts: Pt[]; at: Pt | null }
   /** Geometric tolerance (FR-DRW-023): optionally click an edge for the leader, then place the frame. */
   | { kind: "gtol"; view: string | null; leader: GeoRef | null; circle?: boolean; at: Pt | null }
   /** Datum feature: click an edge, then place the letter. */
@@ -105,7 +107,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -116,7 +118,7 @@ const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-h
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
   ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
-  ["surf", "Surface finish"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+  ["surf", "Surface finish"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
 const ICON = {
@@ -160,7 +162,7 @@ export class DrawingWorkspace {
   private vb = { x: 0, y: 0, w: 420, h: 297 };
   private placements = new Map<string, Placement>();
   /** Text boxes of the drawn annotations (sheet mm), for picking. */
-  private annotHits: { id: string; box: [number, number, number, number]; view?: string }[] = [];
+  private annotHits: { id: string; box: [number, number, number, number]; view?: string; ring?: number[]; band?: number }[] = [];
   private dangling = new Set<string>();
   /** The selected annotation (views and annotations select one at a time). */
   private selA: string | null = null;
@@ -386,6 +388,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
+              <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
               <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
               <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
               <button role="menuitem" data-an="balloon">${esc(t("Balloon"))}</button>
@@ -493,6 +496,7 @@ export class DrawingWorkspace {
     else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
+    else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
@@ -992,6 +996,7 @@ export class DrawingWorkspace {
   private annotAt(p: Pt): string | null {
     for (let i = this.annotHits.length - 1; i >= 0; i--) {
       const h = this.annotHits[i], m = 0.8;
+      if (h.ring) { if (ringDist(h.ring, p[0], p[1]) <= (h.band ?? 6) * 0.6 + m) return h.id; continue; }
       if (p[0] >= h.box[0] - m && p[0] <= h.box[2] + m && p[1] >= h.box[1] - m && p[1] <= h.box[3] + m) return h.id;
     }
     return null;
@@ -1017,11 +1022,12 @@ export class DrawingWorkspace {
   }
 
   private startAnnot(kind: AnnotMode["kind"], how: "chain" | "base" | "ord" = "chain") {
-    const free = kind === "note" || kind === "gtol" || kind === "surf";
+    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
-    if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
+    if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
+    else if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
@@ -1141,6 +1147,7 @@ export class DrawingWorkspace {
   }
 
   private annotClick(m: AnnotMode, p: Pt) {
+    if (m.kind === "cloud") { this.cloudClick(m, p); return; }
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
@@ -1244,6 +1251,23 @@ export class DrawingWorkspace {
     this.renderOverlay();
   }
 
+  /** A corner of a revision cloud; clicking the first corner again (3+ corners) closes it. */
+  private cloudClick(m: Extract<AnnotMode, { kind: "cloud" }>, p: Pt) {
+    const f = m.pts[0];
+    if (f && m.pts.length >= 3 && Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishCloud(m); return; }
+    m.pts.push([round(p[0]), round(p[1])]);
+    this.renderStatus(); this.renderOverlay();
+  }
+
+  private finishCloud(m: Extract<AnnotMode, { kind: "cloud" }>) {
+    if (m.pts.length < 3) { toast(t("Click at least three corners that enclose an area.")); return; }
+    const [x0, y0] = m.pts[0], rev = (this.sheet.annots ?? []).find(a => a.t === "table" && a.kind === "rev") as TableAnnot | undefined;
+    const last = rev?.rows.length ? rev.rows[rev.rows.length - 1][0] : "";
+    this.addAnnot({ id: uid("a_"), t: "cloud", pos: [x0, y0], pts: m.pts.flatMap(([x, y]) => [round(x - x0), round(y - y0)]), ...(last ? { rev: last } : {}) }, "Revision cloud");
+    this.mode = { kind: "none" };
+    this.renderStatus(); this.renderOverlay();
+  }
+
   private addAnnot(a: Annot, label: string) {
     this.store!.change(label, d => { const S = d.sheets[this.sheetIdx]; (S.annots ??= []).push(a); });
     if (a.t !== "dim") { this.selA = a.id; this.renderProps(); }
@@ -1298,6 +1322,14 @@ export class DrawingWorkspace {
   private annotPreview(H: number): string {
     const m = this.mode;
     if (!isAnnotMode(m)) return "";
+    if (m.kind === "cloud") {
+      const pts = m.at ? [...m.pts, m.at] : m.pts;
+      if (!pts.length) return "";
+      const d = pts.map((q, i) => `${i ? "L" : "M"}${q[0]} ${H - q[1]}`).join("");
+      const f = m.pts[0];
+      return `<path class="drw-edge on" d="${d}" fill="none"/>${f ? `<circle class="drw-snap" cx="${f[0]}" cy="${H - f[1]}" r="${this.snapTol() / 2.5}"/>` : ""}`
+        + (pts.length >= 3 ? `<g class="drw-preview">${svgBody(cloudPrims({ id: "_pc", t: "cloud", pos: [0, 0], pts: pts.flat() }).prims, H, "currentColor")}</g>` : "");
+    }
     const at = m.at;
     const vid = m.view ?? (at ? this.viewAt(at) : null);
     const pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
@@ -1453,6 +1485,12 @@ export class DrawingWorkspace {
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    if (a.t === "cloud") {
+      return `<fieldset class="pm-group"><legend>${esc(t("Revision cloud"))}</legend>
+        <label class="drw-f">${esc(t("Arc size (mm)"))}<input data-d="carc" inputmode="decimal" value="${a.arc ?? 6}"></label>
+        <label class="drw-f">${esc(t("Revision"))}<input data-d="crev" value="${esc(a.rev ?? "")}" maxlength="3" translate="no"></label>
+      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    }
     if (a.t === "hole") {
       const e = refEdge(a.ref, this.factsOf(a.view)?.topo ?? null), auto = e ? holeText(e, this.ctx()).join("\n") : "";
       return `<fieldset class="pm-group"><legend>${esc(t("Hole callout"))}</legend>
@@ -1541,6 +1579,7 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
+      else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "gtol" && k.startsWith("g:")) {
@@ -2500,6 +2539,7 @@ export class DrawingWorkspace {
     else if (typing || mod || e.altKey) used = false;
     else if (k === "escape") { if (this.mode.kind !== "none") this.cancelMode(); else if (this.el.querySelector(".drw-menu:not([hidden])")) this.closeMenus(); else if (this.sel || this.selA) { this.sel = null; this.selA = null; this.renderAll(); } else used = false; }
     else if (k === "enter" && this.mode.kind === "brokenout" && (tgt as Element) === this.svg) this.finishBroken(this.mode);
+    else if (k === "enter" && this.mode.kind === "cloud" && (tgt as Element) === this.svg) this.finishCloud(this.mode);
     else if (k === "enter" && this.mode.kind === "detail" && this.mode.prof && !this.mode.r && (this.mode.pts?.length ?? 0) >= 3 && (tgt as Element) === this.svg) this.finishProfile(this.mode);
     else if (k === "enter" && this.mode.kind === "section" && !this.mode.line && (this.mode.pts?.length ?? 0) >= 2 && (tgt as Element) === this.svg) this.finishPath(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
