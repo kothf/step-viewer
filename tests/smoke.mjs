@@ -7153,6 +7153,14 @@ try {
     for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
     const back = await cam();
     check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // A command button keeps focus after its click; the arrows still turn the view (exam bug 29).
+    await np.focus("#lang-btn");
+    const cb0 = await cam();
+    await np.keyboard.press("ArrowLeft"); await settleCam();
+    const cb1 = await cam();
+    check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    await np.evaluate(() => document.activeElement?.blur());
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();
