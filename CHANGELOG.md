@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.254.0] - 2026-11-08
+## [1.259.0] - 2026-11-08
 
 ### Added
 
 - **Miter flange (FR-FT-120)**: Sheet Metal → **Miter Flange** runs an open profile of lines, sketched on a plane square to an edge and starting at it, along the edges clicked in the view. Each line of the profile becomes a bend and a flat flange, with lengths to the virtual sharps on the profile's side, and flanges on edges that meet at a corner of the face are mitred at every level with the corner gap between them, as in SolidWorks. The flat pattern unfolds them like any other flange.
+
+## [1.256.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Images** saves every frame of the study at its frame rate as numbered PNG images (up to 1920 px wide) in a ZIP, like SolidWorks' Save Animation as a series of images, for editing in a video program (FR-FT-122).
 
 ## [1.253.0] - 2026-11-08
 
@@ -1642,8 +1648,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.254.0...HEAD
-[1.254.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.254.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.259.0...HEAD
+[1.259.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.259.0
+[1.256.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.256.0
 [1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
