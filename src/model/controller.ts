@@ -56,6 +56,7 @@ import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
+import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, type SmFlangeFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, flatBendLines } from "../sheetmetal/sheet";
@@ -3122,8 +3123,10 @@ export class ModelController {
 
   /** The thickness arrow of an end cap (FR-FT-121): from the first capped face, outwards (or into the member). */
   private drawCapArrow(f: EndCapFeature) {
-    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames, ref = f.faces[0];
-    if (!data || !names) return;
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames, out = capDir(f) === "out";
+    // Inward / internal caps sit inside the old end: the arrow runs from the plate's outer face into the member.
+    const ref = out ? f.faces[0] : { name: `${f.id}:c0:start` };
+    if (!data || !names || !ref) return;
     let best = -1, bd = Infinity;
     names.forEach((n, i) => {
       const fi = data.faces[i];
@@ -3134,7 +3137,7 @@ export class ModelController {
     if (best < 0) return;
     const fi = data.faces[best];
     const base = new THREE.Vector3(...fi.center);
-    const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(f.inward ? -1 : 1);
+    const dir = new THREE.Vector3(...fi.normal!).normalize().multiplyScalar(out ? 1 : -1);
     this.placeArrow(base, dir, f.thickness.v, false, "thickness");
     this.handleLabel(f.id, "thickness", t("Drag the arrow to change the thickness; click to type it"));
   }

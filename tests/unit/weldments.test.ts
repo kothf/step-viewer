@@ -121,6 +121,19 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 } } as Feature])).volume, 4 * 4.5 * 5, 1e-6);
   near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 }, fillet: true } as Feature])).volume, 4 * (9 - Math.PI * 9 / 4) * 5, 1e-6);
 
+  // Thickness direction. Inward keeps the overall length: the beam is cut back by 5 under a full-size plate.
+  const capIn = run(m, doc([k, mem, tr, { ...cap, inset: { v: 0 }, dir: "in" } as Feature]));
+  assert.deepEqual(capIn.cut.filter(c => c.kind === "member").map(c => c.length), [500, 375]);
+  assert.deepEqual(capIn.cut.find(c => c.kind === "plate")!.plate, [40, 40, 5]);
+  assert.equal(capIn.body!.names.filter(n => n === "m:beam:end").length, 1, "the new end face keeps the name");
+  // Internal: the plate fits the tube's inner outline (34 × 34), 1 mm clearance all round, flush with the end.
+  const capInt = run(m, doc([k, mem, tr, { ...cap, inset: { v: 1 }, dir: "internal" } as Feature]));
+  assert.deepEqual(capInt.cut.filter(c => c.kind === "member").map(c => c.length), [500, 380]);
+  assert.deepEqual(capInt.cut.find(c => c.kind === "plate")!.plate, [32, 32, 5]);
+  // A flat bar has no inside.
+  const bad = m.evaluate(doc([...fb, { ...capF, dir: "internal" } as Feature])).statuses.find(s => !s.ok);
+  assert.match(String(bad?.message ?? JSON.stringify(bad)), /hollow profile/);
+
   // Gusset under the beam against the post: 60 × 60 × 5 triangle.
   const beamBottom = rc.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rc.body!.faces[i])[2] - 280) < 1e-6)!;
   const g: Feature = { id: "g", type: "gusset", name: "Gusset1", face1: { name: beamBottom.n, hint: centroid(m, rc.body!.faces[beamBottom.i]) }, face2: pf, d1: { v: 60 }, d2: { v: 60 }, thickness: { v: 5 }, shape: "tri", loc: "mid" };

@@ -7,7 +7,7 @@ import { FeatureError, type Named } from "../kernel/model";
 import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
-import { cornerKey } from "./types";
+import { capDir, cornerKey } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
 export interface WeldHost {
@@ -542,13 +542,46 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.faces.length) throw new FeatureError("E-WLD-CAP", "Pick the end faces of members to cap.");
   const t = f.thickness.v;
+  const how = capDir(f);
+  // "in": each capped member is cut back by the thickness (a prism of its whole end face), so the overall length stays.
+  const trims: { face: any; tool: Named }[] = [];
   const caps = f.faces.map((ref, k): Named => {
     const face = h.resolveFace(prev, ref);
     const ad = new oc.BRepAdaptor_Surface_2(face, true);
     if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) throw new FeatureError("E-WLD-CAP", "An end cap goes on a flat end face.");
     const fr = h.planeFrame({ face: ref }, prev, frames);
-    let wire = oc.BRepTools.OuterWire(face);
     const area = (w: any) => { const ff = new oc.BRepBuilderAPI_MakeFace_15(w, true).Face(); const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(ff, p, false, false); return Math.abs(p.Mass()); };
+    let wire = oc.BRepTools.OuterWire(face);
+    if (how === "internal") {
+      // The hollow profile's inner outline: the largest wire of the end face other than the outer one.
+      const map = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, map);
+      let best: any = null, ba = 0;
+      for (let i = 1; i <= map.Extent(); i++) {
+        const w = oc.TopoDS.Wire_1(map.FindKey(i));
+        if (w.IsSame(wire)) continue;
+        const a = area(w);
+        if (a > ba) { ba = a; best = w; }
+      }
+      if (!best) throw new FeatureError("E-WLD-CAPIN", "An internal end cap needs a hollow profile (a tube or pipe).");
+      wire = best;
+    }
+    if (how === "in") {
+      const whole = new oc.BRepBuilderAPI_MakeFace_15(oc.BRepTools.OuterWire(face), true).Face();
+      const v = mul(fr.n, -t);
+      const shape = new oc.BRepPrimAPI_MakePrism_1(whole, new oc.gp_Vec_4(v[0], v[1], v[2]), false, true).Shape();
+      const faces = h.sub(shape, "FACE");
+      // The far cap becomes the member's new end face, so it keeps the end face's name.
+      const names = faces.map((x, i) => {
+        const fa = new oc.BRepAdaptor_Surface_2(x, true);
+        if (fa.GetType() === oc.GeomAbs_SurfaceType.GeomAbs_Plane) {
+          const p = fa.Plane().Location();
+          if (Math.abs(Math.abs(dot(sub([p.X(), p.Y(), p.Z()], fr.o), fr.n)) - t) < 1e-6 * (1 + t) && Math.abs(dot([fa.Plane().Axis().Direction().X(), fa.Plane().Axis().Direction().Y(), fa.Plane().Axis().Direction().Z()], fr.n)) > 0.999) return ref.name;
+        }
+        return `${f.id}:c${k}:trim:${i}`;
+      });
+      trims.push({ face, tool: { shape, faces, names } });
+    }
     if (f.inset.v > 1e-9) {
       const off = (d: number) => {
         const mk = new oc.BRepOffsetAPI_MakeOffset_3(wire, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
@@ -563,7 +596,7 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
       wire = w;
     }
     const base = new oc.BRepBuilderAPI_MakeFace_15(wire, true).Face();
-    const dir = mul(fr.n, f.inward ? -t : t);
+    const dir = mul(fr.n, how === "out" ? t : -t);
     const mk = new oc.BRepPrimAPI_MakePrism_1(base, new oc.gp_Vec_4(dir[0], dir[1], dir[2]), false, true);
     let shape = mk.Shape();
     if (f.chamfer && f.chamfer.v > 1e-9) {
@@ -601,7 +634,11 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
     });
     return { shape, faces, names };
   });
-  return h.compoundOf([...h.bodyList(prev), ...caps]);
+  const bodies = h.bodyList(prev).map(b => {
+    for (const tr of trims) if (b.faces.some(x => x.IsSame(tr.face))) b = bool(h, "cut", b, tr.tool, f.id);
+    return b;
+  });
+  return h.compoundOf([...bodies, ...caps]);
 }
 
 /** Gusset: a plate in the corner between two flat faces that meet, centred on (or flush with an end of) their common line. */
