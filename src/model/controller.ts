@@ -3974,7 +3974,7 @@ export class ModelController {
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
-      case "cutlist": showCutList(this.last?.cutList, this.doc); break;
+      case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
       case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
@@ -4050,7 +4050,7 @@ export class ModelController {
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
-    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row);
+    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -4226,7 +4226,7 @@ export class ModelController {
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
         if (id === "folder:bodies" || id === "folder:cutlist") return;
-        if (id.startsWith("cut:")) { showCutList(this.last?.cutList, this.doc); return; }
+        if (id.startsWith("cut:")) { this.cutList(); return; }
         if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
@@ -4312,7 +4312,7 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => showCutList(this.last?.cutList, this.doc)]);
+    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => this.cutList()]);
     if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
@@ -6106,6 +6106,15 @@ export class ModelController {
   bodyProps() { return this.last?.props ?? null; }
 
   /** The part's mass property override (FR-MAT-004), if any. */
+  /** The weldment Cut List dialog; typed item properties go into `PartDoc.cutProps` as one undo step each. */
+  cutList() {
+    showCutList(this.last?.cutList, this.doc, (key, p) => this.store?.change("Cut list properties", d => {
+      const all = { ...(d.cutProps ?? {}) };
+      if (Object.keys(p).length) all[key] = p; else delete all[key];
+      if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;
+    }));
+  }
+
   massOverride() { return this.store?.doc.massOverride ?? null; }
 
   /** The open sketch's normal (Normal to). */
