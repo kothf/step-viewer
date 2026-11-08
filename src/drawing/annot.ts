@@ -4,6 +4,7 @@
 // in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
 import { viewAxes, type MEdge, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
@@ -20,7 +21,7 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx {
-  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
+  topo: Topo | null; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null;
   /** A view that shows another part configuration (FR-DRW-010) gets that configuration's topology and model items. */
   forView?: (v: DrawingView) => Partial<AnnotCtx> | null;
 }
@@ -524,8 +525,8 @@ function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx:
 
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 /** The model facts annotations draw on (topology, holes, threads, sketches, model items, box). */
-export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "items" | "box"> {
-  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], items: f?.items ?? [], box: f?.box ?? null };
+export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; bends?: FlatBend[]; items: ModelItem[]; box: [V3, V3] } | null): Pick<AnnotCtx, "topo" | "holes" | "threads" | "sketches" | "bends" | "items" | "box"> {
+  return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], items: f?.items ?? [], box: f?.box ?? null };
 }
 
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
@@ -538,6 +539,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
   if (v.threads !== false && ctx.threads?.length) out.prims.push(...threadPrims(v, pl, ctx.threads, ctx.topo, P, n));
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
+  if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx));
   for (const a of sheet.annots ?? []) {
     if (a.view !== v.id) continue;
     let r: { prims: Prim[]; box: [number, number, number, number] } | null = null;
@@ -851,6 +853,24 @@ export function sketchPrims(v: DrawingView, pl: Placement, sketches: SketchInfo[
     if (p.length >= 4) segs.push({ k: "p", c: 0, p });
   }
   return decorPrims(v, pl, segs, "thin", "SKETCH");
+}
+
+/** Flat pattern bend lines (FR-FT-120): centre lines with a note along each, "UP 90° R2" (SolidWorks' bend notes). */
+export function bendPrims(v: DrawingView, pl: Placement, bends: FlatBend[], P: (p: V3) => P2, ctx: AnnotCtx): Prim[] {
+  const segs: Seg2[] = bends.map(b => ({ k: "p", c: 0, p: [...P(b.a), ...P(b.b)] }));
+  const out = decorPrims(v, pl, segs, "center", "CENTER");
+  if (v.bendNotes === false) return out;
+  const h = TEXT_H * 0.8;
+  for (const b of bends) {
+    const A = toSheet(pl, ...P(b.a)), B = toSheet(pl, ...P(b.b));
+    let ang = Math.atan2(B[1] - A[1], B[0] - A[0]) * 180 / Math.PI;
+    if (ang > 90.001) ang -= 180; else if (ang <= -90) ang += 180;
+    const r = ang * Math.PI / 180, nx = -Math.sin(r), ny = Math.cos(r);
+    const deg = Math.round(b.angle * 180 / Math.PI * 100) / 100, rad = Math.round(b.r * 100) / 100;
+    const s = `${ctx.label(b.up ? "UP" : "DOWN")} ${String(deg).replace(".", ctx.dec)}° R${String(rad).replace(".", ctx.dec)}`;
+    out.push({ t: "t", x: (A[0] + B[0]) / 2 + nx * 0.8, y: (A[1] + B[1]) / 2 + ny * 0.8, s, h, al: "c", rot: ang, layer: "ANNOT" });
+  }
+  return out;
 }
 
 // ---------- model items ----------

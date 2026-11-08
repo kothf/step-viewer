@@ -8973,6 +8973,48 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: flat pattern view of a sheet metal part, with bend lines and notes (FR-FT-120) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwflat", name: "Bracket", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", 0, 0), P("p2", 100, 0), P("p3", 100, 50), P("p4", 0, 50),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "b", type: "smbase", name: "Base-Flange1", sketch: "s1", thickness: { v: 2 }, radius: { v: 2 }, depth: { v: 20 }, k: 0.5 },
+      { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:l1"] }], length: { v: 20 }, angle: { v: Math.PI / 2 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Bracket.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    await dp.waitForFunction(() => { return !!document.querySelector('[data-pal="flat"] path[d^="M"]'); }, null, { timeout: 60000 });
+    await dp.click('[data-pal="flat"]');
+    await dp.waitForTimeout(500);
+    const [sx, sy] = await dp.evaluate(() => window.__sv.drw.sheetPt(330, 90));
+    await dp.mouse.click(sx, sy);
+    await dp.waitForFunction(() => window.__sv.drw.doc().sheets[0].views.some(v => v.config === "@flat"), null, { timeout: 30000 });
+    await dp.keyboard.press("Escape");
+    await ready();
+    const fv = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views.find(x => x.config === "@flat"), p = window.__sv.drw.placement(v.id);
+      const notes = [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent).filter(s => /^(UP|DOWN) /.test(s));
+      return { orient: v.orient, w: (p.box[2] - p.box[0]) / p.s, h: (p.box[3] - p.box[1]) / p.s, notes, props: !!document.querySelector('#drw .drw-props [data-v="bendNotes"]') };
+    });
+    const flatLen = 50 - 4 + Math.PI / 2 * 3 + 16;
+    check(fv.orient === "top" && Math.abs(fv.w - 100) < 0.6 && Math.abs(fv.h - flatLen) < 0.6 && fv.notes.length === 1 && /^(UP|DOWN) 90° R2$/.test(fv.notes[0]) && fv.props,
+      `drawing: a sheet metal part's flat pattern view from the palette, with its bend line and note (${JSON.stringify({ fv, flatLen })})`);
+    await ctx.close();
+  }
+
   // --- Drawings: revision cloud ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
