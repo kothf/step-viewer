@@ -37,6 +37,9 @@ export interface DrawingView {
    * 3+ points; every leg is parallel or square to the first, which `line` repeats. Legs parallel to the first cut,
    * square legs only step between them; a path that ends on a square leg (half section) cuts no further. */
   path?: number[];
+  /** Aligned section (FR-DRW-012, P6): `path` is [end 1, centre, end 2] and `line` its first leg; the material behind
+   * the second leg is turned about the centre (the parent's view axis) into the plane of the first before it is drawn. */
+  aligned?: boolean;
   /** Section of an assembly: top-level components left whole (FR-DRW-012), drawn uncut. */
   exclude?: string[];
   /** Section / aux: the view looks from this side of the line (+1: left of u1→u2, −1: right). */
@@ -44,6 +47,8 @@ export interface DrawingView {
   /** Detail: circle centre (parent's view axes, model mm) and radius (model mm). */
   c?: [number, number];
   r?: number;
+  /** Detail drawn by a profile instead of a circle (FR-DRW-013): corners u, v in the parent's view axes; `c`/`r` are its box centre and reach. */
+  outline?: number[];
   /** Letter of a section, detail or auxiliary view (A, B, …). */
   letter?: string;
   /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. `pattern` (FR-DRW-012):
@@ -85,7 +90,9 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3 };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
-export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string }
+export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string;
+  /** Fit display: the code (default), its ISO 286 deviations, or both; a hole/shaft pair always shows the code. */
+  show?: "code" | "limits" | "both" }
 
 /** A dimension: horizontal, vertical or aligned between two points (or a line's ends), radius, diameter, the angle of two lines,
  *  the length of an arc seen end-on ("arc"), a chamfer (the shorter of two lines against the other: "1 × 45°"), or an ordinate

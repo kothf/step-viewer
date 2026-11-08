@@ -3570,7 +3570,7 @@ try {
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
-    await dp.click('#drw [data-a="detail"]');
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
     await dp.mouse.move(x, y); await dp.mouse.click(x, y);
     [x, y] = await at(top.id, 25, 0);
@@ -3615,6 +3615,33 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
+    // Aligned section (FR-DRW-012): first leg along −x on the top view, centre at the origin, second leg up +y; it turns into the first leg's plane.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="aligned"]');
+    for (const [u, w] of [[-45, 0], [0, 0], [0, 25]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(top.x, top.y - 75);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const alv = vs.find(v => v.kind === "section" && v.aligned);
+    const alProj = alv && await dp.evaluate(i => window.__sv.drw.proj(i), alv.id);
+    const alArea = (alProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    check(alv && alv.path.length === 6 && alv.letter === "E" && Math.abs(alArea - (50 * 20 + 30 * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "E").length === 2,
+      `drawing: aligned section E, the second leg turned into the first leg's plane (area ${alArea.toFixed(2)} mm² = 50×20 + 30×20; path ${JSON.stringify(alv?.path)})`);
+    // Detail profile (FR-DRW-013): four corners round the hole on the top view, closed by clicking the first again.
+    await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="profile"]');
+    for (const [u, w] of [[0, -12], [22, -12], [22, 12], [5, 12], [0, -12]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    [x, y] = await scr(330, 170);
+    await dp.mouse.move(x + 4, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const pdet = vs.find(v => v.kind === "detail" && v.outline);
+    const pprims = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && p.t === "p" && p.closed && p.p.length === 8).length);
+    const ptexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t").map(p => p.s));
+    check(pdet && pdet.outline.length === 8 && pdet.letter === "F" && pprims >= 2 && ptexts.includes("DETAIL F"),
+      `drawing: detail F framed by a clicked profile, outlined on its parent and on the view (${JSON.stringify(pdet?.outline)}, ${pprims} outlines)`);
     // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
     [x, y] = await at(top.id, -45, -25);
     await dp.mouse.click(x, y);
@@ -3707,6 +3734,16 @@ try {
     if (selA) await dp.click('#drw [data-tolt="sym"]');
     tx = await texts();
     check(selA && tx.includes("100±0.1"), `drawing: a dimension selected by its text takes a ± tolerance (${tx.filter(s => /±/.test(s)).join(" ")})`);
+    // ISO 286 fit (FR-DRW-021): the Ø16 takes H7, shown with its deviations from the table (+0.018 / 0).
+    const dia = await dp.evaluate(() => { const p = window.__sv.drw.prims().find(q => q.t === "t" && q.layer === "ANNOT" && q.s === "Ø16"); return p && [p.x, p.y + p.h / 2]; });
+    [x, y] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), dia);
+    await dp.mouse.click(x, y);
+    const fitOk = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-tolt="fit"]'));
+    if (fitOk) { await dp.click('#drw [data-tolt="fit"]'); await dp.selectOption('#drw .drw-props [data-d="fshow"]', "both"); }
+    tx = await texts();
+    const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
+    check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
+      `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);
@@ -8156,6 +8193,29 @@ try {
     const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
       `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
+    // The flange's length arrow (SolidWorks handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smflange").id));
+    await settle();
+    const fa = await mp.evaluate(() => {
+      const as = window.__sv.modeller.arrows ?? [], v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const a = as[0];
+      if (!a) return { n: 0 };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { n: as.length, key: a.key, dir: a.dir.toArray().map(x => Math.round(x * 1000) / 1000), tipZ: a.obj.position.z, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (fa.from) {
+      await mp.mouse.move(fa.from[0], fa.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(fa.from[0] + ((fa.to[0] - fa.from[0]) * i) / 6, fa.from[1] + ((fa.to[1] - fa.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const fd = await mp.evaluate(() => ({ len: window.__sv.model.mode().draft?.length?.v, v: window.__sv.model.last().props?.volume ?? 0 }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(fa.n === 1 && fa.key === "length" && fa.dir[2] === 1 && Math.abs(fa.tipZ - 25) < 1 && fa.label === "25 mm" && fd.len > 31 && fd.len < 39 && Math.abs(fd.v - (f1.v + T * 100 * (fd.len - 25))) < 1e-2,
+      `sheet metal: the Edge Flange length arrow sits on the flange tip and dragging it lengthens the flange (${JSON.stringify({ fa, fd })})`);
     // Flatten: a flat plate of the developed length, then the DXF with the outline and the bend line.
     await smMenu("Flatten");
     const ba = (Math.PI / 2) * (R + 0.42 * T);

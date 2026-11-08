@@ -5,11 +5,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.179.0] - 2026-11-08
+## [1.187.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: trace path results plot more, as SolidWorks' Results → Plot. Besides the distance, speed and X/Y/Z of the picked point, the plot shows its **Acceleration** and the component's **angle** (how far it has turned since the start, counted on past a full turn, about the axis it turns most about) and **angular speed**. The CSV gains acceleration and angle columns (FR-FT-122).
+
+## [1.183.0] - 2026-11-08
+
+### Added
+
+- **Detail view by profile (FR-DRW-013).** Detail ▾ Profile frames a detail view by corners you click on a view (click the first corner again or press Enter to close it) instead of a circle, as SolidWorks' profile detail. The view's lines, hatching and shading are trimmed to the profile, the profile is drawn on the parent with the letter at its top-right corner and around the detail view, and picks inside it work as in a circle detail. Detail ▾ Circle is the circle detail as before.
+
+## [1.181.0] - 2026-11-08
+
+### Added
+
+- **Fit deviations from ISO 286 (FR-DRW-021).** A drawing dimension with a Fit tolerance (H7, g6, js6, K7, P7, s6 and so on) can show the code, its deviations from the ISO 286 tables or both, as SolidWorks does ("Ø16H7 +0.018/0"). The panel lists the limits the code gives at that size; letters D to S (d to s for shafts), grades IT3 to IT14, sizes up to 500 mm. A hole/shaft pair such as H7/g6 shows its code.
+
+## [1.180.0] - 2026-11-08
+
+### Added
+
+- **Edge flange length arrow (FR-FT-120)**: an edge flange shows a drag arrow on the tip of its flange, like the SolidWorks handle. Dragging it changes the flange length with a live preview, and clicking its label lets you type the length. It also works on a flange selected in the Features tree, which applies the change on release. While the flat pattern shows, the arrow is hidden.
+
+## [1.178.0] - 2026-11-08
+
+### Added
+
+- **Aligned section (FR-DRW-012).** Section ▾ Aligned section takes the end of the first leg, the centre and the end of the second leg on a view. The material on the second leg's side is turned about the centre into the first leg's plane before the cut, so spokes and holes on a bolt circle show at their true distance from the centre, as in SolidWorks. The cutting line shows both legs with arrows at each end, and each component keeps its own hatching.
 
 ## [1.177.0] - 2026-11-08
 
@@ -1399,8 +1423,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.179.0...HEAD
-[1.179.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.179.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.187.0...HEAD
+[1.187.0]: https://github.com/kothf/step-viewer/compare/v1.183.0...v1.187.0
+[1.183.0]: https://github.com/kothf/step-viewer/compare/v1.181.0...v1.183.0
+[1.181.0]: https://github.com/kothf/step-viewer/compare/v1.180.0...v1.181.0
+[1.180.0]: https://github.com/kothf/step-viewer/compare/v1.178.0...v1.180.0
+[1.178.0]: https://github.com/kothf/step-viewer/compare/v1.177.0...v1.178.0
 [1.177.0]: https://github.com/kothf/step-viewer/compare/v1.176.0...v1.177.0
 [1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
 [1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0

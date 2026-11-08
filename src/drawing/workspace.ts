@@ -12,7 +12,7 @@ import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from ".
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
-import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
+import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, inPoly, nextLetter, polyBox, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
@@ -22,7 +22,8 @@ import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
-import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { fitLimits, splitFit } from "./iso286";
+import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -65,9 +66,9 @@ type Mode =
   /** Projected views come off `parent`. */
   | { kind: "projected"; parent: string | null; at: [number, number] | null }
   /** Section view (FR-DRW-012): pick the cutting line on a view (horizontal, vertical or through two points), then place the view. */
-  | { kind: "section"; how: "h" | "v" | "2p" | "off" | "half"; parent: string | null; p1: Pt | null; line: Line4 | null; at: Pt | null; pts?: Pt[]; path?: number[] }
+  | { kind: "section"; how: "h" | "v" | "2p" | "off" | "half" | "aligned"; parent: string | null; p1: Pt | null; line: Line4 | null; at: Pt | null; pts?: Pt[]; path?: number[] }
   /** Detail view (FR-DRW-013): click the centre, then the radius, then place. */
-  | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null }
+  | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null; prof?: boolean; pts?: Pt[]; outline?: number[] }
   /** Auxiliary view (FR-DRW-014): click a straight edge, then place the view square to it. */
   | { kind: "aux"; parent: string | null; line: Line4 | null; at: Pt | null }
   /** Crop view (FR-DRW-015): two corners of the rectangle on the selected view (model view axes). */
@@ -360,8 +361,13 @@ export class DrawingWorkspace {
               <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
               <button role="menuitem" data-cut="off">${esc(t("Offset section"))}</button>
               <button role="menuitem" data-cut="half">${esc(t("Half section"))}</button>
+              <button role="menuitem" data-cut="aligned">${esc(t("Aligned section"))}</button>
             </div></div>
-          <button class="btn small" data-a="detail" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span></button>
+          <div class="drw-dd"><button class="btn small" data-a="detail" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span> ▾</button>
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-det="circle">${esc(t("Circle"))}</button>
+              <button role="menuitem" data-det="profile">${esc(t("Profile"))}</button>
+            </div></div>
           <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
@@ -469,8 +475,10 @@ export class DrawingWorkspace {
     if (this.loading) s = t("Loading the model into the drawing kernel…");
     else if (m.kind === "model") s = t("Click on the sheet to place the {orient} view. Esc cancels.", { orient: t(ORIENT_NAMES[m.orient]).toLowerCase() });
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
+    else if (m.kind === "section" && !m.line && m.how === "aligned") s = t(!m.pts?.length ? "Click the end of the first leg on a view." : m.pts.length === 1 ? "Click the centre: the second leg turns about it into the first leg's plane." : "Click the end of the second leg.");
     else if (m.kind === "section" && !m.line && (m.how === "off" || m.how === "half")) s = !m.pts?.length ? t("Click the first point of the cutting line on a view.") : m.how === "half" ? (m.pts.length === 1 ? t("Click the centre: the cut stops there.") : t("Click where the step ends, square to the cut.")) : m.pts.length === 1 ? t("Click the end of the first cut.") : t("Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.");
     else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
+    else if (m.kind === "detail" && m.prof && !m.r) s = (m.pts?.length ?? 0) < 3 ? t("Click the corners of the detail profile on a view.") : t("Click more corners; click the first corner or press Enter to close the profile.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
     else if (m.kind === "altpos") s = m.comp ? t("Click where that point of the component goes in its other position.") : t("Click an edge of the component to show in another position.");
@@ -593,11 +601,11 @@ export class DrawingWorkspace {
   /** The view the current command would place at the cursor. */
   private previewView(): { view: DrawingView; parent?: string } | null {
     const m = this.mode;
-    if (m.kind === "section" && m.parent && m.line && m.at) return { view: this.sideViewAt("section", m.parent, m.line, m.at, m.path), parent: m.parent };
+    if (m.kind === "section" && m.parent && m.line && m.at) return { view: this.sideViewAt("section", m.parent, m.line, m.at, m.path, m.how === "aligned"), parent: m.parent };
     if (m.kind === "aux" && m.parent && m.line && m.at) return { view: this.sideViewAt("aux", m.parent, m.line, m.at), parent: m.parent };
     if (m.kind === "detail" && m.parent && m.c && m.r && m.at) {
       const par = findView(this.sheet, m.parent);
-      return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
+      return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, ...(m.outline ? { outline: m.outline } : {}), x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
     }
     if (m.kind === "model" && m.at) return { view: { id: "_pv", name: "", orient: m.orient, dir: m.dir, x: m.at[0], y: m.at[1], style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv" } };
     if (m.kind === "projected" && m.parent && m.at) {
@@ -1019,7 +1027,7 @@ export class DrawingWorkspace {
     const { P, n } = projector(viewDir(this.sheet, v));
     const tol = this.snapTol();
     const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
-    const inDetail = (q: Pt) => v.kind !== "detail" || !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r;
+    const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
     const endOn = (e: MEdge) => e.t === "c" && !!e.ax && Math.abs(Math.abs(e.ax[0] * n[0] + e.ax[1] * n[1] + e.ax[2] * n[2]) - 1) < 1e-6;
     let best: Pick | null = null, bd = tol;
     if (!only) for (const e of topo.edges) {
@@ -1087,7 +1095,7 @@ export class DrawingWorkspace {
     const v = findView(this.sheet, viewId);
     if (!v) return [];
     const { P, n } = projector(viewDir(this.sheet, v));
-    const inDetail = (q: Pt) => v.kind !== "detail" || !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r;
+    const inDetail = (q: Pt) => v.kind !== "detail" || (v.outline && v.outline.length >= 6 ? inPoly(v.outline, q[0], q[1]) : !v.c || !v.r || Math.hypot(q[0] - v.c[0], q[1] - v.c[1]) <= v.r);
     return holeEdges(this.facts?.topo ?? null, P, n, inDetail).map(e => edgeRef(e, "e"));
   }
 
@@ -1380,6 +1388,21 @@ export class DrawingWorkspace {
     this.store!.change(label, d => { const a = (d.sheets[this.sheetIdx].annots ?? []).find(x => x.id === id); if (a) fn(a); });
   }
 
+  /** Fit display choice and the ISO 286 limits the code gives at this size (FR-DRW-021). */
+  private fitFields(a: DimAnnot, size: number | undefined): string {
+    const code = a.tol?.fit ?? "", pair = code.includes("/");
+    const show = a.tol?.show ?? "code";
+    const sel = `<label class="drw-f">${esc(t("Show"))}<select data-d="fshow"${pair ? " disabled" : ""}>${([["code", "Code"], ["limits", "Deviations"], ["both", "Code and deviations"]] as const).map(([k, l]) => `<option value="${k}"${show === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
+    const sg = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(3).replace(/^0\.000$/, "0");
+    const row = (c: string) => { const l = size != null ? fitLimits(c, size) : null; return l ? `${c}: ${sg(l.up)} / ${sg(l.lo)}` : null; };
+    const parts = splitFit(code), codes = [parts.hole, parts.shaft].filter((c): c is string => !!c);
+    const rows = codes.map(row);
+    const note = !codes.length || rows.some(r => !r)
+      ? `<p class="drw-note drw-fitlim">${esc(t("ISO 286 has no limits for this code and size (letters D to S, grades 3 to 14, up to 500 mm)."))}</p>`
+      : `<p class="drw-note drw-fitlim" translate="no">${rows.map(r => esc(r!)).join("<br>")}</p>`;
+    return sel + note;
+  }
+
   private setTol(tt: Tol["t"] | "") {
     this.setAnnot("Tolerance", a => {
       if (a.t !== "dim") return;
@@ -1415,7 +1438,7 @@ export class DrawingWorkspace {
         <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([["", "None"], ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as const).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
         ${tol && tol !== "fit" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
         ${tol === "dev" || tol === "limit" ? `<label class="drw-f">${esc(t("Lower"))}<input data-d="lo" inputmode="decimal" value="${a.tol?.lo ?? ""}"></label>` : ""}
-        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>` : ""}
+        ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>${this.fitFields(a, g?.value)}` : ""}
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
@@ -1503,6 +1526,7 @@ export class DrawingWorkspace {
         else if (k === "pre" || k === "suf" || k === "txt") { if (val) a[k] = val; else delete a[k]; }
         else if (a.tol && (k === "up" || k === "lo")) a.tol[k] = num(val);
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
+        else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
@@ -1533,13 +1557,13 @@ export class DrawingWorkspace {
 
   // ---------- section, detail and auxiliary views ----------
 
-  private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" = "h") {
+  private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" | "off" | "half" | "aligned" = "h", prof = false) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     // The first click picks the view (as in SolidWorks), unless there is only one.
     const parent = this.sheet.views.length === 1 ? this.sheet.views[0].id : null;
     if (kind === "section") this.mode = { kind, how, parent, p1: null, line: null, at: null, pts: [] };
-    else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null };
+    else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null, ...(prof ? { prof: true, pts: [] } : {}) };
     else this.mode = { kind, parent, line: null, at: null };
     this.renderStatus();
     this.renderOverlay();
@@ -1602,13 +1626,14 @@ export class DrawingWorkspace {
   }
 
   /** A section or auxiliary view of `parent` from `line`, on the cursor's side and lined up square to the line. */
-  private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[]): DrawingView {
+  private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt, path?: number[], aligned?: boolean): DrawingView {
     const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
     const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
     const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
     const look: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
     const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: at[0], y: at[1], letter: nextLetter(this.doc.sheets), style: kind === "section" ? "hlr" : par?.style, tangent: par?.tangent };
     if (path) v.path = path;
+    if (aligned) v.aligned = true;
     const [x, y] = this.alignedAt(v, at);
     v.x = x; v.y = y;
     return v;
@@ -1630,10 +1655,11 @@ export class DrawingWorkspace {
   }
 
   /** Projects both sides of a section/aux line ahead, so the preview has its lines when the cursor gets there. */
-  private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[]) {
+  private warmSides(kind: "section" | "aux", parent: string, line: Line4, path?: number[], aligned?: boolean) {
     for (const look of [1, -1] as const) {
       const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: 0, y: 0 };
       if (path) v.path = path;
+      if (aligned) v.aligned = true;
       const sh = this.sheetWith(v);
       void this.kernel.request(viewReq(sh, v)).then(() => this.renderOverlay(), () => {});
     }
@@ -1642,9 +1668,9 @@ export class DrawingWorkspace {
   private kindClick(m: Extract<Mode, { kind: "section" | "detail" | "aux" }>, p: Pt) {
     const id = this.kindParent(m, p);
     if (m.kind === "section") {
-      if (m.line && m.parent) { this.placeKind(this.sideViewAt("section", m.parent, m.line, p, m.path)); return; }
+      if (m.line && m.parent) { this.placeKind(this.sideViewAt("section", m.parent, m.line, p, m.path, m.how === "aligned")); return; }
       if (!id || !this.placements.get(id)) return;
-      if (m.how === "off" || m.how === "half") { this.pathClick(m, id, p); return; }
+      if (m.how === "off" || m.how === "half" || m.how === "aligned") { this.pathClick(m, id, p); return; }
       const sp = this.snapIn(id, p).m;
       if (m.how !== "2p") m.line = this.cutLine(id, m.how, sp);
       else if (!m.p1) { m.parent = id; m.p1 = sp; this.sel = id; this.renderStatus(); this.renderOverlay(); return; }
@@ -1657,6 +1683,7 @@ export class DrawingWorkspace {
       this.warmSides("section", id, m.line);
     } else if (m.kind === "detail") {
       if (m.r && m.c && m.parent) { const pv = this.previewView(); if (pv) this.placeKind(pv.view); return; }
+      if (m.prof) { this.profileClick(m, id, p); return; }
       if (!id || !this.placements.get(id)) return;
       if (!m.c) { m.parent = id; m.c = this.snapIn(id, p).m; this.sel = id; }
       else {
@@ -1683,7 +1710,7 @@ export class DrawingWorkspace {
    */
   private pathPoint(m: Extract<Mode, { kind: "section" }>, id: string, p: Pt): Pt {
     const sp = this.snapIn(id, p).m, pts = m.pts ?? [];
-    if (pts.length < 2) return sp;
+    if (pts.length < 2 || m.how === "aligned") return sp;
     const [a, b] = pts, last = pts[pts.length - 1];
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, e: Pt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], n: Pt = [-e[1], e[0]];
     const dx = sp[0] - last[0], dy = sp[1] - last[1], te = dx * e[0] + dy * e[1], tn = dx * n[0] + dy * n[1];
@@ -1699,10 +1726,10 @@ export class DrawingWorkspace {
     if (id !== m.parent) return;
     const q = this.pathPoint(m, id, p), last = pts[pts.length - 1];
     const pl = this.placements.get(id)!, [lx, ly] = toSheet(pl, last[0], last[1]);
-    if (Math.hypot(p[0] - lx, p[1] - ly) < this.snapTol() && pts.length >= 3) { this.finishPath(m); return; }
+    if (Math.hypot(p[0] - lx, p[1] - ly) < this.snapTol() && pts.length >= 3 && m.how !== "aligned") { this.finishPath(m); return; }
     if (Math.hypot(q[0] - last[0], q[1] - last[1]) < 1e-6) return;
     pts.push(q);
-    if (m.how === "half" && pts.length === 3) { this.finishPath(m); return; }
+    if ((m.how === "half" || m.how === "aligned") && pts.length === 3) { this.finishPath(m); return; }
     this.renderStatus(); this.renderOverlay();
   }
 
@@ -1710,8 +1737,17 @@ export class DrawingWorkspace {
   private finishPath(m: Extract<Mode, { kind: "section" }>) {
     const pts = m.pts ?? [];
     if (pts.length < 2 || !m.parent) return;
-    m.line = [pts[0][0], pts[0][1], pts[1][0], pts[1][1]];
     const path = pts.flatMap(q => [Math.round(q[0] * 1e4) / 1e4, Math.round(q[1] * 1e4) / 1e4]);
+    if (m.how === "aligned") {
+      // Aligned section: end 1, centre, end 2; the first leg is the line the view looks square to.
+      if (pts.length !== 3 || !alignedLegs(path)) { toast(t("The two legs of an aligned section must meet at an angle.")); m.pts = pts.slice(0, 2); this.renderStatus(); this.renderOverlay(); return; }
+      m.line = [path[0], path[1], path[2], path[3]];
+      m.path = path;
+      this.warmSides("section", m.parent, m.line, m.path, true);
+      this.renderStatus(); this.renderOverlay();
+      return;
+    }
+    m.line = [pts[0][0], pts[0][1], pts[1][0], pts[1][1]];
     m.path = pts.length >= 3 && cutLegs(path) ? path : undefined;
     if (pts.length >= 3 && !m.path) { toast(t("Every leg of the cutting path must run along or square to the first.")); m.line = null; return; }
     this.warmSides("section", m.parent, m.line, m.path);
@@ -1792,6 +1828,36 @@ export class DrawingWorkspace {
       if (Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishBroken(m); return; }
     }
     m.pts.push(fromSheet(pl, p[0], p[1]));
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  /** Detail profile (FR-DRW-013): corners on one view; a click on the first corner (or Enter) closes it. */
+  private profileClick(m: Extract<Mode, { kind: "detail" }>, id: string | null, p: Pt) {
+    const pts = m.pts ?? (m.pts = []);
+    if (!pts.length) { if (!id || !this.placements.get(id)) return; m.parent = id; this.sel = id; }
+    const pl = this.placements.get(m.parent!);
+    if (!pl) return;
+    if (pts.length >= 3) {
+      const f = toSheet(pl, pts[0][0], pts[0][1]);
+      if (Math.hypot(f[0] - p[0], f[1] - p[1]) < this.snapTol()) { this.finishProfile(m); return; }
+    }
+    pts.push(fromSheet(pl, p[0], p[1]));
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private finishProfile(m: Extract<Mode, { kind: "detail" }>) {
+    const pts = m.pts ?? [];
+    const outline = pts.flat();
+    // A profile with no area (all corners on one line) can't frame anything.
+    let a = 0;
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    if (pts.length < 3 || Math.abs(a) < 1e-6) { toast(t("Click at least three corners that enclose an area."), true); return; }
+    const b = polyBox(outline), c: Pt = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    let r = 0;
+    for (const p of pts) r = Math.max(r, Math.hypot(p[0] - c[0], p[1] - c[1]));
+    m.c = c; m.r = Math.round(r * 100) / 100 || 0.01; m.outline = outline;
     this.renderStatus();
     this.renderOverlay();
   }
@@ -1923,7 +1989,7 @@ export class DrawingWorkspace {
       const poly = (q: Pt[]) => q.length < 2 ? "" : `<polyline class="drw-cut" fill="none" points="${q.map(r => { const [x, y] = toSheet(pl, r[0], r[1]); return `${x},${H - y}`; }).join(" ")}"/>`;
       if (m.line && m.path) { const q: Pt[] = []; for (let i = 0; i + 1 < m.path.length; i += 2) q.push([m.path[i], m.path[i + 1]]); return poly(q); }
       if (m.line) return L(m.line, "drw-cut");
-      if (m.how === "off" || m.how === "half") {
+      if (m.how === "off" || m.how === "half" || m.how === "aligned") {
         const pts = m.pts ?? [];
         if (!pts.length) { if (at) { const sp = this.snapIn(id, at); if (sp.snap) s += dot(sp.m); } return s; }
         return poly(at ? [...pts, this.pathPoint(m, id, at)] : pts) + pts.map(dot).join("");
@@ -1933,6 +1999,11 @@ export class DrawingWorkspace {
       if (m.how === "2p") { if (m.p1) s += L([m.p1[0], m.p1[1], sp.m[0], sp.m[1]], "drw-cut") + dot(m.p1); }
       else s += L(this.cutLine(id, m.how, sp.m), "drw-cut");
       if (sp.snap) s += dot(sp.m);
+    } else if (m.kind === "detail" && m.prof) {
+      const pts = m.outline ? Array.from({ length: m.outline.length / 2 }, (_, i): Pt => [m.outline![2 * i], m.outline![2 * i + 1]]) : m.pts ?? [];
+      const q = m.outline ? [...pts, pts[0]] : at && pts.length ? [...pts, fromSheet(pl, at[0], at[1])] : pts;
+      if (q.length >= 2) s += `<polyline class="drw-cut" fill="none" points="${q.map(r => { const [x, y] = toSheet(pl, r[0], r[1]); return `${x},${H - y}`; }).join(" ")}"/>`;
+      if (!m.outline) s += pts.map(dot).join("");
     } else if (m.kind === "detail") {
       if (!m.c) { if (at) { const sp = this.snapIn(id, at); if (sp.snap) s += dot(sp.m); } return s; }
       const [cx, cy] = toSheet(pl, m.c[0], m.c[1]);
@@ -2096,6 +2167,7 @@ export class DrawingWorkspace {
     }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
+    if (b.dataset.det) { this.closeMenus(); this.startKind("detail", "h", b.dataset.det === "profile"); return; }
     if (b.dataset.an) {
       this.closeMenus();
       const an = b.dataset.an;
@@ -2133,7 +2205,7 @@ export class DrawingWorkspace {
     switch (a) {
       case "back": this.hide(); break;
       case "std3": this.cancelMode(); this.standard3(); break;
-      case "model": case "export": case "section": case "annot": {
+      case "model": case "export": case "section": case "annot": case "detail": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
         this.closeMenus();
         menu.hidden = !open;
@@ -2142,7 +2214,6 @@ export class DrawingWorkspace {
         break;
       }
       case "proj": this.startProjected(); break;
-      case "detail": this.startKind("detail"); break;
       case "aux": this.startKind("aux"); break;
       case "flip": this.flipSel(); break;
       case "crop": this.startTrim("crop"); break;
@@ -2211,7 +2282,8 @@ export class DrawingWorkspace {
     const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
     let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
       <label class="drw-f">${esc(t("Letter"))}<input data-v="letter" value="${esc(v.letter ?? "")}" maxlength="3" translate="no"></label>`;
-    if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
+    if (v.kind === "detail" && v.outline) s += "";
+    else if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
     else s += `<div class="row"><button class="btn small" data-a="flip" title="${esc(t("Look at the other side of the line"))}">${esc(t("Flip direction"))}</button></div>`;
     if (v.kind === "section") {
       s += this.hatchFields(v);
@@ -2405,6 +2477,7 @@ export class DrawingWorkspace {
     else if (typing || mod || e.altKey) used = false;
     else if (k === "escape") { if (this.mode.kind !== "none") this.cancelMode(); else if (this.el.querySelector(".drw-menu:not([hidden])")) this.closeMenus(); else if (this.sel || this.selA) { this.sel = null; this.selA = null; this.renderAll(); } else used = false; }
     else if (k === "enter" && this.mode.kind === "brokenout" && (tgt as Element) === this.svg) this.finishBroken(this.mode);
+    else if (k === "enter" && this.mode.kind === "detail" && this.mode.prof && !this.mode.r && (this.mode.pts?.length ?? 0) >= 3 && (tgt as Element) === this.svg) this.finishProfile(this.mode);
     else if (k === "enter" && this.mode.kind === "section" && !this.mode.line && (this.mode.pts?.length ?? 0) >= 2 && (tgt as Element) === this.svg) this.finishPath(this.mode);
     else if (k === "enter" && this.mode.kind !== "none" && (tgt as Element) === this.svg) this.cancelMode();
     else if ((k === "delete" || k === "backspace") && this.selA && (tgt as Element) === this.svg) this.deleteAnnot();
