@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.176.0] - 2026-11-08
+
+### Added
+
+- **End cap corner fillets (FR-FT-121).** End Cap's corner treatment can round the plate's corners (Fillet, with a radius) as well as chamfer them, as in SolidWorks.
+
+### Fixed
+
+- End cap corner treatment only touches sharp corners: on a tube with a rounded outline it no longer chamfers the seams where the flat sides meet the round corners.
+
 ## [1.175.0] - 2026-11-08
 
 ### Added
@@ -1377,7 +1387,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.175.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.176.0...HEAD
+[1.176.0]: https://github.com/kothf/step-viewer/compare/v1.175.0...v1.176.0
 [1.175.0]: https://github.com/kothf/step-viewer/compare/v1.174.0...v1.175.0
 [1.174.0]: https://github.com/kothf/step-viewer/compare/v1.173.0...v1.174.0
 [1.173.0]: https://github.com/kothf/step-viewer/compare/v1.169.0...v1.173.0

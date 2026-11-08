@@ -111,6 +111,16 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const plate = rc.cut.find(c => c.kind === "plate")!;
   assert.deepEqual(plate.plate, [36, 36, 5]);
 
+  // Corner treatment: on the rounded SHS outline nothing is sharp, so the plate is unchanged.
+  const rcc = run(m, doc([k, mem, tr, { ...cap, chamfer: { v: 3 } } as Feature]));
+  near(rcc.volume, rc.volume, 1e-9);
+  // A flat bar's cap has four sharp corners: chamfered 3 mm, or rounded r 3.
+  const fb: Feature[] = [k, { ...mem, profile: "flat", size: "50x10", segs: [{ sketch: "k", ent: "beam" }] } as Feature];
+  const capF: Feature = { ...cap, inset: { v: 0 } } as Feature;
+  const v0 = run(m, doc([...fb, capF])).volume;
+  near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 } } as Feature])).volume, 4 * 4.5 * 5, 1e-6);
+  near(v0 - run(m, doc([...fb, { ...capF, chamfer: { v: 3 }, fillet: true } as Feature])).volume, 4 * (9 - Math.PI * 9 / 4) * 5, 1e-6);
+
   // Gusset under the beam against the post: 60 × 60 × 5 triangle.
   const beamBottom = rc.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rc.body!.faces[i])[2] - 280) < 1e-6)!;
   const g: Feature = { id: "g", type: "gusset", name: "Gusset1", face1: { name: beamBottom.n, hint: centroid(m, rc.body!.faces[beamBottom.i]) }, face2: pf, d1: { v: 60 }, d2: { v: 60 }, thickness: { v: 5 }, shape: "tri", loc: "mid" };

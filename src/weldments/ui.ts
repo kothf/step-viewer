@@ -211,7 +211,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + chk("inward", f.inward, t("Thickness inward"))
         + help(t("Click the flat end faces of members. Drag the arrow to change the thickness.")))
         + group(t("Offset"), chk("wInset", f.inset.v > 0, t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", t("Inset"), f.inset, "length") : ""))
-        + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Chamfer corners")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : "")),
+        + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Treat the corners"))
+          + (f.chamfer ? sel("wCapCorner", t("Type"), [["chamfer", t("Chamfer")], ["fillet", t("Fillet")]], f.fillet ? "fillet" : "chamfer")
+            + numField("chamfer", f.fillet ? t("Radius") : t("Distance"), f.chamfer, "length") : "")),
     };
   }
   if (f.type === "gusset") {
@@ -290,7 +292,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
   }
   if (f.type === "endcap") {
     if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; };
-    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else delete f.chamfer; };
+    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else { delete f.chamfer; delete f.fillet; } };
+    if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
     if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
