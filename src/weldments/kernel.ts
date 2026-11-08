@@ -7,6 +7,7 @@ import { FeatureError, type Named } from "../kernel/model";
 import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldFeature } from "./types";
+import { cornerKey } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
 export interface WeldHost {
@@ -91,6 +92,7 @@ export function memberShape(f: MemberFeature, doc: PartDoc): ProfileShape {
 
 /** The cut list description of a member's profile: "SHS 40x40x3", or the profile sketch's name. */
 export function memberDesc(f: MemberFeature, doc: PartDoc): string {
+  if (f.desc?.trim()) return f.desc.trim();
   return f.profile === "sketch" ? doc.features.find(x => x.id === f.psketch)?.name ?? "Sketch" : profileName(f.profile, f.size);
 }
 
@@ -230,17 +232,19 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
   const shape = memberShape(f, doc);
   const pls = segs.map((s, i) => placement(f, s, f.segs[i], doc, frames, shape));
   const tol = 1e-6 * (1 + Math.max(...segs.map(s => s.L)));
+  const gap = Math.max(0, f.gap?.v ?? 0);
   const endPt = (i: number, e: 0 | 1) => (e ? segs[i].b : segs[i].a);
   const ends: [End, End][] = segs.map((_s, i) => ([0, 1] as const).map(e => {
     const P = endPt(i, e);
     const others: [number, 0 | 1][] = [];
     segs.forEach((_t, j) => { if (j !== i) for (const k of [0, 1] as const) if (d3(endPt(j, k), P) < tol) others.push([j, k]); });
-    if (!others.length || f.corner === "none") return { kind: "free" } as End;
+    const corner = f.corners?.[cornerKey([segs[i].ent, ...others.map(([j]) => segs[j].ent)])] ?? f.corner;
+    if (!others.length || corner === "none") return { kind: "free" } as End;
     const din = e ? segs[i].w : mul(segs[i].w, -1);
     if (others.length > 1) {
       // Three or more meet: the first (butt2: the last) runs through, the others stop at its face.
       const all = [i, ...others.map(([j]) => j)];
-      const through = f.corner === "butt2" ? Math.max(...all) : Math.min(...all);
+      const through = corner === "butt2" ? Math.max(...all) : Math.min(...all);
       if (through !== i) return Math.abs(dot(segs[i].w, segs[through].w)) > 1 - 1e-9 ? { kind: "free" } as End : { kind: "trimmed", other: through } as End;
       const ext = Math.max(0, ...others.flatMap(([j]) => outline(pls[j].shape.outer, 8).map(q => dot(sub(at3(pls[j], P, q), P), din))));
       return { kind: "through", ext } as End;
@@ -248,8 +252,8 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
     const [j, k] = others[0];
     const dout = k ? mul(segs[j].w, -1) : segs[j].w;
     if (Math.abs(dot(din, dout)) > 1 - 1e-9) return { kind: "free" } as End;
-    if (f.corner === "miter") return { kind: "miter", n: unit(add(din, dout)) } as End;
-    const through = f.corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
+    if (corner === "miter") return { kind: "miter", n: unit(add(din, dout)) } as End;
+    const through = corner === "butt1" ? Math.min(i, j) : Math.max(i, j);
     if (through !== i) return { kind: "trimmed", other: j } as End;
     // Run past the corner until the other member's outline is covered.
     const ext = Math.max(0, ...outline(pls[j].shape.outer, 8).map(q => dot(sub(at3(pls[j], P, q), P), din)));
@@ -264,14 +268,15 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
     ([e0, e1] as End[]).forEach((e, k) => {
       const P = k ? s.b : s.a;
       const nm = `${base}:${k ? "end" : "start"}`;
-      if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, P, e.n, big, nm), f.id);
+      // A mitre gap is split between the two ends, measured square to the mitre plane.
+      if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, sub(P, mul(e.n, gap / 2)), e.n, big, nm), f.id);
       if (e.kind === "trimmed") {
         // Cut square to the other member's face that looks at this one (the plane holds its axis).
         const o = segs[e.other], op = pls[e.other];
         const din = k ? s.w : mul(s.w, -1);
         const m = unit(sub(mul(din, -1), mul(o.w, dot(mul(din, -1), o.w))));
         const ext = Math.max(0, ...outline(op.shape.outer, 8).map(q => dot(sub(at3(op, P, q), P), m)));
-        body = bool(h, "cut", body, halfBox(h, add(P, mul(m, ext)), mul(m, -1), big, nm), f.id);
+        body = bool(h, "cut", body, halfBox(h, add(P, mul(m, ext + gap)), mul(m, -1), big, nm), f.id);
       }
     });
     return pieceNear(h, body, add(s.a, mul(s.w, s.L / 2)));
