@@ -479,7 +479,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-018** (P2, M) Ellipse and elliptical arc.
 - **FR-SK-019** (P2, M) Spline: interpolating through points, with optional tangency handles at ends and points; degree 3; P5: control-polygon spline and curvature handles.
 - **FR-SK-020** (P4, S) Text: font (bundled open fonts), height, along a curve option; usable for extrude/cut (embossing).
-- **FR-SK-021** (P5, C) Conic, parabola, equation-driven curve `y = f(x)` or parametric.
+- **FR-SK-021** (P5, C) Conic, parabola, equation-driven curve `y = f(x)` or parametric. **Done (1.154.0).**
 - **FR-SK-022** (P1, M) Each entity has properties shown in the side panel when selected: coordinates/length/radius/angle (editable as fix-to-value, which adds a dimension or moves the geometry if under-defined), construction flag, relations list.
 
 ### 8.3 Sketch tools

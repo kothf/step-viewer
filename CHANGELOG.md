@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.154.0] - 2026-11-08
+
+### Added
+
+- **Conic, parabola and equation driven curve (FR-SK-021)**: the Circle ▾ menu adds Parabola (focus, vertex, then the start and the end) and Conic (start, end, the top vertex where the end tangents meet, then a point that sets rho, shown at the cursor; rho can be changed in the panel). The Line ▾ menu adds Equation driven curve: y = f(x) or x(t), y(t) with a range, typed in the panel, added with fixed ends. Conics reach the kernel as exact rational curves, so their volumes and areas are exact; equation curves follow their two end points when moved, rotated, scaled or mirrored.
+
 ## [1.152.0] - 2026-11-08
 
 ### Added
@@ -1273,7 +1279,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.152.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.154.0...HEAD
+[1.154.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.154.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
 [1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
 [1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0
