@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.80.0] - 2026-11-08
+## [1.81.0] - 2026-11-08
 
 ### Added
 
@@ -21,6 +21,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - which assembly features are suppressed.
 
   Click a configuration in the tree to switch to it.
+
+## [1.80.0] - 2026-11-08
+
+### Added
+
+- **Geometry compare in the vault** (FR-PDM-050): comparing two versions of a part or an assembly builds both. A table gives volume, mass, surface area, size and centre of mass for each, with the change. A 3D view shows material only in the older version in red and only in the newer one in green, over what both share.
+- **Check in referenced files too** (FR-PDM-011): checking in an assembly lists the parts and sub-assemblies it uses that you have checked out. Changed ones are ticked, and they go in first.
+- The title of a part opened from the vault says when its local copy is **modified** or **outdated** (FR-PDM-016).
+- Drawings (FR-UI-072): an **Annotation** tab beside the view palette holds every annotation tool. **Inference lines**: a view you place or drag lines up with another view's centre when it comes close, with an orange guide.
 
 ## [1.79.0] - 2026-11-08
 
@@ -794,7 +803,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.80.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.81.0...HEAD
+[1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0
 [1.80.0]: https://github.com/kothf/step-viewer/compare/v1.79.0...v1.80.0
 [1.79.0]: https://github.com/kothf/step-viewer/compare/v1.78.0...v1.79.0
 [1.78.0]: https://github.com/kothf/step-viewer/compare/v1.77.0...v1.78.0

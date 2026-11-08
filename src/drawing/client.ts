@@ -2,7 +2,8 @@
 // demand. Projections are cached by direction; asking again for one in flight
 // shares the request.
 import { compile } from "../kernel/client";
-import type { Projection, Topo, V3, ViewDir } from "../kernel/drawing";
+import type { GeomDiff, Projection, Topo, V3, ViewDir } from "../kernel/drawing";
+import type { DiffSrc } from "./drawing.worker";
 import type { HoleInfo, ModelItem } from "./items";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
@@ -69,6 +70,12 @@ export class DrawingKernel {
   }
 
   get hasModel() { return !!this.loaded; }
+
+  /** Two versions of a part or an assembly compared by booleans (FR-PDM-050). */
+  async diff(a: DiffSrc, b: DiffSrc): Promise<GeomDiff> {
+    await this.start();
+    return (await this.call<{ diff: GeomDiff }>({ type: "diff", a, b })).diff;
+  }
 
   /** The view's lines (cached by direction). */
   project(view: ViewDir): Promise<Projection> { return this.request({ view, key: dirKey(view) }); }
