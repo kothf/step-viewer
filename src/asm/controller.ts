@@ -2549,6 +2549,27 @@ export class AsmController {
     return [...out.values()];
   }
 
+  /**
+   * Smallest distance (mm) between the meshes of two top-level components where they are shown now (motion
+   * proximity result): 0 when they touch or overlap, NaN when either has no mesh.
+   */
+  motionGap(a: string, b: string): number {
+    const parts = this.host.viewer.parts, m = new THREE.Matrix4();
+    const of = (c: string) => parts.map((_, i) => i).filter(i => topOf(this.shownIds[i]) === c);
+    const ia = of(a), ib = of(b);
+    let best = Infinity;
+    for (const i of ia) for (const j of ib) {
+      const bvh = parts[i].mesh.geometry.boundsTree;
+      if (!bvh) continue;
+      parts[i].mesh.updateWorldMatrix(true, false);
+      parts[j].mesh.updateWorldMatrix(true, false);
+      m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
+      const hit = bvh.closestPointToGeometry(parts[j].mesh.geometry, m, undefined, undefined, 0, best);
+      if (hit && hit.distance < best) best = hit.distance;
+    }
+    return Number.isFinite(best) ? best : NaN;
+  }
+
   /** Parts whose look a motion study changed: viewer part index → what it had. */
   private motionLooks = new Map<number, { visible: boolean; opacity: number }>();
 

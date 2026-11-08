@@ -77,6 +77,8 @@ export interface TracePath {
   id: string;
   /** A mate value result instead of a point (Results → Plot of a mate): the distance and angle between the mate's two references; `comp`/`p` are unused. */
   mate?: string;
+  /** A proximity result instead of a point: the smallest distance between these two top-level components; `comp`/`p` are unused. */
+  gap?: [string, string];
   /** The component (as the solver names it) the point moves with. */
   comp: string;
   /** The point in the component's own coordinates (mm). */

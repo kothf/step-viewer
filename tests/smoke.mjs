@@ -5734,7 +5734,18 @@ try {
       const sensor = { alert: m.study.traces.find(x => x.id === tr0.id).alert, spans, from: spans[0]?.[0], to: spans[0]?.[1], one: spans.length === 1,
         bands: document.querySelectorAll(`#motion .mo-tlane[data-tlane="${tr0.id}"] .mo-aspan`).length, out: !!document.querySelector("#motion .mo-alert"),
         trip: m.tripAt(0, 2 * sfps)?.i, want: sfps + 1, fromOk: Math.abs(spans[0]?.[0] - (sfps + 1) / sfps) < 1e-9 };
-      const trace = { sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Proximity: Add track… → Proximity measures the smallest gap between two components every frame; the panel
+      // switches the second component and the values follow; frame 0 matches the gap measured in the view there.
+      const gadd = document.querySelector('#motion select[data-mo="add"]'), gopt = [...gadd.options].some(o => o.value === "gap:");
+      gadd.value = "gap:"; gadd.dispatchEvent(new Event("change"));
+      const gt = m.study.traces.at(-1);
+      const gb = document.querySelector('#motion select[data-tr="gb"]'); gb.value = id; gb.dispatchEvent(new Event("change"));
+      const gv = m.gapValues(gt.id);
+      const prox = { gopt, pair: m.study.traces.at(-1).gap?.[1] === id, n: gv.length === path.length, ok: gv.every(v => Number.isFinite(v) && v >= 0),
+        same: (m.seek(0), Math.abs(a.motionGap(gt.gap[0], id) - gv[0]) < 1e-6), row: !!document.querySelector(`#motion .mo-name[data-trace="${gt.id}"]`),
+        read: /mm/.test(document.querySelector("#motion .mo-tread")?.textContent ?? "") };
+      m.deleteTrace(gt.id);
+      const trace = { prox, sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5893,6 +5904,7 @@ try {
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
       && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && Object.values(tc.prox).every(v => v === true)
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
