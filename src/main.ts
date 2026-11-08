@@ -33,7 +33,7 @@ import ImportWorker from "./worker/import.worker?worker";
 import { GerberView } from "./gerber/GerberView";
 import { bindGerberPanel } from "./gerber/panel";
 import { isPcbName, sniff } from "./gerber/load";
-import { bindModal, bindTabs, busy, confirmModal, emptyState, initModals, initPanels, storage, toast } from "./ui";
+import { bindModal, bindTabs, busy, confirmModal, emptyState, initConfirmCorners, initModals, initPanels, storage, toast } from "./ui";
 import { lang, onLangChange, setLang, startI18n, t, withLang } from "./i18n";
 import { bindCommandBar, onCmTab, relabelCmTabs, setCmTabs, type CmTabId } from "./commandBar";
 import { renderHelp } from "./help";
@@ -335,6 +335,7 @@ const gerber = new GerberView($("#gerber"), {
 });
 const panels = initPanels($("#app"));
 initModals();
+initConfirmCorners();
 const openPicker = () => $<HTMLInputElement>("#file-input").click();
 $$("[data-open]").forEach(b => b.addEventListener("click", openPicker));
 bindGerberPanel(gerber, {

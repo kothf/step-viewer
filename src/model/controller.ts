@@ -220,6 +220,14 @@ function holeAxes(fr: Frame | undefined): { names: string[]; show: (p: [number, 
   };
 }
 
+/** PropertyManager header: title with ✓ and ✕ on the right. The panel pins it (sticky), so they never scroll away. */
+function okHead(title: string, o: { ok?: string; okKey?: string; cancelKey?: string; noTranslate?: boolean } = {}) {
+  const ok = o.ok ?? t("OK (Enter)"), cancel = t("Cancel (Esc)");
+  return `<div class="pm-head pm-top"><h3${o.noTranslate ? ' translate="no"' : ""}>${esc(title)}</h3><span class="pm-okc">`
+    + `<button class="pm-ok" data-a="${o.okKey ?? "ok"}" title="${esc(ok)}" aria-label="${esc(ok)}">✓</button>`
+    + `<button class="pm-cancel" data-a="${o.cancelKey ?? "cancel"}" title="${esc(cancel)}" aria-label="${esc(cancel)}">✕</button></span></div>`;
+}
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -1757,12 +1765,14 @@ export class ModelController {
 
     $("#new-part").addEventListener("click", () => this.newPart());
     $("#empty-new").addEventListener("click", () => this.newPart());
-    $("#mc-ok").addEventListener("click", () => this.ok());
+    // The corner mirrors the panel: a sketch pattern / move / rotate panel takes its own ✓ and ✕ first.
+    const inner = (k: string) => this.mode.kind === "sketch" && this.mode.editor.pattern ? $("#mc-pm").querySelector<HTMLButtonElement>(`[data-a=${k}]`) : null;
+    $("#mc-ok").addEventListener("click", () => { const b = inner("pok"); if (b) b.click(); else this.ok(); });
     document.querySelectorAll<HTMLElement>("#mc-empty [data-plane]").forEach(b => b.addEventListener("click", () => void this.createSketch({ std: b.dataset.plane as "XY" })));
     // The menu closes on a click elsewhere, Esc, scrolling or resizing.
     document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.("#mc-menu")) this.closeMenu(); }, true);
     window.addEventListener("resize", () => this.closeMenu());
-    $("#mc-cancel").addEventListener("click", () => void this.cancel());
+    $("#mc-cancel").addEventListener("click", () => { const b = inner("pcancel"); if (b) b.click(); else void this.cancel(); });
   }
 
   private key(e: KeyboardEvent) {
@@ -4581,16 +4591,15 @@ export class ModelController {
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
-    const head = (title: string, help: string) => `<div class="pm-head"><h3>${esc(title)}</h3></div><p class="pm-help muted">${esc(help)}</p>`;
+    const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
-      pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }))
+      pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }), true)
         + `<p class="pm-help"><b>${esc(t("Plane"))}:</b> <span data-a="cur" translate="no">${esc(this.refLabel(ed.plane))}</span></p>`
         + `<div class="pm-field"><span>${esc(t("X axis"))}</span><button class="pm-box${ed.pickX ? " focus" : ""}" data-a="xpick" title="${esc(t("Click, then click a straight edge: the sketch X axis runs along it"))}">${esc(ed.xAxis ? t("Edge") : t("Plane direction"))}</button></div>`
         + (ed.xAxis ? `<label class="chk pm-chk"><input type="checkbox" data-a="xflip"${ed.xAxis.flip ? " checked" : ""} />${esc(t("Reverse X axis"))}</label><button class="btn small" data-a="xclear">${esc(t("Use the plane direction"))}</button>` : "")
         : head(t("Sketch"), t("Pick a plane or a flat face for the sketch.")))
-        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`
-        + (ed ? `<div class="pm-actions"><button class="btn primary small" data-a="ok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="cancel">✕ ${esc(t("Cancel"))}</button></div>` : "");
+        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`;
       pm.querySelectorAll<HTMLElement>("[data-std]").forEach(b => b.addEventListener("click", () => this.planePicked({ std: b.dataset.std as "XY" })));
       pm.querySelector("[data-a=ok]")?.addEventListener("click", () => this.ok());
       pm.querySelector("[data-a=cancel]")?.addEventListener("click", () => void this.cancel());
@@ -5546,7 +5555,7 @@ export class ModelController {
     const mi = d.material ? MATERIALS.findIndex(x => x.name === d.material!.name && x.density === d.material!.density) : -2;
     const col = d.color ?? DEFAULT_COLOR;
     const hex = `#${col.map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
-    pm.innerHTML = `<div class="pm-head"><h3>${esc(t("Part properties"))}</h3></div>`
+    pm.innerHTML = okHead(t("Part properties"))
       + text("name", t("Name"), d.name) + text("title", t("Title"), d.props.title) + text("partNumber", t("Part number"), d.props.partNumber)
       + text("description", t("Description"), d.props.description) + text("revision", t("Revision"), d.props.revision) + text("author", t("Author"), d.props.author)
       + `<label class="pm-field"><span>${esc(t("Material"))}</span><select data-p="material"><option value="-2"${mi === -2 ? " selected" : ""}>${esc(t("Not specified"))}</option>${MATERIALS.map((x, i) => `<option value="${i}"${mi === i ? " selected" : ""}>${esc(t(x.name))} (${x.density})</option>`).join("")}<option value="-1"${mi === -1 ? " selected" : ""}>${esc(t("Custom…"))}</option></select></label>`
@@ -5556,8 +5565,7 @@ export class ModelController {
       + (d.massOverride ? `<label class="pm-field"><span>${esc(t("Mass"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrMass" value="${d.massOverride.mass ?? ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">kg</span></span></label>`
         + (["x", "y", "z"] as const).map((a, i) => `<label class="pm-field"><span>${esc(t("Centre of mass"))} ${a.toUpperCase()}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrCom" data-i="${i}" value="${d.massOverride!.com ? trimNum(d.massOverride!.com[i], 6) : ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">mm</span></span></label>`).join("")
         + `<p class="pm-help muted">${esc(t("For purchased parts: the entered values replace the calculated ones in Mass properties. Leave the centre of mass empty to keep it calculated."))}</p>` : "")
-      + `</fieldset>`
-      + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("OK"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+      + `</fieldset>`;
     pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => el.addEventListener("change", () => {
       const k = el.dataset.p!, v = el.value;
       if (k === "name") { if (v.trim()) d.name = v.trim(); }
@@ -5609,7 +5617,7 @@ export class ModelController {
     const rels = ed.validRelations();
     const nSel = ed.selection.size;
     const plane = "std" in sk.plane ? t(STD_NAMES[sk.plane.std]) : t("Face");
-    pm.innerHTML = `<div class="pm-head"><h3 translate="no">${esc(featureLabel(sk.name))}</h3></div>`
+    pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
       + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b></p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
@@ -5630,8 +5638,7 @@ export class ModelController {
       + this.assistant(ed)
       + this.checkBox(ed)
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
-      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
-      + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`;
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
     pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
@@ -5823,10 +5830,9 @@ export class ModelController {
       : group(t("Parameters"), centre(p.c) + `<label class="pm-field"><span>${esc(t("Scale factor"))}</span><input type="text" inputmode="decimal" class="pm-n" data-p="k" data-q="factor" value="${trimNum(p.k, 6)}" /></label>`) + opts(p.copy, p.keep);
     const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities" } as const;
     const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities." : "The green preview shows where the entities go.";
-    pm.innerHTML = `<div class="pm-head"><h3>${esc(t(titles[p.kind]))}</h3></div>`
+    pm.innerHTML = okHead(t(titles[p.kind]), { okKey: "pok", cancelKey: "pcancel" })
       + `<p class="pm-help muted">${esc(t(help))}</p>`
-      + body
-      + `<div class="pm-actions"><button class="btn primary small" data-a="pok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="pcancel">✕ ${esc(t("Cancel"))}</button></div>`;
+      + body;
     pm.querySelectorAll<HTMLInputElement>("[data-p]").forEach(inp => inp.addEventListener("change", () => {
       const k = inp.dataset.p!, q = inp.dataset.q;
       const pp = ed.pattern as unknown as Record<string, unknown> & { c?: [number, number] };
