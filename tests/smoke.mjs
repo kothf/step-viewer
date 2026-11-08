@@ -5509,13 +5509,14 @@ try {
       const plot = !!document.querySelector("#motion .mo-trace-plot svg polyline"), row = !!document.querySelector(`#motion .mo-name[data-trace="${tr0.id}"]`);
       const psel = document.querySelector('#motion select[data-tr="plot"]'); if (psel) { psel.value = "speed"; psel.dispatchEvent(new Event("change")); }
       const speedPlot = m.study.traces.at(-1).plot;
-      // Results → Plot: acceleration and the component's angle (the pin only slides: no turn).
+      // Results → Plot: acceleration and the component's angle (the pose key turns the pin 90° about Z by the end).
       const plotAs = q => { const el = document.querySelector('#motion select[data-tr="plot"]'); if (el) { el.value = q; el.dispatchEvent(new Event("change")); } return { plot: m.study.traces.at(-1).plot, svg: !!document.querySelector("#motion .mo-trace-plot svg polyline"), read: document.querySelector("#motion .mo-tread")?.textContent ?? "" }; };
       const accelPlot = plotAs("accel"), anglePlot = plotAs("angle"), angles = m.traceAngle(tr0.id);
-      const angleOk = angles.length === path.length && angles.every(v => Math.abs(v) < 1e-6);
+      const angleOk = angles.length === path.length && Math.abs(angles[0]) < 1e-9 && angles.every(Number.isFinite);
+      const angleEnd = angles.at(-1);
       const lines = window.__sv.viewer.scene.children.some(ch => ch.children?.some(x => x.userData?.trace === tr0.id));
       const len = path.reduce((s2, q, k) => k ? s2 + Math.hypot(q[0] - path[k - 1][0], q[1] - path[k - 1][1], q[2] - path[k - 1][2]) : 0, 0);
-      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, lines };
+      const trace = { pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5630,7 +5631,7 @@ try {
       && tc.start.every(v => Math.abs(v) < 0.01) && Math.abs(tc.end[0]) < 0.01 && Math.abs(tc.end[1]) < 0.01 && Math.abs(tc.end[2] - 20) < 0.01
       && Math.abs(tc.len - 20) < 0.05 && tc.plot && tc.row && tc.speedPlot === "speed" && tc.lines && tc.gone
       && tc.accelPlot.plot === "accel" && tc.accelPlot.svg && /mm\/s²/.test(tc.accelPlot.read)
-      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk,
+      && tc.anglePlot.plot === "angle" && tc.anglePlot.svg && tc.anglePlot.read.includes("°") && tc.angleOk && Math.abs(Math.abs(tc.angleEnd) - 90) < 0.1,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle) and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
