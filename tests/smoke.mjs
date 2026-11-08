@@ -4742,6 +4742,105 @@ try {
     await ctx.close();
   }
 
+  // --- motion study (FR-FT-122): mate keys, motors, explode and camera animation, GIF and WebM ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    await mp.evaluate(() => window.__sv.model.store.change("Pin", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 0, y: 0 }, { id: "c", t: "circle", c: "o", r: 3 }] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await mp.waitForTimeout(150);
+    await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const pin = [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    for (let k = 0; k < 2; k++) { await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "pin.mcadprt")), pin); await shown(k + 1); }
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 30, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    // Pin 2 on pin 1's axis, 10 mm above its top face; an exploded view moving pin 2 along +X.
+    await mp.evaluate(() => {
+      const a = window.__sv.asm, k = a.doc.components[0].part, g = [...a.geo.get(k).entries()], c = a.doc.components;
+      const side = g.find(([, x]) => x.k === "axis")[0], top = g.find(([, x]) => x.k === "plane" && x.n[2] > 0.99)[0], bottom = g.find(([, x]) => x.k === "plane" && x.n[2] < -0.99)[0];
+      a.change(d => {
+        d.mates = [{ id: "mc", name: "Concentric1", type: "concentric", a: { comp: c[0].id, face: side }, b: { comp: c[1].id, face: side } },
+          { id: "md", name: "Distance1", type: "distance", a: { comp: c[0].id, face: top }, b: { comp: c[1].id, face: bottom }, align: "anti", value: 10 }];
+        d.explodes = [{ id: "x1", name: "Exploded1", steps: [{ comps: [c[1].id], dir: [1, 0, 0], dist: 50 }] }];
+      });
+    });
+    await shown(2);
+    await mp.click('#asm-tools [data-ac="motion"]');
+    await mp.waitForFunction(() => !document.querySelector("#motion").hidden);
+    const pos = () => mp.evaluate(() => { const g = window.__sv.viewer.parts[1].group, q = g.quaternion; return { x: Math.round(g.position.x * 1000) / 1000, z: Math.round(g.position.z * 1000) / 1000, rz: Math.round(2 * Math.atan2(q.z, q.w) * 1000) / 1000 }; });
+    // Mate keys: Distance1 from 10 to 40 mm over 5 s.
+    const keys = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.addTrack("mate:md");
+      const tr = m.study.tracks[0];
+      m.sel = { track: tr.id, key: 1 };
+      m.render();
+      const inp = document.querySelector('#motion [data-p="v"]');
+      inp.value = "40"; inp.dispatchEvent(new Event("change"));
+      return { n: window.__sv.asm.doc.motions?.length, keys: m.study.tracks[0].keys.map(k => [k.t, k.v]), rows: document.querySelectorAll("#motion .mo-key").length };
+    });
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const mid = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(5));
+    const end = await pos();
+    // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
+    await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
+    const turn = await pos();
+    // Animation wizard: explode over the study, and rotate the model (camera keys).
+    const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+    await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
+    const exploded = await pos();
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const cam1 = await mp.evaluate(() => { const v = window.__sv.viewer; return { p: v.camera.position.toArray(), t: v.controls.target.toArray() }; });
+    // Recording: a GIF of a 1 s study and a WebM video.
+    const rec = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.edit(s => { s.duration = 1; });
+      const gif = await m.recordGif(160), head = new Uint8Array(await gif.slice(0, 6).arrayBuffer());
+      const webm = await m.recordWebm();
+      const wh = webm ? new Uint8Array(await webm.slice(0, 4).arrayBuffer()) : [];
+      return { gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
+    });
+    // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
+    const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
+    await shown(2);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(150);
+    const ru = await mp.evaluate(() => {
+      const bad = [], ok = /^(fps|mm|GIF|WebM)$/;
+      const test = s => { for (const w of s.split(/[^A-Za-z0-9]+/)) if (/^[A-Za-z]{2,}$/.test(w) && !ok.test(w)) bad.push(s.trim().slice(0, 40)); };
+      const root = document.querySelector("#motion");
+      const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = tw.nextNode(); n; n = tw.nextNode()) if (!n.parentElement.closest('[translate="no"]')) test(n.data);
+      for (const e of root.querySelectorAll("[title], [aria-label]")) for (const at of ["title", "aria-label"]) { const v = e.getAttribute(at); if (v) test(v); }
+      return { bad, title: root.querySelector(".mo-title").textContent };
+    });
+    await mp.click("#lang-btn");
+    await mp.click('#motion [data-mo="close"]');
+    const back = await pos();
+    check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
+      && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && Math.abs(exploded.x - 50) < 0.01 && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
+      && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
+      `motion study: mate keys, rotary motor, explode and orbit wizard, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, rec, undo, ru, back })})`);
+    await ctx.close();
+  }
+
   // --- 1.65: advanced mates, display states, transparency, open part (FR-MATE-004, FR-ASM-025/007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

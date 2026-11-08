@@ -38,6 +38,7 @@ import { ModelController } from "./model/controller";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
+import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -115,6 +116,8 @@ const asm = new AsmController({
   editPart: (doc, file, label, back) => modeller.editIn(doc, file, { label, back }),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
+// Motion studies (FR-FT-122): the timeline pane under the view, driving the assembly's mates.
+const motion = new MotionManager(asm, viewer);
 $("#app-version").textContent = `v${__APP_VERSION__}`;
 // Offline start (FR-STO-030): the service worker keeps this version's app files. Not in dev, and not
 // under test automation unless the page asks for it (?sw), so tests see the network as it is.
@@ -2346,4 +2349,4 @@ refreshMeasurements();
 // Orthographic by default (true dimensions on screen); the last choice is remembered.
 setProjection(storage.get("sv:proj") === "perspective" ? "perspective" : "orthographic");
 
-if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has("debug")) Object.assign(window, { __sv: { surfAna, modeller, asm, motion, drawing, drw: drawing.debug(), vault: vaultPanel, model: modeller.debug(), gerber, openPcb, toast, viewer, state, snapper, setMode, section, annotations, handlePick, setTool, showBody, setCircleMode, setUnits, setDecimals, setCsys, csysFrom, csys, quadrants, virtualCorners, originAxes, hl, kernel, exportStep, renderSections, timings: () => Object.assign(timings, kernel.timing) } });
