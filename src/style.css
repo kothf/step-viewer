@@ -822,6 +822,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .ft-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .ft-row.dragging { opacity: .5; }
+.ft-ext { font-size: 11px; font-weight: 700; padding: 0 2px; color: var(--muted, #6b7280); font-family: ui-monospace, monospace; }
 .ft-rel { font-size: 11px; font-weight: 700; padding: 0 2px; }
 .ft-row.ft-parent .ft-rel { color: var(--accent-text); }
 .ft-row.ft-child .ft-rel { color: #7c3aed; }

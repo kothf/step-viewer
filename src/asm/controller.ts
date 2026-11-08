@@ -14,6 +14,7 @@ import { activateState, addState, deleteState } from "./states";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
+import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
@@ -40,7 +41,7 @@ export interface AsmHost {
   /** Parts open in other document tabs, for Insert component. */
   openParts?(): { doc: PartDoc; fileName: string }[];
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
-  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void): void;
+  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
   appVersion: string;
@@ -96,6 +97,8 @@ export class AsmController {
   /** The top-level transforms the shown meshes were built with (sub-assembly children follow theirs). */
   private builtTf: Record<string, Tf> = {};
   private faceNames: string[][] = [];
+  /** Rebuilds in a row that moved in-context references (stops a part chasing its own faces). */
+  private ctxPasses = 0;
   /** The last mate solve: degrees of freedom and failing mates. */
   solved: SolveResult | null = null;
   mating: MateDraft | null = null;
@@ -265,6 +268,7 @@ export class AsmController {
     const next = JSON.parse(before) as AsmDoc;
     fn(next);
     this.applySolve(next);
+    this.syncContext(next);
     if (this.interfere?.pairs) { this.interfere.pairs = null; this.clearOverlay(); }
     if (JSON.stringify(next) === before) { this.renderTree(); return; }
     this.undoStack.push(before);
@@ -331,6 +335,10 @@ export class AsmController {
         this.solved = r;
         if (r.ok && r.moved) { applySolved(this.doc, r.tfs); this.renderTree(); this.rebuild(); return; }
       }
+      // In-context parts (FR-ASM-030) follow the faces they reference, now that the faces are known.
+      if (this.doc && this.syncContext(this.doc)) {
+        if (++this.ctxPasses <= 3) { this.renderTree(); this.rebuild(); return; }
+      } else this.ctxPasses = 0;
       // Patterns whose direction was learnt only now: build again with their instances.
       const before = this.expanded?.bad.length ?? 0;
       if (this.doc?.patterns?.length && before && this.expand(this.doc).bad.length < before) { this.rebuild(); return; }
@@ -1749,7 +1757,7 @@ export class AsmController {
   }
 
   /** Open part (FR-ASM-007): the part goes to the modeller; Return to assembly brings the edit back as one undo step. */
-  editPart(id: string) {
+  editPart(id: string, inContext = false) {
     const c = this.comp(id), doc = this.doc, entry = c && doc?.parts[c.part];
     if (!c || !doc || !entry || !this.host.editPart) return;
     if (entry.asm) { toast(t("Open the sub-assembly's own file to edit it."), true); return; }
@@ -1762,7 +1770,64 @@ export class AsmController {
       this.selected = parked.sel;
       if (JSON.stringify(pd) !== JSON.stringify(parked.doc.parts[parked.key]?.doc)) this.change(d => { if (d.parts[parked.key]) d.parts[parked.key].doc = pd; });
       else this.renderAll();
+    }, inContext ? this.contextOf(c.id) : undefined);
+  }
+
+  /**
+   * Edit in context (FR-ASM-030): the other shown components as the modeller sees them, in world mm, with
+   * their face names and the planes of their flat faces. Components that use the same part are left out
+   * (a part cannot reference itself).
+   */
+  private contextOf(id: string): PartContext | undefined {
+    const c = this.comp(id);
+    if (!c) return undefined;
+    const comps: CtxComp[] = [];
+    const v = new THREE.Vector3();
+    this.shownIds.forEach((sid, i) => {
+      const top = this.comp(topOf(sid)), part = this.host.viewer.parts[i], names = this.faceNames[i];
+      const own = this.anyComp(sid);
+      if (!top || top.id === c.id || !part || !names || !part.mesh.visible || own?.part === c.part) return;
+      part.mesh.updateMatrixWorld(true);
+      const m = part.mesh.matrixWorld, src = part.data.positions, pos = new Float32Array(src.length);
+      for (let k = 0; k < src.length; k += 3) { v.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(m); pos[k] = v.x; pos[k + 1] = v.y; pos[k + 2] = v.z; }
+      const nm = new THREE.Matrix3().getNormalMatrix(m);
+      const faces = part.data.faces.map((f, j) => {
+        const out: CtxComp["faces"][number] = { triStart: f.triStart, triCount: f.triCount, name: names[j] ?? "" };
+        if (f.type === "plane" && f.normal) {
+          const p = new THREE.Vector3(...f.centroid).applyMatrix4(m), n = new THREE.Vector3(...f.normal).applyMatrix3(nm).normalize();
+          out.plane = { p: [p.x, p.y, p.z], n: [n.x, n.y, n.z] };
+        }
+        return out;
+      });
+      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces });
     });
+    return { host: c.id, tf: c.tf.slice(), comps };
+  }
+
+  /**
+   * Moves the unlocked external references of in-context parts (FR-ASM-030) to where their faces are now:
+   * the face's plane from the learnt part geometry, placed by its component, seen from the host component.
+   * Returns whether a part changed (the document is changed in place).
+   */
+  private syncContext(doc: AsmDoc): boolean {
+    let any = false;
+    for (const entry of Object.values(doc.parts)) {
+      if (!entry.doc || entry.asm || !ctxRefs(entry.doc).length) continue;
+      const r = syncCtx(entry.doc, ref => {
+        const host = doc.components.find(x => x.id === ref.host), c = this.anyCompIn(doc, ref.comp);
+        const g = c && this.geo.get(c.part)?.get(ref.face);
+        if (!host || !c || !g || g.k !== "plane") return null;
+        const inv = invert(host.tf), w = placeGeo(g, c.tf) as { p: V3; n: V3 };
+        return { p: applyPoint(inv, w.p), n: unit(applyDir(inv, w.n)) };
+      });
+      if (r.changed) any = true;
+    }
+    return any;
+  }
+
+  /** A component of `doc` by id, pattern and sub-assembly instances included. */
+  private anyCompIn(doc: AsmDoc, id: string): Component | undefined {
+    return (doc === this.doc ? this.anyComp(id) : doc.components.find(x => x.id === id) ?? this.anyComp(id)) ?? undefined;
   }
 
   setColor(id: string, color: V3 | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (color) c.color = color; else delete c.color; } }); }
@@ -2190,7 +2255,7 @@ export class AsmController {
 
   private menu(c: Component, x: number, y: number) {
     this.popup([
-      ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
+      ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void], [t("Edit in context"), () => this.editPart(c.id, true)] as [string, () => void]]),
       ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Mate references…"), () => this.startMateRef(c.id)] as [string, () => void]]),
       ...(this.partConfigs(c.id).names.length > 1 ? [[t("Configuration…"), () => this.popup(this.partConfigs(c.id).names.map(n => [`${n === this.partConfigs(c.id).current ? "● " : ""}${n}`, () => this.setComponentConfig(c.id, n)] as [string, () => void]), x, y)] as [string, () => void]] : []),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],

@@ -20,8 +20,10 @@ import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snaps
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId } from "./types";
 import { parseXyz } from "./curves";
+import { ctxRefs, type PartContext } from "./context";
+import { applyDir as tfDir, applyPoint as tfPoint, invert as tfInvert } from "../asm/math";
 import { segPoints, solve3d } from "../sketch/sketch3d";
-import type { SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
+import type { CtxRef, SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
@@ -188,7 +190,7 @@ function statusText(s: FeatureStatus) {
 }
 
 /** A part kept in a document tab while another document is shown. */
-export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"] }
+export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null }
 
 export class ModelController {
   store: DocStore | null = null;
@@ -236,11 +238,59 @@ export class ModelController {
   returnTo: { label: string; back(doc: PartDoc): void } | null = null;
 
   /** Opens a component's part for editing; Return to assembly hands the edited part back. */
-  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }) {
+  editIn(doc: PartDoc, fileName: string, ret: { label: string; back(doc: PartDoc): void }, ctx?: PartContext) {
     this.load(doc, fileName, null);
     this.store!.markSaved();
     this.returnTo = ret;
+    this.setContext(ctx ?? null);
     this.renderReturnBar();
+  }
+
+  /**
+   * Edit in context (FR-ASM-030): the assembly around the part, drawn see-through in the part's own
+   * coordinates. Its flat faces take sketches (external references, `{ ctx }` planes).
+   */
+  private context: PartContext | null = null;
+  private ctxView = new THREE.Group();
+
+  private setContext(ctx: PartContext | null) {
+    this.context = ctx;
+    for (const o of this.ctxView.children) { const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    this.ctxView.clear();
+    if (!ctx) { this.host.viewer.invalidate(); return; }
+    if (!this.ctxView.parent) this.host.viewer.scene.add(this.ctxView);
+    const inv = tfInvert(ctx.tf), e = inv;
+    const mat = new THREE.Matrix4().set(e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11], 0, 0, 0, 1);
+    for (const c of ctx.comps) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(c.positions, 3));
+      g.setIndex(new THREE.BufferAttribute(c.index, 1));
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0x8c99a6, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide }));
+      m.matrixAutoUpdate = false;
+      m.matrix.copy(mat);
+      m.userData.ctx = c;
+      m.renderOrder = 2;
+      this.ctxView.add(m);
+    }
+    this.ctxView.updateMatrixWorld(true);
+    this.host.viewer.invalidate();
+  }
+
+  /** A flat face of a context component under the pointer, as an external reference, and how far it is. */
+  private ctxAt(x: number, y: number): { ref: PlaneRef | null; dist: number } | null {
+    if (!this.context || !this.ctxView.children.length) return null;
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const hit = rc.intersectObjects(this.ctxView.children, false)[0];
+    if (!hit || hit.faceIndex == null) return null;
+    const c = hit.object.userData.ctx as PartContext["comps"][number];
+    const face = c.faces.find(f => hit.faceIndex! >= f.triStart && hit.faceIndex! < f.triStart + f.triCount);
+    if (!face?.plane || !face.name) return { ref: null, dist: hit.distance };
+    const inv = tfInvert(this.context.tf);
+    const ref = { ctx: { comp: c.comp, face: face.name, host: this.context.host, label: c.label, p: tfPoint(inv, face.plane.p), n: tfDir(inv, face.plane.n) } };
+    return { ref, dist: hit.distance };
   }
 
   /** Back to the assembly with the part as it is now. */
@@ -254,6 +304,7 @@ export class ModelController {
     this.store.markSaved();
     journalDrop(this.doc.id);
     this.returnTo = null;
+    this.setContext(null);
     r.back(doc);
   }
 
@@ -267,7 +318,7 @@ export class ModelController {
       bar.setAttribute("role", "status");
       document.getElementById("tab-features")!.prepend(bar);
     }
-    bar.innerHTML = `<span>${esc(t("Editing a part of {asm}", { asm: this.returnTo.label }))}</span><button class="btn small primary" data-a="ret">${esc(t("Return to assembly"))}</button>`;
+    bar.innerHTML = `<span>${esc(this.context ? t("Editing a part in the context of {asm}", { asm: this.returnTo.label }) : t("Editing a part of {asm}", { asm: this.returnTo.label }))}</span><button class="btn small primary" data-a="ret">${esc(t("Return to assembly"))}</button>`;
     bar.querySelector("button")!.addEventListener("click", () => this.returnToAssembly());
   }
 
@@ -348,7 +399,7 @@ export class ModelController {
     if (!this.store) return null;
     if (this.mode.kind === "sketch") this.ok();
     else if (this.mode.kind !== "none") this.exitMode(false);
-    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo };
+    const tab: PartTab = { store: this.store, fileName: this.fileName, handle: this.handle, vault: this.vault, returnTo: this.returnTo, context: this.context };
     this.close();
     return tab;
   }
@@ -359,6 +410,7 @@ export class ModelController {
     this.vault = tab.vault;
     this.renderVaultBar();
     this.returnTo = tab.returnTo;
+    this.setContext(tab.context);
     this.renderReturnBar();
     this.host.setDoc(this.docLabel());
   }
@@ -373,6 +425,8 @@ export class ModelController {
     this.renderVaultBar();
     this.returnTo = null;
     this.renderReturnBar();
+    this.setContext(null);
+    this.setContext(null);
     this.fileName = fileName;
     this.handle = handle;
     this.selected = null;
@@ -587,6 +641,8 @@ export class ModelController {
   startSketch() {
     if (!this.store) return;
     this.exitMode(false);
+    const cp = this.ctxPick?.plane;
+    if (cp && "ctx" in cp) { void this.createSketch(cp); return; }
     const fid = this.pickedFace();
     const pr = fid != null ? this.planeOfFace(fid) : null;
     if (pr) { void this.createSketch(pr); return; }
@@ -1437,6 +1493,46 @@ export class ModelController {
   }
 
   /** Snapshots of the open part (FR-STO-005): restore one, or open it as a copy. */
+  /**
+   * External references (FR-ASM-030): every in-context plane of the part, with the component face it
+   * follows and its state; each can be locked, and Lock all freezes them all (`PartDoc.ctxLocked`).
+   */
+  showExtRefs() {
+    if (!this.store) return;
+    let d = document.getElementById("mc-xref") as HTMLDialogElement | null;
+    if (!d) {
+      d = document.createElement("dialog");
+      d.id = "mc-xref";
+      d.className = "modal v-dlg";
+      d.setAttribute("aria-labelledby", "mc-xref-title");
+      document.body.appendChild(d);
+      trapFocus(d, () => d!.open);
+    }
+    const dlg = d;
+    const draw = () => {
+      const refs = ctxRefs(this.doc), all = !!this.doc.ctxLocked;
+      const found = (r: CtxRef) => !!this.context?.comps.some(c => c.comp === r.comp && c.faces.some(f => f.name === r.face));
+      const state = (r: CtxRef) => (all || r.locked ? t("Locked") : !this.context ? t("Out of context") : found(r) ? t("In context") : t("Missing"));
+      dlg.innerHTML = `<h3 id="mc-xref-title">${esc(t("External References"))}</h3>`
+        + `<p class="muted">${esc(t("Planes this part takes from faces of other components, made while editing it in the context of an assembly. Unlocked ones follow the faces when the assembly changes."))}</p>`
+        + (refs.length ? `<div class="v-scroll"><table class="v-table"><thead><tr><th>${esc(t("Feature"))}</th><th>${esc(t("Referenced face"))}</th><th>${esc(t("State"))}</th><th>${esc(t("Lock"))}</th></tr></thead><tbody>${refs.map(({ f, ref }, i) => `<tr><td translate="no">${esc(featureLabel(f.name))}</td><td translate="no">${esc(ref.label ?? ref.comp)}</td><td>${esc(state(ref))}</td><td><input type="checkbox" data-xlock="${i}"${ref.locked || all ? " checked" : ""}${all ? " disabled" : ""} aria-label="${esc(t("Lock"))} ${esc(featureLabel(f.name))}" /></td></tr>`).join("")}</tbody></table></div>`
+          : `<p>${esc(t("This part has no external references. Edit it in context from an assembly (right-click a component) and sketch on another component's face to make one."))}</p>`)
+        + `<div class="row end">${refs.length ? `<button class="btn" data-a="lockall">${esc(all ? t("Unlock all") : t("Lock all"))}</button>` : ""}<button class="btn" data-a="close">${esc(t("Close"))}</button></div>`;
+      dlg.querySelector("[data-a=close]")!.addEventListener("click", () => dlg.close());
+      dlg.querySelector("[data-a=lockall]")?.addEventListener("click", () => {
+        this.store!.change(all ? "Unlock external references" : "Lock external references", doc => { if (all) delete doc.ctxLocked; else doc.ctxLocked = true; });
+        draw();
+      });
+      dlg.querySelectorAll<HTMLInputElement>("[data-xlock]").forEach(b => b.addEventListener("change", () => {
+        const i = +b.dataset.xlock!, on = b.checked;
+        this.store!.change(on ? "Lock external reference" : "Unlock external reference", doc => { const r = ctxRefs(doc)[i]?.ref; if (r) { if (on) r.locked = true; else delete r.locked; } });
+        draw();
+      }));
+    };
+    draw();
+    if (!dlg.open) dlg.showModal();
+  }
+
   async showSnapshots() {
     if (!this.store) return;
     if (this.vault) { toast(t("This part is in a vault: its versions are in the Vault tab's History.")); return; }
@@ -1717,6 +1813,12 @@ export class ModelController {
     const f = this.host.faceAt(e.clientX, e.clientY);
     const fd = f ? new THREE.Vector3(...f.point).distanceTo(rc.ray.origin) : Infinity;
     // A face beats the standard planes (drawn over the whole model); reference planes count when nearer.
+    // A face of another component (edit in context) counts when nothing of the part is nearer.
+    const cx = this.ctxAt(e.clientX, e.clientY);
+    if (cx && cx.dist < fd && (!ph || "std" in (ph.object.userData.ref as PlaneRef) || cx.dist <= ph.distance)) {
+      if (!cx.ref) toast(t("A sketch needs a flat face or a plane."), true);
+      return cx.ref;
+    }
     if (f && (!ph || "std" in (ph.object.userData.ref as PlaneRef) || fd <= ph.distance + 1e-6)) return this.planeOfFace(f.faceId);
     return ph ? (ph.object.userData.ref as PlaneRef) : null;
   }
@@ -1799,6 +1901,7 @@ export class ModelController {
     if (!r) return t("None");
     if ("std" in r) return t(STD_NAMES[r.std]);
     if ("plane" in r) { const f = this.store?.feature(r.plane); return f ? featureLabel(f.name) : t("Missing"); }
+    if ("ctx" in r) return t("Face of {name} (external)", { name: r.ctx.label ?? r.ctx.comp });
     const owner = this.store?.feature(r.face.name.split(":")[0]);
     return owner ? t("Face of {name}", { name: featureLabel(owner.name) }) : t("Face");
   }
@@ -3384,6 +3487,7 @@ export class ModelController {
       axis: [t("Axis"), t("Reference axis: a straight edge, a round face's axis, or two planes")],
       point: [t("Point"), t("Reference point: a vertex, an arc centre, a face centre or an edge midpoint")],
       csys: [t("Coordinate system"), t("Coordinate system: an origin and X and Z directions, for measurements and export")],
+      extrefs: [t("External References"), t("External references: the faces of other components this part was built on in context; lock or unlock them")],
     };
     if (base[id]) return base[id];
     const hit = [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS(), ...WELD_TOOLS()].find(x => x[0] === id);
@@ -3719,7 +3823,11 @@ export class ModelController {
       rc.setFromCamera(ndc, v.camera);
       const ph = body ? undefined : rc.intersectObjects(this.planeMeshes, false)[0];
       const ref = ph?.object.userData.ref as PlaneRef | undefined;
-      if (ref && ("std" in ref || "plane" in ref)) {
+      const cx = body ? null : this.ctxAt(at.x, at.y);
+      if (cx?.ref && (!ph || cx.dist <= ph.distance)) {
+        this.ctxPick = { plane: cx.ref };
+        items.push(["sketch", t("Sketch")]);
+      } else if (ref && ("std" in ref || "plane" in ref)) {
         this.selected = "std" in ref ? `std:${ref.std}` : ref.plane;
         this.ctxPick = { plane: ref };
         this.renderTree();
@@ -3853,6 +3961,7 @@ export class ModelController {
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
+      case "extrefs": this.showExtRefs(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -3947,7 +4056,11 @@ export class ModelController {
       const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
-      return row(f.id, icon, featureLabel(f.name), relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
+      // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
+      const pl = (f as { plane?: PlaneRef }).plane, cr = pl && "ctx" in pl ? pl.ctx : null;
+      const xm = cr ? (d.ctxLocked || cr.locked ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")]) : null;
+      const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
+      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
     };
     // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
     const frozen = this.frozenCount();
@@ -5978,7 +6091,7 @@ const CM_FLY: Record<string, string[]> = {
   sweep: ["sweep", "loft"],
   sweepcut: ["sweepcut", "loftcut"],
   pattern: ["lpattern", "cpattern", "mirror", "spattern", "tpattern"],
-  plane: ["plane", "axis", "point", "csys"],
+  plane: ["plane", "axis", "point", "csys", "extrefs"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
   bodies: ["import", "heal", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
   direct: ["moveface", "delface", "recognize"],

@@ -18,6 +18,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
 - **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
 
+## [1.135.0] - 2026-11-08
+
+### Added
+
+- **Edit in context (FR-ASM-030)**: right-click a component and choose Edit in context. Its part opens with the rest of the assembly shown see-through around it.
+  - A sketch on a flat face of another component is an external reference, marked -> in the Features tree.
+  - Back in the assembly, the sketch follows that face whenever the components move or change.
+  - External References (Features → Plane ▾) lists each one with its state: in context, out of context (->?) or locked (->*). You can lock them one by one or all at once.
+
 ## [1.134.0] - 2026-11-08
 
 ### Added
@@ -1187,7 +1196,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.136.0...HEAD
-[1.136.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.136.0
+[1.136.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.136.0
+[1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0

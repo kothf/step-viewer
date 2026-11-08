@@ -128,7 +128,7 @@ const asm = new AsmController({
   opened: label => docs?.opened("asm", label),
   openParts: () => (docs?.tabs ?? []).filter(x => x.kind === "part" && x.state).map(x => { const st = x.state as PartTab; return { doc: st.store.doc, fileName: st.fileName || `${st.store.doc.name}.mcadprt` }; }),
   // Edit part in place: the part takes over the assembly's tab, and Return to assembly takes it back.
-  editPart: (doc, file, label, back) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) })) : modeller.editIn(doc, file, { label, back })),
+  editPart: (doc, file, label, back, ctx) => (docs ? docs.inPlaceSwitch(() => modeller.editIn(doc, file, { label, back: d => docs!.inPlaceSwitch(() => back(d)) }, ctx)) : modeller.editIn(doc, file, { label, back }, ctx)),
   openPart: () => modeller.openPart(),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
