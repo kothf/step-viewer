@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Copy by drag (FR-SK-044)**: Ctrl+drag of selected sketch entities makes copies. Relations and dimensions among the copied entities are copied too; relations to the rest of the sketch are not. A Ctrl+click without moving still deselects.
 - **Cursor position while sketching (FR-SK-047)**: the status bar shows the cursor's x, y in sketch coordinates and document units next to the sketch status.
 
+## [1.256.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Images** saves every frame of the study at its frame rate as numbered PNG images (up to 1920 px wide) in a ZIP, like SolidWorks' Save Animation as a series of images, for editing in a video program (FR-FT-122).
+
 ## [1.253.0] - 2026-11-08
 
 ### Added
@@ -1645,7 +1651,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.257.0...HEAD
-[1.257.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.257.0
+[1.257.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.257.0
+[1.256.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.256.0
 [1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
