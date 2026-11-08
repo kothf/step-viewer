@@ -264,3 +264,29 @@ test("three members meeting at a corner: one runs through, the others stop at it
 
 function centroid(m: Modeller, face: unknown) { return (m as unknown as { centroid(f: unknown): [number, number, number] }).centroid(face); }
 function centroidX(m: Modeller, face: unknown) { return centroid(m, face)[0]; }
+
+test("member groups: segments in group 2 take their own profile position, rotation and mirror (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // Two separate rails along X.
+  const sk: SketchFeature = { id: "s", type: "sketch", name: "Rails", plane: { std: "XY" }, rels: [], dims: [], ents: [
+    P("a0", 0, 0), P("a1", 500, 0), P("b0", 0, 200), P("b1", 500, 200),
+    { id: "r1", t: "line", a: "a0", b: "a1" }, { id: "r2", t: "line", a: "b0", b: "b1" },
+  ] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "rhs", size: "100x50x4", segs: ["r1", "r2"].map(ent => ({ sketch: "s", ent })), corner: "none" };
+  const A = profileArea(profileShape("rhs", "100x50x4")!);
+  const flat = run(m, doc([sk, mem]));
+  near(flat.volume, 2 * 500 * A, 1e-4);
+  assert.ok(Math.abs(m.props(flat.body!).com[2]) < 1e-6);
+  // Both on their bottom edge: the profiles sit on one side of the path.
+  const both = run(m, doc([sk, { ...mem, anchor: "b" }]));
+  const dz = m.props(both.body!).com[2];
+  assert.ok(Math.abs(dz) > 10, `com z ${dz}`);
+  // Only group 2 on its bottom edge: half the shift; rotated 90° the volume stays the same.
+  const g = run(m, doc([sk, { ...mem, groups: [{ ents: ["r2"], anchor: "b" }] }]));
+  near(m.props(g.body!).com[2], dz / 2, 1e-4);
+  const rot = run(m, doc([sk, { ...mem, anchor: "b", groups: [{ ents: ["r2"], anchor: "b", angle: { v: Math.PI / 2 } }] }]));
+  near(rot.volume, 2 * 500 * A, 1e-4);
+  const zr = m.props(rot.body!).com[2];
+  assert.ok(Math.abs(zr - dz) > 5 && Math.abs(zr) > 5, `rotated group com z ${zr} vs ${dz}`);
+});

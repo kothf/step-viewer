@@ -995,6 +995,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-span { position: absolute; top: 12px; height: 2px; background: var(--muted); opacity: 0.5; pointer-events: none; }
 .motion .mo-key { position: absolute; top: 6px; width: 13px; height: 13px; margin-left: -7px; padding: 0; transform-origin: center; background: var(--panel); border: 2px solid var(--accent); rotate: 45deg; border-radius: 2px; cursor: ew-resize; }
 .motion .mo-key.sel, .motion .mo-bar.sel { background: var(--accent); }
+.mo-box { position: fixed; z-index: 60; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); pointer-events: none; }
+.motion .mo-multi { font-weight: 600; }
 .motion .mo-key.i-snap { rotate: 0deg; border-radius: 0; }
 .motion .mo-key.i-easein, .motion .mo-key.i-easeout, .motion .mo-key.i-ease { border-radius: 50%; }
 .motion .mo-key.i-easein { border-left-width: 4px; }
@@ -1046,6 +1048,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .right .rp-tabs button { min-width: 30px; }
 .right .rp-tabs { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .cm-note { align-self: center; margin: 0 0 0 10px; font-size: 12px; white-space: nowrap; }
+.wseg-row { display: flex; align-items: center; gap: 6px; }
+.wseg-row .pm-chk { flex: 1; }
+.wseg-row select { width: auto; font-size: 12px; }
 
 /* ---------- document tabs (FR-DOC-003, FR-UI-120): one tab per open document, above the status bar ---------- */
 .doc-tabs { grid-area: tabs; display: flex; align-items: stretch; gap: 2px; min-width: 0; padding: 0 8px; height: 30px; background: var(--panel); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
