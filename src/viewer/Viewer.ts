@@ -91,6 +91,8 @@ export class Viewer {
     this.controls.screenSpacePanning = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     this.controls.addEventListener("change", () => this.invalidate());
+    // A drag or wheel zoom starts from a camera Previous view can return to.
+    this.controls.addEventListener("start", () => { const now = performance.now(); if (now - this.lastStart > 600) this.pushView(); this.lastStart = now; });
 
     const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, stencilBuffer: true });
     this.composer = new EffectComposer(this.renderer, rt);
@@ -256,7 +258,7 @@ export class Viewer {
     this.computeBounds();
     this.computeExplodeVectors();
     this.setMode(this.mode);
-    if (fit) this.fit(false);
+    if (fit) { this.fit(false); this.views = []; }
   }
 
   /** Half size of the box the view fits when nothing is shown (a new part: 50 mm). */
@@ -354,7 +356,92 @@ export class Viewer {
     this.animateTo(sphere.center, sphere.center.clone().addScaledVector(d.normalize(), dist), animate, sphere.radius * 2.2);
   }
 
-  private animateTo(target: THREE.Vector3, pos: THREE.Vector3, animate: boolean, orthoH: number) {
+  // ---------- view navigation (FRS 13.13: FR-UI-102/103) ----------
+
+  /** Height of the view at the target, in world units. */
+  viewHeight() {
+    if (this.camera === this.ortho) return (this.ortho.top - this.ortho.bottom) / this.ortho.zoom;
+    return this.camera.position.distanceTo(this.controls.target) * 2 * Math.tan(THREE.MathUtils.degToRad(this.persp.fov / 2));
+  }
+
+  /** Turns the view about the target: `h` about the world up axis, `v` about the screen's horizontal axis (degrees). */
+  rotateView(h: number, v: number, animate = true) {
+    const tgt = this.controls.target.clone();
+    const r = this.camera.position.clone().sub(tgt);
+    const up = THREE.Object3D.DEFAULT_UP;
+    r.applyAxisAngle(up, THREE.MathUtils.degToRad(-h));
+    if (v) {
+      // Over the top stops just short of the pole (the orbit keeps Z up).
+      const right = new THREE.Vector3().crossVectors(up, r).normalize();
+      const polar = r.angleTo(up), lim = 1e-3;
+      const a = THREE.MathUtils.clamp(THREE.MathUtils.degToRad(v), polar - Math.PI + lim, polar - lim);
+      if (right.lengthSq() > 0.5) r.applyAxisAngle(right, a);
+    }
+    this.animateTo(tgt, tgt.clone().add(r), animate, this.viewHeight());
+  }
+
+  /** Moves the view by fractions of its height (x right, y up). */
+  panView(fx: number, fy: number, animate = true) {
+    const h = this.viewHeight();
+    const cam = this.camera;
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const upv = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    const d = right.multiplyScalar(-fx * h).addScaledVector(upv, -fy * h);
+    this.animateTo(this.controls.target.clone().add(d), cam.position.clone().add(d), animate, h);
+  }
+
+  /** Zooms about the view centre: factor < 1 zooms in. */
+  zoomView(factor: number, animate = true) {
+    const tgt = this.controls.target.clone();
+    const r = this.camera.position.clone().sub(tgt);
+    const pos = this.camera === this.ortho ? this.camera.position.clone() : tgt.clone().addScaledVector(r, factor);
+    this.animateTo(tgt, pos, animate, this.viewHeight() * factor);
+  }
+
+  /** Frames a screen rectangle (canvas pixels): Zoom to area. */
+  zoomToRect(x0: number, y0: number, x1: number, y1: number) {
+    const w = Math.abs(x1 - x0), hh = Math.abs(y1 - y0);
+    if (w < 4 || hh < 4) return;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const cam = this.camera, tgt = this.controls.target.clone();
+    const ndc = new THREE.Vector2((cx / this.size.x) * 2 - 1, -(cy / this.size.y) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, cam);
+    const n = cam.getWorldDirection(new THREE.Vector3());
+    const hit = this.raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, tgt), new THREE.Vector3()) ?? tgt;
+    const f = Math.max(w / this.size.x, hh / this.size.y);
+    const r = cam.position.clone().sub(tgt);
+    const pos = cam === this.ortho ? hit.clone().add(r) : hit.clone().addScaledVector(r, f);
+    this.animateTo(hit, pos, true, this.viewHeight() * f);
+  }
+
+  private lastStart = -1e9;
+  /** Forgets earlier cameras (a new model). */
+  clearViews() { this.views = []; }
+  /** Earlier cameras for Previous view, newest last. */
+  private views: { t: THREE.Vector3; p: THREE.Vector3; h: number }[] = [];
+  /** Remembers the current camera (before a command or a drag moves it). */
+  pushView() {
+    const v = { t: this.controls.target.clone(), p: this.camera.position.clone(), h: this.viewHeight() };
+    const last = this.views.at(-1);
+    if (last && last.t.distanceTo(v.t) < 1e-9 && last.p.distanceTo(v.p) < 1e-9 && Math.abs(last.h - v.h) < 1e-9) return;
+    this.views.push(v);
+    if (this.views.length > 20) this.views.shift();
+  }
+  /** A camera move is still running. */
+  get animating() { return !!this.anim; }
+  get canGoBack() { return this.views.length > 0; }
+  /** Previous view: back to the camera before the last view change. */
+  previousView() {
+    const v = this.views.pop();
+    if (!v) return false;
+    this.animateTo(v.t, v.p, true, v.h, false);
+    return true;
+  }
+
+  private animateTo(target: THREE.Vector3, pos: THREE.Vector3, animate: boolean, orthoH: number, remember = true) {
+    if (remember) this.pushView();
+    // Reduced motion: camera changes apply in one frame.
+    if (animate && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) animate = false;
     const cam = this.camera;
     const t0 = this.controls.target.clone(), p0 = cam.position.clone();
     const h0 = cam === this.ortho ? (this.ortho.top - this.ortho.bottom) / this.ortho.zoom : orthoH;
@@ -380,7 +467,7 @@ export class Viewer {
     let start = -1;
     this.anim = t => {
       if (start < 0) start = t;
-      const k = Math.min(1, (t - start) / 450);
+      const k = Math.min(1, (t - start) / 300);
       apply(k);
       return k < 1;
     };
