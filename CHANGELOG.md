@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.214.0] - 2026-11-08
+## [1.218.0] - 2026-11-08
 
 ### Changed
 
 - **Assemblies build on all CPU cores (FR-ARC-016).** WebAssembly runs one thread per instance, so the geometry kernel used to build an assembly's parts one after another on a single core. Opening an assembly now also starts up to 3 helper kernel workers (2 on a 4- or 8-thread CPU; more made builds slower, since every kernel instance competes for the CPU while it starts) that build the distinct parts at the same time, biggest first, while the assembly's own worker takes its share. A helper sends the exact body back as BREP with its named faces, plus its analysed mesh, so measurements, mates, interference and STEP export work as before. Only parts the assembly does not hold yet go to the helpers; editing one part still rebuilds just that part. On a 4-core machine the 23-part Leuenberger valve stage builds its parts in 4.7 s instead of 10.3 s; on a 4-core/8-thread i7 the 34-part engine builds in about 18 s instead of 32 s (one part, the nameplate with its embossed text, takes 15 s of that by itself). Helpers stop after 30 s idle to give their memory back. `?workers=N` sets the number of helpers and `?workers=0` turns it off.
+
+## [1.215.0] - 2026-11-08
+
+### Added
+
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+- **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
 
 ## [1.211.0] - 2026-11-08
 
@@ -1517,8 +1524,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.214.0...HEAD
-[1.214.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.214.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.218.0...HEAD
+[1.218.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.218.0
+[1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
 [1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0
 [1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0

@@ -230,7 +230,24 @@ export class Modeller {
 
   /** The frame of a sketch plane. */
   frameOf(sk: SketchFeature, body: Named | null, frames: Record<string, Frame> = {}): Frame {
-    return this.planeFrame(sk.plane, body, frames);
+    const fr = this.planeFrame(sk.plane, body, frames);
+    if (!sk.xAxis) return fr;
+    // Sketch orientation (FR-SK-002 P2): X along a straight edge, projected onto the plane. An edge that is gone,
+    // not straight or square to the plane leaves the natural direction, with a warning.
+    try {
+      const oc = this.oc;
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, sk.xAxis.edge));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new Error("not straight");
+      let d = this.xyz(ad.Line().Direction());
+      d = add(d, mul(fr.n, -dot(d, fr.n)));
+      if (Math.hypot(...d) < 1e-6) throw new Error("square");
+      if (dot(d, fr.x) < -1e-9 || (Math.abs(dot(d, fr.x)) <= 1e-9 && dot(d, fr.y) < 0)) d = mul(d, -1);
+      if (sk.xAxis.flip) d = mul(d, -1);
+      return frameFrom(fr.o, d, fr.n);
+    } catch {
+      this.warning = "The sketch X axis edge is gone, not straight or square to the plane: the plane's own direction is used.";
+      return fr;
+    }
   }
 
   /** The frame of a plane reference: a standard plane, a flat face, or a reference plane evaluated before. */

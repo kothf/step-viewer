@@ -140,7 +140,7 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
     if (f.start === "vertex") vtx(f.startVertex);
   }
   if (f.type === "thread" && f.edge) faces.push(...f.edge.faces);
-  if (f.type === "sketch") plane(f.plane);
+  if (f.type === "sketch") { plane(f.plane); if (f.xAxis) faces.push(...f.xAxis.edge.faces); }
   if (f.type === "plane") { plane(f.base); if (f.axis) faces.push(...f.axis.faces); }
   if (f.type === "axis" || f.type === "point") { if (f.edge) faces.push(...f.edge.faces); if (f.face) faces.push(f.face.name); }
   if (f.type === "axis") for (const p of f.planes ?? []) plane(p);

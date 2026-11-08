@@ -1678,3 +1678,21 @@ test("FR-ARC-016: a body sent between kernel workers (BREP + face order) keeps e
   };
   body.faces.forEach((f, i) => facts(f).forEach((v, k) => close(facts(back.faces[i])[k] as number, v as number)));
 });
+
+test("sketch orientation: X axis along a straight edge (FR-SK-002)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = (xAxis?: SketchFeature["xAxis"]): SketchFeature => ({ ...circle("s2", 10, 0, 3, { face: { name: "f1:end" } }), ...(xAxis ? { xAxis } : {}) });
+  const F0 = run(m, doc([s1, ex, top()])).frames.s2;
+  // The edge on the +X side of the top face runs along Y: X turns onto the plane's own Y, the normal stays.
+  const edge = { faces: ["f1:side:s1l2", "f1:end"] as [string, string] };
+  const F1 = run(m, doc([s1, ex, top({ edge })])).frames.s2;
+  for (let k = 0; k < 3; k++) { close(F1.x[k], F0.y[k]); close(F1.n[k], F0.n[k]); close(F1.o[k], F0.o[k]); }
+  const F2 = run(m, doc([s1, ex, top({ edge, flip: true })])).frames.s2;
+  for (let k = 0; k < 3; k++) close(F2.x[k], -F0.y[k]);
+  // A vertical edge is square to the plane: the plane's direction stays, with a warning.
+  const r3 = run(m, doc([s1, ex, top({ edge: { faces: ["f1:side:s1l1", "f1:side:s1l2"] } })]));
+  for (let k = 0; k < 3; k++) close(r3.frames.s2.x[k], F0.x[k]);
+  assert.ok(r3.statuses.find(s => s.id === "s2")?.warning, "warned");
+});

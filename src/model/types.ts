@@ -51,7 +51,9 @@ export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"
   | "equal" | "tangent" | "concentric" | "midpoint" | "fix" | "onCurve" | "symmetric"
   /** A point where two curves cross: e = [point, curve, curve] (FR-SK-051). */
-  | "intersection";
+  | "intersection"
+  /** Equal curvature (G2) where a spline meets a line, arc or spline at a shared end; includes tangency (FR-SK-051). */
+  | "curvature";
 
 export interface SkRel {
   id: string; t: RelKind; e: string[]; /** tangent arc–arc: internal */ inner?: boolean;
@@ -104,6 +106,11 @@ export interface SketchFeature {
   /** Shown in the view: true hides it, false shows it even when a feature uses it; absent: shown until a feature uses it. */
   hidden?: boolean;
   plane: PlaneRef;
+  /**
+   * Sketch orientation (FR-SK-002 P2): the sketch X axis along a straight model edge (projected onto the plane,
+   * first pointing the way of the plane's own X, `flip` turns it round). Absent: the plane's natural direction.
+   */
+  xAxis?: { edge: EdgeRef; flip?: boolean };
   ents: SkEnt[];
   rels: SkRel[];
   dims: SkDim[];
