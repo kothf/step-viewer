@@ -67,6 +67,14 @@ let skSection: SectionPlane | null = null;
 const snapper = new Snapper(viewer);
 const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
+// A lost WebGL context blanks the 3D view (only the HTML labels stay). The browser usually gives it back within a
+// moment and the viewer redraws; if it does not, say so instead of leaving an empty view that looks like lost work.
+let ctxLostTimer = 0;
+viewer.onContext(lost => {
+  clearTimeout(ctxLostTimer);
+  if (lost) ctxLostTimer = window.setTimeout(() => { if (viewer.contextLost) toast(t("The graphics card reset and the 3D view could not be restored. Save your work, then reload the page (unsaved parts are offered for recovery)."), true); }, 3000);
+  else toast(t("The graphics card reset; the 3D view was restored."));
+});
 applyThemeToViewer();
 // Part modelling: command bar, Features tab, sketcher; its parts show through showPartModel.
 /** Document tabs at the bottom (FR-DOC-003); set up once the controllers exist. */
@@ -809,6 +817,8 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   ++loadToken;
   if (first) {
     resetForNewModel();
+    // A STEP file shown before (another tab) must not lend its header to the part's Properties.
+    state.meta = null;
     setPcbMode(false);
     kernel.clear();
     showKernelStatus();
