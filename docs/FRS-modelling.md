@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | Document | FRS-MCAD-MOD, Functional Requirements Specification for parametric modelling in MöbiusCAD |
-| Version | 0.1 (draft for review) |
+| Version | 0.2 (draft; 2026-11-08 adds section 13.13 and Appendix F from the UI/UX parity audit) |
 | Date | 2026-11-06 |
 | Owner | Andrey Dumchin |
 | Product baseline | MöbiusCAD 1.17.0 (viewer: STEP/IGES/BREP/SLDPRT/SLDASM/mesh, PCB view) |
@@ -1050,6 +1050,68 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 - **FR-I18N-003** (P1, M) Number input accepts both `.` and `,` as decimal separator in RU; display follows the language (`12,5 мм` in RU) while exports (STEP, DXF, CSV) stay in English/C locale.
 - **FR-I18N-004** (P5, M) Drawing standards are independent of UI language (an RU user can make an ISO drawing in English text and vice versa); title block field labels follow the sheet format's language.
 
+### 13.13 Everyday interaction parity (audit 2026-11-08)
+
+An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.87.0 and are not repeated here.
+
+**Mouse and view**
+
+- **FR-UI-100** (P1, M) **Rotation centre** (SW habit): a middle click without a drag on a vertex, edge or face sets the pivot for the following rotations: a vertex rotates about that point, an edge about the edge's line, a face about the picked point. A small marker shows the pivot; a middle click on empty space returns to rotating about the view centre. In the MöbiusCAD left-drag mapping the same pick is made with Alt+left click.
+- **FR-UI-101** (P1, M) Mouse details: double middle click = zoom to fit; Shift+middle drag zooms (up = in); Ctrl+middle drag pans; wheel zooms about the cursor. Preferences: reverse wheel direction, zoom to cursor on/off, rotation speed. The same mapping works in the sketcher, the assembly and drawings (drawings: pan and zoom only).
+- **FR-UI-102** (P1, M) Keyboard view navigation when focus is in the graphics area (or on the page with nothing focused): arrows rotate the view 15° (preference) about the screen axes, Shift+arrows 90°, Alt+←/→ roll 15°, Ctrl+arrows pan 10 % of the view; **Z** zooms out and **Shift+Z** zooms in by 20 % about the view centre. When the tree has focus the arrows keep moving in the tree and the rollback bar (FR-UI-060).
+- **FR-UI-103** (P1, M) **Zoom to selection** (heads-up bar, context menu) frames the selected entities; **Zoom to area** draws a box and frames it; **Previous view** (heads-up bar, Alt+Z; Ctrl+Shift+Z stays redo) steps back through at least the last 10 camera positions of the document. Camera moves from these commands, standard views and Normal to are animated in at most 300 ms, and instant when `prefers-reduced-motion` is set.
+- **FR-UI-104** (P1, M) **Orientation picker** (Space, completes FR-UI-031): a floating panel at the cursor with the seven standard views, Normal to, named views and a small selector cube whose faces, edges and corners can be clicked; Space again, Esc or a pick closes it. **Named views** (P2, S): "Save view" stores the current camera under a name in the document (view data, not on the undo stack, FR-UND-004).
+
+**Selection**
+
+- **FR-SEL-007** (P1, M) A left click without a drag on empty space clears the selection; Ctrl+click toggles an entity; Shift+click adds. With a command running, empty-space clicks do not clear its selection boxes (only Clear selections or Del does).
+- **FR-SEL-008** (P1, M) Box selection (FR-SEL-002) works in parts and assemblies, not only in sketches: left to right takes entities fully inside, right to left those crossed; the selection filter (FR-SEL-003) applies; Ctrl adds the boxed entities. The box starts from a left drag on empty space; a left drag on geometry keeps orbiting in the MöbiusCAD mapping. P2 (S): lasso selection.
+- **FR-SEL-009** (P1, S) **Selection breadcrumbs**: after a pick, a small bar at the top left of the graphics area shows the chain from the entity up (face → feature → sketch → body → part, and component → sub-assembly in assemblies); hovering a crumb highlights it, clicking selects it, right-click opens its menu. **Shift+D** moves the breadcrumbs and the confirmation corner (FR-UI-021) to the cursor (D stays the distance tool, Appendix A).
+- **FR-SEL-010** (P2, S) **Magnifying glass** (G): a round inset at the cursor shows the area magnified (wheel changes the factor) and picks made inside it select at that zoom; Esc or G closes it.
+- **FR-SEL-011** (P1, M) **Colour-coded selection boxes**: each selection box of a feature panel has its own colour (from tokens, 3:1 against model and background) and its picks are drawn in that colour in the view with a small callout naming the box ("Edges", "From", "Mate 1"), so the user sees which pick went where.
+- **FR-SEL-012** (P1, M) Selection rules around commands: valid pre-selected entities fill the first matching box when a command starts (FR-SEL-006); after OK or Cancel the model selection is empty; the hover cursor shows a glyph for the entity type under it (face, edge, vertex, plane, sketch entity) as well as the highlight.
+
+**Visibility**
+
+- **FR-UI-105** (P3, M) **Hide/show under the cursor** in multibody parts and assemblies: **Tab** hides the body or component under the cursor; **Shift+Tab** shows a hidden one under the cursor; holding **Ctrl+Shift+Tab** draws all hidden bodies/components see-through so one can be clicked to show it. The keys act only while the pointer is over the graphics area and no input has focus (focus moves with Tab elsewhere); the 3D sketch keeps Tab for its plane (FR-SK-080). Hide/show this way is undoable (FR-UND-004).
+
+**Feature panel and commands**
+
+- **FR-UI-106** (P1, M) **Keep visible pushpin** in the panel header: when pinned, OK applies the feature and opens the same command again with the same options and empty selection boxes (same as Ctrl+Enter, FR-UI-044, which this brings forward from P2 to P1).
+- **FR-UI-107** (P1, M) **Right-click while a command runs**: the context menu starts with OK, Cancel, Clear selections (of the focused box) and, over a picked item, Remove from selection; command-specific helpers follow (for fillet and chamfer: the edge helpers of 1.36.0). A right-drag still pans; the menu opens only on a release without movement.
+- **FR-UI-108** (P1, M) **Undo inside a command**: Ctrl+Z / Ctrl+Y while a panel is open undo and redo the panel's own changes (a pick, a value, an option) without leaving it; the document stack is not touched until OK.
+- **FR-UI-109** (P1, M) **Selection box flow** (completes FR-UI-041): when a panel opens, the first empty required box is focused; when a box has all it needs (e.g. one face for "From"), focus moves to the next required box by itself; a box keeps focus while it takes many items (edges for a fillet).
+- **FR-UI-110** (P1, M) **Value callouts** (SW habit) for every feature's main values (depth, angle, radius, distance, count, thickness), attached to the model next to the drag handle: clicking one opens its value box, changes go both ways with the panel, and the flip arrow in the view reverses the direction like the panel button.
+- **FR-UI-111** (P1, M) **Repeat last command**: Enter with no command running and focus in the graphics area repeats the last feature command (pre-selection rules apply); the status bar shows "Enter: repeat Fillet". In a sketch, Enter with the select tool active repeats the last sketch tool and **Ctrl+Enter** or the confirmation corner exits the sketch (FR-SK-003). (1.85.0 exits the sketch on a plain Enter; this changes it.)
+- **FR-UI-112** (P1, M) Tooltips on every command button show the label, the shortcut key and a one-line description; a disabled button says why (FR-UI-012).
+- **FR-UI-113** (P2, C) Right-click on empty graphics area lists the last 5 commands ("Recent commands") above the usual items.
+
+**Dimensions on the model and in sketches**
+
+- **FR-UI-114** (P1, M) **Modify box** (completes FR-UI-053 and FR-UI-028): the box shows the dimension's name as its title (editable, FR-SK-065), the value with units, ✓, ✕, **Rebuild** (applies and keeps the box open), **Reverse direction** for linear dimensions, an increment field with spin buttons, and the mouse wheel over the box steps the value by the increment (Shift ×10, Alt ×0.1) with a live rebuild/solve; typing `=` starts an expression with variable and dimension name completion (FR-PAR-002). Enter = ✓, Esc = ✕ keeping the old value.
+- **FR-UI-115** (P1, M) **Feature dimensions on the model** (completes FR-HIS-010): a single click on a feature in the tree, or on one of its faces with Instant3D on, shows its driving dimensions (its sketch's and the feature's own) on the model in blue; a double click on a shown dimension opens the Modify box; a change rebuilds as one undo step. Double-clicking a feature row shows its dimensions (SW habit) and Edit feature stays in the context bar, the menu and Enter on the row. (1.85.0 opens Edit feature on a double click and shows no feature dimensions on the model.)
+- **FR-SK-067** (P1, M) **Instant 2D**: in a sketch, a selected driving dimension shows a round handle at its moving end; dragging it changes the value with a ruler and snap ticks, as model handles do (FR-UI-027), and is one undo step.
+- **FR-SK-068** (P1, M) Dimension placement feedback: while placing, the preview follows the cursor and shows the type it will be (horizontal, vertical, aligned, the angle quadrant, radius/diameter); a right-click locks the current orientation so the text can be moved freely; Esc cancels placement only. Clicking a placed dimension's arrow dots flips its arrows inside/outside.
+
+**Sketch interaction**
+
+- **FR-SK-043** (P1, M) **Drag to merge**: dragging an end point onto another point, the origin or a curve adds the coincident relation (or merges the points, FR-SK-051) with the coincident glyph shown while hovering the target; holding Ctrl while releasing suppresses it (FR-SK-052).
+- **FR-SK-044** (P1, M) **Copy by drag**: Ctrl+drag of selected sketch entities copies them (relations between the copies kept, relations to the rest dropped);
+- **FR-SK-045** (P1, M) **Sketch context menu** (right-click without movement): End chain (while drawing), Select chain, Construction on/off, the relations valid for the selection (FR-SK-054), Fully define…, Delete, Zoom to selection, Exit sketch, Discard. A right-click with the line tool ends the chain like a double click.
+- **FR-SK-046** (P1, S) **Quick snaps**: a menu (heads-up bar while sketching and the sketch context menu) picks one snap type for the next point only (end point, midpoint, centre, quadrant, intersection, tangent, perpendicular, parallel, nearest, horizontal/vertical); Preferences turn each inference type on or off permanently.
+- **FR-SK-047** (P1, M) The status bar shows the cursor position in sketch coordinates (x, y in document units) while sketching, next to the sketch status (FR-UI-050).
+
+**Tree and history**
+
+- **FR-HIS-012** (P1, M) Rollback commands in the tree menu (completes FR-HIS-004): Roll back to here, Roll to previous, Roll to end; a document saved rolled back reopens rolled back with a notice "The part is rolled back: N features are not shown" and a Roll to end button.
+- **FR-HIS-013** (P1, S) Tree housekeeping: **Shift+C** collapses all rows; hovering a sketch, plane, axis or body row shows an eye button to hide/show it; a hidden item's icon is outlined.
+- **FR-HIS-014** (P2, S) **Copy and paste features**: Ctrl+C on a sketch or a feature in the tree and Ctrl+V with a face or plane selected makes a copy placed on it; references that cannot follow are listed for repair (FR-TN-004). Ctrl+drag of a tree row onto a face does the same.
+
+**Undo and status**
+
+- **FR-UND-005** (P1, M) The Undo and Redo buttons have a ▾ list of the last 20 steps by name ("Extrude1 depth 20 → 25", FR-UND-001); picking a step undoes or redoes back to it. The button tooltips name the step they will undo. (1.85.0 shows a generic "Undo (Ctrl+Z)".)
+- **FR-UI-116** (P1, M) **Units in the status bar**: clicking the unit label opens the unit systems (mm-g-s, cm-g-s, m-kg-s, in-lb-s, custom…) and decimals; choosing one changes the document's display units as an undoable document change; values are stored in mm and radians as before.
+
 ---
 
 ## 14. Non-functional requirements
@@ -1311,6 +1373,27 @@ All values exact to 1e-6 relative unless stated.
 - **AT-P5-5** Hinge mate allows rotation only, with a 0–90° limit.
 - **AT-P5-6** Fastener library: insert an M6×20 ISO 4762 screw into a hole with automatic mates.
 
+**UI/UX parity (section 13.13; P1 polish unless the requirement says otherwise)**
+
+Each test is scripted in the smoke test where it can be (synthetic pointer and key events, camera and DOM checks).
+
+- **AT-UX-1** (FR-UI-100) Middle click on a vertex of the bracket, then middle-drag: the vertex stays at the same screen position (±2 px) while the model turns; middle click on empty space, drag: the model turns about the view centre again.
+- **AT-UX-2** (FR-UI-101, FR-UI-102) Double middle click frames the model (same camera as F within 1 %); → rotates the camera 15° about the screen's vertical axis, Shift+→ 90°; Z then Shift+Z returns to the starting distance within 1 %; with the tree focused, ↓ moves the tree selection and the camera does not move.
+- **AT-UX-3** (FR-UI-103) Ctrl+1, Ctrl+5, Ctrl+7, then Previous view three times returns to the camera before Ctrl+1; Zoom to selection on one hole face frames it so its bounding box fills 60–90 % of the shorter view side; with reduced motion emulated, a standard view applies in one frame.
+- **AT-UX-4** (FR-UI-104) Space opens the orientation picker at the cursor; clicking its Top face gives the same camera as Ctrl+5; Esc closes it without moving the camera.
+- **AT-UX-5** (FR-SEL-007, FR-SEL-008) In a part, a right-to-left box over the bracket's corner selects the crossed faces and edges allowed by the filter; a click on empty space clears them; with Fillet open, an empty-space click keeps the Edges box filled.
+- **AT-UX-6** (FR-SEL-011, FR-UI-109) Open Extrude with "Up to surface": the profile box is focused first, after picking the sketch the target box is focused by itself; the target face is drawn in the target box's colour and its callout reads the box name.
+- **AT-UX-7** (FR-UI-106, FR-UI-108) Fillet with the pushpin on: pick 2 edges, Ctrl+Z → 1 edge, OK → the fillet exists and the Fillet panel is open again with the same radius and an empty Edges box; the document's undo list has one Fillet step.
+- **AT-UX-8** (FR-UI-107) Right-click without movement during Chamfer shows OK, Cancel, Clear selections first; Clear selections empties the focused box; a right-drag pans and opens no menu.
+- **AT-UX-9** (FR-UI-111) After a Fillet is made, Enter with nothing focused opens Fillet again; in a sketch, after drawing a circle and pressing Esc, Enter starts the circle tool and Ctrl+Enter exits the sketch.
+- **AT-UX-10** (FR-UI-114, FR-UI-115) Click Extrude1 in the tree: its depth dimension shows on the model; double-click it, wheel up twice with increment 5 → value +10 and the volume updates before Enter; Esc restores the old value and volume; Enter instead makes one undo step.
+- **AT-UX-11** (FR-SK-067, FR-SK-068) In a sketch, drag the handle of a 40 mm length dimension by +10 mm on screen scale: the value becomes 50 (snap ticks) and one Ctrl+Z restores 40; while placing a dimension between two points, right-click locks it horizontal and moving the cursor up keeps it horizontal.
+- **AT-UX-12** (FR-SK-043, FR-SK-044, FR-SK-045) Drag a free line end onto another line's end: a coincident relation is added and DOF drops by 2; Ctrl+drag a selected circle: a second circle with the same radius exists, not related to the first; right-click while drawing a line chain ends the chain and keeps the line tool.
+- **AT-UX-13** (FR-UND-005) After three edits the Undo ▾ list shows them by name, newest first; picking the third undoes all three; the Undo tooltip names the step it will undo.
+- **AT-UX-14** (FR-HIS-012) Save a part rolled back above its last two features, reopen it: it opens rolled back with the notice; Roll to end in the notice shows all features.
+- **AT-UX-15** (FR-UI-105, P3) In a two-body part, Tab over body 2 hides it; Shift+Tab over the same spot shows it; both steps are undoable.
+- **AT-UX-16** (FR-UI-116, FR-SK-047) Choose in-lb-s in the status bar: a 25.4 mm dimension shows 1.000 in, the file still stores 25.4; Ctrl+Z returns to mm. While sketching, the status bar shows the cursor x, y in the document unit.
+
 **PDM**
 
 - **AT-PDM-1** (P2) Create a vault in a folder, add the bracket, check out, change the hole, check in with a comment: version 2 exists, version 1 opens read-only with the old volume, the audit log has both entries.
@@ -1389,8 +1472,17 @@ All values exact to 1e-6 relative unless stated.
 | Ctrl+8 | Normal to selection | SW habit |
 | Space | View orientation picker | SW habit |
 | F | Zoom to fit | existing |
-| Shift+arrows / arrows | Rotate view 90° / by step | SW habit |
-| Enter / Esc | OK / Cancel command, end chain | |
+| Shift+arrows / arrows | Rotate view 90° / by 15° (FR-UI-102) | SW habit |
+| Alt+←/→, Ctrl+arrows | Roll 15°, pan | SW habit |
+| Z / Shift+Z | Zoom out / in | SW habit |
+| Alt+Z | Previous view (Ctrl+Shift+Z stays redo) | MöbiusCAD |
+| Middle click, double middle click | Rotation centre, zoom to fit (FR-UI-100/101) | SW habit |
+| Tab / Shift+Tab / Ctrl+Shift+Tab | Hide / show under the cursor, show hidden see-through (FR-UI-105) | SW habit |
+| G | Magnifying glass (FR-SEL-010) | SW habit |
+| Shift+D | Breadcrumbs and confirmation corner to the cursor (FR-SEL-009; D is the distance tool) | MöbiusCAD |
+| Shift+C | Collapse the tree | SW habit |
+| Ctrl+C / Ctrl+V | Copy / paste a feature or sketch (FR-HIS-014) | SW habit |
+| Enter / Esc | OK / Cancel command, end chain; Enter with no command repeats the last one (FR-UI-111) | SW habit |
 | Ctrl+Enter | Exit sketch | |
 | L, R, C, A, P, T, O, D, K, Q | Line, rectangle, circle, arc, polygon, trim, offset, dimension, relation, construction (in a sketch) | |
 | E | Extrude (part, no sketch active) | MöbiusCAD |
@@ -1462,3 +1554,63 @@ All messages have Russian translations in `i18n.ru.ts`.
 - SolidWorks 2026 what's new summaries (Hawk Ridge Systems, Javelin, SolidProfessor): <https://hawkridgesys.com/whats-new-in-solidworks-2026>, <https://www.javelin-tech.com/3d/assembly-modeling-whats-new-in-solidworks-2026/>, <https://solidprofessor.com/?p=9936793>
 - PlaneGCS for the web: <https://github.com/Salusoft89/planegcs>, <https://npmjs.com/package/@salusoft89/planegcs>
 - Remaining SolidWorks functionality is from general product knowledge of SolidWorks 2020–2026 and should be checked against the official help where a detail matters.
+
+### Appendix F. SolidWorks everyday UI/UX parity audit (2026-11-08, MöbiusCAD 1.85.0)
+
+Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 does (checked in `src/main.ts`, `src/model/controller.ts`, `src/sketch/editor.ts`, `src/viewer/Viewer.ts`). **New** = was missing from the FRS, added in 13.13. **Weaker** = in the FRS, implemented partly or differently. **Done** = matches. Items the modelling thread is reworking in 1.87.0 are marked so.
+
+| Habit | FRS | 1.85.0 | Class |
+| --- | --- | --- | --- |
+| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (1.87.0 fixes sketch mode) |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V only | Weaker (1.87.0) |
+| Middle click sets the rotation centre | FR-UI-100 | No | New |
+| Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
+| Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |
+| Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | No (tree double-click fits a node in the viewer only) | New |
+| Space orientation picker, named views | FR-UI-031, FR-UI-104 | Ctrl+1…8 work; Space does nothing | Weaker / New (named views) |
+| Animated view changes | FR-UI-103 | Done (`animateTo`), no reduced-motion rule | New (detail) |
+| Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
+| Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
+| Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
+| Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
+| Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
+| Magnifying glass G | FR-SEL-010 | No | New |
+| Colour-coded selection boxes | FR-SEL-011 | One pick colour | New |
+| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | No (H hides the selection in the viewer) | New |
+| Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
+| Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |
+| Context toolbar on selection | FR-UI-026 | Done | Done |
+| Right-click menu on geometry | FR-UI-025 | Browser menu suppressed; only fillet/chamfer edge helpers | Weaker |
+| Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
+| Mouse gestures | FR-UI-024 (P2, S) | No | Weaker (not started) |
+| Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
+| Fly-out mini tree while a panel is open | FR-UI-003 | No | Weaker |
+| Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
+| Undo inside an open panel | FR-UI-108 | No | New |
+| Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
+| Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
+| Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
+| Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | Plain value input (Enter/Esc) | Weaker |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | Double-click opens Edit feature; no feature dimensions on the model | Weaker |
+| Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | No | New |
+| Typing a number while drawing | FR-UI-052 | No | Weaker |
+| Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
+| Drag an end point onto another to merge | FR-SK-043 | Drag moves; no relation added | New |
+| Ctrl+drag copies sketch entities | FR-SK-044 | No | New |
+| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | No | New |
+| Quick snaps | FR-SK-046 | No | New |
+| Cursor x, y in the status bar while sketching | FR-SK-047 | Status shows DOF and the tool hint | New |
+| Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | Selecting a row highlights its faces (FR-HIS-003); no hover link | Weaker |
+| Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
+| Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
+| Shift+C collapse, eye buttons in the tree | FR-HIS-013 | Folders collapse; sketch Show/Hide in the menu | New |
+| Copy and paste features | FR-HIS-014 | No | New |
+| Tree reorder by drag, Alt+↑/↓ | FR-HIS-006 | Done | Done |
+| Rename F2, Del deletes | FR-UI-060 | Done | Done |
+| Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
+| Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
+| Command search Ctrl+K | FR-UI-014 (S) | No | Weaker (not started) |
+| Units in the status bar | FR-UI-116 | No | New |
+| Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
