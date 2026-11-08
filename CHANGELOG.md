@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.98.0] - 2026-11-08
+
+### Added
+
+- Motion studies: appearance tracks fade a component in or out, or hide and show it, over the study (opacity keys 0–100 %, **Hidden** / **Shown** set a key), as SolidWorks' component visibility and transparency keys (FR-FT-122).
+- Motion timeline: Alt+←/→ moves the selected key one frame (Shift: ten), without passing its neighbours.
+
 ## [1.97.0] - 2026-11-08
 
 ### Added
@@ -944,7 +951,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.97.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.98.0...HEAD
+[1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
 [1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
 [1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0

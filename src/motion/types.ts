@@ -39,10 +39,13 @@ export interface MotorTrack {
 /** An exploded view's progress, 0 collapsed … 1 exploded. */
 export interface ExplodeTrack { id: string; kind: "explode"; view: string; keys: Key[]; off?: boolean }
 
+/** A component's appearance (SolidWorks: component visibility and transparency keys): opacity 0 hidden … 1 opaque. */
+export interface LookTrack { id: string; kind: "look"; comp: string; keys: Key[]; off?: boolean }
+
 /** View orientation keys. */
 export interface CameraTrack { id: string; kind: "camera"; keys: CamKey[]; off?: boolean }
 
-export type Track = MateTrack | MotorTrack | ExplodeTrack | CameraTrack;
+export type Track = MateTrack | MotorTrack | ExplodeTrack | LookTrack | CameraTrack;
 
 export interface MotionStudy {
   id: string;
