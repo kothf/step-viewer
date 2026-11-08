@@ -44,7 +44,8 @@ const majorOf = (h: HoleSize) => parseFloat(h.size.slice(1));
 import { evalVars, exprTargets, refreshExprs, renameEverywhere, validVarName } from "./params";
 import { STD_FRAMES } from "../kernel/model";
 import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
-import { bezPts, splineBezier } from "../sketch/spline";
+import { entBezier } from "../sketch/conic";
+import { bezPts } from "../sketch/spline";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
@@ -3577,7 +3578,7 @@ export class ModelController {
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
         ["aslot3", t("3-pt arc slot"), t("3-point arc slot: start, end, a point on the arc, then the width")],
-        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
+        ["spline", t("Spline"), t("Spline: click points it passes through; double-click ends it")], ["ellipse", t("Ellipse"), t("Ellipse: centre, end of the major axis, then a point on it")], ["earc", t("Partial ellipse"), t("Partial ellipse: centre, major axis, start, then end")], ["parabola", t("Parabola"), t("Parabola: focus, vertex, then the start and the end")], ["conic", t("Conic"), t("Conic: start, end, the top vertex, then a point that sets rho")], ["eqn", t("Equation curve"), t("Equation driven curve: y = f(x), or x(t) and y(t)")], ["point", t("Point"), t("Point (P)")], ["text", t("Text"), t("Text: letters for embossing or engraving, from the bundled fonts")],
         ["trim", t("Trim"), t("Trim: click the piece of a curve to remove (T)")], ["extend", t("Extend"), t("Extend a line or arc to the next curve (E)")], ["split", t("Split"), t("Split a line or arc where you click")],
         ["fillet", t("Fillet"), t("Sketch fillet: click a corner where two lines meet")], ["chamfer", t("Chamfer"), t("Sketch chamfer: click a corner where two lines meet")],
         ["offset", t("Offset"), t("Offset entities: a curve or a chain, to the cursor's side (O)")], ["convert", t("Convert"), t("Convert entities: copy model edges into the sketch")], ["intersect", t("Intersection curve"), t("Intersection curve: where the sketch plane cuts model faces")],
@@ -3585,7 +3586,7 @@ export class ModelController {
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline", "eqn"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -3638,8 +3639,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      const g = ({ line: ["line", "spline", "eqn"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "ellipse", "earc", "parabola", "conic"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), parabola: t("Parabola"), conic: t("Conic"), eqn: t("Equation driven curve"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -5443,6 +5444,7 @@ export class ModelController {
         : `<p class="muted">${esc(t("Select sketch items or model edges to add relations (Ctrl+click for more)."))}</p>`)
       + `</div>`
       + this.textBox(ed)
+      + this.curveBox(ed)
       + (["slot", "cslot", "aslot", "aslot3"].includes(ed.tool) ? `<label class="chk pm-chk" title="${esc(t("Slots get width and length (or radius) dimensions, and the Modify box opens on them."))}"><input type="checkbox" data-a="slotdims"${ed.slotDims ? " checked" : ""} />${esc(t("Add dimensions"))}</label>` : "")
       + (ed.tool === "polygon" ? `<label class="pm-field"><span>${esc(t("Sides"))}</span><input type="text" inputmode="numeric" class="pm-n" data-a="sides" value="${ed.polySides}" /></label>` : "")
       + (ed.tool === "fillet" ? `<label class="pm-field"><span>${esc(t("Radius"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-a="fr" value="${trimNum(ed.filletRadius * UNITS[units.current].f, 4)}" /><span class="muted">${units.current}</span></span></label>` : "")
@@ -5480,6 +5482,7 @@ export class ModelController {
       this.renderPanel();
     }));
     this.bindTextBox(pm, ed);
+    this.bindCurveBox(pm, ed);
     pm.querySelector<HTMLInputElement>("[data-a=sides]")?.addEventListener("change", e => {
       const n = Math.round(+(e.target as HTMLInputElement).value);
       if (n >= 3 && n <= 64) ed.polySides = n; else { toast(t("A polygon has 3 to 64 sides."), true); (e.target as HTMLInputElement).value = String(ed.polySides); }
@@ -5518,6 +5521,70 @@ export class ModelController {
       + (sel && !sel.along ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-tx="ang" value="${trimNum((o.ang * 180) / Math.PI, 4)}" /><span class="muted">°</span></span></label>` : "")
       + (sel ? this.alongField(ed, sel) : "")
       + `<p class="pm-help muted">${esc(sel ? t("The height is that of a capital letter. Drag the text by its start point; dimension or relate that point like any other.") : t("Click in the sketch where the text starts (the left end of its baseline)."))}</p></div>`;
+  }
+
+  /**
+   * Conics and equation curves (FR-SK-021): with the Equation curve tool, the equation to add; with one
+   * conic or equation curve selected, its rho or its equation.
+   */
+  private curveBox(ed: SketchEditor): string {
+    const one = ed.selection.size === 1 ? ed.sk.ents.find(e => e.id === [...ed.selection][0]) : undefined;
+    const sel = one && one.t === "spline" && one.kind ? one : undefined;
+    if (sel && (sel.kind === "conic" || sel.kind === "parabola")) {
+      return `<div class="pm-sec pm-curve"><h4>${esc(t(sel.kind === "conic" ? "Conic" : "Parabola"))}</h4>`
+        + `<label class="pm-field"><span>${esc(t("Rho"))}</span><input type="text" inputmode="decimal" class="pm-n" data-cq="rho" value="${trimNum(sel.kind === "parabola" ? 0.5 : sel.rho ?? 0.5, 4)}" /></label>`
+        + `<p class="pm-help muted">${esc(t("Rho below 0.5 makes an ellipse, 0.5 a parabola, above 0.5 a hyperbola. Drag the ends or the top vertex to shape it."))}</p></div>`;
+    }
+    const eq = sel?.kind === "eqn" ? sel.eq : ed.tool === "eqn" ? ed.eqDraft : undefined;
+    if (!eq) return "";
+    const v = (k: string, label: string, val: string) => `<label class="pm-field"><span>${esc(label)}</span><input type="text" data-cq="${k}" value="${esc(val)}" spellcheck="false" translate="no" /></label>`;
+    const xy = eq.mode === "xy";
+    return `<div class="pm-sec pm-curve"><h4>${esc(t("Equation driven curve"))}</h4>`
+      + `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-cq="mode"><option value="xy"${xy ? " selected" : ""}>${esc(t("Explicit: y = f(x)"))}</option><option value="param"${xy ? "" : " selected"}>${esc(t("Parametric: x(t), y(t)"))}</option></select></label>`
+      + (xy ? v("y", "y(x) =", eq.y) : v("x", "x(t) =", eq.x ?? "t") + v("y", "y(t) =", eq.y))
+      + v("t0", xy ? t("From x") : t("From t"), eq.t0) + v("t1", xy ? t("To x") : t("To t"), eq.t1)
+      + `<p class="pm-help muted">${esc(t("Lengths in millimetres, angles in radians; sin, cos, sqrt, ^ and pi work. The end points are fixed where the equation puts them."))}</p>`
+      + (sel ? "" : `<div class="pm-actions"><button class="btn primary small" data-cq="add">${esc(t("Add curve"))}</button></div>`)
+      + `</div>`;
+  }
+
+  private bindCurveBox(pm: HTMLElement, ed: SketchEditor) {
+    const one = ed.selection.size === 1 ? ed.sk.ents.find(e => e.id === [...ed.selection][0]) : undefined;
+    const sel = one && one.t === "spline" && one.kind ? one : undefined;
+    const fields = () => {
+      const eq = { ...(sel?.kind === "eqn" && sel.eq ? sel.eq : ed.eqDraft) };
+      pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cq]").forEach(el => {
+        const k = el.dataset.cq!;
+        if (k === "mode") eq.mode = el.value === "param" ? "param" : "xy";
+        else if (k === "x" || k === "y" || k === "t0" || k === "t1") eq[k] = el.value;
+      });
+      if (eq.mode === "param" && eq.x === undefined) eq.x = "t";
+      if (eq.mode === "xy") delete eq.x;
+      return eq;
+    };
+    pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-cq]").forEach(el => {
+      const k = el.dataset.cq!;
+      if (k === "add") { el.addEventListener("click", () => { const err = ed.addEquation(fields()); if (err) toast(t(err), true); this.renderPanel(); }); return; }
+      el.addEventListener("change", () => {
+        if (k === "rho" && sel) {
+          let r: number;
+          try { r = evaluate(el.value, "number"); } catch (err) { toast(t((err as Error).message), true); return; }
+          const err = ed.setCurve(sel.id, { rho: r });
+          if (err) { el.setAttribute("aria-invalid", "true"); toast(t(err), true); return; }
+          this.renderPanel();
+          return;
+        }
+        const eq = fields();
+        if (!sel) {
+          // A new type starts from an example of it.
+          if (k === "mode") Object.assign(eq, eq.mode === "param" ? { x: "10*cos(t)", y: "5*sin(t)", t0: "0", t1: "pi" } : { y: "x^2/40", t0: "-20", t1: "20" });
+          ed.eqDraft = eq; if (k === "mode") this.renderPanel(); return;
+        }
+        const err = ed.setCurve(sel.id, { eq });
+        if (err) { el.setAttribute("aria-invalid", "true"); toast(t(err), true); return; }
+        this.renderPanel();
+      });
+    });
   }
 
   /** Text along a curve (FR-SK-020): pick a curve of the sketch for the baseline, and the side the letters stand on. */
@@ -6171,7 +6238,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
       const line = e.p0 && e.p1 ? ellPts(E, t0, ellSweep(t0, ellParam(E, pts.get(e.p1)!)), 48) : ellPts(E, 0, 2 * Math.PI, 64);
       for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
     } else if (e.t === "spline" && e.pts.length >= 2) {
-      const line = bezPts(splineBezier(e.pts.map(q => pts.get(q)!), !!e.closed && e.pts.length >= 3), 16);
+      const line = bezPts(entBezier(e, q => pts.get(q)!), 16);
       for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
     }
     else if (e.t === "text") for (const line of textPolys(e, pts.get(e.p)!, textPath(sk.ents, e))) for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
@@ -6360,6 +6427,9 @@ const ICON_SVG: Record<string, string> = {
   "sk:trim": S('<path d="M2 13 13 2" stroke-dasharray="2 2"/><path d="M2 8h12"/><circle cx="5" cy="11" r="1.6"/><circle cx="11" cy="11" r="1.6"/><path d="M6.2 9.9 9.8 6M9.8 9.9 6.2 6"/>'),
   "sk:spline": S('<path d="M2 12c2.5-8 5-8 6-4s3.5 4 6-4"/><circle cx="2" cy="12" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="14" cy="4" r="1" fill="currentColor"/>'),
   "sk:ellipse": S('<ellipse cx="8" cy="8" rx="6" ry="3.5" transform="rotate(-25 8 8)"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/>'),
+  "sk:parabola": S('<path d="M2.5 2.5Q8 20 13.5 2.5"/><circle cx="8" cy="7" r="0.9" fill="currentColor"/>'),
+  "sk:conic": S('<path d="M2.5 13Q3 3 13 2.5"/><path d="M2.5 13 2.5 2.5 13 2.5" stroke-dasharray="1.2 1.4"/>'),
+  "sk:eqn": S('<path d="M1.5 9c2-5 3.5-5 5 0s3 5 5 0 2.5-3 3-3"/><path d="M1.5 14.5h13M1.5 1.5v13" stroke-width="1"/>'),
   "sk:earc": S('<path d="M2.6 10.5A6 3.5 -25 0 1 13.4 5.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/><path d="M8 8 13.4 5.5" stroke-dasharray="1.2 1.4"/>'),
   "sk:slot": S('<path d="M5 4.5h6a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7z"/><path d="M5 8h6" stroke-dasharray="1.5 1.5"/>'),
   "sk:rect3": S('<path d="M3 9.5 9.5 3l3.5 3.5L6.5 13z"/><circle cx="3" cy="9.5" r="1.1" fill="currentColor"/><circle cx="9.5" cy="3" r="1.1" fill="currentColor"/><circle cx="13" cy="6.5" r="1.1" fill="currentColor"/>'),

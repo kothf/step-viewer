@@ -6,7 +6,8 @@
 // Crossing curves (regions cut by intersections) are reported, not split.
 import type { SketchFeature, SkEnt, V2 } from "../model/types";
 import { ellOf, ellParam, ellPts, ellSweep, type Ell } from "./ellipse";
-import { bezPts, splineBezier } from "./spline";
+import { bezPts } from "./spline";
+import { entBezier, entConic } from "./conic";
 import { textLoops } from "./text";
 
 export type Seg =
@@ -18,8 +19,11 @@ export type Seg =
   | { ent: string; kind: "ellipse"; el: Ell }
   /** Elliptical arc from a to b; ccw as for arcs. */
   | { ent: string; kind: "earc"; el: Ell; a: V2; b: V2; ccw: boolean }
-  /** Spline as cubic Bézier control points in the direction of travel (closed: first = last). */
-  | { ent: string; kind: "spline"; bz: V2[] };
+  /**
+   * Spline as cubic Bézier control points in the direction of travel (closed: first = last). A conic also
+   * has `rq` = its exact rational quadratic (start, top vertex, end, middle weight), which the kernel uses.
+   */
+  | { ent: string; kind: "spline"; bz: V2[]; rq?: [V2, V2, V2, number] };
 
 export interface ProfileFace { outer: Seg[]; holes: Seg[][] }
 export interface Profile { faces: ProfileFace[]; error?: { code: string; message: string; at?: V2 } }
@@ -75,6 +79,13 @@ function segsCross(a: V2, b: V2, c: V2, d: V2, tol: number) {
 }
 
 /** The closed regions of a sketch. */
+/** A spline entity's segment, in the direction of travel (a conic keeps its exact form). */
+function splineSeg(e: SkEnt & { t: "spline" }, m: Map<string, SkEnt>, forward: boolean): Seg {
+  const bz = entBezier(e, q => pt(m, q)), rq = entConic(e, q => pt(m, q));
+  if (forward) return { ent: e.id, kind: "spline", bz, ...(rq ? { rq } : {}) };
+  return { ent: e.id, kind: "spline", bz: bz.reverse(), ...(rq ? { rq: [rq[2], rq[1], rq[0], rq[3]] as [V2, V2, V2, number] } : {}) };
+}
+
 export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()): Profile {
   const m = new Map(sk.ents.map(e => [e.id, e] as const));
   const curves = sk.ents.filter(e => !e.cons && !skip.has(e.id) && (e.t === "line" || e.t === "arc" || e.t === "circle" || e.t === "ellipse" || e.t === "spline"));
@@ -96,7 +107,7 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
       if (e.p0 && e.p1) open.push({ ent: e, a: pt(m, e.p0), b: pt(m, e.p1) });
       else loops.push([{ ent: e.id, kind: "ellipse", el }]);
     } else if (e.t === "spline" && e.pts.length >= 2) {
-      if (e.closed && e.pts.length >= 3) loops.push([{ ent: e.id, kind: "spline", bz: splineBezier(e.pts.map(q => pt(m, q)), true) }]);
+      if (e.closed && e.pts.length >= 3) loops.push([{ ent: e.id, kind: "spline", bz: entBezier(e, q => pt(m, q)) }]);
       else if (!e.closed) open.push({ ent: e, a: pt(m, e.pts[0]), b: pt(m, e.pts[e.pts.length - 1]) });
     }
   }
@@ -133,7 +144,7 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
       const a = forward ? o.a : o.b, b = forward ? o.b : o.a;
       if (e.t === "line") loop.push({ ent: e.id, kind: "line", a, b });
       else if (e.t === "arc") { const c = pt(m, e.c); loop.push({ ent: e.id, kind: "arc", c, r: Math.hypot(o.a[0] - c[0], o.a[1] - c[1]), a, b, ccw: forward }); }
-      else if (e.t === "spline") { const bz = splineBezier(e.pts.map(q => pt(m, q))); loop.push({ ent: e.id, kind: "spline", bz: forward ? bz : bz.reverse() }); }
+      else if (e.t === "spline") loop.push(splineSeg(e, m, forward));
       else if (e.t === "ellipse") loop.push({ ent: e.id, kind: "earc", el: ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b)), a, b, ccw: forward });
       const to = forward ? ends[i][1] : ends[i][0];
       const next = nodes.get(to)!.find(j => j !== i || ends[i][0] === ends[i][1]);
@@ -181,7 +192,7 @@ export function sketchPath(sk: SketchFeature): { segs: Seg[]; closed: boolean; e
     const e = curves[0];
     if (e.t === "circle") return { segs: [{ ent: e.id, kind: "circle", c: pt(m, e.c), r: e.r }], closed: true };
     if (e.t === "ellipse" && !(e.p0 && e.p1)) return { segs: [{ ent: e.id, kind: "ellipse", el: ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b)) }], closed: true };
-    if (e.t === "spline" && e.closed) return { segs: [{ ent: e.id, kind: "spline", bz: splineBezier(e.pts.map(q => pt(m, q)), true) }], closed: true };
+    if (e.t === "spline" && e.closed) return { segs: [{ ent: e.id, kind: "spline", bz: entBezier(e, q => pt(m, q)) }], closed: true };
   }
   if (curves.some(e => e.t === "circle" || (e.t === "ellipse" && !(e.p0 && e.p1)) || (e.t === "spline" && e.closed))) return fail("A closed curve can only be a path on its own.");
   let size = 1;
@@ -203,7 +214,7 @@ export function sketchPath(sk: SketchFeature): { segs: Seg[]; closed: boolean; e
     const a = forward ? ends[i][0] : ends[i][1], b = forward ? ends[i][1] : ends[i][0];
     if (e.t === "line") segs.push({ ent: e.id, kind: "line", a, b });
     else if (e.t === "arc") { const c = pt(m, e.c); segs.push({ ent: e.id, kind: "arc", c, r: Math.hypot(ends[i][0][0] - c[0], ends[i][0][1] - c[1]), a, b, ccw: forward }); }
-    else if (e.t === "spline") { const bz = splineBezier(e.pts.map(q => pt(m, q))); segs.push({ ent: e.id, kind: "spline", bz: forward ? bz : bz.reverse() }); }
+    else if (e.t === "spline") segs.push(splineSeg(e, m, forward));
     else if (e.t === "ellipse") segs.push({ ent: e.id, kind: "earc", el: ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b)), a, b, ccw: forward });
     at = b;
     i = ends.findIndex(([p, q], j) => !used[j] && (same(p, at) || same(q, at)));
@@ -221,7 +232,7 @@ export function sketchCurves(sk: SketchFeature): Seg[] {
     if (e.t === "line") out.push({ ent: e.id, kind: "line", a: pt(m, e.a), b: pt(m, e.b) });
     else if (e.t === "circle") out.push({ ent: e.id, kind: "circle", c: pt(m, e.c), r: e.r });
     else if (e.t === "arc") { const c = pt(m, e.c), a = pt(m, e.a); out.push({ ent: e.id, kind: "arc", c, r: Math.hypot(a[0] - c[0], a[1] - c[1]), a, b: pt(m, e.b), ccw: true }); }
-    else if (e.t === "spline") out.push({ ent: e.id, kind: "spline", bz: splineBezier(e.pts.map(q => pt(m, q)), !!e.closed) });
+    else if (e.t === "spline") out.push(splineSeg(e, m, true));
     else if (e.t === "ellipse") {
       const el = ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b));
       out.push(e.p0 && e.p1 ? { ent: e.id, kind: "earc", el, a: pt(m, e.p0), b: pt(m, e.p1), ccw: true } : { ent: e.id, kind: "ellipse", el });
@@ -244,7 +255,7 @@ export function textPath(ents: SkEnt[], e: Extract<SkEnt, { t: "text" }>): V2[] 
     if (c.t === "line") out = [pt(m, c.a), pt(m, c.b)];
     else if (c.t === "arc") { const cc = pt(m, c.c), a = pt(m, c.a), b = pt(m, c.b); out = [...loopPolygon([{ ent: c.id, kind: "arc", c: cc, r: Math.hypot(a[0] - cc[0], a[1] - cc[1]), a, b, ccw: true }], 64), b]; }
     else if (c.t === "circle") { out = loopPolygon([{ ent: c.id, kind: "circle", c: pt(m, c.c), r: c.r }], 48); out.push(out[0]); }
-    else if (c.t === "spline") { if (c.pts.length < 2) return undefined; const bz = splineBezier(c.pts.map(q => pt(m, q)), !!c.closed && c.pts.length >= 3); out = bezPts(bz, 16); }
+    else if (c.t === "spline") { if (c.pts.length < 2) return undefined; const bz = entBezier(c, q => pt(m, q)); out = bezPts(bz, 16); }
     else if (c.t === "ellipse") {
       const el = ellOf(pt(m, c.c), pt(m, c.a), pt(m, c.b));
       if (c.p0 && c.p1) { const ta = ellParam(el, pt(m, c.p0)); out = ellPts(el, ta, ellSweep(ta, ellParam(el, pt(m, c.p1))), 64); }
