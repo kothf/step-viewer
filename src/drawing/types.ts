@@ -25,6 +25,8 @@ export interface DrawingView {
   y: number;
   /** Own scale as [numerator, denominator]; absent: the sheet scale (projected views: the parent's). */
   scale?: [number, number];
+  /** A part configuration to draw (FR-DRW-010), set on a model view; views made from it follow. Absent: the part's active one. */
+  config?: string;
   style?: DisplayStyle;
   tangent?: TangentEdges;
   /** Show the label under the view (projected and model views have none by default). */
@@ -151,7 +153,11 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
  */
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot;
+/** A revision cloud (SolidWorks' Revision Cloud): scallops around a polygon on the sheet. `pts` are x, y pairs relative to `pos`
+ *  (sheet mm); `arc` is the largest scallop chord (mm, default 6); `rev` an optional revision letter in a triangle at the first corner. */
+export interface CloudAnnot { id: string; t: "cloud"; view?: undefined; pos: [number, number]; pts: number[]; arc?: number; rev?: string }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot;
 
 export interface Sheet {
   id: string;
