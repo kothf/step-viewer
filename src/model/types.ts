@@ -650,6 +650,16 @@ export interface ImportFeature {
   tol?: Num;
 }
 
+/**
+ * Check and heal (FR-FT-131): the whole body sewn within `tol`, fixed with ShapeFix and closed shells
+ * made solids; `unify` also merges faces that lie on one surface. The report is the feature's warning.
+ */
+export interface HealFeature {
+  id: string; type: "heal"; name: string; suppressed?: boolean;
+  tol: Num;
+  unify?: boolean;
+}
+
 /*
  * Surfaces (FRS 9.11, FR-FT-100). Surface bodies are open sheets kept apart from the solid bodies:
  * they show in the view and can be picked, but have no volume and take no part in solid features.
@@ -778,7 +788,7 @@ export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes o
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
-  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
+  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | HealFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
   | WeldFeature;
 export type FeatureType = Feature["type"];
