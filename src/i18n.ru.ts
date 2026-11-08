@@ -2620,7 +2620,16 @@ export const RU: Record<string, string> = {
   "The loft did not close into a solid.": "Элемент по сечениям не замкнулся в твёрдое тело.",
   "The guide curve must start on the profile's edge, away from the path.": "Направляющая кривая должна начинаться на краю профиля, в стороне от траектории.",
   "The guide curve meets the path: the profile would shrink to nothing.": "Направляющая кривая касается траектории: профиль сжался бы в точку.",
-  // 1.86.0: intersect (FR-BODY-007) and untrim surface (FR-FT-100).
+  // 1.86.0: drafting style (FR-DRW-025).
+  "Drafting style": "Стиль оформления",
+  "Text height": "Высота текста",
+  "Arrowheads": "Стрелки",
+  "Line group": "Группа линий",
+  "mm": "мм",
+  "Filled": "Залитые",
+  "Dot": "Точка",
+  "Oblique stroke": "Засечка",
+  // 1.87.0: intersect (FR-BODY-007) and untrim surface (FR-FT-100).
   "Intersect": "Пересечь",
   "Intersect: solids and surfaces cut each other into regions; keep the ones you want": "Пересечь: тела и поверхности разрезают друг друга на области; оставьте нужные",
   "Regions": "Области",

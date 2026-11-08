@@ -6,10 +6,10 @@
 import { viewAxes, type MEdge, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import { arrowHead, clipToCircle, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem } from "./items";
-import { rotateBox, rotatePrims, type Prim } from "./prims";
+import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { DimAnnot, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { viewDir } from "./views";
 
 type P2 = [number, number];
@@ -18,8 +18,27 @@ export type Label = (s: string, p?: Record<string, string>) => string;
 /** What annotations need from the model and the UI. */
 export interface AnnotCtx { topo: Topo | null; holes: HoleInfo[]; items: ModelItem[]; box: [V3, V3] | null; dec: string; label: Label; bom?: Bom | null }
 
-export const TEXT_H = 3.5;
-const ARROW = 3;
+/** Annotation text height and arrowhead in force (FR-DRW-025): set from the drawing's style by `useStyle` before composing. */
+export let TEXT_H = 3.5;
+let ARROW = 3, ARROW_KIND: NonNullable<DraftStyle["arrow"]> = "filled";
+
+/** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
+export function useStyle(st: DraftStyle | undefined) {
+  TEXT_H = st?.text ?? 3.5;
+  ARROW = TEXT_H * 6 / 7;
+  ARROW_KIND = st?.arrow ?? "filled";
+  const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
+  Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, frame: Math.max(0.5, thick * 1.4) });
+}
+
+/** A dimension or leader end at (x, y) pointing along (dx, dy), in the style's arrowhead. */
+function arrow(x: number, y: number, dx: number, dy: number): Prim {
+  const L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+  if (ARROW_KIND === "open") return { t: "p", p: [x - ux * ARROW - uy * ARROW * 0.3, y - uy * ARROW + ux * ARROW * 0.3, x, y, x - ux * ARROW + uy * ARROW * 0.3, y - uy * ARROW - ux * ARROW * 0.3], pen: "thin", layer: "ANNOT" };
+  if (ARROW_KIND === "dot") { const r = ARROW / 5, p: number[] = []; for (let i = 0; i < 12; i++) p.push(x + r * Math.cos(i * Math.PI / 6), y + r * Math.sin(i * Math.PI / 6)); return { t: "p", p, pen: "thin", layer: "ANNOT", closed: true, fill: true }; }
+  if (ARROW_KIND === "tick") { const k = ARROW / 2 * Math.SQRT1_2, ax = (ux - uy) * k, ay = (uy + ux) * k; return { t: "l", p: [x - ax, y - ay, x + ax, y + ay], pen: "thick", layer: "ANNOT" }; }
+  return arrowHead(x, y, dx, dy, ARROW, 1);
+}
 const dot3 = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len2 = (a: P2) => Math.hypot(a[0], a[1]);
@@ -239,8 +258,8 @@ export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { 
     const outside = d2(T, C) > R;
     const far = outside ? T : add2(C, u, R);
     out.push(thin(g.k === "dia" ? add2(C, u, -R) : C, far));
-    out.push(arrowHead(...add2(C, u, R), u[0], u[1], ARROW, 1));
-    if (g.k === "dia") out.push(arrowHead(...add2(C, u, -R), -u[0], -u[1], ARROW, 1));
+    out.push(arrow(...add2(C, u, R), u[0], u[1]));
+    if (g.k === "dia") out.push(arrow(...add2(C, u, -R), -u[0], -u[1]));
     // A short horizontal shoulder at the text, which sits on it.
     const sx = u[0] >= 0 ? 1 : -1;
     let box: [number, number, number, number];
@@ -261,8 +280,8 @@ export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { 
     const R = Math.max(d2(T, sec.x), 3), a1 = sec.a0 + sec.sw;
     out.push({ t: "a", o: sec.x, r: R, a0: sec.a0, a1, pen: "thin", layer: "ANNOT" });
     const tip = (an: number): P2 => [sec.x[0] + R * Math.cos(an), sec.x[1] + R * Math.sin(an)];
-    out.push(arrowHead(...tip(sec.a0), Math.sin(sec.a0), -Math.cos(sec.a0), ARROW, 1));
-    out.push(arrowHead(...tip(a1), -Math.sin(a1), Math.cos(a1), ARROW, 1));
+    out.push(arrow(...tip(sec.a0), Math.sin(sec.a0), -Math.cos(sec.a0)));
+    out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
     // Extension lines when the arc runs past the lines' ends.
     for (const [l, an] of [[L[0], sec.a0], [L[1], a1]] as [[P2, P2], number][]) {
       const e: P2 = [Math.cos(an), Math.sin(an)], reach = Math.max(...l.map(p => (p[0] - sec.x[0]) * e[0] + (p[1] - sec.x[1]) * e[1]));
@@ -297,8 +316,8 @@ export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { 
   const inside = span >= 2 * ARROW + 2;
   const from = Math.min(al(lo) - (inside ? 0 : ARROW + 2), tLo < al(lo) ? tLo : Infinity), to = Math.max(al(hi) + (inside ? 0 : ARROW + 2), tHi > al(hi) ? tHi : -Infinity);
   out.push(thin(add2(lo, d, from - al(lo)), add2(lo, d, to - al(lo))));
-  if (inside) { out.push(arrowHead(lo[0], lo[1], -d[0], -d[1], ARROW, 1)); out.push(arrowHead(hi[0], hi[1], d[0], d[1], ARROW, 1)); }
-  else { out.push(arrowHead(lo[0], lo[1], d[0], d[1], ARROW, 1)); out.push(arrowHead(hi[0], hi[1], -d[0], -d[1], ARROW, 1)); }
+  if (inside) { out.push(arrow(lo[0], lo[1], -d[0], -d[1])); out.push(arrow(hi[0], hi[1], d[0], d[1])); }
+  else { out.push(arrow(lo[0], lo[1], d[0], d[1])); out.push(arrow(hi[0], hi[1], -d[0], -d[1])); }
   const box = writeText(add2(base, up, 1), rot, "c");
   return { prims: out, box };
 }
@@ -310,7 +329,7 @@ function holePrims(a: HoleAnnot, e: MEdge, P: (p: V3) => P2, pl: Placement, ctx:
   const C = toSheet(pl, ...P(e.c ?? e.m)), R = (e.r ?? 0) * pl.s, T = toSheet(pl, a.pos[0], a.pos[1]);
   const u = unit2([T[0] - C[0], T[1] - C[1]], [Math.SQRT1_2, Math.SQRT1_2]);
   const tip = add2(C, u, R);
-  out.push(thin(tip, T), arrowHead(tip[0], tip[1], -u[0], -u[1], ARROW, 1));
+  out.push(thin(tip, T), arrow(tip[0], tip[1], -u[0], -u[1]));
   const sx = u[0] >= 0 ? 1 : -1, w = Math.max(...lines.map(s => textW(s))) + 1;
   out.push(thin(T, [T[0] + sx * w, T[1]]));
   const x = T[0] + sx * 0.5;
@@ -327,7 +346,7 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
   if (leaderTo) {
     const start: P2 = [leaderTo[0] < at[0] ? at[0] - 1 : at[0] + w + 1, at[1] + h * 0.35];
     const u = unit2([leaderTo[0] - start[0], leaderTo[1] - start[1]]);
-    out.push(thin(start, leaderTo), arrowHead(leaderTo[0], leaderTo[1], u[0], u[1], ARROW, 1));
+    out.push(thin(start, leaderTo), arrow(leaderTo[0], leaderTo[1], u[0], u[1]));
   }
   return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
 }
@@ -408,7 +427,7 @@ function surfOn(a: SurfAnnot, T: P2, f: { at: P2; d: P2 } | null, dec: string): 
     return { prims: rotatePrims(r.prims, f.at, ang), box: rotateBox(r.box, f.at, ang) };
   }
   const r = surfPrims(a, T, dec), u = unit2([f.at[0] - T[0], f.at[1] - T[1]]);
-  r.prims.push(thin(T, f.at), arrowHead(f.at[0], f.at[1], u[0], u[1], ARROW, 1));
+  r.prims.push(thin(T, f.at), arrow(f.at[0], f.at[1], u[0], u[1]));
   return r;
 }
 

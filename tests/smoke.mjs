@@ -5539,7 +5539,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.86: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
+  // --- 1.87: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5582,7 +5582,7 @@ try {
     const i3 = await state();
     check(i0.title === "Intersect" && rows.n === 3 && JSON.stringify([...rows.v].sort((a, b) => a - b)) === "[1000,3000,5000]" && i0.v === 9000 && i0.bodies === 1
       && i1.v === 8000 && i1.bodies === 2 && i2.v === 9000 && i2.bodies === 1 && i3.v === 8000 && !i3.bad,
-      `model 1.86: Intersect lists the regions and keeps the ticked ones (FR-BODY-007) (${JSON.stringify({ i0, rows, i1, i2, i3 })})`);
+      `model 1.87: Intersect lists the regions and keeps the ticked ones (FR-BODY-007) (${JSON.stringify({ i0, rows, i1, i2, i3 })})`);
     // Untrim Surface: a 40 mm square surface with a Ø10 hole gets its hole filled.
     await mp.evaluate(() => window.__sv.model.store.change("Holed surface", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
@@ -5606,14 +5606,14 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(Math.abs(a0 - (1600 - Math.PI * 25)) < 0.2 && u.title === "Untrim Surface" && mode === "holes" && !u.bad && a1 === 1600,
-      `model 1.86: Untrim Surface fills the hole of a planar surface (FR-FT-100) (${JSON.stringify({ a0, u, a1, mode })})`);
+      `model 1.87: Untrim Surface fills the hole of a planar surface (FR-FT-100) (${JSON.stringify({ a0, u, a1, mode })})`);
     // In Russian: the Intersect panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "intersect").id));
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.86: Intersect panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.87: Intersect panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
@@ -5723,6 +5723,14 @@ try {
     await clickAt(fv.x + (40 - fv.uc) * fv.s, fv.y + 15 * fv.s);
     const cr = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { crop: v.crop, breaks: v.breaks ?? null, w: pl.box[2] - pl.box[0], h: pl.box[3] - pl.box[1], ru: !!document.querySelector('.drw-props [data-a="uncrop"]') }; }, fv.id);
     check(cr.crop && !cr.breaks && Math.abs(cr.w - 40) < 1 && Math.abs(cr.h - 20) < 0.6 && cr.ru, `drawing: crop view keeps only the rectangle (${JSON.stringify(cr)})`);
+    // Drafting style (FR-DRW-025): with nothing selected, the sheet panel sets 5 mm text, oblique strokes and the 0.7 line group.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.selectOption('.drw-props [data-st="text"]', "5");
+    await ap.selectOption('.drw-props [data-st="arrow"]', "tick");
+    await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
+    const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
+    check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
     await ctx.close();
   }
 
