@@ -58,6 +58,8 @@ export class VaultPanel {
   private found: { ids: Set<string>; label: string } | null = null;
   /** Users whose check-out of the selected file lost to an earlier one (FR-PDM-071). */
   private conflicts: string[] = [];
+  /** The selected assembly's linked components that have newer versions in the vault. */
+  private stale: { id: string; path: string; version: number; latest: number }[] = [];
   /** Notifications since the last visit (FR-PDM-061). */
   private unseen = 0;
 
@@ -129,6 +131,7 @@ export class VaultPanel {
       // The open part follows its file's lock and version.
       if (this.openId) { const f = this.files.find(x => x.id === this.openId); if (f) this.tieOpen(f); }
       this.conflicts = this.sel ? [...new Set((await v.lockConflicts(this.sel)).map(c => c.user))] : [];
+      this.stale = this.sel ? await v.outdatedLinks(this.sel).catch(() => []) : [];
       this.unseen = (await v.notifications(this.seenAt)).length;
     }
     await this.render();
@@ -290,7 +293,8 @@ export class VaultPanel {
     const v = this.vault, id = this.sel;
     if (!v || !id) return;
     const c = [...new Set((await v.lockConflicts(id)).map(x => x.user))];
-    if (c.length && this.sel === id) { this.conflicts = c; await this.render(); }
+    const stale = await v.outdatedLinks(id).catch(() => []);
+    if ((c.length || stale.length) && this.sel === id) { this.conflicts = c; this.stale = stale; await this.render(); }
   }
 
   /** A refused check-in in a shared vault (FR-PDM-070): save the work as a new file, or discard it. */
@@ -319,6 +323,17 @@ export class VaultPanel {
     const st = this.state.get(id);
     if (st?.modified && !await confirmModal(t("The local copy of {name} has changes that are not checked in. Replace it with the latest version?", { name: this.rec(id).path }), t("Get latest"))) return;
     await this.run(() => v.getLatest(id, true));
+  }
+
+  /** Update links (FR-ASM-003): the checked-out assembly takes the latest versions of its linked components. */
+  async updateLinks(id: string) {
+    const v = this.vault;
+    if (!v) return;
+    await this.run(async () => {
+      const changed = await v.updateLinks(id);
+      toast(changed.length ? t("Links updated: {list}. Check the assembly in to keep them.", { list: changed.join(", ") }) : t("The links are up to date."), "success");
+    });
+    if (this.openId === id) await this.openFile(id);
   }
 
   async rollBack(id: string, n: number) {
@@ -531,7 +546,7 @@ export class VaultPanel {
   // ---------- references (FR-PDM-021/022, 052) ----------
 
   private treeHtml(n: TreeNode, depth = 0): string {
-    const li = (c: TreeNode): string => `<li translate="no">${c.qty > 1 ? `<b>${c.qty}×</b> ` : ""}${esc(c.path)}${c.missing ? ` <span class="v-bad">${esc(t("missing"))}</span>` : ` · v${c.version}${c.rev ? ` · ${esc(c.rev)}` : ""} · <span translate="yes">${esc(tn(c.state))}</span>`}${c.cycle ? " ↻" : ""}${c.children.length && depth < 20 ? `<ul>${c.children.map(x => li(x)).join("")}</ul>` : ""}</li>`;
+    const li = (c: TreeNode): string => `<li translate="no">${c.qty > 1 ? `<b>${c.qty}×</b> ` : ""}${esc(c.path)}${c.missing ? ` <span class="v-bad">${esc(t("missing"))}</span>` : ` · v${c.version}${c.rev ? ` · ${esc(c.rev)}` : ""} · <span translate="yes">${esc(tn(c.state))}</span>`}${c.linked ? ` · <span class="v-link" translate="yes">⛓ ${esc(t("linked"))}</span>` : ""}${c.newer ? ` <span class="v-warn-i" translate="yes">${esc(t("v{n} in the vault", { n: c.newer }))}</span>` : ""}${c.cycle ? " ↻" : ""}${c.children.length && depth < 20 ? `<ul>${c.children.map(x => li(x)).join("")}</ul>` : ""}</li>`;
     return `<ul class="v-tree">${depth ? li(n) : n.children.map(li).join("")}</ul>`;
   }
 
@@ -1021,6 +1036,7 @@ export class VaultPanel {
         ${sel.checkout && !st?.mine && v.has("Admin") ? `<button class="btn small" data-a="break">${esc(t("Break lock"))}</button>` : ""}
         </div>
         ${this.conflicts.length ? `<p class="v-warn">${esc(t("Also checked out at the same time by {list}: the earlier check-out holds the lock.", { list: this.conflicts.join(", ") }))}</p>` : ""}
+        ${this.stale.length ? `<div class="v-warn v-stale"><p>${esc(t("Linked components with newer versions in the vault:"))}</p><ul>${this.stale.map(x => `<li translate="no">${esc(x.path)} · v${x.version} → v${x.latest}</li>`).join("")}</ul>${st?.mine ? `<button class="btn small" data-a="links">${esc(t("Update links"))}</button>` : `<p class="muted">${esc(t("Check the assembly out to update its links."))}</p>`}</div>` : ""}
         ${this.cardSummary(sel)}
       </div>` : "";
       const shown = this.found ? this.files.filter(f => this.found!.ids.has(f.id)) : this.files;
@@ -1046,7 +1062,7 @@ export class VaultPanel {
     });
     h.querySelectorAll<HTMLElement>("[data-openws]").forEach(b => b.addEventListener("click", () => void this.openInBrowser(b.dataset.openws!).catch(e => toast(t((e as Error).message), true))));
     h.querySelectorAll<HTMLElement>(".v-row").forEach(b => {
-      b.addEventListener("click", () => { this.sel = b.dataset.id!; this.conflicts = []; void this.render().then(() => this.loadConflicts()); });
+      b.addEventListener("click", () => { this.sel = b.dataset.id!; this.conflicts = []; this.stale = []; void this.render().then(() => this.loadConflicts()); });
       b.addEventListener("dblclick", () => void this.openFile(b.dataset.id!));
     });
     const zipIn = h.querySelector<HTMLInputElement>("#v-zip");
@@ -1076,6 +1092,7 @@ export class VaultPanel {
         case "card": if (id) void this.dataCard(id); break;
         case "pdf": if (id) void this.pdfOf(id); break;
         case "contains": if (id) void this.containsDlg(id); break;
+        case "links": if (id) void this.updateLinks(id); break;
         case "used": if (id) void this.whereUsedDlg(id); break;
         case "rename": if (id) void this.renameDlg(id); break;
         case "copy": if (id) void this.copyTreeDlg(id); break;

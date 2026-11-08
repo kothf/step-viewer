@@ -5544,6 +5544,23 @@ try {
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
     check(tab.views && !tab.annot && tab.n === 12 && mode === "note", `drawing: annotation tab shows the 12 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
+    const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
+    const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
+    await clickAt(fv.x + (35 - fv.uc) * fv.s, fv.y);
+    await ap.click('.drw-props [data-a="vbreak"]');
+    await clickAt(fv.x + (-25 - fv.uc) * fv.s, fv.y);
+    await clickAt(fv.x + (15 - fv.uc) * fv.s, fv.y);
+    const br = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { breaks: v.breaks, w: pl.box[2] - pl.box[0], zig: (window.__sv.drw.svg().match(/<polyline/g) ?? []).length, mode: window.__sv.drw.mode() }; }, fv.id);
+    check(br.breaks?.length === 1 && Math.abs(br.breaks[0].a + 25) < 0.6 && Math.abs(br.breaks[0].b - 15) < 0.6 && Math.abs(br.w - (fv.w - 40 + 6 / fv.s)) < 1 && br.mode === "none",
+      `drawing: break view leaves out the picked band and closes up (${JSON.stringify([fv, br])})`);
+    // Crop view: replace the break with a crop around the hole end.
+    await ap.click('.drw-props [data-a="unbreak"]');
+    await ap.click('.drw-props [data-a="crop"]');
+    await clickAt(fv.x + (0 - fv.uc) * fv.s, fv.y - 15 * fv.s);
+    await clickAt(fv.x + (40 - fv.uc) * fv.s, fv.y + 15 * fv.s);
+    const cr = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { crop: v.crop, breaks: v.breaks ?? null, w: pl.box[2] - pl.box[0], h: pl.box[3] - pl.box[1], ru: !!document.querySelector('.drw-props [data-a="uncrop"]') }; }, fv.id);
+    check(cr.crop && !cr.breaks && Math.abs(cr.w - 40) < 1 && Math.abs(cr.h - 20) < 0.6 && cr.ru, `drawing: crop view keeps only the rectangle (${JSON.stringify(cr)})`);
     await ctx.close();
   }
 

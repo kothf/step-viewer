@@ -253,3 +253,48 @@ test("vault: check in referenced files too, deepest first, changed ones marked (
   await v.undoCheckOut(plate.id);
   assert.deepEqual((await v.checkInWith(top.id)).map(x => x.path), ["parts/Bolt.mcadprt", "asm/Sub.mcadasm"]);
 });
+
+test("vault: linked assembly components resolve by their hash, show newer versions and update from the vault (FR-ASM-003)", async () => {
+  const { docJson } = await import("../../src/pdm/codec");
+  const { sha256 } = await import("../../src/pdm/vault");
+  const v = await Vault.create(memDir("L"), "L", "Andrey", "pc1");
+  const p1 = await doc("part", [], { description: "v1" });
+  const pin = await v.add("a/parts/Pin.mcadprt", p1);
+  // The pin moves on to v2 before the assembly is checked in: the link still names v1's bytes.
+  await v.checkOut(pin.id);
+  await v.saveWorking(pin.id, await doc("part", [], { description: "v2" }));
+  await v.checkIn(pin.id, "v2");
+  const part = (desc: string) => ({ kind: "part", props: { description: desc }, features: [] });
+  const asmDoc = { kind: "assembly", parts: { pin: { name: "Pin", file: "Pin.mcadprt", doc: part("v1"), link: { path: "parts/Pin.mcadprt", hash: await sha256(p1) } } },
+    components: [{ id: "c1", part: "pin" }, { id: "c2", part: "pin" }] };
+  const asmBytes = await zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 1, kind: "assembly" }) }, { name: "document.json", data: JSON.stringify(asmDoc) }]);
+  assert.deepEqual(await docRefs("a/Top.mcadasm", asmBytes), [{ path: "parts/Pin.mcadprt", qty: 2, hash: await sha256(p1) }]);
+  const top = await v.add("a/Top.mcadasm", asmBytes);
+  assert.deepEqual(v.latest(top).refs, [{ id: pin.id, path: "parts/Pin.mcadprt", version: 1, qty: 2, linked: true }]);
+  const tree = await v.contains(top.id);
+  assert.equal(tree.children[0].version, 1);
+  assert.equal(tree.children[0].linked, true);
+  assert.equal(tree.children[0].newer, 2);
+  assert.deepEqual((await v.outdatedLinks(top.id)).map(x => [x.path, x.version, x.latest]), [["a/parts/Pin.mcadprt", 1, 2]]);
+  // Opened with the latest components, the link hash follows the version put in.
+  const pin2 = (await v.files()).find(f => f.id === pin.id)!;
+  const latest = await v.resolvedBytes(top.id, undefined, "latest");
+  const j = await docJson(latest.bytes) as { parts: { pin: { doc: { props: { description: string } }; link: { hash: string } } } };
+  assert.equal(j.parts.pin.doc.props.description, "v2");
+  assert.equal(j.parts.pin.link.hash, v.latest(pin2).sha);
+  // Update links needs a check-out, then writes the working copy; checked in, nothing is outdated.
+  await assert.rejects(v.updateLinks(top.id));
+  await v.checkOut(top.id);
+  assert.deepEqual(await v.updateLinks(top.id), ["a/parts/Pin.mcadprt"]);
+  assert.deepEqual(await v.updateLinks(top.id), []);
+  await v.checkIn(top.id, "links");
+  const t2 = (await v.files()).find(f => f.id === top.id)!;
+  assert.equal(v.latest(t2).refs![0].version, 2);
+  assert.deepEqual(await v.outdatedLinks(top.id), []);
+  // Renaming the part rewrites the link path.
+  await v.rename(pin.id, "a/parts/Dowel.mcadprt");
+  const t3 = (await v.files()).find(f => f.id === top.id)!;
+  const j3 = await docJson(await v.versionBytes(top.id, v.latest(t3).n)) as { parts: { pin: { link: { path: string } } } };
+  assert.equal(j3.parts.pin.link.path, "parts/Dowel.mcadprt");
+  assert.equal(v.latest(t3).refs![0].linked, true);
+});

@@ -8,7 +8,8 @@
 import { toJson } from "../model/file";
 import { unzipLimited, zip } from "../model/zip";
 
-export interface DocRef { path: string; qty: number }
+/** A reference; a linked assembly component (FR-ASM-003) also carries the SHA-256 of the file it was last read from. */
+export interface DocRef { path: string; qty: number; hash?: string }
 
 const dec = new TextDecoder();
 const isDoc = (path: string) => /\.mcad(prt|asm|drw)$/i.test(path);
@@ -39,20 +40,31 @@ export async function docRefs(path: string, bytes: Uint8Array): Promise<DocRef[]
 
 /**
  * The files an assembly's embedded parts came from (FR-PDM-020), when its manifest lists none: `parts[k].file`
- * (a name in the assembly's folder), counted by the unsuppressed components that use it.
+ * (a name in the assembly's folder), or for a linked part its `link.path` with the hash of the bytes it was read
+ * from, counted by the unsuppressed components that use it.
  */
 function embeddedRefs(m: Map<string, Uint8Array>): DocRef[] {
-  const doc = readJson(m, "document.json") as { parts?: Record<string, { file?: unknown }>; components?: { part?: unknown; suppressed?: unknown }[] } | null;
+  const doc = readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; link?: { path?: unknown; hash?: unknown } }>; components?: { part?: unknown; suppressed?: unknown }[] } | null;
   if (!doc?.parts || typeof doc.parts !== "object") return [];
   const uses = new Map<string, number>();
   for (const c of Array.isArray(doc.components) ? doc.components : []) if (typeof c?.part === "string" && !c.suppressed) uses.set(c.part, (uses.get(c.part) ?? 0) + 1);
-  const out = new Map<string, number>();
+  const out = new Map<string, DocRef>();
   for (const [k, p] of Object.entries(doc.parts)) {
     const n = uses.get(k) ?? 0;
-    if (typeof p?.file !== "string" || !p.file || !n || p.file.startsWith("/")) continue;
-    out.set(p.file, (out.get(p.file) ?? 0) + n);
+    const file = partPath(p);
+    if (!file || !n || file.startsWith("/")) continue;
+    const r = out.get(file) ?? { path: file, qty: 0 };
+    r.qty += n;
+    if (typeof p.link?.hash === "string" && p.link.hash) r.hash = p.link.hash;
+    out.set(file, r);
   }
-  return [...out].map(([path, qty]) => ({ path, qty }));
+  return [...out.values()];
+}
+
+/** Where an assembly's part entry comes from: its link's path, else its file name. */
+function partPath(p: { file?: unknown; link?: { path?: unknown } } | null | undefined): string | null {
+  if (typeof p?.link?.path === "string" && p.link.path) return p.link.path.replace(/\\/g, "/").replace(/^\.\//, "");
+  return typeof p?.file === "string" && p.file ? p.file : null;
 }
 
 /** An assembly's embedded part documents, packed as part files named by where they came from (FR-PDM-003). */
@@ -69,18 +81,24 @@ export async function embeddedParts(bytes: Uint8Array): Promise<{ file: string; 
 }
 
 /**
- * An assembly with some embedded documents replaced (FR-PDM-022): `parts` maps a part's file name to the
- * part document now in force, `subs` a sub-assembly's file name to its assembly document. Null when nothing changed.
+ * An assembly with some embedded documents replaced (FR-PDM-022): `parts` maps a part's file name (or link path)
+ * to the part document now in force, `subs` a sub-assembly's to its assembly document. `shas` gives the SHA-256 of
+ * the vault version each came from, written into a linked entry's `link.hash` so the assembly knows the copy is
+ * current. Null when nothing changed.
  */
-export async function embedDocs(bytes: Uint8Array, parts: Map<string, unknown>, subs: Map<string, unknown>): Promise<Uint8Array | null> {
+export async function embedDocs(bytes: Uint8Array, parts: Map<string, unknown>, subs: Map<string, unknown>, shas = new Map<string, string>()): Promise<Uint8Array | null> {
   const m = await entries(bytes);
-  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown; name?: unknown }> } | null;
+  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown; name?: unknown; link?: { path: string; hash: string } }> } | null;
   if (!m || !doc?.parts) return null;
   let n = 0;
   for (const p of Object.values(doc.parts)) {
-    if (typeof p?.file !== "string") continue;
-    if (p.asm && subs.has(p.file)) { const a = subs.get(p.file); if (JSON.stringify(a) !== JSON.stringify(p.asm)) { p.asm = a; n++; } }
-    else if (!p.asm && parts.has(p.file)) { const d = parts.get(p.file); if (JSON.stringify(d) !== JSON.stringify(p.doc)) { p.doc = d; n++; } }
+    const key = partPath(p);
+    if (!key) continue;
+    if (p.asm && subs.has(key)) { const a = subs.get(key); if (JSON.stringify(a) !== JSON.stringify(p.asm)) { p.asm = a; n++; } }
+    else if (!p.asm && parts.has(key)) { const d = parts.get(key); if (JSON.stringify(d) !== JSON.stringify(p.doc)) { p.doc = d; n++; } }
+    else continue;
+    const h = shas.get(key);
+    if (p.link && h && p.link.hash !== h) { p.link.hash = h; n++; }
   }
   if (!n) return null;
   m.set("document.json", new TextEncoder().encode(toJson(doc)));

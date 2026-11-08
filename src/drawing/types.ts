@@ -44,7 +44,14 @@ export interface DrawingView {
   hatch?: { gap?: number; angle?: number };
   /** Centre marks on round edges seen end-on and centrelines on cylinders seen from the side (FR-DRW-023); false hides them. */
   marks?: boolean;
+  /** Crop view (FR-DRW-015): only what lies inside this rectangle (view axes, model mm: [u0, v0, u1, v1]) is drawn. */
+  crop?: [number, number, number, number];
+  /** Break view (FR-DRW-015): bands between `a` and `b` along the view's u (vertical break lines) or v axis
+   * (horizontal break lines), in model mm, are left out and the rest closes up to a 6 mm gap on the sheet. */
+  breaks?: ViewBreak[];
 }
+
+export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 
 /**
  * What an annotation is attached to (FR-DRW-021): a model edge by its key (the names of the faces

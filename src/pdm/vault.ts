@@ -35,7 +35,8 @@ export interface VaultInfo {
   outputs?: boolean;
 }
 /** A reference from one version to another file (FR-PDM-020): the version it was checked in against, and how many. */
-export interface RefRec { id: string; path: string; version: number; qty: number }
+/** A reference at check-in; `linked` = a linked assembly component (FR-ASM-003), whose version is the one its hash names. */
+export interface RefRec { id: string; path: string; version: number; qty: number; linked?: boolean }
 export interface VersionRec {
   n: number; sha: string; size: number; at: string; user: string; comment: string; state: string; rolledBackFrom?: number;
   /** Content dropped by Purge old versions (the row stays in the history). */ purged?: boolean;
@@ -71,7 +72,9 @@ export interface SearchQuery {
   /** Data card fields that must contain the value (case-insensitive). */ fields?: Record<string, string>;
   /** "Contains material = Aluminium": a file anywhere in the file's references has this data card value. */ contains?: { field: string; value: string };
 }
-export interface TreeNode { id: string; path: string; version: number; qty: number; rev?: string; state: string; children: TreeNode[]; cycle?: boolean; missing?: boolean }
+export interface TreeNode { id: string; path: string; version: number; qty: number; rev?: string; state: string; children: TreeNode[]; cycle?: boolean; missing?: boolean;
+  /** A linked component, and the vault's latest version when the parent uses an older one. */
+  linked?: boolean; newer?: number }
 export type Resolve = "built" | "latest" | "released";
 export interface LogEntry { at: string; seq?: number; user: string; action: string; file?: string; path?: string; version?: number; details?: string; /** Addressed to a user or role (FR-PDM-061). */ to?: string }
 
@@ -466,7 +469,7 @@ export class Vault {
     const bytes = await this.versionBytes(id, v.n);
     if (mode === "built" || depth > 8 || !/\.mcadasm$/i.test(f.path)) return { bytes, changed: [] };
     const all = new Map((await this.files(true)).map(x => [x.id, x]));
-    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), changed: string[] = [];
+    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), shas = new Map<string, string>(), changed: string[] = [];
     for (const r of v.refs ?? []) {
       const c = all.get(r.id);
       if (!c) continue;
@@ -474,15 +477,58 @@ export class Vault {
       if (pv.purged) continue;
       if (/\.mcadprt$/i.test(c.path)) {
         const d = await docJson(await this.object(pv.sha));
-        if (d) { parts.set(r.path, d); if (pv.n !== r.version) changed.push(c.path); }
+        if (d) { parts.set(r.path, d); shas.set(r.path, pv.sha); if (pv.n !== r.version) changed.push(c.path); }
       } else if (/\.mcadasm$/i.test(c.path)) {
         const sub = await this.resolvedBytes(c.id, pv.n, mode, depth + 1);
         const d = await docJson(sub.bytes);
         if (d) { subs.set(r.path, d); if (pv.n !== r.version || sub.changed.length) changed.push(c.path, ...sub.changed); }
       }
     }
-    const out = await embedDocs(bytes, parts, subs);
+    const out = await embedDocs(bytes, parts, subs, shas);
     return { bytes: out ?? bytes, changed: out ? [...new Set(changed)] : [] };
+  }
+
+  /** Linked components of an assembly's latest version that have newer versions in the vault (FR-ASM-003). */
+  async outdatedLinks(id: string): Promise<{ id: string; path: string; version: number; latest: number }[]> {
+    const f = await this.file(id);
+    const all = new Map((await this.files()).map(x => [x.id, x]));
+    const out: { id: string; path: string; version: number; latest: number }[] = [];
+    for (const r of this.latest(f).refs ?? []) {
+      const c = r.linked ? all.get(r.id) : undefined;
+      if (c && this.latest(c).n > r.version && !out.some(x => x.id === c.id)) out.push({ id: c.id, path: c.path, version: r.version, latest: this.latest(c).n });
+    }
+    return out;
+  }
+
+  /**
+   * Update links from the vault (FR-ASM-003, FR-PDM-022): the checked-out assembly's working copy gets the latest
+   * version of each linked part or sub-assembly, with the link hashes to match; check it in to record it.
+   * Returns the paths that changed.
+   */
+  async updateLinks(id: string): Promise<string[]> {
+    const f = await this.file(id);
+    const st = await this.status(f);
+    if (!st.mine) throw new VaultError("Check the file out first.");
+    const data = await this.working(f.path);
+    if (!data) return [];
+    const refs = await this.indexRefs(f.path, data);
+    const all = new Map((await this.files()).map(x => [x.id, x]));
+    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), shas = new Map<string, string>(), changed: string[] = [];
+    for (const r of refs) {
+      const c = r.linked ? all.get(r.id) : undefined;
+      if (!c) continue;
+      const lv = this.latest(c);
+      if (lv.n === r.version || lv.purged) continue;
+      const d = await docJson(await this.object(lv.sha));
+      if (!d) continue;
+      (/\.mcadasm$/i.test(c.path) ? subs : parts).set(r.path, d);
+      shas.set(r.path, lv.sha);
+      changed.push(c.path);
+    }
+    const out = changed.length ? await embedDocs(data, parts, subs, shas) : null;
+    if (!out) return [];
+    await this.writeWorking(f.path, out);
+    return changed;
   }
 
   /** Get latest (FR-PDM-015): the working copy becomes the latest version (refused over local changes unless forced). */
@@ -626,7 +672,9 @@ export class Vault {
     for (const r of refs) {
       const target = resolveRel(path, r.path);
       const f = target ? files.find(x => x.path.toLowerCase() === target.toLowerCase()) : undefined;
-      out.push({ id: f?.id ?? "", path: r.path, version: f ? this.latest(f).n : 0, qty: r.qty });
+      // A linked component names the bytes it was read from: that version, even if newer ones exist.
+      const exact = f && r.hash ? [...f.versions].reverse().find(v => v.sha === r.hash) : undefined;
+      out.push({ id: f?.id ?? "", path: r.path, version: exact?.n ?? (f ? this.latest(f).n : 0), qty: r.qty, ...(r.hash ? { linked: true } : {}) });
     }
     return out;
   }
@@ -654,7 +702,9 @@ export class Vault {
       for (const r of v.refs ?? []) {
         const c = all.get(r.id);
         if (!c) { n.children.push({ id: "", path: r.path, version: 0, qty: r.qty, state: "", children: [], missing: true }); continue; }
-        n.children.push(node(c, this.pick(c, r, mode), r.qty, s2));
+        const k = node(c, this.pick(c, r, mode), r.qty, s2);
+        if (r.linked) { k.linked = true; const l = this.latest(c).n; if (l > k.version) k.newer = l; }
+        n.children.push(k);
       }
       return n;
     };
