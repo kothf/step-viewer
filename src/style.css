@@ -660,7 +660,9 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-line { display: flex; gap: 8px; align-items: center; }
 .mc-status:not(:empty), .mc-busy { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
 .mc-busy { color: var(--muted); }
-.mc-confirm { position: absolute; right: 132px; bottom: 16px; z-index: 4; display: flex; gap: 6px; }
+/* Confirmation corner (SolidWorks): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
+.mc-confirm { position: absolute; right: 132px; top: 10px; z-index: 4; display: flex; gap: 6px; }
+#viewport:has(.mc-confirm:not([hidden])) .mc-bar { right: 228px; }
 .mc-confirm button { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); font-size: 20px; cursor: pointer; display: grid; place-items: center; }
 .mc-ok { color: #1f7a35; }
 .mc-cancel { color: var(--danger); }
@@ -719,6 +721,9 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 .pm-head h3 { margin: 2px 0 4px; font-size: 15px; }
+/* The panel scrolls under its title row, so ✓/✕ stay in reach however long the panel is. */
+.pm > .pm-head { position: sticky; top: -8px; z-index: 2; margin: -8px -12px 4px; padding: 8px 12px 4px; background: var(--panel-2); border-bottom: 1px solid transparent; }
+.pm.scrolled > .pm-head { border-bottom-color: var(--line); box-shadow: 0 3px 6px -4px rgba(0, 0, 0, .25); }
 .pm-help { margin: 0 0 8px; font-size: 12px; }
 .pm-field { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
 .pm-field select, .pm-field input[type=text] { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
@@ -741,7 +746,8 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
   .mc-bar { right: 10px; }
   .mc-b { min-width: 40px; }
   .mc-l { display: none; }
-  .mc-confirm { right: 10px; bottom: 64px; }
+  .mc-confirm { right: 104px; }
+  #viewport:has(.mc-confirm:not([hidden])) .mc-bar { right: 200px; }
 }
 .sk-dim.draft { pointer-events: none; border-style: dashed; }
 #app.mc-cmd .tool-hint { display: none !important; }
@@ -1093,3 +1099,5 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-plot .mo-pg { stroke: var(--line); stroke-width: 0.5; vector-effect: non-scaling-stroke; }
 .motion .mo-plot .mo-pt { fill: var(--muted, currentColor); font-size: 7px; }
 .motion .mo-plot .mo-ph { stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.motion .mo-aspan { position: absolute; top: 3px; bottom: 3px; min-width: 2px; background: color-mix(in srgb, var(--warn-text) 35%, transparent); border-block: 2px solid var(--warn-text); pointer-events: none; }
+.motion .mo-alert { color: var(--warn-text); font-weight: 600; }

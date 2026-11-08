@@ -12,7 +12,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
-import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
+import { ORIGIN, curveJoint, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
 import { uid } from "../model/doc";
 import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
@@ -103,12 +103,12 @@ const DANGLING = { light: 0x8f6a00, dark: 0xd8b13a };
 
 const REL_GLYPH: Record<RelKind, string> = {
   coincident: "◉", horizontal: "H", vertical: "V", parallel: "∥", perpendicular: "⊥", collinear: "⫽", equal: "=",
-  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕",
+  tangent: "T", concentric: "◎", midpoint: "M", fix: "⚓", onCurve: "◦", symmetric: "⇹", intersection: "✕", curvature: "κ",
 };
 export const REL_NAME: Record<RelKind, string> = {
   coincident: "Coincident", horizontal: "Horizontal", vertical: "Vertical", parallel: "Parallel", perpendicular: "Perpendicular",
   collinear: "Collinear", equal: "Equal", tangent: "Tangent", concentric: "Concentric", midpoint: "Midpoint", fix: "Fix",
-  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection",
+  onCurve: "On curve", symmetric: "Symmetric", intersection: "Intersection", curvature: "Equal curvature",
 };
 
 /** A relation's name: a fix that follows a model edge is "On edge". */
@@ -1211,6 +1211,11 @@ export class SketchEditor {
     if (total === 2 && n("ellipse") + circ === 2 && n("ellipse")) out.push("concentric");
     if (total === 3 && n("line") >= 1 && (n("point") === 2 || n("line") === 3)) out.push("symmetric");
     if (total === 3 && n("point") === 1 && n("line") + circ + n("ellipse") === 2) out.push("intersection");
+    // A spline and a line, arc or spline meeting at an end: tangent and equal curvature (FR-SK-050/051).
+    if (total === 2 && n("spline") >= 1 && n("spline") + n("line") + n("arc") === 2) {
+      const [a, b] = [...this.selection];
+      if (curveJoint(this.sk, a, b)) out.push("tangent", "curvature");
+    }
     if (total >= 1 && !this.selection.has(ORIGIN)) out.push("fix");
     return [...new Set(out)];
   }

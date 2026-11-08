@@ -230,7 +230,24 @@ export class Modeller {
 
   /** The frame of a sketch plane. */
   frameOf(sk: SketchFeature, body: Named | null, frames: Record<string, Frame> = {}): Frame {
-    return this.planeFrame(sk.plane, body, frames);
+    const fr = this.planeFrame(sk.plane, body, frames);
+    if (!sk.xAxis) return fr;
+    // Sketch orientation (FR-SK-002 P2): X along a straight edge, projected onto the plane. An edge that is gone,
+    // not straight or square to the plane leaves the natural direction, with a warning.
+    try {
+      const oc = this.oc;
+      const ad = new oc.BRepAdaptor_Curve_2(this.resolveEdge(body, sk.xAxis.edge));
+      if (ad.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) throw new Error("not straight");
+      let d = this.xyz(ad.Line().Direction());
+      d = add(d, mul(fr.n, -dot(d, fr.n)));
+      if (Math.hypot(...d) < 1e-6) throw new Error("square");
+      if (dot(d, fr.x) < -1e-9 || (Math.abs(dot(d, fr.x)) <= 1e-9 && dot(d, fr.y) < 0)) d = mul(d, -1);
+      if (sk.xAxis.flip) d = mul(d, -1);
+      return frameFrom(fr.o, d, fr.n);
+    } catch {
+      this.warning = "The sketch X axis edge is gone, not straight or square to the plane: the plane's own direction is used.";
+      return fr;
+    }
   }
 
   /** The frame of a plane reference: a standard plane, a flat face, or a reference plane evaluated before. */
@@ -581,11 +598,20 @@ export class Modeller {
         tools.push(this.nameSweep(mk, f.id, edgeEnt, mk.Shape()));
       }
     }
-    // Several regions: fuse the tools first.
-    let tool = tools[0];
-    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    // Several regions: fuse the tools first, in one operation.
+    const tool = this.fuseAll(tools, f.id);
     if (!(f.type === "extrude" && f.outside)) this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss" && prev && f.merge === false) return this.compoundOf([...this.bodyList(prev), tool]);
+    if (f.op === "boss" && prev && f.type === "extrude") {
+      // A boss standing on the body (embossed text, a pad on a face): when the body lies wholly behind
+      // the plane the tool starts from, the two only touch, and gluing skips the slow intersection of
+      // the coplanar faces (a 25-letter emboss: 6 s → 1 s).
+      // Both checks together prove it whatever the end condition; a wrong guess only falls back.
+      const ahead = mul(frame.n, f.flip ? -1 : 1);
+      const back = f.end === "mid" ? f.depth.v / 2 : f.end === "blind" ? f.depth2?.v ?? 0 : 0;
+      const start = add(add(frame.o, so), mul(ahead, -back));
+      if (this.reach(prev.shape, start, ahead) < 1e-5 && this.reach(tool.shape, start, mul(ahead, -1)) < 1e-5) return this.bool("fuse", prev, tool, f.id, true);
+    }
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");
     const out = this.bool(f.type === "extrude" && f.outside ? "common" : "cut", prev, tool, f.id);
@@ -739,14 +765,43 @@ export class Modeller {
     return this.bool("cut", a, { shape: tool, faces, names: faces.map((_f, i) => `${fid}:t${i}`) }, fid);
   }
 
-  private bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string): Named {
+  /**
+   * `a` op `b`. `glue` (fuse only) says the two only touch, never overlap: OCCT then skips intersecting
+   * faces that lie on each other (BOPAlgo_GlueShift), which is much faster for many coplanar faces.
+   */
+  private bool(kind: "fuse" | "cut" | "common", a: Named, b: Named, fid: string, glue = false): Named {
     const oc = this.oc;
     const pr = new oc.Message_ProgressRange_1();
-    const mk = kind === "fuse" ? new oc.BRepAlgoAPI_Fuse_3(a.shape, b.shape, pr)
+    let mk: any;
+    if (glue && kind === "fuse") {
+      mk = new oc.BRepAlgoAPI_Fuse_1();
+      const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+      A.Append_1(a.shape); B.Append_1(b.shape);
+      mk.SetArguments(A); mk.SetTools(B);
+      mk.SetGlue(oc.BOPAlgo_GlueEnum.BOPAlgo_GlueShift);
+      mk.Build(pr);
+    } else mk = kind === "fuse" ? new oc.BRepAlgoAPI_Fuse_3(a.shape, b.shape, pr)
       : kind === "cut" ? new oc.BRepAlgoAPI_Cut_3(a.shape, b.shape, pr)
       : new oc.BRepAlgoAPI_Common_3(a.shape, b.shape, pr);
     if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", kind === "fuse" ? "The new material could not be joined to the body." : "The cut failed.");
     return this.carry(mk, [a, b], mk.Shape(), fid);
+  }
+
+  /**
+   * All the tools fused in one operation (the first as the argument, the rest as tools): one pass
+   * instead of one per tool, each on a growing result (a 25-letter text: 8 s → 0.3 s).
+   */
+  private fuseAll(tools: Named[], fid: string): Named {
+    if (tools.length < 2) return tools[0];
+    const oc = this.oc;
+    const mk = new oc.BRepAlgoAPI_Fuse_1();
+    const A = new oc.TopTools_ListOfShape_1(), B = new oc.TopTools_ListOfShape_1();
+    A.Append_1(tools[0].shape);
+    for (const t of tools.slice(1)) B.Append_1(t.shape);
+    mk.SetArguments(A); mk.SetTools(B);
+    mk.Build(new oc.Message_ProgressRange_1());
+    if (!mk.IsDone() || mk.HasErrors()) throw new FeatureError("E-FT-BOOL", "The new material could not be joined to the body.");
+    return this.carry(mk, tools, mk.Shape(), fid);
   }
 
   /** The material a cut took away: the body before it minus the body after it (the cut preview). */
@@ -3166,6 +3221,43 @@ export class Modeller {
     return { brep, solids: this.solids(body.shape), faces: body.faces.length };
   }
 
+  /**
+   * A body as BREP text plus where each named face sits in the shape's face map (1-based; negative
+   * when the named face is the map's face reversed), so another kernel worker can rebuild the same
+   * named body with `fromTransport` (parallel assembly builds). Null when a face is not in the map.
+   */
+  toTransport(body: Named): { brep: string; order: number[] } | null {
+    const oc = this.oc;
+    const map = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(body.shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+    const order: number[] = [];
+    for (const f of body.faces) {
+      const i = map.FindIndex(f);
+      if (i < 1) return null;
+      order.push(map.FindKey(i).Orientation_1() === f.Orientation_1() ? i : -i);
+    }
+    return { brep: this.brepText(body).brep, order };
+  }
+
+  /** The named body `toTransport` wrote (in this worker's OCCT). */
+  fromTransport(brep: string, order: number[], names: string[]): Named {
+    const oc = this.oc;
+    const path = `/xfer${Date.now()}${Math.floor(Math.random() * 1e6)}.brep`;
+    oc.FS.writeFile(path, brep);
+    const shape = new oc.TopoDS_Shape();
+    const ok = oc.BRepTools.Read_2(shape, path, new oc.BRep_Builder(), new oc.Message_ProgressRange_1());
+    oc.FS.unlink(path);
+    if (!ok || shape.IsNull()) throw new Error("The part body could not be read.");
+    const map = new oc.TopTools_IndexedMapOfShape_1();
+    oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+    const faces = order.map(i => {
+      if (Math.abs(i) > map.Extent()) throw new Error("The part body does not match its faces.");
+      const k = map.FindKey(Math.abs(i));
+      return oc.TopoDS.Face_1(i < 0 ? k.Reversed() : k);
+    });
+    return { shape, faces, names };
+  }
+
   /** Bodies back into one shape: a compound when there are several. */
   private compoundOf(parts: Named[]): Named {
     if (parts.length === 1) return parts[0];
@@ -3345,8 +3437,7 @@ export class Modeller {
 
   /** Boss or cut with a feature's tool solids; the tools are kept for mirror and patterns. */
   private applyTool(f: { id: string; op: "boss" | "cut" }, tools: Named[], prev: Named | null): Named {
-    let tool = tools[0];
-    for (const t of tools.slice(1)) tool = this.bool("fuse", tool, t, f.id);
+    const tool = this.fuseAll(tools, f.id);
     this.tools.set(f.id, [{ shape: tool, op: f.op === "boss" ? "fuse" : "cut" }]);
     if (f.op === "boss") return prev ? this.bool("fuse", prev, tool, f.id) : tool;
     if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to cut yet.");

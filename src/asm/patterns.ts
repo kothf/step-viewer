@@ -68,6 +68,23 @@ export function explodeOffsets(v: ExplodeView): Map<string, V3> {
 }
 
 /**
+ * Offsets of an exploded view at progress k (0 collapsed … 1 exploded). All steps move together, or with `seq`
+ * one after another: of n steps, step i runs while k goes from i/n to (i + 1)/n.
+ */
+export function explodeAt(v: ExplodeView, k: number, seq = false): Map<string, V3> {
+  const out = new Map<string, V3>(), n = v.steps.length;
+  v.steps.forEach((s, i) => {
+    const f = seq ? Math.max(0, Math.min(1, k * n - i)) : k;
+    if (f <= 0) return;
+    for (const id of s.comps) {
+      const o = out.get(id) ?? [0, 0, 0];
+      out.set(id, [o[0] + s.dir[0] * s.dist * f, o[1] + s.dir[1] * s.dist * f, o[2] + s.dir[2] * s.dist * f]);
+    }
+  });
+  return out;
+}
+
+/**
  * Auto explode: one step per floating component, outward from the assembly centre along the line to
  * its own centre (or +Z when they coincide), by half the assembly size.
  */

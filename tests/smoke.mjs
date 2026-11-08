@@ -3100,6 +3100,61 @@ try {
     // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
     check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
       `model 1.167: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
+    // 1.215: a spline leaving a line's end takes Tangent and Equal curvature (FR-SK-050/051); Tangent turns its end along the line.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const q of [[14, -6], [20, -6], [20, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("spline"));
+    for (const q of [[20, -6], [26, -2.5], [32, -6], [32, -6]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("select"));
+    await click([17, -6]);
+    const onSp = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); return l[Math.floor(l.length / 4)]; });
+    { const [x, y] = await toPage(onSp); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.keyboard.down("Control"); await mp.mouse.down(); await mp.mouse.up(); await mp.keyboard.up("Control"); await mp.waitForTimeout(150); }
+    const relBtns = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-rel]")].map(b => b.dataset.rel).join(","));
+    if (await mp.$('#mc-pm [data-rel="tangent"]')) await mp.click('#mc-pm [data-rel="tangent"]');
+    await mp.waitForTimeout(150);
+    const st = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.filter(e => e.t === "spline" && !e.kind).at(-1), l = ed.splineLine(c); const d = [l[1][0] - l[0][0], l[1][1] - l[0][1]]; return { tan: ed.sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, slope: Math.round(Math.abs(d[1] / d[0]) * 1000) / 1000, dir: Math.sign(d[0]), ok: ed.info.status }; });
+    check(/tangent/.test(relBtns) && /curvature/.test(relBtns) && st.tan === 1 && st.slope < 0.01 && st.dir === 1 && st.ok === "ok",
+      `model 1.215: spline tangent to the line it leaves; Equal curvature offered (${relBtns}, ${JSON.stringify(st)})`);
+    await ctx.close();
+  }
+
+  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const world = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(...w).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 30 × 20 block and a sketch on its top face.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -15), P("b", 20, -15), P("c", 20, 15), P("d", -20, 15), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } }, { id: "t", type: "sketch", name: "Sketch2", plane: { face: { name: "x:end" } }, hidden: false, rels: [], dims: [], ents: [P("q", 5, 0)] }); }); });
+    await idle();
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const x0 = await mp.evaluate(() => window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(","));
+    // Edit sketch plane → X axis → click the top edge on the +X side (it runs along Y) → OK.
+    await mp.evaluate(() => window.__sv.modeller.editSketchPlane("t"));
+    await idle();
+    await mp.click('#mc-pm [data-a="xpick"]');
+    const status = await mp.evaluate(() => document.querySelector("#mc-status")?.textContent ?? "");
+    const [ex, ey] = await world([20, 0, 20]);
+    await mp.mouse.move(ex, ey); await mp.waitForTimeout(80); await mp.mouse.down(); await mp.mouse.up();
+    await mp.waitForTimeout(300);
+    await idle();
+    const box = await mp.evaluate(() => document.querySelector('#mc-pm [data-a="xpick"]')?.textContent ?? "");
+    await mp.click('#mc-pm [data-a="ok"]');
+    await idle();
+    const after = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(x => x.id === "t"); return { edge: f.xAxis?.edge?.faces?.slice().sort().join("+") ?? null, x: window.__sv.model.last().frames.t.x.map(v => Math.round(v * 1000) / 1000).join(",") }; });
+    check(x0 === "1,0,0" && /straight edge/.test(status) && box === "Edge" && after.edge === "x:end+x:side:l2" && after.x === "0,1,0",
+      `model 1.215: sketch X axis along a picked model edge (${x0} → ${after.x}, ${after.edge}, ${box}, ${status})`);
     await ctx.close();
   }
 
@@ -5646,7 +5701,18 @@ try {
         a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
       document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
       mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
-      const trace = { mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
+      // Sensor: Alert above 10 mm on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
+      // shows Out of range at the end, and with Stop playback the trip is the first frame past 1 s.
+      m.sel = null; m.selTrace = tr0.id; m.render(); m.showAt(m.time);
+      plotAs("dist");
+      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10"; amax.dispatchEvent(new Event("change"));
+      const astop = document.querySelector('#motion input[data-tr="astop"]'); astop.checked = true; astop.dispatchEvent(new Event("change"));
+      m.seek(2);
+      const spans = m.alertSpansOf(tr0.id), sfps = m.study.fps;
+      const sensor = { alert: m.study.traces.find(x => x.id === tr0.id).alert, spans, from: spans[0]?.[0], to: spans[0]?.[1], one: spans.length === 1,
+        bands: document.querySelectorAll(`#motion .mo-tlane[data-tlane="${tr0.id}"] .mo-aspan`).length, out: !!document.querySelector("#motion .mo-alert"),
+        trip: m.tripAt(0, 2 * sfps)?.i, want: sfps + 1, fromOk: Math.abs(spans[0]?.[0] - (sfps + 1) / sfps) < 1e-9 };
+      const trace = { sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
       trace.gone = !(m.study.traces ?? []).length && !document.querySelector("#motion .mo-name[data-trace]");
       m.sel = { track: tr.id, key: 1 };
@@ -5718,6 +5784,13 @@ try {
       document.querySelector('#motion [data-mo="clashclose"]')?.click();
       const closed = !document.querySelector("#motion .mo-clashes");
       const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      // Explode keys: Step by step on the key panel sets the track's seq; the one-step wizard leaves it off.
+      m.wizard("explode");
+      const et = m.study.tracks.find(k => k.kind === "explode");
+      m.sel = { track: et.id, key: 0 }; m.render();
+      const seqBox = document.querySelector('#motion input[data-p="seq"]'), seqBefore = !!et.seq;
+      if (seqBox) { seqBox.checked = true; seqBox.dispatchEvent(new Event("change")); }
+      interfere.seq = { box: !!seqBox, before: seqBefore, after: !!m.study.tracks.find(k => k.id === et.id)?.seq };
       m.deleteStudy();
       m.studyId = prevStudy; m.render(); m.seek(prevTime);
       trace.interfere = interfere;
@@ -5791,7 +5864,10 @@ try {
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
-      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false,
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false
+      && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
+      && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
@@ -8626,6 +8702,62 @@ try {
     await ctx.close();
   }
 
+  // --- Several part tabs next to a STEP tab: each tab shows its own body; a lost WebGL context comes back ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&nokernel`);
+    await dp.waitForFunction(() => window.__sv);
+    await dp.setInputFiles("#file-input", join(fixtures, "cax-if/as1_pe_203.stp"));
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const plate = async w => {
+      await dp.click("#new-part");
+      await dp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.last());
+      await dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
+        const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+        d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -w / 2, -10), P("b", w / 2, -10), P("c", w / 2, 10), P("d", -w / 2, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+          { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+      }), w);
+      await dp.waitForTimeout(150);
+      await idle();
+    };
+    await plate(40);
+    await plate(80);
+    // What the view shows: the open part's name, the body's width and whether the STEP header leaked into Properties.
+    const shown = () => dp.evaluate(() => {
+      const ps = window.__sv.viewer.parts, d = ps.length === 1 ? ps[0].data : null;
+      return { name: window.__sv.model.store?.doc.name, w: d ? Math.round(d.bboxMax[0] - d.bboxMin[0]) : -ps.length, step: /AP203/.test(document.querySelector("#props")?.textContent ?? "") };
+    });
+    const seen = [];
+    for (const i of [1, 2, 0, 1, 2, 1]) {
+      await dp.click(`#doc-tabs .dt >> nth=${i} >> .dt-b`);
+      if (i === 0) await dp.waitForFunction(() => !window.__sv.model.store && window.__sv.viewer.parts.length > 1 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+      else { await dp.waitForFunction(n => window.__sv.model.store?.doc.name === n, i === 1 ? "Part1" : "Part2"); await idle(); }
+      const s = await shown();
+      seen.push(i ? `${s.name}:${s.w}${s.step ? "+step" : ""}` : "step");
+    }
+    check(seen.join() === "Part1:40,Part2:80,step,Part1:40,Part2:80,Part1:40", `tabs: switching between two part tabs and a STEP tab shows each part's own body, without the STEP header (${seen})`);
+    // A lost WebGL context (GPU reset) blanks the view; once the browser gives it back the view draws again.
+    const lost = await dp.evaluate(async () => {
+      const v = window.__sv.viewer, gl = v.renderer.getContext(), ext = gl.getExtension("WEBGL_lose_context");
+      if (!ext) return "no extension";
+      const env0 = v.scene.environment;
+      ext.loseContext();
+      await new Promise(r => setTimeout(r, 300));
+      const was = v.contextLost;
+      ext.restoreContext();
+      await new Promise(r => setTimeout(r, 800));
+      // three.js starts a fresh renderer.info on restore, so any frame counted now was drawn on the new context.
+      const msg = [...document.querySelectorAll("#toasts .toast")].map(x => x.textContent).join(" | ");
+      return { was, back: !v.contextLost, drew: v.renderer.info.render.frame > 0 && v.renderer.info.render.triangles > 0, env: v.scene.environment !== env0, msg };
+    });
+    check(lost.was && lost.back && lost.drew && lost.env && /restored/.test(lost.msg), `viewer: a lost WebGL context is redrawn when it comes back, with a fresh environment map (${JSON.stringify(lost)})`);
+    await ctx.close();
+  }
+
   // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
@@ -8641,6 +8773,62 @@ try {
     await pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
     const names = await pg.$$eval("#tree .row-n", els => els.map(e => e.textContent.trim()));
     check(names.some(n => n.includes(want)) && !names.some(n => /[ÏËà÷åðí]/.test(n)), `STEP names in Windows-1251 read as Cyrillic in the model tree (${names.join(" | ")})`);
+    await ctx.close();
+  }
+
+  // --- ✓/✕ always in reach: pinned panel title row and the confirmation corner at the top right of the view (FR-UI-021) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 700 } });
+    const kp = await ctx.newPage();
+    kp.on("pageerror", e => errors.push(e.message));
+    kp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await kp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await kp.goto(`${origin}/index.html?debug&nokernel`);
+    await kp.waitForFunction(() => window.__sv);
+    await kp.click("#new-part");
+    await kp.waitForFunction(() => window.__sv.model?.store);
+    await kp.click('[data-c="sketch"]');
+    await kp.click('#mc-pm [data-std="XY"]');
+    await kp.waitForFunction(() => window.__sv.model.mode().kind === "sketch");
+    await kp.waitForTimeout(300);
+    // Scroll the long sketch panel to its end: the ✓ in its title row stays inside the panel.
+    const reach = async (pmSel, cornerSel) => kp.evaluate(([ps, cs]) => {
+      const pm = document.querySelector(ps);
+      pm.scrollTop = pm.scrollHeight;
+      const r = pm.getBoundingClientRect(), ok = pm.querySelector(".pm-top .pm-ok").getBoundingClientRect();
+      const corner = document.querySelector(cs), c = corner.getBoundingClientRect(), vp = document.querySelector("#viewport").getBoundingClientRect();
+      const cube = document.querySelector("#navcube").getBoundingClientRect();
+      return { scrolls: pm.scrollHeight > pm.clientHeight, okIn: ok.top >= r.top - 1 && ok.bottom <= r.bottom + 1 && ok.height > 0, scrolled: pm.classList.contains("scrolled"),
+        corner: !corner.hidden && c.height > 0, top: Math.round(c.top - vp.top), leftOfCube: c.right <= cube.left, okTitle: corner.querySelector(".mc-ok").title };
+    }, [pmSel, cornerSel]);
+    await kp.waitForTimeout(100);
+    const sk = await reach("#mc-pm", "#mc-confirm");
+    check(sk.scrolls && sk.okIn && sk.corner && sk.top <= 16 && sk.leftOfCube && sk.okTitle === "Exit sketch (Enter)",
+      `✓ reach: the sketch panel's ✓ stays in view when the panel is scrolled, and the corner sits at the top right of the view (${JSON.stringify(sk)})`);
+    await kp.waitForTimeout(100);
+    const sc = await kp.evaluate(() => document.querySelector("#mc-pm").classList.contains("scrolled"));
+    // The panel ✓ exits the sketch.
+    await kp.click("#mc-pm .pm-top .pm-ok");
+    await kp.waitForFunction(() => window.__sv.model.mode().kind === "none");
+    const exited = await kp.evaluate(() => ({ hidden: document.querySelector("#mc-confirm").hidden, sketches: window.__sv.model.store.doc.features.filter(f => f.type === "sketch").length }));
+    check(sc && exited.hidden && exited.sketches === 1, `✓ reach: a scrolled panel marks its title row; the panel ✓ exits the sketch and the corner goes (${sc}, ${JSON.stringify(exited)})`);
+    // Assembly: the Explode panel's ✓/✕ are mirrored in the corner.
+    await kp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await kp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await kp.click("#new-more"); await kp.click("#new-asm-part");
+    await kp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1 && document.querySelector("#app").classList.contains("asm"), null, { timeout: 120000 });
+    const before = await kp.evaluate(() => !document.querySelector("#asm-confirm").hidden);
+    await kp.click('#asm-tools [data-ac="explode"]');
+    await kp.waitForFunction(() => !document.querySelector("#asm-confirm").hidden);
+    const ac = await kp.evaluate(() => { const c = document.querySelector("#asm-confirm"), r = c.getBoundingClientRect(), vp = document.querySelector("#viewport").getBoundingClientRect(); return { top: Math.round(r.top - vp.top), cancel: !c.querySelector(".mc-cancel").hidden }; });
+    await kp.click("#asm-confirm .mc-ok");
+    await kp.waitForFunction(() => document.querySelector("#asm-pm").hidden || !document.querySelector("#asm-pm .pm-top"));
+    const after = await kp.evaluate(() => document.querySelector("#asm-confirm").hidden);
+    check(!before && ac.top <= 16 && ac.cancel && after, `✓ reach: the assembly corner shows only while a panel with ✓ is open, and its ✓ closes the panel (${before}, ${JSON.stringify(ac)}, ${after})`);
     await ctx.close();
   }
 
@@ -8789,6 +8977,49 @@ try {
   }
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
+
+  // --- Parallel assembly builds (FR-ARC-016): distinct parts are built by helper kernel workers, same result as one worker ---
+  if (inShard(4)) {
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const plate = (id, w, h, d, holes) => ({ schema: 1, kind: "part", id, name: id, units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } },
+      ...(holes ? [{ id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: holes }] },
+        { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }] : [])] });
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const parts = {}, components = [];
+    for (let k = 0; k < 5; k++) {
+      parts[`p${k}`] = { name: `Part${k}`, file: `Part${k}.mcadprt`, doc: plate(`part${k}`, 40 + 10 * k, 30, 5 + k, k % 2 ? 4 + k : 0) };
+      components.push({ id: `c${k}`, name: `Part${k}<1>`, part: `p${k}`, tf: T(0, 0, 20 * k), fixed: k === 0 });
+    }
+    components.push({ id: "c9", name: "Part3<2>", part: "p3", tf: [0, -1, 0, 100, 1, 0, 0, 0, 0, 0, 1, 0] });
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_par", name: "Parallel", units: { length: "mm", decimals: 2 }, parts, components };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }))];
+    const build = async workers => {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      const dp = await ctx.newPage();
+      dp.on("pageerror", e => errors.push(e.message));
+      dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+      await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await dp.goto(`${origin}/index.html?debug&nokernel&workers=${workers}`);
+      await dp.waitForFunction(() => window.__sv);
+      await dp.evaluate(b => window.__sv.asm.openFile({ name: "Parallel.mcadasm", data: new Uint8Array(b).buffer }), ab);
+      await dp.waitForFunction(() => window.__sv.viewer.parts.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
+      const r = await dp.evaluate(() => ({
+        par: window.__sv.asm.kernel.lastParallel,
+        props: window.__sv.asm.props,
+        parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, p.data.faces.filter(f => f.type === "cylinder").length, Math.round(p.data.volume * 1000), p.data.faces.map(f => Math.round(f.area * 100)).join(",")]),
+      }));
+      await ctx.close();
+      return r;
+    };
+    const one = await build(0), many = await build(2);
+    check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
+    check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
+    check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
 } catch (err) {
   console.error(err);
   failures++;

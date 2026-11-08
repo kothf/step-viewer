@@ -5,13 +5,58 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.221.0] - 2026-11-08
+## [1.237.0] - 2026-11-08
 
 ### Fixed
 
 - Drawing dimensions: one click on an end-on circle made of several arcs (a revolved part's rim) gave a radius such as R15. The fullest edge now wins, so it gives Ø30.
 - Drawing dimensions: a circle smaller than the snap distance (a Ø5 rod at 1:1, a Ø12 bore at 1:2) could not be picked, because its centre point or a nearby line end always won. A circle right under the cursor now beats a point that is not, and a first pick on a circle takes the circle even where another edge ends on it (a cross hole's curve on a shaft).
 - Text widths on drawings follow the embedded DejaVu Sans. Fit deviations (Ø12H7 +0.018/0) no longer overlap the dimension text or each other, and long title block values shrink to fit their cell or, in the big cells, break into two lines instead of running past the frame.
+
+## [1.233.0] - 2026-11-08
+
+### Changed
+
+- **Embossed text and other many-region extrudes build several times faster.** The regions of one sketch are now joined in a single boolean operation instead of one after another, and a boss that only stands on the body (its sketch plane is the body's outer face, as with a nameplate's lettering) is glued on without intersecting the faces that lie on each other. The Leuenberger nameplate (a 25-letter emboss, 441 faces) builds in 2.8 s instead of 16 s, with the same faces, names, volume and area. A boss that reaches into the body still takes the full boolean.
+
+## [1.232.0] - 2026-11-08
+
+### Changed
+
+- **Assemblies build on all CPU cores (FR-ARC-016).** WebAssembly runs one thread per instance, so the geometry kernel used to build an assembly's parts one after another on a single core. Opening an assembly now also starts up to 3 helper kernel workers (2 on a 4- or 8-thread CPU; more made builds slower, since every kernel instance competes for the CPU while it starts) that build the distinct parts at the same time, biggest first, while the assembly's own worker takes its share. A helper sends the exact body back as BREP with its named faces, plus its analysed mesh, so measurements, mates, interference and STEP export work as before. Only parts the assembly does not hold yet go to the helpers; editing one part still rebuilds just that part. On a 4-core machine the 23-part Leuenberger valve stage builds its parts in 4.7 s instead of 10.3 s; on a 4-core/8-thread i7 the 34-part engine builds in about 18 s instead of 32 s (one part, the nameplate with its embossed text, takes 15 s of that by itself). Helpers stop after 30 s idle to give their memory back. `?workers=N` sets the number of helpers and `?workers=0` turns it off.
+
+## [1.231.0] - 2026-11-08
+
+### Added
+
+- Motion studies: trace paths and mate value results work as **sensors**, like SolidWorks' motion study sensors. Set **Alert below** and/or **Alert above** on the plotted quantity: the out-of-range times show as orange bands in the result's timeline row and the readout says Out of range; with **Stop playback** ticked, playing stops at the frame where the value goes out of range (FR-FT-122).
+
+## [1.229.0] - 2026-11-08
+
+### Fixed
+
+- The 3D view no longer stays blank after the graphics card resets (a lost WebGL context, which can happen while switching between heavy document tabs). The view and the view cube draw again as soon as the browser gives the context back, with the lighting rebuilt; if it does not come back, a message says to save and reload instead of leaving an empty view with only the X/Y/Z labels.
+- A part opened after a STEP file in another tab no longer shows that STEP file's header (protocol, author, CAD system) in Properties.
+
+## [1.226.0] - 2026-11-08
+
+### Added
+
+- Motion studies: explode steps can run **one after another**, as SolidWorks' animation wizard does. With several steps in the exploded view the Explode wizard moves them in turn (Collapse brings them back in reverse); the **Step by step** box on an explode key turns it on or off for that track (FR-FT-122).
+
+## [1.219.0] - 2026-11-08
+
+### Changed
+
+- **✓ and ✕ are always in reach.** The title row of every PropertyManager panel (features, sheet metal, weldments, surfaces, assembly commands) stays pinned at the top while the panel scrolls, so accepting no longer needs a scroll back up. The sketch panel, sketch pattern/move/rotate/scale, Sketch plane and Part properties moved their OK/Cancel (and Exit sketch) from the bottom into that row.
+- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in SolidWorks, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
+
+## [1.215.0] - 2026-11-08
+
+### Added
+
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+- **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
 
 ## [1.211.0] - 2026-11-08
 
@@ -1519,8 +1564,15 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.221.0...HEAD
-[1.221.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.221.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.237.0...HEAD
+[1.237.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.237.0
+[1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
+[1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
+[1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
+[1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0
+[1.226.0]: https://github.com/kothf/step-viewer/compare/v1.219.0...v1.226.0
+[1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
+[1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
 [1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
 [1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0
 [1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0

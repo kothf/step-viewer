@@ -41,6 +41,8 @@ export class NavCube {
       if (dir) viewer.viewFrom(dir);
     });
     viewer.onRender(() => this.render());
+    // Its own WebGL context can come back after the viewer's: draw again then.
+    canvas.addEventListener("webglcontextrestored", () => this.render());
   }
 
   resize() {
