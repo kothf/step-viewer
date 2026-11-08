@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -20,10 +20,10 @@ import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { fitLimits, splitFit } from "./iso286";
-import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -97,6 +97,8 @@ type AnnotMode =
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
   | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
+  /** Centreline (two parallel edges or two points) or centre mark (a round edge), placed at the last click (FR-DRW-023). */
+  | { kind: "cline"; how: "line" | "mark"; view: string | null; picks: Pick[]; at: Pt | null }
   /** Revision cloud: corners clicked on the sheet; the first corner again or Enter closes it. */
   | { kind: "cloud"; view: null; pts: Pt[]; at: Pt | null }
   /** Geometric tolerance (FR-DRW-023): optionally click an edge for the leader, then place the frame. */
@@ -107,7 +109,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -118,7 +120,7 @@ const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-h
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
   ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
-  ["surf", "Surface finish"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
+  ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
 const ICON = {
@@ -388,6 +390,8 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
+              <button role="menuitem" data-an="cline">${esc(t("Centerline"))}</button>
+              <button role="menuitem" data-an="cmark">${esc(t("Center mark"))}</button>
               <button role="menuitem" data-an="cloud">${esc(t("Revision cloud"))}</button>
               <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
               <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
@@ -496,6 +500,7 @@ export class DrawingWorkspace {
     else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
+    else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
@@ -707,7 +712,7 @@ export class DrawingWorkspace {
     if (aid) {
       const a = this.annot(aid)!, pl = a.view ? this.placements.get(a.view) : undefined;
       this.sel = null; this.selA = aid;
-      this.adrag = { id: aid, start: p, orig: [...a.pos] as Pt, s: pl?.s ?? 1, moved: false };
+      if (a.pos) this.adrag = { id: aid, start: p, orig: [...a.pos] as Pt, s: pl?.s ?? 1, moved: false };
       this.svg.setPointerCapture(e.pointerId);
       this.renderTree(); this.renderProps(); this.renderOverlay();
       return;
@@ -780,6 +785,14 @@ export class DrawingWorkspace {
     if (ax === "y") dy = 0;
     if (ax === "x") dx = 0;
     if (Array.isArray(ax)) { const k = dx * ax[0] + dy * ax[1]; dx = k * ax[0]; dy = k * ax[1]; }
+    // A projected view stays on its side of the parent: across it, it would still be the same view (its side
+    // and the projection type say which), now in the wrong place for first or third angle.
+    const par = v.parent && !v.kind && v.side ? o.get(v.parent) : undefined;
+    if (par && v.side) {
+      const p0 = o.get(id)!, gap = 5;
+      if (v.side[0]) { const rel = (p0[0] + dx - par[0]) * v.side[0]; if (rel < gap) dx += (gap - rel) * v.side[0]; }
+      if (v.side[1]) { const rel = (p0[1] + dy - par[1]) * v.side[1]; if (rel < gap) dy += (gap - rel) * v.side[1]; }
+    }
     const visit = (vid: string) => {
       const p = o.get(vid)!;
       out.set(vid, [p[0] + dx, p[1] + dy]);
@@ -987,8 +1000,8 @@ export class DrawingWorkspace {
 
   /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
   private factsOf(view: string, sh = this.sheet): ModelFacts | null {
-    const v = findView(sh, view), c = v && viewConfig(sh, v);
-    return (c && this.kernel.configs.get(c)) || this.facts;
+    const v = findView(sh, view), c = v && viewConfig(sh, v), f = (c && this.kernel.configs.get(c)) || this.facts, only = v && viewOnly(sh, v);
+    return f && only ? { ...f, topo: topoOnly(f.topo, only) } : f;
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -1021,12 +1034,13 @@ export class DrawingWorkspace {
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
-  private startAnnot(kind: AnnotMode["kind"], how: "chain" | "base" | "ord" = "chain") {
+  private startAnnot(kind: AnnotMode["kind"] | "cmark", how: "chain" | "base" | "ord" = "chain") {
     const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "cloud") this.mode = { kind, view: null, pts: [], at: null };
+    else if (kind === "cline" || kind === "cmark") this.mode = { kind: "cline", how: kind === "cmark" ? "mark" : "line", view: null, picks: [], at: null };
     else if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
@@ -1148,6 +1162,7 @@ export class DrawingWorkspace {
 
   private annotClick(m: AnnotMode, p: Pt) {
     if (m.kind === "cloud") { this.cloudClick(m, p); return; }
+    if (m.kind === "cline") { this.clineClick(m, p); return; }
     const vid = m.view ?? this.viewAt(p);
     if (m.kind === "dim") {
       if (!vid) return;
@@ -1251,6 +1266,34 @@ export class DrawingWorkspace {
     this.renderOverlay();
   }
 
+  /** The centreline or centre mark the picks make, or null when they make none (lines not parallel, no round edge). */
+  private buildCline(m: Extract<AnnotMode, { kind: "cline" }>, picks: Pick[]): CLineAnnot | null {
+    const vid = m.view, pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
+    if (!vid || !pl || !v) return null;
+    const asPoint = (pk: Pick): GeoRef => (pk.kind === "circle" ? edgeRef(pk.e, "c") : pk.ref);
+    const a: CLineAnnot = m.how === "mark" ? { id: "_pcl", t: "cline", view: vid, k: "mark", refs: [picks[0].ref] }
+      : { id: "_pcl", t: "cline", view: vid, k: "line", refs: picks[0].kind === "line" && picks[1].kind === "line" ? [picks[0].ref, picks[1].ref] : picks.map(asPoint) };
+    return clineSegs(a, projector(viewDir(this.sheet, v)).P, this.factsOf(vid)?.topo ?? null, pl) ? a : null;
+  }
+
+  private clineClick(m: Extract<AnnotMode, { kind: "cline" }>, p: Pt) {
+    const vid = m.view ?? this.viewAt(p);
+    if (!vid) return;
+    const pick = this.pickAt(vid, p, m.how === "mark" ? "circle" : undefined);
+    if (!pick) { toast(t(m.how === "mark" ? "Click a round edge seen end-on: a circle or an arc. Esc ends." : "Click a straight edge or a point (a circle's centre) of a view. Esc ends.")); return; }
+    m.view = vid;
+    if (m.how === "mark" || m.picks.length) {
+      const first = m.picks[0];
+      if (first && JSON.stringify(first.ref) === JSON.stringify(pick.ref)) return;
+      if (first && (first.kind === "line") !== (pick.kind === "line")) { toast(t("Pick two parallel edges, or two points.")); return; }
+      const a = this.buildCline(m, m.how === "mark" ? [pick] : [first, pick]);
+      if (!a) { toast(t(m.how === "mark" ? "Click a round edge seen end-on: a circle or an arc. Esc ends." : "Pick two parallel edges, or two points.")); return; }
+      this.addAnnot({ ...a, id: uid("a_") }, m.how === "mark" ? "Center mark" : "Centerline");
+      m.picks = []; m.view = null;
+    } else m.picks = [pick];
+    this.renderStatus(); this.renderOverlay();
+  }
+
   /** A corner of a revision cloud; clicking the first corner again (3+ corners) closes it. */
   private cloudClick(m: Extract<AnnotMode, { kind: "cloud" }>, p: Pt) {
     const f = m.pts[0];
@@ -1331,6 +1374,7 @@ export class DrawingWorkspace {
         + (pts.length >= 3 ? `<g class="drw-preview">${svgBody(cloudPrims({ id: "_pc", t: "cloud", pos: [0, 0], pts: pts.flat() }).prims, H, "currentColor")}</g>` : "");
     }
     const at = m.at;
+    if (m.kind === "cline") return this.clinePreview(m, H);
     const vid = m.view ?? (at ? this.viewAt(at) : null);
     const pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
     if (!vid || !pl || !v || !at) return "";
@@ -1384,6 +1428,29 @@ export class DrawingWorkspace {
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+    return s;
+  }
+
+  /** The picked and hovered edges of the centreline command, and the line or mark a click would add. */
+  private clinePreview(m: Extract<AnnotMode, { kind: "cline" }>, H: number): string {
+    const at = m.at, vid = m.view ?? (at ? this.viewAt(at) : null);
+    const pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
+    if (!vid || !pl || !v) return "";
+    const { P } = projector(viewDir(this.sheet, v));
+    const S = (q: [number, number, number]) => toSheet(pl, ...P(q));
+    const show = (pk: Pick, cls: string) => {
+      if (pk.kind === "pt") { const q = S("pt" in pk.ref ? pk.ref.pt : (pk.ref.p === "c" ? pk.e.c! : pk.ref.p === "a" ? pk.e.a : pk.e.b)); return `<circle class="drw-snap" cx="${q[0]}" cy="${H - q[1]}" r="${this.snapTol() / 2.5}"/>`; }
+      if (pk.kind === "line") { const a = S(pk.e.a), b = S(pk.e.b); return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; }
+      const c = S(pk.e.c!); return `<circle class="${cls}" cx="${c[0]}" cy="${H - c[1]}" r="${pk.e.r! * pl.s}" fill="none"/>`;
+    };
+    let s = m.picks.map(pk => show(pk, "drw-edge on")).join("");
+    const hov = at ? this.pickAt(vid, at, m.how === "mark" ? "circle" : undefined) : null;
+    if (hov) {
+      s += show(hov, "drw-edge");
+      const a = m.how === "mark" ? this.buildCline({ ...m, view: vid }, [hov]) : m.picks.length ? this.buildCline(m, [m.picks[0], hov]) : null;
+      const g = a && clineSegs(a, P, this.factsOf(vid)?.topo ?? null, pl);
+      if (g) s += `<g class="drw-preview">${svgBody(g.map(q => ({ t: "l" as const, p: q, pen: "center" as const, layer: "CENTER" })), H, "currentColor")}</g>`;
+    }
     return s;
   }
 
@@ -1485,6 +1552,11 @@ export class DrawingWorkspace {
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    if (a.t === "cline") {
+      return `<fieldset class="pm-group"><legend>${esc(t(a.k === "mark" ? "Center mark" : "Centerline"))}</legend>
+        <label class="drw-f">${esc(t("Extension (mm)"))}<input data-d="cext" inputmode="decimal" value="${a.ext ?? 2}"></label>
+      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    }
     if (a.t === "cloud") {
       return `<fieldset class="pm-group"><legend>${esc(t("Revision cloud"))}</legend>
         <label class="drw-f">${esc(t("Arc size (mm)"))}<input data-d="carc" inputmode="decimal" value="${a.arc ?? 6}"></label>
@@ -1579,6 +1651,7 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
+      else if (a.t === "cline" && k === "cext") { const v = num(val); if (v != null && v >= 0 && v <= 50) a.ext = v; }
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
@@ -2144,7 +2217,7 @@ export class DrawingWorkspace {
           <label class="drw-f">${esc(t("Name"))}<input data-v="name" value="${esc(v.name)}" translate="no"></label>
           ${v.kind ? this.kindProps(v) : v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
           <label class="drw-f">${esc(t("Orientation"))}<select data-v="orient">${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<option value="${o}"${o === (v.orient ?? "front") ? " selected" : ""}>${esc(t(ORIENT_NAMES[o]))}</option>`).join("")}</select></label>`}
-          ${this.configField(v)}
+          ${this.configField(v)}${this.onlyField(v)}
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Scale"))}</legend>
           <label class="drw-f">${esc(t("Scale"))}<select data-v="scale"><option value="">${esc(v.parent ? t("Parent's scale") : t("Sheet scale ({s})", { s: scaleText(sh.scale) }))}</option>${SCALES.map(s => `<option value="${scaleText(s)}"${own === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${own && !SCALES.some(s => scaleText(s) === own) ? `<option value="${own}" selected>${own}</option>` : ""}<option value="custom">${esc(t("Custom…"))}</option></select></label>
@@ -2339,6 +2412,14 @@ export class DrawingWorkspace {
     return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${src.doc.configs.map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
   }
 
+  /** Assembly drawings: a model view of one component alone (a part's detail views on the assembly's drawing); views made from it follow. */
+  private onlyField(v: DrawingView): string {
+    const comps = this.sectionComps();
+    if (!comps.length || v.kind || v.parent) return "";
+    const cur = v.only?.[0] ?? "";
+    return `<label class="drw-f">${esc(t("Components"))}<select data-v="only"><option value="">${esc(t("All components"))}</option>${comps.map(c => `<option value="${esc(c.id)}"${cur === c.id ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+  }
+
   private kindProps(v: DrawingView): string {
     const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
     let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
@@ -2454,6 +2535,7 @@ export class DrawingWorkspace {
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
     else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; });
+    else if (vk === "only") this.setView("View components", v => { if (val) v.only = [val]; else delete v.only; });
     else if (vk === "orient") {
       const o = val as Orient;
       const c = o === "current" ? this.host.currentView() : null;
@@ -2512,7 +2594,7 @@ export class DrawingWorkspace {
       });
     }
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
-    else if (sk === "projection") this.setSheet("Projection type", sh => { sh.projection = val as Sheet["projection"]; });
+    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"]));
     else if (sk === "format") {
       if (val.startsWith("user:")) {
         const id = val.slice(5), f = this.sheet.tb?.id === id ? this.sheet.tb : loadFormats().find(x => x.id === id);

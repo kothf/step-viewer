@@ -146,6 +146,12 @@ test("section/aux directions: a view from the right of a line is the third-angle
   // Detail views reuse their parent's projection.
   const det = { id: "d", name: "D", kind: "detail" as const, parent: "a", c: [0, 0] as [number, number], r: 5, x: 0, y: 0 };
   assert.equal(viewReq({ ...sheet, views: [...sheet.views, det] }, det).key, req.key);
+  // A model view of some components alone: its own views carry the list and a key of their own.
+  const solo = { ...sheet, views: [{ ...sheet.views[0], only: ["c2"] }, sheet.views[1]] };
+  const sr = viewReq(solo, solo.views[1]);
+  assert.deepEqual(sr.only, ["c2"]);
+  assert.notEqual(sr.key, req.key);
+  assert.equal(viewReq(sheet, sheet.views[1]).only, undefined);
 });
 
 test("detail clipping and section hatching", async () => {
@@ -686,6 +692,33 @@ test("view configuration: projected, section and detail views follow their model
   assert.ok(!viewReq(sheet, sheet.views[3]).key.includes("|cfg|"));
 });
 
+test("switching first/third angle keeps each projected view the same view and moves it across its parent", async () => {
+  const { switchProjection, projectedDir, viewDir } = await import("../../src/drawing/views");
+  const sheet = { id: "s", name: "S", size: "A3" as const, scale: [1, 1] as [number, number], projection: "first" as const, format: "iso" as const, views: [
+    { id: "f", name: "F", orient: "front" as const, x: 100, y: 150 },
+    { id: "t", name: "T", parent: "f", side: [0, -1] as [number, number], x: 100, y: 80 },
+    { id: "r", name: "R", parent: "f", side: [1, 0] as [number, number], x: 200, y: 150 },
+    { id: "rr", name: "RR", parent: "r", side: [1, 0] as [number, number], x: 280, y: 150 }] };
+  const before = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  switchProjection(sheet as any, "third");
+  const after = sheet.views.map(v => viewDir(sheet as any, v as any).dir.map(c => Math.round(c) + 0).join());
+  assert.deepEqual(after, before);
+  assert.deepEqual(sheet.views.map(v => [v.x, v.y]), [[100, 150], [100, 220], [0, 150], [-80, 150]]);
+  assert.equal(sheet.projection, "third");
+  void projectedDir;
+});
+
+
+test("a component-only view keeps the topology of its components only", async () => {
+  const { topoOnly } = await import("../../src/drawing/views");
+  const topo = { edges: [{ k: "c1@f1|c1@f2" }, { k: "c2@f1|c2@f3" }, { k: "s1/c3@f0|s1/c3@f1" }], cyls: [{ f: "c1@f4" }, { f: "c2@f2" }, {}] };
+  const a = topoOnly(topo, ["c2"]);
+  assert.deepEqual(a.edges.map(e => e.k), ["c2@f1|c2@f3"]);
+  assert.deepEqual(a.cyls.map(c => c.f), ["c2@f2"]);
+  assert.deepEqual(topoOnly(topo, ["s1"]).edges.map(e => e.k), ["s1/c3@f0|s1/c3@f1"]);
+  assert.equal(topoOnly(topo, undefined), topo);
+});
+
 test("revision cloud: scallops bulge outwards whichever way the corners go", async () => {
   const { cloudPrims } = await import("../../src/drawing/annot");
   for (const pts of [[0, 0, 30, 0, 30, 20, 0, 20], [0, 0, 0, 20, 30, 20, 30, 0]]) {
@@ -700,4 +733,28 @@ test("revision cloud: scallops bulge outwards whichever way the corners go", asy
   }
   const rv = cloudPrims({ id: "c", t: "cloud", pos: [0, 0], pts: [0, 0, 10, 0, 10, 10], rev: "B" });
   assert.ok(rv.prims.some(p => p.t === "t" && p.s === "B"));
+});
+
+test("centreline: halfway between two parallel edges over both, centre mark on an arc", async () => {
+  const { clineSegs } = await import("../../src/drawing/annot");
+  const pl = { s: 2, uc: 0, vc: 0, x: 100, y: 100, box: [0, 0, 0, 0] as [number, number, number, number], ready: true };
+  const P = (p: V3): [number, number] => [p[0], p[1]];
+  const topo = { cyls: [], edges: [
+    { k: "A", t: "l" as const, a: [0, 0, 0] as V3, b: [40, 0, 0] as V3, m: [20, 0, 0] as V3 },
+    { k: "B", t: "l" as const, a: [10, 10, 0] as V3, b: [50, 10, 0] as V3, m: [30, 10, 0] as V3 },
+    { k: "C", t: "l" as const, a: [0, 0, 0] as V3, b: [10, 10, 0] as V3, m: [5, 5, 0] as V3 },
+    { k: "R", t: "c" as const, a: [5, 0, 0] as V3, b: [0, 5, 0] as V3, m: [5 * Math.SQRT1_2, 5 * Math.SQRT1_2, 0] as V3, c: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, r: 5, sp: Math.PI / 2 },
+  ] };
+  const ref = (k: string, m: V3) => ({ e: k, h: m, p: "e" as const });
+  const g = clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [ref("A", [20, 0, 0]), ref("B", [30, 10, 0])] }, P, topo, pl)!;
+  assert.equal(g.length, 1);
+  // Halfway at y = 5 (sheet 100 + 2·5), from x = 0 to 50 plus 2 sheet mm (1 model mm) each way.
+  assert.deepEqual(g[0].map(v => Math.round(v * 1000) / 1000), [100 - 2, 110, 200 + 2, 110]);
+  assert.equal(clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [ref("A", [20, 0, 0]), ref("C", [5, 5, 0])] }, P, topo, pl), null, "not parallel");
+  const pts = clineSegs({ id: "l", t: "cline", view: "v", k: "line", refs: [{ pt: [0, 0, 0] }, { pt: [0, 20, 0] }], ext: 0 }, P, topo, pl)!;
+  assert.deepEqual(pts[0], [100, 100, 100, 140]);
+  const mk = clineSegs({ id: "m", t: "cline", view: "v", k: "mark", refs: [ref("R", topo.edges[3].m)] }, P, topo, pl)!;
+  assert.equal(mk.length, 2);
+  assert.deepEqual(mk[0].map(v => Math.round(v * 1000) / 1000), [100 - 12, 100, 100 + 12, 100]);
+  assert.equal(clineSegs({ id: "m", t: "cline", view: "v", k: "mark", refs: [ref("A", [20, 0, 0])] }, P, topo, pl), null, "a line is not round");
 });

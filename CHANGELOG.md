@@ -5,6 +5,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.219.0] - 2026-11-08
+
+### Changed
+
+- **✓ and ✕ are always in reach.** The title row of every PropertyManager panel (features, sheet metal, weldments, surfaces, assembly commands) stays pinned at the top while the panel scrolls, so accepting no longer needs a scroll back up. The sketch panel, sketch pattern/move/rotate/scale, Sketch plane and Part properties moved their OK/Cancel (and Exit sketch) from the bottom into that row.
+- Confirmation corner (FR-UI-021): the ✓/✕ in the view now sit at the top right, beside the view cube, as in SolidWorks, and assembly commands (Mate, Explode, patterns, Toolbox, Interference, assembly features) get one too. In a sketch pattern the corner applies the pattern instead of leaving the sketch.
+
+## [1.215.0] - 2026-11-08
+
+### Added
+
+- **Spline tangent and Equal curvature (FR-SK-050, FR-SK-051)**: select a spline and a line, arc or another spline that meet at an end, and the relations list offers Tangent and Equal curvature, as in SolidWorks. Tangent turns the spline's end along the other curve; Equal curvature also matches the bend on both sides of the joint (a smooth G2 blend), which suits style splines and conics. Ends joined by a coincident relation count as meeting. The relation glyph is κ.
+- **Sketch orientation (FR-SK-002)**: Edit sketch plane has an X axis box. Click it, then click a straight model edge, and the sketch turns so its X axis runs along that edge (projected onto the plane); Reverse X axis turns it round, and Use the plane direction goes back. If the edge later disappears or ends up square to the plane, the sketch keeps the plane's own direction and shows a warning.
+
+## [1.211.0] - 2026-11-08
+
+### Added
+
+- Centrelines and centre marks put in by hand on drawings (FR-DRW-023, SolidWorks' Centerline and Center Mark). Annotation → **Centerline** takes two parallel edges (the line halfway between them, over the length of both) or two points such as hole centres; **Center mark** puts a cross on a circle or an arc seen end-on, so rounded corners and slot ends can be marked too (the automatic marks cover full circles only). Both follow the model when it changes, are drawn on the CENTER layer in every export, and can be selected on their lines to change how far they run past the geometry.
+
+## [1.208.0] - 2026-11-08
+
+### Added
+
+- Drawings of an assembly: a model view can show **one component alone** (view panel → Components), so part details go on the assembly's own drawing. Its projected and section views follow, and its centre marks, smart dimensions and hole callouts use only that component's edges.
+
+### Fixed
+
+- Switching a drawing between first and third angle projection left the views where they were, so the view under the front view silently became a bottom view. Each projected view now stays the same view and moves across its parent, and a projected view dragged across its parent stops on its own side (as in SolidWorks).
+
+## [1.206.0] - 2026-11-08
+
+### Added
+
+- **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
+
 ## [1.205.0] - 2026-11-08
 
 ### Added
@@ -1489,7 +1525,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.205.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.219.0...HEAD
+[1.219.0]: https://github.com/kothf/step-viewer/compare/v1.215.0...v1.219.0
+[1.215.0]: https://github.com/kothf/step-viewer/compare/v1.211.0...v1.215.0
+[1.211.0]: https://github.com/kothf/step-viewer/compare/v1.208.0...v1.211.0
+[1.208.0]: https://github.com/kothf/step-viewer/compare/v1.206.0...v1.208.0
+[1.206.0]: https://github.com/kothf/step-viewer/compare/v1.205.0...v1.206.0
 [1.205.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.205.0
 [1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0

@@ -358,7 +358,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
  */
 export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
-export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number }
+export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string }
 export interface Topo { edges: MEdge[]; cyls: MCyl[] }
 
 /** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
@@ -414,7 +414,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
       for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
     }
     const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
-    if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp });
+    if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
   }
   emap.delete(); fmap.delete();
   return { edges, cyls };

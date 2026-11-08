@@ -108,7 +108,7 @@ export interface ModelHost {
 type Mode =
   | { kind: "none" }
   /** Picking a sketch plane: for a new sketch, or for an existing one (`edit`: Edit sketch plane, FR-SK-007). */
-  | { kind: "plane"; edit?: { id: string; plane: PlaneRef } }
+  | { kind: "plane"; edit?: { id: string; plane: PlaneRef; xAxis?: SketchFeature["xAxis"]; pickX?: boolean } }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
   | { kind: "props"; draft: PartDoc }
@@ -218,6 +218,14 @@ function holeAxes(fr: Frame | undefined): { names: string[]; show: (p: [number, 
     show: p => [q(fr.o[a] + fr.x[a] * p[0] + fr.y[a] * p[1]), q(fr.o[b] + fr.x[b] * p[0] + fr.y[b] * p[1])],
     store: w => { const u = w[0] - fr.o[a], v = w[1] - fr.o[b]; return [q((u * m[1][1] - v * m[0][1]) / det), q((m[0][0] * v - m[1][0] * u) / det)]; },
   };
+}
+
+/** PropertyManager header: title with ✓ and ✕ on the right. The panel pins it (sticky), so they never scroll away. */
+function okHead(title: string, o: { ok?: string; okKey?: string; cancelKey?: string; noTranslate?: boolean } = {}) {
+  const ok = o.ok ?? t("OK (Enter)"), cancel = t("Cancel (Esc)");
+  return `<div class="pm-head pm-top"><h3${o.noTranslate ? ' translate="no"' : ""}>${esc(title)}</h3><span class="pm-okc">`
+    + `<button class="pm-ok" data-a="${o.okKey ?? "ok"}" title="${esc(ok)}" aria-label="${esc(ok)}">✓</button>`
+    + `<button class="pm-cancel" data-a="${o.cancelKey ?? "cancel"}" title="${esc(cancel)}" aria-label="${esc(cancel)}">✕</button></span></div>`;
 }
 
 export class ModelController {
@@ -567,7 +575,10 @@ export class ModelController {
       // Edit sketch plane: rolled back to the sketch, which shows on the plane picked so far.
       const i = d.features.findIndex(f => f.id === m.edit!.id);
       const sk = d.features[i];
-      if (sk?.type === "sketch") { sk.plane = m.edit.plane; sk.hidden = false; d.rollback = i + 1; }
+      if (sk?.type === "sketch") {
+        sk.plane = m.edit.plane; sk.hidden = false; d.rollback = i + 1;
+        if (m.edit.xAxis) sk.xAxis = m.edit.xAxis; else delete sk.xAxis;
+      }
     } else if (m.kind === "feature") {
       const f = structuredClone(m.draft);
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -770,7 +781,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -778,7 +789,7 @@ export class ModelController {
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
-    const smEdge = type === "smflange" || type === "smhem" ? this.pickedEdge() : null;
+    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -863,7 +874,7 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog") {
+    } else if (type === "smbase" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, hasBody: !!this.last?.data });
       if (typeof sm === "string") { toast(sm, true); return; }
@@ -1008,9 +1019,14 @@ export class ModelController {
       return;
     }
     if (m.kind === "plane" && m.edit) {
-      const { id, plane } = m.edit;
+      const { id, plane, xAxis } = m.edit;
       this.mode = { kind: "none" };
-      this.store!.change("Edit sketch plane", d => { const f = d.features.find(x => x.id === id); if (f?.type === "sketch") f.plane = plane; });
+      this.store!.change("Edit sketch plane", d => {
+        const f = d.features.find(x => x.id === id);
+        if (f?.type !== "sketch") return;
+        f.plane = plane;
+        if (xAxis) f.xAxis = xAxis; else delete f.xAxis;
+      });
       this.clearDecor();
       this.renderAll();
       void this.rebuild();
@@ -1693,7 +1709,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
-      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem")) this.pickSmEdge(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -1747,12 +1763,14 @@ export class ModelController {
 
     $("#new-part").addEventListener("click", () => this.newPart());
     $("#empty-new").addEventListener("click", () => this.newPart());
-    $("#mc-ok").addEventListener("click", () => this.ok());
+    // The corner mirrors the panel: a sketch pattern / move / rotate panel takes its own ✓ and ✕ first.
+    const inner = (k: string) => this.mode.kind === "sketch" && this.mode.editor.pattern ? $("#mc-pm").querySelector<HTMLButtonElement>(`[data-a=${k}]`) : null;
+    $("#mc-ok").addEventListener("click", () => { const b = inner("pok"); if (b) b.click(); else this.ok(); });
     document.querySelectorAll<HTMLElement>("#mc-empty [data-plane]").forEach(b => b.addEventListener("click", () => void this.createSketch({ std: b.dataset.plane as "XY" })));
     // The menu closes on a click elsewhere, Esc, scrolling or resizing.
     document.addEventListener("pointerdown", e => { if (!(e.target as HTMLElement).closest?.("#mc-menu")) this.closeMenu(); }, true);
     window.addEventListener("resize", () => this.closeMenu());
-    $("#mc-cancel").addEventListener("click", () => void this.cancel());
+    $("#mc-cancel").addEventListener("click", () => { const b = inner("pcancel"); if (b) b.click(); else void this.cancel(); });
   }
 
   private key(e: KeyboardEvent) {
@@ -1805,6 +1823,8 @@ export class ModelController {
   }
 
   private pickPlane(e: PointerEvent) {
+    const m = this.mode;
+    if (m.kind === "plane" && m.edit?.pickX) { this.pickSketchX(e, m.edit); return; }
     const r = this.pickRef(e);
     if (r) this.planePicked(r);
   }
@@ -1821,13 +1841,26 @@ export class ModelController {
     void this.rebuild();
   }
 
+  /** Sketch orientation (FR-SK-002 P2): a straight model edge clicked while choosing the X axis. */
+  private pickSketchX(e: PointerEvent, ed: NonNullable<Extract<Mode, { kind: "plane" }>["edit"]>) {
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit?.edge || hit.edge.type !== "line") { toast(t("Click a straight edge for the sketch X axis."), true); return; }
+    const ref = this.refOfEdge(hit.edge);
+    if (!ref) return;
+    ed.xAxis = { edge: ref, ...(ed.xAxis?.flip ? { flip: true } : {}) };
+    ed.pickX = false;
+    this.renderPanel();
+    this.renderBar();
+    void this.rebuild();
+  }
+
   /** Edit sketch plane (FR-SK-007): pick another plane or flat face; the sketch keeps its geometry in its own coordinates. */
   editSketchPlane(id: string) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     this.exitMode(false);
-    this.mode = { kind: "plane", edit: { id, plane: structuredClone(sk.plane) } };
+    this.mode = { kind: "plane", edit: { id, plane: structuredClone(sk.plane), ...(sk.xAxis ? { xAxis: structuredClone(sk.xAxis) } : {}) } };
     this.selected = id;
     this.renderAll();
     void this.rebuild();
@@ -1963,11 +1996,15 @@ export class ModelController {
   }
 
   /** Edge flange and hem (FR-FT-120): a click toggles a straight sheet edge; edges the draft itself made are skipped. */
-  private pickSmEdge(e: PointerEvent, f: { id: string; edges: EdgeRef[] }) {
+  private pickSmEdge(e: PointerEvent, f: { id: string; type: string; edges: EdgeRef[] }) {
+    // Break corner takes the short edges across the thickness, between two side faces.
+    const corner = f.type === "smcorner";
+    const msg = corner ? t("Pick an edge across the thickness at an outside corner.") : t("Pick a straight edge of the sheet.");
     const hit = this.host.edgeAt(e.clientX, e.clientY);
-    if (!hit?.edge || hit.edge.type !== "line") { toast(t("Pick a straight edge of the sheet.")); return; }
+    if (!hit?.edge || hit.edge.type !== "line") { toast(msg); return; }
     const ref = this.edgeRefs([hit.edge])[0];
-    if (!ref || ref.faces.some(n => n.startsWith(`${f.id}:`))) { toast(t("Pick a straight edge of the sheet.")); return; }
+    if (!ref || ref.faces.some(n => n.startsWith(`${f.id}:`))) { toast(msg); return; }
+    if (corner && ref.faces.some(n => /:(top|bot)$/.test(n))) { toast(msg); return; }
     const key = (r: EdgeRef) => [...r.faces].sort().join("|");
     const i = f.edges.findIndex(x => key(x) === key(ref));
     if (i >= 0) f.edges.splice(i, 1); else f.edges.push(ref);
@@ -3629,7 +3666,7 @@ export class ModelController {
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
     this.syncSketchSection();
     if (m.kind !== "sketch") {
-      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
+      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
         : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
@@ -4048,7 +4085,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": this.startFeature(c); break;
+      case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -4542,17 +4579,23 @@ export class ModelController {
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
-    const head = (title: string, help: string) => `<div class="pm-head"><h3>${esc(title)}</h3></div><p class="pm-help muted">${esc(help)}</p>`;
+    const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
-      pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }))
+      pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }), true)
         + `<p class="pm-help"><b>${esc(t("Plane"))}:</b> <span data-a="cur" translate="no">${esc(this.refLabel(ed.plane))}</span></p>`
+        + `<div class="pm-field"><span>${esc(t("X axis"))}</span><button class="pm-box${ed.pickX ? " focus" : ""}" data-a="xpick" title="${esc(t("Click, then click a straight edge: the sketch X axis runs along it"))}">${esc(ed.xAxis ? t("Edge") : t("Plane direction"))}</button></div>`
+        + (ed.xAxis ? `<label class="chk pm-chk"><input type="checkbox" data-a="xflip"${ed.xAxis.flip ? " checked" : ""} />${esc(t("Reverse X axis"))}</label><button class="btn small" data-a="xclear">${esc(t("Use the plane direction"))}</button>` : "")
         : head(t("Sketch"), t("Pick a plane or a flat face for the sketch.")))
-        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`
-        + (ed ? `<div class="pm-actions"><button class="btn primary small" data-a="ok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="cancel">✕ ${esc(t("Cancel"))}</button></div>` : "");
+        + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`;
       pm.querySelectorAll<HTMLElement>("[data-std]").forEach(b => b.addEventListener("click", () => this.planePicked({ std: b.dataset.std as "XY" })));
       pm.querySelector("[data-a=ok]")?.addEventListener("click", () => this.ok());
       pm.querySelector("[data-a=cancel]")?.addEventListener("click", () => void this.cancel());
+      if (ed) {
+        pm.querySelector("[data-a=xpick]")?.addEventListener("click", () => { ed.pickX = !ed.pickX; this.renderPanel(); this.renderBar(); });
+        pm.querySelector<HTMLInputElement>("[data-a=xflip]")?.addEventListener("change", ev => { if (ed.xAxis) { if ((ev.target as HTMLInputElement).checked) ed.xAxis.flip = true; else delete ed.xAxis.flip; } this.renderPanel(); void this.rebuild(); });
+        pm.querySelector("[data-a=xclear]")?.addEventListener("click", () => { delete ed.xAxis; ed.pickX = false; this.renderPanel(); void this.rebuild(); });
+      }
       return;
     }
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
@@ -5500,7 +5543,7 @@ export class ModelController {
     const mi = d.material ? MATERIALS.findIndex(x => x.name === d.material!.name && x.density === d.material!.density) : -2;
     const col = d.color ?? DEFAULT_COLOR;
     const hex = `#${col.map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
-    pm.innerHTML = `<div class="pm-head"><h3>${esc(t("Part properties"))}</h3></div>`
+    pm.innerHTML = okHead(t("Part properties"))
       + text("name", t("Name"), d.name) + text("title", t("Title"), d.props.title) + text("partNumber", t("Part number"), d.props.partNumber)
       + text("description", t("Description"), d.props.description) + text("revision", t("Revision"), d.props.revision) + text("author", t("Author"), d.props.author)
       + `<label class="pm-field"><span>${esc(t("Material"))}</span><select data-p="material"><option value="-2"${mi === -2 ? " selected" : ""}>${esc(t("Not specified"))}</option>${MATERIALS.map((x, i) => `<option value="${i}"${mi === i ? " selected" : ""}>${esc(t(x.name))} (${x.density})</option>`).join("")}<option value="-1"${mi === -1 ? " selected" : ""}>${esc(t("Custom…"))}</option></select></label>`
@@ -5510,8 +5553,7 @@ export class ModelController {
       + (d.massOverride ? `<label class="pm-field"><span>${esc(t("Mass"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrMass" value="${d.massOverride.mass ?? ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">kg</span></span></label>`
         + (["x", "y", "z"] as const).map((a, i) => `<label class="pm-field"><span>${esc(t("Centre of mass"))} ${a.toUpperCase()}</span><span class="pm-in"><input type="text" inputmode="decimal" data-p="ovrCom" data-i="${i}" value="${d.massOverride!.com ? trimNum(d.massOverride!.com[i], 6) : ""}" placeholder="${esc(t("calculated"))}" /><span class="muted">mm</span></span></label>`).join("")
         + `<p class="pm-help muted">${esc(t("For purchased parts: the entered values replace the calculated ones in Mass properties. Leave the centre of mass empty to keep it calculated."))}</p>` : "")
-      + `</fieldset>`
-      + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("OK"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+      + `</fieldset>`;
     pm.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-p]").forEach(el => el.addEventListener("change", () => {
       const k = el.dataset.p!, v = el.value;
       if (k === "name") { if (v.trim()) d.name = v.trim(); }
@@ -5563,7 +5605,7 @@ export class ModelController {
     const rels = ed.validRelations();
     const nSel = ed.selection.size;
     const plane = "std" in sk.plane ? t(STD_NAMES[sk.plane.std]) : t("Face");
-    pm.innerHTML = `<div class="pm-head"><h3 translate="no">${esc(featureLabel(sk.name))}</h3></div>`
+    pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
       + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b></p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
@@ -5584,8 +5626,7 @@ export class ModelController {
       + this.assistant(ed)
       + this.checkBox(ed)
       + `<div class="pm-sec"><h4>${esc(t("Relations"))}</h4>${this.relationList(ed)}</div>`
-      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`
-      + `<div class="pm-actions"><button class="btn primary small" data-a="ok">${esc(t("Exit sketch"))}</button><button class="btn small" data-a="cancel">${esc(t("Cancel"))}</button></div>`;
+      + `<div class="pm-sec"><h4>${esc(t("Dimensions"))}</h4>${sk.dims.length ? `<label class="chk pm-chk"><input type="checkbox" data-a="shownames"${ed.showNames ? " checked" : ""} />${esc(t("Show dimension names"))}</label><ul class="pm-dims">${sk.dims.map(d => `<li><button class="link" data-dim="${d.id}" translate="no" title="${esc(`${d.name}@${sk.name}`)}">${esc(d.name)}</button> <span class="muted">${esc(d.val.expr ?? (d.t === "angle" ? `${trimNum((d.val.v * 180) / Math.PI, 3)}°` : `${trimNum(d.val.v * UNITS[units.current].f, 4)} ${units.current}`))}${d.driven ? ` (${esc(t("reference"))})` : ""}</span></li>`).join("")}</ul>` : `<p class="muted">${esc(t("None yet: use Dimension (D)."))}</p>`}</div>`;
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
     pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
@@ -5777,10 +5818,9 @@ export class ModelController {
       : group(t("Parameters"), centre(p.c) + `<label class="pm-field"><span>${esc(t("Scale factor"))}</span><input type="text" inputmode="decimal" class="pm-n" data-p="k" data-q="factor" value="${trimNum(p.k, 6)}" /></label>`) + opts(p.copy, p.keep);
     const titles = { linear: "Linear sketch pattern", circular: "Circular sketch pattern", move: "Move entities", rotate: "Rotate entities", scale: "Scale entities" } as const;
     const help = p.kind === "linear" || p.kind === "circular" ? "The green preview shows the instances. Copies keep equal relations to the selected entities." : "The green preview shows where the entities go.";
-    pm.innerHTML = `<div class="pm-head"><h3>${esc(t(titles[p.kind]))}</h3></div>`
+    pm.innerHTML = okHead(t(titles[p.kind]), { okKey: "pok", cancelKey: "pcancel" })
       + `<p class="pm-help muted">${esc(t(help))}</p>`
-      + body
-      + `<div class="pm-actions"><button class="btn primary small" data-a="pok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="pcancel">✕ ${esc(t("Cancel"))}</button></div>`;
+      + body;
     pm.querySelectorAll<HTMLInputElement>("[data-p]").forEach(inp => inp.addEventListener("change", () => {
       const k = inp.dataset.p!, q = inp.dataset.q;
       const pp = ed.pattern as unknown as Record<string, unknown> & { c?: [number, number] };

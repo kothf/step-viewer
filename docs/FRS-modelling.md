@@ -459,7 +459,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 ### 8.1 Entering and leaving a sketch
 
 - **FR-SK-001** (P1, M) **Sketch** starts on a selected plane or planar face; without a selection it asks for one, showing the standard planes. The view turns normal to the sketch plane (option: off), and the sketch toolbar replaces the feature toolbar.
-- **FR-SK-002** (P1, M) The sketch has a local 2D coordinate system: origin projected from the part origin; X axis aligned with the plane's natural direction (standard planes) or a chosen edge (P2: "Sketch orientation" option).
+- **FR-SK-002** (P1, M) The sketch has a local 2D coordinate system: origin projected from the part origin; X axis aligned with the plane's natural direction (standard planes) or a chosen edge (P2: "Sketch orientation" option). **Sketch orientation done (1.215.0: X axis box in Edit sketch plane).**
 - **FR-SK-003** (P1, M) Leaving the sketch: **Exit sketch** (confirm corner, or Ctrl+Enter / the sketch button again) keeps changes; **Discard** (with confirmation if changed) reverts to the state at entry.
 - **FR-SK-004** (P1, M) Starting a feature (e.g. Extrude) while in a sketch exits the sketch and uses it as the feature's profile.
 - **FR-SK-005** (P1, M) Editing an existing sketch rolls the model back to just before that sketch; geometry after it is hidden or shown transparent (option).
@@ -517,7 +517,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 | Fixed | any entity (locks in place) |
 | On edge / On model | sketch entity–projected model edge or vertex (external reference) |
 
-- **FR-SK-051** (P2, M) Additional relations: pierce (sketch point onto a curve not in the plane), intersection (point at intersection of two curves), along X/Y of another point, curvature continuity (spline), equal curvature, merge points.
+- **FR-SK-051** (P2, M) Additional relations: pierce (sketch point onto a curve not in the plane), intersection (point at intersection of two curves), along X/Y of another point, curvature continuity (spline), equal curvature, merge points. **Intersection, merge points and along X/Y (horizontal/vertical between two points) done; spline tangent and equal curvature (G2 at a shared end) done (1.215.0); pierce open.**
 - **FR-SK-052** (P1, M) Automatic relations while drawing (horizontal, vertical, coincident, tangent, perpendicular, parallel to inferred lines), shown as glyphs near the cursor; holding Ctrl (or a toggle) suppresses them.
 - **FR-SK-053** (P1, M) Relations are shown as small glyphs next to the entities (toggle), with hover highlighting of the related entities; clicking a glyph selects the relation; Del deletes it.
 - **FR-SK-054** (P1, M) **Add relation**: select entities, the panel lists only relations valid for that selection.
