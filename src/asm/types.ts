@@ -44,6 +44,11 @@ export interface AsmDoc {
   patterns?: CompPattern[];
   /** Named exploded views (FR-ASM-023). */
   explodes?: ExplodeView[];
+  /** Assembly configurations (FR-ASM-026) and the active one (its values live on the document). */
+  configs?: AsmConfig[];
+  activeConfig?: string;
+  /** Assembly features (FR-ASM-027): cuts that exist only in the assembly, applied to the placed components in order. */
+  features?: AsmFeature[];
   /** Display states (FR-ASM-025) and the active one. */
   states?: DisplayState[];
   activeState?: string;
@@ -115,3 +120,42 @@ export interface CompPattern {
 
 export interface ExplodeStep { comps: string[]; dir: V3; dist: number }
 export interface ExplodeView { id: string; name: string; steps: ExplodeStep[] }
+
+/**
+ * Assembly feature (FR-ASM-027): a hole (circle) or cut extrude (rectangle) that starts on a flat face of
+ * `ref.comp` and goes into the material, cutting every component it reaches (or those in `comps`).
+ * `at`, `n` (out of the face) and `x` (the rectangle's width direction) are in `ref.comp`'s own
+ * coordinates, so the feature moves with that component.
+ */
+export interface AsmFeature {
+  id: string;
+  name: string;
+  type: "hole" | "cut";
+  ref: MateRef;
+  at: V3;
+  n: V3;
+  x: V3;
+  /** Hole diameter (mm). */
+  dia?: number;
+  /** Cut: rectangle width (along x) and height (mm). */
+  w?: number;
+  h?: number;
+  /** Depth (mm) from the face; absent: through all. */
+  depth?: number;
+  /** Components it may cut (feature scope); absent: all. */
+  comps?: string[];
+  suppressed?: boolean;
+}
+
+/** What an assembly configuration controls (FR-ASM-026). */
+export interface AsmConfigState {
+  /** Suppressed component ids. */
+  suppressed: string[];
+  /** Component id → part key (a part configuration is a part entry of its own). */
+  parts: Record<string, string>;
+  /** Mate values and suppression by mate id. */
+  mates: Record<string, { value?: number; min?: number; max?: number; suppressed?: boolean }>;
+  /** Suppressed assembly feature ids. */
+  features: string[];
+}
+export interface AsmConfig { id: string; name: string; state: AsmConfigState }

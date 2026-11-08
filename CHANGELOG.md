@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.81.0] - 2026-11-08
+
+### Added
+
+- **Assembly features** (FR-ASM-027): the new **Assembly cut** command makes a hole or a rectangular cut extrude that exists only in the assembly.
+  - Click a flat face where it starts, then set the size and the depth (or Through all).
+  - Under Feature scope, pick which components it may cut; by default it cuts every component it reaches.
+  - It moves with the component it starts on, a red preview shows the tool, and the cut faces can be mated to.
+  - The tree lists it under Assembly features (edit, suppress, delete), and a feature that cuts nothing is marked.
+- **Assembly configurations** (FR-ASM-026): **Add configuration** in the assembly's menu. Each configuration keeps:
+  - which components are suppressed;
+  - the part configuration each component uses (component menu → **Configuration…**, shown after its name in the tree);
+  - mate values and suppression;
+  - which assembly features are suppressed.
+
+  Click a configuration in the tree to switch to it.
+
 ## [1.80.0] - 2026-11-08
 
 ### Added
@@ -786,7 +803,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.80.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.81.0...HEAD
+[1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0
 [1.80.0]: https://github.com/kothf/step-viewer/compare/v1.79.0...v1.80.0
 [1.79.0]: https://github.com/kothf/step-viewer/compare/v1.78.0...v1.79.0
 [1.78.0]: https://github.com/kothf/step-viewer/compare/v1.77.0...v1.78.0

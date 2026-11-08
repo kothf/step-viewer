@@ -173,7 +173,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         data.color = color;
         parts.push({ id: p.id, data, faces: p.body.names });
       }
-      post({ id: r.id, ok: true, parts, statuses, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
+      post({ id: r.id, ok: true, parts, statuses, features: assembler.featureStatus, props: assembler.props(placed), heap: heap(), ms: performance.now() - t0 });
     } else if (r.type === "asmClearance") {
       assembler ??= new Assembler(kernel.module);
       const { placed } = assembler.evaluate(r.doc, 1);

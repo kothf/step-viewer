@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { occ } from "./occ";
 import { Assembler } from "../../src/kernel/assembly";
 import { packAsm, unpackAsm } from "../../src/asm/file";
+import { activateConfig, addConfig, deleteConfig, partUsed } from "../../src/asm/configs";
 import { IDENTITY, applyPoint, compose, eulerXYZ, fromPose, invert, rotation, translation } from "../../src/asm/math";
 import type { AsmDoc } from "../../src/asm/types";
 import type { Feature, PartDoc } from "../../src/model/types";
@@ -122,4 +123,57 @@ test("FR-ASM-021: clearance check lists pairs closer than the minimum with their
   const gap = (min: number) => a.clearance(placed, min).find(p => p.a === "c2" && p.b === "c3");
   assert.ok(Math.abs((gap(12)?.distance ?? -1) - 10) < 1e-6, JSON.stringify(gap(12)));
   assert.equal(gap(9), undefined);
+});
+
+test("FR-ASM-027: an assembly hole through all cuts every component it reaches; a cut extrude only those in scope", async () => {
+  const a = new Assembler(await occ());
+  // Block<1> (10 × 10 × 10) stands on the plate (40 × 20 × 5) at the origin; Block<2> is elsewhere.
+  const doc = asm();
+  doc.features = [{ id: "af1", name: "Hole1", type: "hole", ref: { comp: "c2", face: "x:end" }, at: [5, 5, 10], n: [0, 0, 1], x: [1, 0, 0], dia: 4 }];
+  const vol = (d: AsmDoc) => { const r = a.evaluate(d); return Object.fromEntries(r.placed.map(p => [p.id, a.props([p])!.volume])); };
+  const v = vol(doc);
+  const hole = Math.PI * 4;
+  assert.ok(Math.abs(v.c2 - (1000 - hole * 10)) < 1e-6, String(v.c2));
+  assert.ok(Math.abs(v.c1 - (4000 - hole * 5)) < 1e-6, String(v.c1));
+  assert.ok(Math.abs(v.c3 - 1000) < 1e-9, String(v.c3));
+  assert.deepEqual(a.featureStatus, [{ id: "af1", ok: true, cut: ["c1", "c2"], message: undefined }]);
+  // The hole's wall is a named face of the cut components (so it can be mated to).
+  const placed = a.evaluate(doc).placed;
+  assert.ok(placed.find(p => p.id === "c1")!.body.names.some(n => n.startsWith("af1:t")));
+  // A 6 mm deep 4 × 2 cut from the block's top (z = 15) stops above the plate (z = 5): only the block is cut.
+  doc.features = [{ id: "af2", name: "Cut1", type: "cut", ref: { comp: "c2", face: "x:end" }, at: [5, 5, 10], n: [0, 0, 1], x: [1, 0, 0], w: 4, h: 2, depth: 6, comps: ["c2", "c1"] }];
+  const w = vol(doc);
+  assert.ok(Math.abs(w.c2 - (1000 - 48)) < 1e-6 && Math.abs(w.c1 - 4000) < 1e-9, JSON.stringify(w));
+  assert.deepEqual(a.featureStatus[0].cut, ["c2"]);
+  // Scoped to the plate alone, that cut reaches nothing: the feature reports it.
+  doc.features[0].comps = ["c1"];
+  vol(doc);
+  assert.equal(a.featureStatus[0].ok, false);
+});
+
+test("FR-ASM-026: assembly configurations swap suppression, part entries, mate values and feature suppression", () => {
+  const doc = asm();
+  doc.parts.block2 = { ...doc.parts.block, doc: { ...doc.parts.block.doc, id: "d_block2" } };
+  doc.mates = [{ id: "m1", name: "Distance1", type: "distance", a: { comp: "c1", face: "x:end" }, b: { comp: "c2", face: "x:start" }, value: 0 }];
+  doc.features = [{ id: "af1", name: "Hole1", type: "hole", ref: { comp: "c1", face: "x:end" }, at: [5, 5, 5], n: [0, 0, 1], x: [1, 0, 0], dia: 2 }];
+  const id = addConfig(doc, "Long", "cf_long");
+  assert.equal(doc.configs?.length, 2);
+  assert.equal(doc.activeConfig, id);
+  // In "Long": block 2 suppressed, block 1 uses the other part entry, the mate 5 mm, the hole off.
+  doc.components[2].suppressed = true;
+  doc.components[1].part = "block2";
+  doc.mates[0].value = 5;
+  doc.features[0].suppressed = true;
+  activateConfig(doc, "cf_default");
+  assert.ok(!doc.components[2].suppressed && doc.components[1].part === "block" && doc.mates[0].value === 0 && !doc.features[0].suppressed);
+  // block2 is still needed by "Long", so it must not be dropped as unused.
+  assert.ok(partUsed(doc, "block2"));
+  activateConfig(doc, "cf_long");
+  assert.ok(doc.components[2].suppressed && doc.components[1].part === "block2" && doc.mates[0].value === 5 && doc.features[0].suppressed);
+  // Deleting the active one goes back to Default; the last one cannot go.
+  assert.ok(deleteConfig(doc, "cf_long"));
+  assert.equal(doc.activeConfig, "cf_default");
+  assert.equal(doc.components[1].part, "block");
+  assert.ok(!partUsed(doc, "block2"));
+  assert.ok(!deleteConfig(doc, "cf_default"));
 });

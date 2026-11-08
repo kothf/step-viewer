@@ -4520,6 +4520,79 @@ try {
     await ctx.close();
   }
 
+  // --- 1.81: assembly features (FR-ASM-027), assembly configurations (FR-ASM-026) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const ap = await ctx.newPage();
+    ap.on("pageerror", e => errors.push(e.message));
+    ap.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await ap.goto(`${origin}/index.html?debug`);
+    await ap.waitForFunction(() => window.__sv);
+    const partOf = async (w, h, d) => {
+      await ap.click("#new-part");
+      await ap.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await ap.evaluate(([w, h, d]) => window.__sv.model.store.change("Part", doc => {
+        const pt = (id, x, y) => ({ id, t: "point", x, y }), ln = (id, a, b) => ({ id, t: "line", a, b });
+        doc.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [pt("a", 0, 0), pt("b", w, 0), pt("c", w, h), pt("d", 0, h), ln("l1", "a", "b"), ln("l2", "b", "c"), ln("l3", "c", "d"), ln("l4", "d", "a")] },
+          { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: d } });
+      }), [w, h, d]);
+      await ap.waitForTimeout(150);
+      await ap.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+      return [...await ap.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const plate = await partOf(40, 20, 5), block = await partOf(10, 10, 10);
+    const shown = n => ap.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await ap.click("#new-more");
+    await ap.click("#new-asm");
+    await ap.waitForFunction(() => window.__sv.asm.doc && !window.__sv.asm.doc.components.length);
+    await ap.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await ap.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "block.mcadprt")), block);
+    await shown(2);
+    // The block on the plate's corner; an M6 cap screw (a part with configurations) off to the side.
+    await ap.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 5]; }));
+    await shown(2);
+    await ap.evaluate(() => { const a = window.__sv.asm; a.startFasteners(); a.setFastener({ kind: "iso4762", size: "M6", length: 12 }); a.insertFastener([1, 0, 0, 80, 0, 1, 0, 0, 0, 0, 1, 0]); a.closeTools(); });
+    await shown(3);
+    const v0 = await ap.evaluate(() => window.__sv.asm.props.volume);
+    // Assembly hole Ø4 through all from the block's top: it cuts the block and the plate.
+    await ap.click('#asm-tools [data-ac="afeat"]');
+    const title = await ap.evaluate(() => {
+      const a = window.__sv.asm, c = a.doc.components, top = [...a.geo.get(c[1].part).entries()].find(([, g]) => g.k === "plane" && g.n[2] > 0.99)[0];
+      Object.assign(a.featuring, { ref: { comp: c[1].id, face: top }, at: [5, 5, 10], n: [0, 0, 1], x: [1, 0, 0], dia: 4 });
+      a.renderAll();
+      return document.querySelector("#asm-pm h3")?.textContent;
+    });
+    await ap.evaluate(() => window.__sv.asm.okFeature());
+    await ap.waitForFunction(() => window.__sv.asm.doc.features?.length === 1 && window.__sv.asm.featStatus.length === 1, null, { timeout: 120000 });
+    await shown(3);
+    const feat = await ap.evaluate(v0 => { const a = window.__sv.asm, c = a.doc.components; return { cut: a.featStatus[0].cut.map(id => c.findIndex(x => x.id === id)), dv: Math.round((v0 - a.props.volume) * 1000) / 1000, row: !!document.querySelector(`#asm-tree .ft-afeat[data-id="${a.doc.features[0].id}"]`), wall: [...a.geo.get(c[0].part).keys()].some(k => k.includes(":t")) }; }, v0);
+    // Configurations: in "Configuration 2" the hole is suppressed and the screw is M10; Default brings both back.
+    const cfg = await ap.evaluate(async () => {
+      const a = window.__sv.asm, sid = a.doc.components[2].id;
+      const id = a.addAsmConfig();
+      a.change(d => { d.features[0].suppressed = true; });
+      a.setComponentConfig(sid, "M10");
+      await a.idle;
+      const label = () => document.querySelector(`#asm-tree .ft-row[data-id="${sid}"] .ft-name`)?.textContent;
+      const inCfg2 = { active: a.doc.activeConfig === id, sup: !!a.doc.features[0].suppressed, label: label(), configs: document.querySelectorAll("#asm-tree .ft-config").length };
+      a.activateAsmConfig("cf_default");
+      await a.idle;
+      const inDef = { sup: !!a.doc.features[0].suppressed, label: label(), parts: Object.keys(a.doc.parts).length };
+      a.activateAsmConfig(id);
+      await a.idle;
+      return { inCfg2, inDef, back: label() };
+    });
+    await shown(3);
+    check(title === "Assembly hole" && JSON.stringify(feat.cut) === "[0,1]" && Math.abs(feat.dv - 60 * Math.PI) < 0.05 && feat.row && feat.wall
+      && cfg.inCfg2.active && cfg.inCfg2.sup && /\(M10\)$/.test(cfg.inCfg2.label ?? "") && cfg.inCfg2.configs === 2
+      && !cfg.inDef.sup && /\(M6\)$/.test(cfg.inDef.label ?? "") && cfg.inDef.parts === 4 && /\(M10\)$/.test(cfg.back ?? ""),
+      `asm 1.81: an assembly hole cuts the block and the plate; assembly configurations swap feature suppression and the screw's size (FR-ASM-027, FR-ASM-026) (${JSON.stringify({ title, feat, cfg })})`);
+    await ctx.close();
+  }
+
   // --- 1.79: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
