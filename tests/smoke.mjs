@@ -7241,6 +7241,69 @@ try {
     await ctx.close();
   }
 
+  // --- Document tabs (FR-DOC-003, FR-UI-120): parts, assemblies and drawings stay open in tabs at the bottom ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&nokernel`);
+    await dp.waitForFunction(() => window.__sv);
+    const tabs = () => dp.evaluate(() => [...document.querySelectorAll("#doc-tabs .dt")].map(d => (d.classList.contains("on") ? "*" : "") + d.querySelector(".dt-l").textContent));
+    const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    await dp.click("#new-part");
+    await dp.waitForFunction(() => window.__sv.model?.store);
+    await dp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }));
+    await dp.waitForTimeout(150);
+    await idle();
+    const t0 = await tabs();
+    // Make assembly from part: the part stays open in its own tab.
+    await dp.click("#new-more"); await dp.click("#new-asm-part");
+    await dp.waitForFunction(() => window.__sv.asm.doc?.components.length === 1);
+    const t1 = await tabs();
+    // Back to the part: its features and its undo history are still there.
+    await dp.click("#doc-tabs .dt >> nth=0 >> .dt-b");
+    await dp.waitForFunction(() => window.__sv.model?.store);
+    const back = await dp.evaluate(() => ({ feats: window.__sv.model.store.doc.features.length, undo: window.__sv.model.store.undoLabel, model: document.querySelector("#app").classList.contains("model") }));
+    check(t0.join() === "*Part1.mcadprt" && t1.join() === "Part1.mcadprt,*Assembly1.mcadasm" && back.feats === 2 && back.undo === "Plate" && back.model,
+      `tabs: the part keeps its tab when an assembly is made from it, and comes back with its undo history (${t0} → ${t1}; ${JSON.stringify(back)})`);
+    // Insert component offers the part open in the other tab.
+    await dp.click("#doc-tabs .dt >> nth=1 >> .dt-b");
+    await dp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    await dp.click('#asm-tools [data-ac="insert"]');
+    const offered = await dp.evaluate(() => [...document.querySelectorAll("#asm-menu button")].map(b => b.textContent));
+    await dp.click("#asm-menu button >> nth=0");
+    await dp.waitForFunction(() => window.__sv.asm.doc.components.length === 2);
+    check(offered.join("|") === "Open document: Part1.mcadprt|Browse…", `tabs: Insert component lists the parts open in other tabs (${offered.join(" | ")})`);
+    // A drawing opens in its own tab over the assembly; the assembly tab brings the 3D view back.
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => document.querySelector("#app").classList.contains("drawing") && document.querySelectorAll("#doc-tabs .dt").length === 3, null, { timeout: 90000 });
+    const t2 = await tabs();
+    const tabsBox = await dp.evaluate(() => { const r = document.querySelector("#doc-tabs").getBoundingClientRect(), d = document.querySelector(".drw").getBoundingClientRect(); return { top: r.top, bottom: r.bottom, drw: d.bottom, h: innerHeight }; });
+    await dp.click('#doc-tabs .dt-b:has-text("Assembly1")');
+    await dp.waitForFunction(() => !document.querySelector("#app").classList.contains("drawing"));
+    const t3 = await tabs();
+    check(t2.join() === "Part1.mcadprt,Assembly1.mcadasm,*Assembly1.mcaddrw" && tabsBox.bottom === tabsBox.h && tabsBox.drw <= tabsBox.top && t3[1] === "*Assembly1.mcadasm",
+      `tabs: a drawing gets its own tab above the drawing sheet, and the assembly tab returns to the 3D view (${t2} → ${t3}; ${JSON.stringify(tabsBox)})`);
+    // Closing a changed document asks first; the tab goes.
+    await dp.click("#doc-tabs .dt >> nth=0 >> .dt-x");
+    const asked = await dp.isVisible("#confirm[open]");
+    await dp.click("#confirm[open] [data-a=ok]");
+    await dp.waitForFunction(() => document.querySelectorAll("#doc-tabs .dt").length === 2);
+    const t4 = await tabs();
+    // In Russian.
+    await dp.click("#lang-btn");
+    const ru = await dp.evaluate(() => ({ nav: document.querySelector("#doc-tabs").getAttribute("aria-label"), x: document.querySelector("#doc-tabs .dt-x").getAttribute("aria-label") }));
+    await dp.click("#lang-btn");
+    check(asked && t4.join() === "*Assembly1.mcadasm,Assembly1.mcaddrw" && ru.nav === "Открытые документы" && /^Закрыть /.test(ru.x), `tabs: closing a changed part asks first; Russian labels (${t4}; ${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 } catch (err) {
   console.error(err);

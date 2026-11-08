@@ -21,6 +21,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
 
 
+## [1.129.0] - 2026-11-08
+
+### Added
+
+- **Document tabs** (FR-DOC-003, FR-UI-120): every part, assembly, drawing and model file you open or make gets a tab at the bottom of the window, as in SolidWorks.
+  - A click switches documents; each keeps its undo history.
+  - A drawing's tab shows the sheet over the model it was made from, and the model's tab takes you back to it.
+  - ✕ or a middle click closes a tab and asks first when it has unsaved changes.
+  - New drawing on a model whose drawing is already open goes to that drawing's tab.
+- **Insert component from open documents**: in an assembly, Insert component lists the parts open in other tabs, then Browse….
+- **Make assembly from part** keeps the part open in its own tab.
+
 ## [1.126.0] - 2026-11-08
 
 ### Added
@@ -1150,7 +1162,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.130.0...HEAD
-[1.130.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.130.0
+[1.130.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.130.0
+[1.129.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.129.0
 [1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0
 [1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
 [1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
