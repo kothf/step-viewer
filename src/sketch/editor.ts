@@ -517,17 +517,22 @@ export class SketchEditor {
     return id;
   }
 
-  private drawClick(raw: V2, e: PointerEvent) {
-    const s = this.snapPoint(raw, true, true);
+  private drawClick(raw: V2, e: { detail: number }, exact?: { hv: "horizontal" | "vertical" | null; dims: (made: SkEnt[]) => SkDim[] }) {
+    const s = exact ? { p: raw, id: null, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
-    const finish = (label: string) => { this.sk.rels.push(...rels); this.commit(label); };
+    const before = exact ? new Set(this.sk.ents.map(x => x.id)) : null;
+    const finish = (label: string) => {
+      this.sk.rels.push(...rels);
+      if (exact && before) this.addTypedDims(exact.dims(this.sk.ents.filter(x => !before.has(x.id))));
+      this.commit(label);
+    };
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
     if (this.tool === "line") {
       if (!d.pts.length) { d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
       const a0 = d.pts.at(-1)!;
-      if (Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
+      if (!exact && Math.hypot(p[0] - a0[0], p[1] - a0[1]) < this.px(p) * 2) return;
       const aId = d.ids.at(-1) ?? this.usePoint(a0, d.snapOrigin ? ORIGIN : null, d.snapCurve ?? null, rels);
       const bId = this.usePoint(p, s.id, s.curve, rels);
       const lid = uid("l");
@@ -544,7 +549,7 @@ export class SketchEditor {
     if (this.tool === "circle" || this.tool === "rect" || this.tool === "crect") {
       if (!d.pts.length) { d.pts = [p]; d.ids = [s.id]; d.snapCurve = s.curve; this.render(); return; }
       const c = d.pts[0];
-      if (Math.hypot(p[0] - c[0], p[1] - c[1]) < this.px(p) * 3) return;
+      if (!exact && Math.hypot(p[0] - c[0], p[1] - c[1]) < this.px(p) * 3) return;
       if (this.tool === "circle") {
         const cId = this.usePoint(c, d.ids[0], d.snapCurve ?? null, rels);
         this.sk.ents.push({ id: uid("c"), t: "circle", c: cId, r: Math.hypot(p[0] - c[0], p[1] - c[1]) });
@@ -1847,6 +1852,108 @@ export class SketchEditor {
 
   // ---------- keys ----------
 
+  /**
+   * Sizes typed while drawing (FR-UI-052): with an entity started, a digit opens a value box at the cursor
+   * for its next size (line: length, then angle; rectangle: width, then height; circle: diameter).
+   * The last Enter places the entity, with driving dimensions for the typed sizes.
+   */
+  private typedFields(): { name: string; q: "length" | "angle"; now: number }[] | null {
+    const d = this.draft, c = d.cursor;
+    const a = d.pts.at(-1);
+    if (!a || !c) return null;
+    const dx = c[0] - a[0], dy = c[1] - a[1];
+    if (this.tool === "line") return [{ name: "Length", q: "length", now: Math.hypot(dx, dy) }, { name: "Angle", q: "angle", now: (Math.atan2(dy, dx) + 2 * Math.PI) % (2 * Math.PI) }];
+    if ((this.tool === "rect" || this.tool === "crect") && d.pts.length === 1) {
+      const k = this.tool === "crect" ? 2 : 1;
+      return [{ name: "Width", q: "length", now: Math.abs(dx) * k }, { name: "Height", q: "length", now: Math.abs(dy) * k }];
+    }
+    if (this.tool === "circle" && d.pts.length === 1) return [{ name: "Diameter", q: "length", now: 2 * Math.hypot(dx, dy) }];
+    return null;
+  }
+
+  private typed: HTMLElement | null = null;
+
+  private openTyped(first: string) {
+    const fields = this.typedFields();
+    if (!fields || this.typed) return;
+    this.closeInput(false);
+    const vals: number[] = [];
+    const box = document.createElement("div");
+    box.className = "sk-typed";
+    const lab = document.createElement("span");
+    const inp = document.createElement("input");
+    inp.className = "sk-input";
+    box.append(lab, inp);
+    const r = this.host.layer.getBoundingClientRect(), ev = this.lastEv;
+    box.style.left = `${(ev ? ev.clientX - r.left : r.width / 2) + 16}px`;
+    box.style.top = `${(ev ? ev.clientY - r.top : r.height / 2) + 16}px`;
+    this.host.layer.appendChild(box);
+    this.typed = box;
+    const u = this.host.unit();
+    const show = (i: number, text?: string) => {
+      const f = fields[i];
+      lab.textContent = `${t(f.name)}${f.q === "angle" ? " °" : ` ${u.name}`}`;
+      inp.setAttribute("aria-label", t(f.name));
+      inp.value = text ?? (f.q === "angle" ? trimNum((f.now * 180) / Math.PI, 2) : trimNum(f.now / u.mm, 4));
+      if (text === undefined) inp.select();
+    };
+    const close = () => { box.remove(); if (this.typed === box) this.typed = null; this.host.layer.parentElement?.focus?.(); };
+    const accept = () => {
+      const f = fields[vals.length];
+      let v: number;
+      try { v = evaluate(inp.value, f.q, f.q === "angle" ? "deg" : u.name, this.host.vars?.() ?? {}); }
+      catch (err) { this.host.toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), "error"); return; }
+      if (f.q === "length" && !(v > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
+      vals.push(v);
+      if (vals.length < fields.length) { show(vals.length); return; }
+      close();
+      this.placeTyped(vals);
+    };
+    inp.addEventListener("keydown", e => {
+      e.stopPropagation();
+      if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); accept(); }
+      else if (e.key === "Escape") { e.preventDefault(); close(); }
+    });
+    inp.addEventListener("blur", () => setTimeout(() => { if (this.typed === box && document.activeElement !== inp) close(); }, 0));
+    show(0, first);
+    inp.focus();
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+  }
+
+  /** Places the started entity from typed sizes; signs follow the side the cursor is on. */
+  private placeTyped(v: number[]) {
+    const d = this.draft, a = d.pts.at(-1), c = d.cursor;
+    if (!a || !c) return;
+    const sx = c[0] < a[0] ? -1 : 1, sy = c[1] < a[1] ? -1 : 1;
+    const lineOf = (made: SkEnt[]) => made.filter((x): x is SkEnt & { t: "line" } => x.t === "line" && !x.cons);
+    const dim = (t: SkDim["t"], e: string[], val: number): SkDim => ({ id: uid("d"), name: "", t, e, val: { v: val } });
+    if (this.tool === "line") {
+      const [len, ang] = v;
+      const deg = ((((ang * 180) / Math.PI) % 360) + 360) % 360;
+      const hv = Math.abs(deg % 180) < 1e-9 || Math.abs((deg % 180) - 180) < 1e-9 ? "horizontal" : Math.abs(deg - 90) < 1e-9 || Math.abs(deg - 270) < 1e-9 ? "vertical" : null;
+      const p: V2 = [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)];
+      this.drawClick(p, { detail: 1 }, { hv, dims: made => lineOf(made).slice(0, 1).map(l => dim("distance", [l.id], len)) });
+    } else if (this.tool === "rect" || this.tool === "crect") {
+      const k = this.tool === "crect" ? 0.5 : 1;
+      const p: V2 = [a[0] + sx * v[0] * k, a[1] + sy * v[1] * k];
+      this.drawClick(p, { detail: 1 }, { hv: null, dims: made => { const ls = lineOf(made); return ls.length >= 2 ? [dim("distance", [ls[0].id], v[0]), dim("distance", [ls[1].id], v[1])] : []; } });
+    } else if (this.tool === "circle") {
+      this.drawClick([a[0] + v[0] / 2, a[1]], { detail: 1 }, { hv: null, dims: made => made.filter(x => x.t === "circle").slice(0, 1).map(x => dim("diameter", [x.id], v[0])) });
+    }
+    this.statusHint();
+  }
+
+  /** Typed sizes become driving dimensions where they add information (no toast when they do not). */
+  private addTypedDims(dims: SkDim[]) {
+    for (const dim of dims) {
+      dim.name = this.nextDimName();
+      const r = tryAdd(this.sk, { dim });
+      if (!r.ok || r.redundant) continue;
+      this.sk = r.sketch;
+      this.info = r.result;
+    }
+  }
+
   key(e: KeyboardEvent): boolean {
     const k = e.key.toLowerCase();
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -1858,6 +1965,7 @@ export class SketchEditor {
       return false;
     }
     if (k === "delete" || k === "backspace") return this.deleteSelection();
+    if (/^[0-9.]$/.test(e.key) && this.typedFields()) { this.openTyped(e.key); return true; }
     const tools: Record<string, SkTool> = { l: "line", r: "rect", c: "circle", a: "arc", d: "dim", p: "point", t: "trim", g: "polygon", f: "fillet", e: "extend", o: "offset", w: "slot" };
     if (tools[k]) { this.setTool(tools[k]); return true; }
     if (k === "q") { this.toggleConstruction(); return true; }
