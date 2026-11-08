@@ -2154,7 +2154,7 @@ try {
     await mp.click("#mc-ok");
     await idle();
     const ax = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); const fr = window.__sv.model.last().frames[f.id]; return { type: f.type, name: f.name, n: fr?.n.map(v => Math.round(Math.abs(v) * 1e6) / 1e6), row: !!document.querySelector(`#mc-tree .ft-row[data-id="${f.id}"]`) }; });
-    check(refMenu.join("|") === "Plane|Axis|Point|Coordinate system" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
+    check(refMenu.join("|") === "Plane|Axis|Point|Coordinate system|External References" && ax.type === "axis" && ax.n?.join(",") === "0,1,0" && ax.row, `model 1.21: Axis from two planes, from the Plane ▾ flyout (${refMenu.join("|")}, ${JSON.stringify(ax)})`);
     // Point at the centre of the top face, picked in the view.
     await mp.click('#mc-tools [data-fly="plane"]');
     await mp.click("#mc-menu button:nth-child(3)");
@@ -5129,6 +5129,105 @@ try {
       && !st1.hid && st1.op === 1 && st1.vop === 1 && st1.on === "Default"
       && /Return to assembly/.test(bar) && Math.abs(back.h - 20) < 1e-3 && Math.abs(back.z - 13) < 1e-3 && back.dirty && !back.model && back.mates === 1,
       `asm 1.65: limit distance from the Mate panel, display states with transparency, open part and return (FR-MATE-004, FR-ASM-007/025) (${JSON.stringify({ lim, mated, st2, st1, bar, back })})`);
+    await ctx.close();
+  }
+
+  // --- 1.135: edit in context, sketch on another component, external references (FR-ASM-030) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+    const rectEnts = (w, h) => [P("a", -w / 2, -h / 2), P("b", w / 2, -h / 2), P("c", w / 2, h / 2), P("d", -w / 2, h / 2), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")];
+    const rect = (w, h, depth) => [{ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: rectEnts(w, h) },
+      { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: depth } }];
+    const modelIdle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    const makePart = async feats => {
+      await mp.click("#new-part");
+      await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+      await mp.evaluate(f => window.__sv.model.store.change("Part", d => { d.features.push(...f); }), feats);
+      await mp.waitForTimeout(150);
+      await modelIdle();
+      return [...await mp.evaluate(async () => [...await window.__sv.modeller.partBytes()])];
+    };
+    const plate = await makePart(rect(60, 60, 5)), box = await makePart(rect(10, 10, 10));
+    await mp.click("#new-more");
+    await mp.click("#new-asm");
+    await mp.waitForFunction(() => window.__sv.asm.doc);
+    const shown = n => mp.waitForFunction(k => !window.__sv.asm.building && document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === k, n, { timeout: 120000 });
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "plate.mcadprt")), plate);
+    await shown(1);
+    await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "box.mcadprt")), box);
+    await shown(2);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[1].tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 30]; }));
+    await shown(2);
+    const [plateId, boxId] = await mp.evaluate(() => window.__sv.asm.doc.components.map(c => c.id));
+    const menu = await mp.evaluate(() => { const a = window.__sv.asm; a.menu(a.doc.components[1], 300, 300); const t = [...document.querySelectorAll(".mc-menu button, .asm-menu button, [role=menu] button")].map(b => b.textContent); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); return t; });
+    // Edit the box in context: the plate shows around it; click the plate's top face (world z = 5, the box part's z = −25) for a sketch.
+    await mp.evaluate(id => window.__sv.asm.editPart(id, true), boxId);
+    await mp.waitForFunction(() => document.querySelector("#app").classList.contains("model") && document.querySelector("#mc-ret"));
+    await modelIdle();
+    const inCtx = await mp.evaluate(() => ({ meshes: window.__sv.modeller.ctxView.children.length, bar: document.querySelector("#mc-ret")?.textContent }));
+    await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(1, -1, 0.8), false));
+    await mp.evaluate(() => { const v = window.__sv.viewer, V = v.camera.position.constructor; v.fit(false, new v.bounds.constructor(new V(-30, -30, -25), new V(30, 30, 10))); });
+    await mp.waitForTimeout(200);
+    await runCmd(mp, "Sketch");
+    await mp.waitForTimeout(100);
+    const [cx, cy] = await mp.evaluate(p => {
+      const v = window.__sv.viewer, q = new (v.camera.position.constructor)(...p).project(v.camera), r = v.renderer.domElement.getBoundingClientRect();
+      return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+    }, [-22, -22, -25]);
+    await mp.mouse.move(cx, cy); await mp.waitForTimeout(50); await mp.mouse.down(); await mp.mouse.up();
+    await mp.waitForFunction(() => window.__sv.model.store.doc.features.some(f => f.type === "sketch" && f.plane.ctx), null, { timeout: 30000 });
+    const ref = await mp.evaluate(() => structuredClone(window.__sv.model.store.doc.features.find(f => f.plane?.ctx).plane.ctx));
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await mp.waitForTimeout(150);
+    await mp.evaluate(ents => window.__sv.model.store.change("Pad", d => {
+      const sk = d.features.find(f => f.plane?.ctx);
+      sk.ents = ents.map(e => ({ ...e, id: `k${e.id}`, ...(e.a ? { a: `k${e.a}`, b: `k${e.b}` } : {}) }));
+      d.features.push({ id: "pad", type: "extrude", name: "Extrude2", sketch: sk.id, op: "boss", merge: false, end: "blind", depth: { v: 5 } });
+    }), rectEnts(10, 10));
+    await mp.waitForTimeout(150);
+    await modelIdle();
+    const inPart = await mp.evaluate(() => ({ v: Math.round(window.__sv.model.last().props.volume), mark: [...document.querySelectorAll("#ft-tree .ft-ext, #tab-features .ft-ext")].map(e => e.textContent), bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    // External References lists it; the dialog in Russian.
+    await runCmd(mp, "External References");
+    await mp.waitForSelector("#mc-xref[open]");
+    const dlg = await mp.evaluate(() => ({ rows: document.querySelectorAll("#mc-xref tbody tr").length, text: document.querySelector("#mc-xref tbody")?.textContent }));
+    // The dialog is modal: switch the language behind it.
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => document.querySelector("#mc-xref").textContent);
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.click('#mc-xref [data-a="close"]');
+    await mp.click("#mc-ret button");
+    await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    await shown(2);
+    // The plate goes up 10 mm: the pad follows its top face (world z 15..20).
+    const padZ = () => mp.evaluate(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return d ? Math.round(d.bboxMin[2] * 1000) / 1000 : null; }, boxId);
+    const z0 = await padZ();
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[0].tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 10]; }));
+    await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return !a.building && d && Math.abs(d.bboxMin[2] - 15) < 1e-3; }, boxId, { timeout: 60000 });
+    const moved = await mp.evaluate(id => { const a = window.__sv.asm, c = a.doc.components.find(x => x.id === id); return a.doc.parts[c.part].doc.features.find(f => f.plane?.ctx).plane.ctx.p[2]; }, boxId);
+    const z1 = await padZ();
+    // Locked: moving the plate back leaves the pad where it is.
+    await mp.evaluate(id => window.__sv.asm.change(d => { const c = d.components.find(x => x.id === id); d.parts[c.part].doc.ctxLocked = true; }), boxId);
+    await shown(2);
+    await mp.evaluate(() => window.__sv.asm.change(d => { d.components[0].tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]; }));
+    await shown(2);
+    await mp.waitForTimeout(300);
+    await mp.waitForFunction(() => !window.__sv.asm.building);
+    const z2 = await padZ();
+    check(menu.includes("Edit in context") && inCtx.meshes === 1 && /in the context of/.test(inCtx.bar ?? "")
+      && ref.comp === plateId && ref.host === boxId && Math.abs(ref.p[2] + 25) < 1e-3 && Math.abs(ref.n[2] - 1) < 1e-6
+      && inPart.v === 1500 && inPart.mark.join() === "->" && !inPart.bad && dlg.rows === 1 && /In context/.test(dlg.text ?? "")
+      && z0 === 5 && Math.abs(moved + 15) < 1e-3 && z1 === 15 && z2 === 15,
+      `asm 1.135: edit in context, sketch on the plate's face, the pad follows the plate until locked (FR-ASM-030) (${JSON.stringify({ menu: menu.length, inCtx, ref, inPart, dlg, z0, moved, z1, z2 })})`);
+    check(/Внешние ссылки/.test(ru) && /В контексте/.test(ru) && !/External References|In context|Lock all/.test(ru), `asm 1.135: External References dialog in Russian (${ru.slice(0, 300)})`);
     await ctx.close();
   }
 

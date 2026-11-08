@@ -1681,7 +1681,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Open part edits it apart from the assembly | Not built |
+| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Edit in context (1.135.0): the assembly shown around the part, sketches on other components' flat faces, External References list with lock / lock all | Built (planes; converted edges not yet) |
 
 **Planned, not started:** P6 sheet metal (FR-FT-120), weldments (FR-FT-121), motion (FR-FT-122) and the scripting console; P7 server vault and git backend (FR-PDM-072, FR-PDM-073).
 
