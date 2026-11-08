@@ -5,11 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.237.0] - 2026-11-08
+## [1.238.0] - 2026-11-08
 
 ### Added
 
 - **Linked sketch offsets (FR-SK-034)**: Offset entities now works as in SolidWorks. By default the copy keeps offset relations to its source and gets one distance dimension, so editing that dimension or moving the source moves the copy with it (turn off **Follow the source** for a static copy, as before). **Both sides** offsets to both sides at once, and for an open chain **Cap ends** closes the two copies with arcs about the source ends or with straight lines. Offsets of arcs and circles are dimensioned as the gap between the concentric curves. The relation glyph is ⇉.
+
+## [1.237.0] - 2026-11-08
+
+### Fixed
+
+- Drawing dimensions: one click on an end-on circle made of several arcs (a revolved part's rim) gave a radius such as R15. The fullest edge now wins, so it gives Ø30.
+- Drawing dimensions: a circle smaller than the snap distance (a Ø5 rod at 1:1, a Ø12 bore at 1:2) could not be picked, because its centre point or a nearby line end always won. A circle right under the cursor now beats a point that is not, and a first pick on a circle takes the circle even where another edge ends on it (a cross hole's curve on a shaft).
+- Text widths on drawings follow the embedded DejaVu Sans. Fit deviations (Ø12H7 +0.018/0) no longer overlap the dimension text or each other, and long title block values shrink to fit their cell or, in the big cells, break into two lines instead of running past the frame.
 
 ## [1.236.0] - 2026-11-08
 
@@ -1574,7 +1582,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.237.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.238.0...HEAD
+[1.238.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.238.0
 [1.237.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.237.0
 [1.236.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.236.0
 [1.234.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.234.0

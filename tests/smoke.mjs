@@ -2108,7 +2108,7 @@ try {
     await click([80, 0]); await click([100, 0]); await click([90, 4]);
     const slot = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk; const arcs = sk.ents.filter(e => e.t === "arc"); const P = id => sk.ents.find(e => e.id === id); return { arcs: arcs.length, r: arcs.map(a => Math.hypot(P(a.a).x - P(a.c).x, P(a.a).y - P(a.c).y)), tan: sk.rels.filter(r => r.t === "tangent").length, ok: window.__sv.model.editor().info.status }; });
     check(slot.arcs === 2 && slot.r.every(r => near(r, 4, 0.01)) && slot.tan === 4 && slot.ok === "ok", `model 1.20: Slot makes two lines and two R4 end arcs, tangent (${JSON.stringify(slot)})`);
-    // 1.237.0 (FR-SK-034): offset both sides with arc caps round the open top line, linked to its source by one dimension.
+    // 1.238.0 (FR-SK-034): offset both sides with arc caps round the open top line, linked to its source by one dimension.
     await tool("offset");
     await mp.evaluate(() => window.__sv.modeller.renderPanel());
     await mp.waitForSelector('#mc-pm [data-a="oboth"]');
@@ -2133,7 +2133,7 @@ try {
       return { ys, status: window.__sv.model.editor().info.status };
     });
     check(capOpts === "none|arc|line" && ob.offs === 2 && ob.linked === 1 && ob.dim === 3 && ob.caps === 2 && ob.r.every(r => near(r, 3, 0.01)) && ob5.ys.join(",") === "35,45" && ob5.status === "ok",
-      `model 1.237: Offset both sides caps the open line with arcs and one dimension drives both copies (${capOpts}, ${JSON.stringify(ob)}, ${JSON.stringify(ob5)})`);
+      `model 1.238: Offset both sides caps the open line with arcs and one dimension drives both copies (${capOpts}, ${JSON.stringify(ob)}, ${JSON.stringify(ob5)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
@@ -3852,6 +3852,10 @@ try {
     const fitNote = await dp.evaluate(() => document.querySelector("#drw .drw-fitlim")?.textContent ?? "");
     check(fitOk && tx.includes("Ø16H7") && tx.includes("+0.018") && fitNote.includes("H7: +0.018 / 0"),
       `drawing: a diameter takes the H7 fit with its ISO 286 deviations (${tx.filter(s => /H7|0\.018/.test(s)).join(" ")}; ${fitNote})`);
+    // The deviations start right of the drawn "Ø16H7", measured on the rendered glyphs (exam bug 39). The screen font may not be
+    // DejaVu (exports embed it), and glyph boxes include side bearings, so a sliver under 0.15·h counts as clear; the bug was ~1·h.
+    const devGap = await dp.evaluate(() => { const els = [...document.querySelectorAll("#drw svg text")], r = s => els.find(e => e.textContent === s)?.getBoundingClientRect(); const m = r("Ø16H7"), u = r("+0.018"), l = [...els].filter(e => e.textContent === "0").map(e => e.getBoundingClientRect()).find(q => m && Math.abs(q.left - u.left) < 2); return m && u ? { gap: +(u.left - m.right).toFixed(1), lo: l ? +(l.left - m.right).toFixed(1) : null, h: +m.height.toFixed(1) } : null; });
+    check(devGap && devGap.gap > -0.15 * devGap.h && (devGap.lo === null || devGap.lo > -0.15 * devGap.h), `drawing: fit deviations clear the dimension text (${JSON.stringify(devGap)})`);
     // Hole callout and a note.
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="hole"]');
     [x, y] = await at(top.id, 10, -8);
