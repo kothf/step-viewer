@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.235.0] - 2026-11-08
+## [1.238.0] - 2026-11-08
 
 ### Fixed
 
 - **Offline start picks up new versions behind a CDN.** The page registers its service worker as `sw.js?v=<version>` and asks the browser to skip its HTTP cache for it. aerocat.tech's Cloudflare kept `sw.js` for a day, so visitors got the worker of an older release (1.169.0 while 1.219.0 was deployed), which precached that release's files. Every release now has its own worker URL.
+
+## [1.236.0] - 2026-11-08
+
+### Added
+
+- **Closed Corner for sheet metal (FR-FT-120)**: a new Closed Corner command on the Sheet Metal tab closes the open corner between two flanges made separately, like SolidWorks' Closed Corner. Click a flange's end face and choose Overlap (it runs over the other flange's end) or Underlap (it stops at the other flange, a gap short of it). The other flange's end moves to meet it, and the flat pattern follows.
 
 ## [1.234.0] - 2026-11-08
 
@@ -1568,8 +1574,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.235.0...HEAD
-[1.235.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.235.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.238.0...HEAD
+[1.238.0]: https://github.com/kothf/step-viewer/compare/v1.236.0...v1.238.0
+[1.236.0]: https://github.com/kothf/step-viewer/compare/v1.234.0...v1.236.0
 [1.234.0]: https://github.com/kothf/step-viewer/compare/v1.233.0...v1.234.0
 [1.233.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.233.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
