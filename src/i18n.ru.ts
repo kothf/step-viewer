@@ -2767,4 +2767,7 @@ export const RU: Record<string, string> = {
   "Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2.": "Щёлкните плоские или цилиндрические грани: шов идёт вдоль прямых и круглых рёбер, где набор 1 встречается с набором 2.",
   "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.": "Швы строятся вдоль прямых и круглых рёбер между плоскими и цилиндрическими гранями; остальные рёбра пропущены.",
   "The faces of the two sets do not meet along a straight or round edge.": "Грани двух наборов не встречаются по прямому или круглому ребру.",
+  // 1.89.0: sketch snapping to model geometry.
+  "Snap to model geometry": "Привязка к геометрии модели",
+  "Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges.": "Точки привязываются к вершинам модели, серединам рёбер и центрам окружностей и остаются связанными с ними; автоматический размер берёт рёбра модели.",
 };

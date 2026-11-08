@@ -341,6 +341,15 @@ export class ModelController {
     this.host.selectLeftTab("features");
     this.host.setMaterial?.(doc.material);
     this.renderAll();
+    if (!doc.features.length) {
+      // A new part needs no kernel to show: the origin and the three planes go up at once (the kernel
+      // still loads in the background for the first feature).
+      this.shownOnce = true;
+      this.host.show(null, doc.name, true);
+      this.host.setDoc(this.docLabel());
+      this.host.viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+      this.drawDecor();
+    }
     void this.rebuild();
   }
 
@@ -420,12 +429,14 @@ export class ModelController {
   private async rebuild() {
     if (!this.store) return;
     const doc = this.displayDoc();
-    this.setBusy(1);
+    // An empty part has nothing to build: no busy sign while the kernel loads behind it.
+    const quiet = !doc.features.length;
+    if (!quiet) this.setBusy(1);
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
     const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
     const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
-    this.setBusy(-1);
+    if (!quiet) this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
     this.followEdges(r);
@@ -576,8 +587,22 @@ export class ModelController {
         return { tri, type: face.type, axis: face.axis, center: face.center, radius: face.radius };
       },
       edgeRef: ed => this.refOfEdge(ed as EdgeInfo),
+      modelEdge: e => {
+        // The edge under the pointer, then every edge that ends or is centred at the snapped point (a vertex
+        // snap may name an edge square to the sketch, which projects to nothing).
+        const out: EdgeInfo[] = [];
+        const hit = this.host.edgeAt(e.clientX, e.clientY);
+        if (hit?.edge) out.push(hit.edge);
+        const sp = this.host.snapAt?.(e.clientX, e.clientY), data = this.host.viewer.parts[0]?.data;
+        if (sp && data) {
+          const near = (q?: V3) => !!q && Math.hypot(q[0] - sp.point[0], q[1] - sp.point[1], q[2] - sp.point[2]) < 1e-4 * (1 + Math.hypot(...sp.point));
+          for (const x of data.edges) if (!out.includes(x) && (near(x.start) || near(x.end) || near(x.center) || near(x.mid))) out.push(x);
+        }
+        return out;
+      },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
+    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; } catch { /* private mode */ }
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
     this.renderAll();
@@ -1307,6 +1332,11 @@ export class ModelController {
     const vp = this.host.vp;
     const canvas = this.host.viewer.renderer.domElement;
     const onCanvas = (e: Event) => e.target === canvas;
+    // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
+    vp.addEventListener("pointerdown", () => {
+      const mb = this.host.viewer.controls.mouseButtons;
+      mb.MIDDLE = this.mode.kind === "sketch" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    }, true);
     vp.addEventListener("pointerdown", e => {
       if (!onCanvas(e)) return;
       this.down = { x: e.clientX, y: e.clientY };
@@ -4411,6 +4441,7 @@ export class ModelController {
     pm.innerHTML = `<div class="pm-head"><h3 translate="no">${esc(featureLabel(sk.name))}</h3></div>`
       + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b></p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
+      + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
@@ -4436,6 +4467,7 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-reattach]").forEach(b => b.addEventListener("click", () => { ed.select([b.dataset.reattach!]); ed.startReattach(b.dataset.reattach!); this.renderBar(); this.renderPanel(); }));
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
+    pm.querySelector<HTMLInputElement>("[data-a=modelsnap]")?.addEventListener("change", e => { ed.modelSnap = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:modelSnap", ed.modelSnap ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=dimname]")?.addEventListener("change", e => {
       const inp = e.target as HTMLInputElement;
       const err = ed.renameDim(inp.dataset.id!, inp.value);

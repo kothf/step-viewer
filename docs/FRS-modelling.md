@@ -1052,7 +1052,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.13 Everyday interaction parity (audit 2026-11-08)
 
-An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.87.0 and are not repeated here.
+An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusCAD 1.85.0 (Appendix F) found habits that were missing here or described too loosely to build or test. The requirements below close those gaps; each has an acceptance test in section 16.2 (AT-UX-*). Sketch inference and snapping to model geometry (FR-SK-042, FR-SK-052) and middle-drag rotation in sketch mode (FR-UI-020) are being reworked in 1.89.0 and are not repeated here.
 
 **Mouse and view**
 
@@ -1561,8 +1561,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
-| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (1.87.0 fixes sketch mode) |
-| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V only | Weaker (1.87.0) |
+| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (sketch mode fixed in 1.89.0) |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V only | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
 | Middle click sets the rotation centre | FR-UI-100 | No | New |
 | Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |

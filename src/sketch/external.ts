@@ -10,7 +10,7 @@ export interface ModelEdge { type: string; start: V3; end: V3; mid: V3; closed: 
 /** An edge projected into sketch coordinates. */
 export type ExtGeo = { t: "line"; a: V2; b: V2 } | { t: "circle"; c: V2; r: number } | { t: "arc"; c: V2; a: V2; b: V2 };
 
-const uvOf = (f: Frame, w: V3): V2 => {
+export const uvOf = (f: Frame, w: V3): V2 => {
   const q = [w[0] - f.o[0], w[1] - f.o[1], w[2] - f.o[2]];
   return [q[0] * f.x[0] + q[1] * f.x[1] + q[2] * f.x[2], q[0] * f.y[0] + q[1] * f.y[1] + q[2] * f.y[2]];
 };
