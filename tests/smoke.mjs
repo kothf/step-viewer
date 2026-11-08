@@ -3224,6 +3224,15 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
+    // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
+    [x, y] = await at(top.id, -45, -25);
+    await dp.mouse.click(x, y);
+    await dp.click('#drw .drw-props [data-style="shadedEdges"]');
+    await ready();
+    const shadeP = await dp.evaluate(() => { const p = window.__sv.drw.prims(); return { tris: p.filter(q => q.layer === "SHADE").length, greys: new Set(p.filter(q => q.layer === "SHADE").map(q => q.gray)).size, svg: /data-l="SHADE"/.test(window.__sv.drw.svg()), dxf: /\nSHADE\n/.test(window.__sv.drw.dxf()) }; });
+    vs = await views();
+    check(vs.find(v => v.id === top.id)?.style === "shadedEdges" && shadeP.tris > 20 && shadeP.svg && !shadeP.dxf,
+      `drawing: a view shaded with edges draws grey triangles under its lines; DXF leaves the shading out (${JSON.stringify(shadeP)})`);
     // DXF has the hatch on its own layer; Russian labels; a saved drawing keeps the views.
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
@@ -6020,7 +6029,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.122: Check-Heal feature (FR-FT-131) ---
+  // --- 1.125: Check-Heal feature (FR-FT-131) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -6053,7 +6062,7 @@ try {
     await settle();
     const done = await state();
     check(s0.v === 1000 && h.v === 1000 && /^Check and heal: 0 free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(h.report) && u.faces === 6 && s0.faces > 6 && u.v === 1000 && done.faces === 6 && done.types.endsWith("heal") && !done.bad,
-      `model 1.122: Check-Heal reports the body and merges its split faces (FR-FT-131) (${JSON.stringify({ s0, h, u, done })})`);
+      `model 1.125: Check-Heal reports the body and merges its split faces (FR-FT-131) (${JSON.stringify({ s0, h, u, done })})`);
     await ctx.close();
   }
 

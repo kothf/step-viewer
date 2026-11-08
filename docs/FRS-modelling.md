@@ -1675,7 +1675,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Ruled, close, centreline, start/end normal and guide curves (1.119.0) are built; connectors are missing | Partly |
 | FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
 | FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
-| FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.122.0 (Check-Heal feature; Insert body also heals) | Built |
+| FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.125.0 (Check-Heal feature; Insert body also heals) | Built |
 
 **Assemblies (section 10)**
 
