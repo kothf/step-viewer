@@ -1389,6 +1389,29 @@ test("sweep start tangency: path tangent turns the profile square to the path (F
   close(r1.props!.volume, 24 * 40, 1e-4);
 });
 
+test("sweep end tangency: path tangent ends the sweep square to the path (FR-FT-080 P5)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const bbox = (shape: unknown) => { const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(shape, b, false); const lo = b.CornerMin(), hi = b.CornerMax(); return [lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()]; };
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  // The same 45° path and flat 6 × 4 profile, keeping the normal constant.
+  const s = 40 / Math.SQRT2;
+  const path: SketchFeature = { id: "ps", type: "sketch", name: "Path", plane: { std: "XZ" }, rels: [], dims: [], ents: [P("a", 0, 0), P("b", s, s), { id: "pl", t: "line", a: "a", b: "b" }] };
+  const prof = rect("pr", 0, 0, 6, 4);
+  const sw: Feature = { id: "w1", type: "sweep", name: "Sweep1", op: "boss", profile: "pr", path: { sketch: "ps" }, orient: "normal" };
+  // Without it the end face is flat like the start: the top is at the path's end height.
+  const r0 = run(m, doc([path, prof, sw]));
+  const b0 = bbox(r0.body!.shape);
+  close(b0[5], s, 1e-4);
+  // Path tangent at the end: the end face turns 45° about Y, so its corners reach 3 sin 45° above and in from x = s + 3.
+  const r1 = run(m, doc([path, prof, { ...sw, endTangent: true } as Feature]));
+  const b1 = bbox(r1.body!.shape);
+  close(b1[5], s + 3 * Math.SQRT1_2, 2e-3);
+  close(b1[3], s + 3 * Math.SQRT1_2, 2e-3);
+  // The start stays flat on Top.
+  assert.ok(Math.abs(b1[2]) < 1e-4, `bottom ${b1[2]}`);
+});
+
 test("feature recognition: holes in an imported body become hole features (FR-FT-102)", async () => {
   const m = new Modeller(await occ());
   const s = rect("s", 0, 0, 60, 40);

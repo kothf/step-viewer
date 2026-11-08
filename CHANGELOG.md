@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.143.0] - 2026-11-08
+
+### Added
+
+- **Sweep end tangency (FR-FT-080)**: next to Start tangency, End tangency "Path tangent" ends a sweep with the profile square to the path. With Keep normal constant the profile turns gradually from its sketch plane at the start to square at the end. Not with a guide curve or a closed path.
+
 ## [1.142.0] - 2026-11-08
 
 ### Added
@@ -1226,7 +1232,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.142.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.143.0...HEAD
+[1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0
 [1.142.0]: https://github.com/kothf/step-viewer/compare/v1.141.0...v1.142.0
 [1.141.0]: https://github.com/kothf/step-viewer/compare/v1.140.0...v1.141.0
 [1.140.0]: https://github.com/kothf/step-viewer/compare/v1.139.0...v1.140.0

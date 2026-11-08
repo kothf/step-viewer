@@ -3221,6 +3221,8 @@ export const RU: Record<string, string> = {
   "Nothing is left of the target body.": "От целевого тела ничего не осталось.",
   "Start and End Tangency": "Касательность в начале и конце",
   "Start tangency": "Касательность в начале",
+  "End tangency": "Касательность в конце",
+  "The sweep ends with the profile square to the path. Not with a guide curve or a closed path.": "Сдвиг заканчивается профилем, перпендикулярным траектории. Не с направляющей кривой и не с замкнутой траекторией.",
   "Path tangent": "Касательно к траектории",
   "The profile is turned square to the path where the path starts.": "Профиль поворачивается перпендикулярно траектории в её начале.",
   // 1.116.0: feature recognition (FR-FT-102).

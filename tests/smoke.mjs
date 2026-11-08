@@ -6529,6 +6529,16 @@ try {
     const tan = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "sw").startTangent);
     check(Math.abs(t0.v - done.v - 960 / Math.SQRT2) < 2 && Math.abs(t1.v - done.v - 960) < 2 && tan === true && !t1.bad,
       `model 1.108: sweep start tangency Path tangent turns the profile square to the path (FR-FT-080) (${JSON.stringify({ base: done.v, t0, t1, tan })})`);
+    // End tangency (1.143.0): with the start already square the end section matches it, so the solid is the same prism.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("sw"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="endTan"]', "path");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const t2 = await state();
+    const etan = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "sw").endTangent);
+    check(etan === true && Math.abs(t2.v - done.v - 960) < 2 && !t2.bad, `model 1.143: sweep end tangency Path tangent (FR-FT-080) (${JSON.stringify({ t2, etan })})`);
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "indent").id));
     await settle();

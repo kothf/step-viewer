@@ -2420,6 +2420,32 @@ export class Modeller {
     const guide = f.guide ? this.pathWire(f.guide, doc, prev, frames) : null;
     const twist = !guide && f.orient !== "normal" && f.twist && Math.abs(f.twist.v) > 1e-9 ? this.twistSpine(spine, f.twist.v) : null;
     const law = guide ? this.guideLaw(spine, guide) : null;
+    // End tangency "path tangent" (P5): a second section at the path's end, the profile turned square to the
+    // path there (the least turn from the profile's plane to the end tangent), so the sweep ends square.
+    let endSection: ((w: any) => any) | null = null;
+    let endVertex: any = null;
+    const profN = !f.circular && f.profile ? this.sketchOf(f.profile, doc, prev, frames, "a profile sketch").frame.n : null;
+    if (f.endTangent && profN && !law && !oc.BRep_Tool.IsClosed_1(spine)) {
+      const ad = new oc.BRepAdaptor_CompCurve_2(spine, false);
+      const p0 = new oc.gp_Pnt_1(), v0 = new oc.gp_Vec_1(), p1 = new oc.gp_Pnt_1(), v1 = new oc.gp_Vec_1();
+      ad.D1(ad.FirstParameter(), p0, v0);
+      ad.D1(ad.LastParameter(), p1, v1);
+      const t0 = unit(this.xyz(v0)), t1 = unit(this.xyz(v1));
+      const n = dot(profN, t0) >= 0 ? profN : mul(profN, -1);
+      const P0 = this.xyz(p0), P1 = this.xyz(p1);
+      const ax: V3 = [n[1] * t1[2] - n[2] * t1[1], n[2] * t1[0] - n[0] * t1[2], n[0] * t1[1] - n[1] * t1[0]];
+      const ang = Math.atan2(Math.hypot(...ax), dot(n, t1));
+      const rot = new oc.gp_Trsf_1();
+      if (Math.hypot(...ax) > 1e-9) rot.SetRotation_1(new oc.gp_Ax1_2(this.P(P0), this.D(unit(ax))), ang);
+      else if (ang > 1) rot.SetMirror_2(new oc.gp_Ax1_2(this.P(P0), this.D(Math.abs(n[2]) < 0.9 ? unit([n[1], -n[0], 0]) : unit([0, n[2], -n[1]]))));
+      const tr = new oc.gp_Trsf_1();
+      tr.SetTranslation_1(this.V(sub3(P1, P0)));
+      tr.Multiply(rot);
+      endSection = (w: any) => oc.TopoDS.Wire_1(new oc.BRepBuilderAPI_Transform_2(w, tr, true).Shape());
+      const va = new oc.TopoDS_Vertex(), vb = new oc.TopoDS_Vertex();
+      oc.TopExp.Vertices_2(spine, va, vb);
+      endVertex = vb;
+    }
     const pipe = (w: any, edgeEnt: [any, string][]): Named => {
       const mk = new oc.BRepOffsetAPI_MakePipeShell(spine);
       if (guide) {
@@ -2440,6 +2466,7 @@ export class Modeller {
       // Path tangent at the start: OCCT turns the profile square to the path (WithCorrection).
       const fix = !!f.startTangent && !f.circular;
       if (law) mk.SetLaw_1(w, law, false, fix); else mk.Add_1(w, false, fix);
+      if (endSection) mk.Add_2(endSection(w), endVertex, false, false);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
       if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");

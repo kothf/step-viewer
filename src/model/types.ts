@@ -558,6 +558,8 @@ export interface SweepFeature {
   guide?: SweepPath;
   /** Start tangency "path tangent" (P5): the profile is turned square to the path where it starts. */
   startTangent?: boolean;
+  /** End tangency "path tangent" (P5): the sweep ends with the profile square to the path's end. */
+  endTangent?: boolean;
 }
 
 /** Loft (FR-FT-082): through two or more closed profiles in order. */
