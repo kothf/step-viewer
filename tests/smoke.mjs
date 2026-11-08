@@ -2666,7 +2666,7 @@ try {
     // The Circle flyout also holds Ellipse and Partial ellipse.
     await mp.click('#mc-tools [data-fly="circle"]');
     const elFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(3)");
+    await mp.click("#mc-menu button:nth-child(4)");
     // Ellipse 2 × 30 by 2 × 12 round the origin (the centre snaps to it: 3 DOF left); the third click is on the ellipse at x = 18.
     await click([0, 0]); await click([30, 0]); await click([18, 12 * Math.sqrt(1 - 0.36)]);
     const el = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const e = sk.ents.find(x => x.t === "ellipse"); return e ? { r1: Math.hypot(P(e.a).x - P(e.c).x, P(e.a).y - P(e.c).y), r2: Math.hypot(P(e.b).x - P(e.c).x, P(e.b).y - P(e.c).y), st: ed.info.status, dof: ed.info.dof } : null; });
@@ -2691,7 +2691,7 @@ try {
     await idle();
     const cut = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok) }; });
     const dT = Math.PI - 2 * Math.atan2(0.6, 0.8), half = 80 * (dT - Math.sin(dT)) * 2;
-    check(elFly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
+    check(elFly === "Circle|3-point circle|Perimeter circle|Ellipse|Partial ellipse|Parabola|Conic" && el && near(el.r1, 30, 0.01) && near(el.r2, 12, 0.01) && el.st === "ok" && el.dof === 3 && near(vEl, Math.PI * 30 * 12 * 5, 0.5) && cut.ok && near(vEl - cut.v, half, 1), `model 1.34: ellipse and partial ellipse tools, extruded and cut (${elFly}, ${JSON.stringify(el)}, ${vEl.toFixed(1)}, ${(vEl - cut.v).toFixed(1)} ≈ ${half.toFixed(1)}, ${cut.ok})`);
     // 1.35: a closed spline (FR-SK-019) from the Line flyout on the end face, cut through all.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [-15, 0, 5] } }, rels: [], dims: [], ents: [] }); }));
     await idle();
@@ -3020,7 +3020,7 @@ try {
     // Circle ▾ lists Parabola and Conic after the ellipses; pick Conic.
     await mp.click('#mc-tools [data-fly="circle"]');
     const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
-    await mp.click("#mc-menu button:nth-child(6)");
+    await mp.click("#mc-menu button:nth-child(7)");
     const picked = await mp.evaluate(() => window.__sv.model.editor().tool);
     // Start (0, 0), end (40, 0), top vertex (20, 30), shoulder (20, 12): rho 0.4.
     await click([0, 0]); await click([40, 0]); await click([20, 30]);
@@ -3032,7 +3032,7 @@ try {
     await click([40, 0]); await click([0, 0]);
     await mp.keyboard.press("Escape");
     const con = await mp.evaluate(() => { const ed = window.__sv.model.editor(), c = ed.sk.ents.find(e => e.kind === "conic"); return { rho: c?.rho, pts: c?.pts.length, lines: ed.sk.ents.filter(e => e.t === "line").length, ok: ed.info.status }; });
-    check(fly === "Circle|3-point circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
+    check(fly === "Circle|3-point circle|Perimeter circle|Ellipse|Partial ellipse|Parabola|Conic" && picked === "conic" && label === "ρ 0.4" && con.rho === 0.4 && con.pts === 3 && con.lines === 1 && con.ok === "ok",
       `model 1.157: Conic from the Circle menu: start, end, top vertex, rho from the fourth click (${fly}, ${picked}, ${label}, ${JSON.stringify(con)})`);
     // The panel edits rho; the conic region extrudes exactly (rational quadratic edge).
     await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); ed.select([ed.sk.ents.find(e => e.kind === "conic").id]); window.__sv.modeller.renderPanel(); });
@@ -3088,6 +3088,18 @@ try {
     const sty = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.find(e => e.kind === "style"); return c ? { n: c.pts.length, closed: !!c.closed, ends: [c.pts[0], c.pts.at(-1)].map(id => [P(id).x, P(id).y].map(v => Math.round(v)).join(",")).join(" "), ok: ed.info.status } : null; });
     check(sTool === "sspline" && sty && sty.n === 4 && !sty.closed && sty.ends === "12,-15 30,-9" && sty.ok === "ok",
       `model 1.164: style spline from four control points (${sTool}, ${JSON.stringify(sty)})`);
+    // 1.166: Perimeter circle (FR-SK-014 P2) from the Circle menu, clicked on the three sides of a triangle: its incircle.
+    await mp.evaluate(() => window.__sv.model.editor().setTool("line"));
+    for (const q of [[0, -14], [10, -14], [0, -4], [0, -14]]) await click(q);
+    await mp.keyboard.press("Escape");
+    await mp.click('#mc-tools [data-fly="circle"]');
+    await mp.click("#mc-menu button:nth-child(3)");
+    const pTool = await mp.evaluate(() => window.__sv.model.editor().tool);
+    for (const q of [[3.5, -14], [7, -11], [0, -7.5]]) await click(q);
+    const pc = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id), c = sk.ents.filter(e => e.t === "circle").at(-1); return c ? { r: Math.round(c.r * 1000) / 1000, c: [P(c.c).x, P(c.c).y].map(v => Math.round(v * 1000) / 1000).join(","), tan: sk.rels.filter(r => r.t === "tangent" && r.e.includes(c.id)).length, ok: ed.info.status } : null; });
+    // Legs 10 and 10: r = (10 + 10 − 10√2) / 2 = 2.929 at (r, −14 + r).
+    check(pTool === "pcircle" && pc && pc.r === 2.929 && pc.c === "2.929,-11.071" && pc.tan === 3 && pc.ok === "ok",
+      `model 1.166: perimeter circle tangent to three sides of a triangle (${pTool}, ${JSON.stringify(pc)})`);
     await ctx.close();
   }
 
