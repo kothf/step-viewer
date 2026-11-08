@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, mateCsv, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, alertSpans, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
@@ -322,4 +322,16 @@ test("explode steps one after another (animation wizard) or all at once (FR-FT-1
   assert.equal(explodeAt(v, 0, true).size, 0);
   const s: MotionStudy = { id: "s", name: "S", duration: 2, fps: 10, tracks: [{ id: "t", kind: "explode", view: "x", keys: [{ t: 0, v: 0 }, { t: 2, v: 1 }], seq: true }] };
   assert.deepEqual(frameAt(s, 1, new Map()).explode, [{ id: "x", k: 0.5, seq: true }]);
+});
+
+test("result sensors: out-of-range frames, spans and the frame where they trip", () => {
+  const v = [0, 2, 5, 6, 3, 1, 7, 8];
+  assert.deepEqual(outOfRange(v, { max: 4.5 }), [false, false, true, true, false, false, true, true]);
+  assert.deepEqual(outOfRange(v, {}), v.map(() => false));
+  assert.deepEqual(alertSpans(v, 2, { max: 4.5 }), [[1, 1.5], [3, 3.5]]);
+  assert.deepEqual(alertSpans(v, 1, { min: 1.5, max: 6.5 }), [[0, 0], [5, 7]]);
+  assert.equal(tripFrame(v, { max: 4.5 }, 0, 7), 2);
+  assert.equal(tripFrame(v, { max: 4.5 }, 2, 7), 6, "already out at the start of the step: trips only when it comes back in and out again");
+  assert.equal(tripFrame(v, { max: 4.5 }, 3, 5), -1);
+  assert.equal(tripFrame(v, { min: -1 }, 0, 7), -1);
 });
