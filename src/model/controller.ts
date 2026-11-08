@@ -21,7 +21,7 @@ import { ModelKernel, type Rebuild } from "./kernelClient";
 import { pathId } from "./types";
 import { parseXyz } from "./curves";
 import { segPoints, solve3d } from "../sketch/sketch3d";
-import type { FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
+import type { SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
   GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
@@ -91,16 +91,24 @@ type Mode =
   | { kind: "cfg" };
 
 /** Which selection box of the feature panel the next click in the view fills. */
-type Focus = "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
-type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature;
+type Focus = "tsurf" | "ttool" | "keep" | "fs1" | "fs2" | "fc" | "main" | "bodies" | "base" | "axis" | "upto" | "start" | "origin" | "cx" | "cz" | "seeds" | "psketch" | "dir" | "dir2" | "mplane" | "faces" | "hplane" | "pts" | "nplane";
+type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length) : f.edges.length > 0;
 const isBodyOp = (f: Feature): f is BodyFeature => f.type === "intersect" || f.type === "combine" || f.type === "bsplit" || f.type === "delbody" || f.type === "movebody" || f.type === "scale";
-const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern";
+const isCopy = (f: Feature): f is CopyFeature => f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern";
+/** A sketch's free points (not the ends or centres of its curves): where a sketch-driven pattern puts copies. */
+function freePoints(sk: Feature): { id: string; x: number; y: number }[] {
+  if (sk.type !== "sketch") return [];
+  const used = new Set<string>();
+  for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
+  for (const e of sk.ents) if (e.t === "spline") for (const q of e.pts) used.add(q);
+  return sk.ents.filter(e => e.t === "point" && !used.has(e.id)) as { id: string; x: number; y: number }[];
+}
 /** Features whose result mirror and patterns can copy. */
-const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpattern", "hole"]);
+const SEED_TYPES = new Set(["extrude", "revolve", "mirror", "lpattern", "cpattern", "spattern", "hole"]);
 
 /** Fills a hole's sizes from the ISO table for its kind, size and fit (FR-FT-051). */
 function applyHoleSize(f: HoleFeature) {
@@ -131,8 +139,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim"];
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -616,7 +624,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -737,7 +745,7 @@ export class ModelController {
       const face = shellFace != null ? this.host.viewer.parts[0]?.data.faces[shellFace] : undefined;
       if (shellFace != null && face?.type === "plane") { const pr = this.planeOfFace(shellFace); if (pr) dr.plane = pr; }
       draft = dr;
-    } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern" || type === "delface" || type === "moveface") {
+    } else if (type === "shell" || type === "mirror" || type === "lpattern" || type === "cpattern" || type === "spattern" || type === "tpattern" || type === "delface" || type === "moveface") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const seeds = seedSel ? [seedSel] : [];
       if (type === "delface" || type === "moveface") {
@@ -749,6 +757,12 @@ export class ModelController {
         draft = { id, type: "shell", name: nextName(d, "shell"), thickness: { v: 2 }, faces: fr ? [fr] : [] } satisfies ShellFeature;
       } else if (type === "mirror") draft = { id, type: "mirror", name: nextName(d, "mirror"), features: seeds } satisfies MirrorFeature;
       else if (type === "lpattern") draft = { id, type: "lpattern", name: nextName(d, "lpattern"), features: seeds, spacing: { v: 10 }, count: 3 } satisfies LinearPatternFeature;
+      else if (type === "spattern" || type === "tpattern") {
+        // Sketch-driven: the last sketch with free points; table-driven: two rows to start from.
+        const sk = type === "spattern" ? [...d.features.slice(0, end)].reverse().find(x => x.type === "sketch" && freePoints(x).length) : undefined;
+        draft = type === "spattern" ? { id, type: "spattern", name: nextName(d, "spattern"), features: seeds, src: "sketch", ...(sk ? { sketch: sk.id } : {}) } satisfies SketchPatternFeature
+          : { id, type: "spattern", name: nextName(d, "spattern").replace("SketchPattern", "TablePattern"), features: seeds, src: "table", table: [{ x: { v: 20 }, y: { v: 0 } }, { x: { v: 40 }, y: { v: 0 } }] } satisfies SketchPatternFeature;
+      }
       else draft = { id, type: "cpattern", name: nextName(d, "cpattern"), features: seeds, count: 4, angle: { v: 2 * Math.PI }, equal: true } satisfies CircularPatternFeature;
     } else {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
@@ -761,6 +775,8 @@ export class ModelController {
     const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "offsurf" ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
+      : type === "spattern" ? ((draft as SketchPatternFeature).sketch || (draft as CopyFeature).features.length ? "seeds" : "psketch")
+      : type === "tpattern" ? "seeds"
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
       : type === "combine" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies" : undefined;
     this.mode = { kind: "feature", draft, index, isNew: true, focus };
@@ -875,7 +891,11 @@ export class ModelController {
     if (f.type === "thread" && !f.edge) { toast(t("Pick a round edge of a cylinder."), true); return; }
     if (f.type === "hole" && (!f.plane || !f.pts.length)) { toast(t(f.plane ? "Click on the face to place the holes." : "Pick a flat face or a plane for the holes."), true); return; }
     if (f.type === "mirror" && !f.plane) { toast(t("Pick a plane or a flat face to mirror about."), true); return; }
-    if ((f.type === "lpattern" || f.type === "cpattern") && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
+    if ((f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") && (f.copy ?? "features") === "features" && !f.features.length) { toast(t("Pick the features to copy."), true); return; }
+    if (isCopy(f) && f.copy === "faces" && !f.faces?.length) { toast(t("Pick the faces to copy."), true); return; }
+    if (isCopy(f) && f.copy === "bodies" && !f.bodies?.length) { toast(t("Pick the bodies to copy."), true); return; }
+    if (f.type === "spattern" && f.src === "sketch" && !f.sketch) { toast(t("Pick a sketch with points."), true); return; }
+    if (f.type === "spattern" && f.src === "table" && !f.table?.length) { toast(t("Add table rows with offsets other than 0, 0."), true); return; }
     if (f.type === "lpattern" && !f.dir) { toast(t("Pick a direction: an edge, a face or an axis."), true); return; }
     if (f.type === "cpattern" && !f.axis) { toast(t("Pick an axis: a round edge or face, a straight edge or a reference axis."), true); return; }
     if ((f.type === "sweep" || f.type === "sweepsurf") && !f.path) { toast(t("Pick a path: a sketch, a helix or a curve."), true); return; }
@@ -1735,6 +1755,18 @@ export class ModelController {
       this.draftChanged();
       return;
     }
+    if (f.copy === "faces" || f.copy === "bodies") {
+      // Faces of a boss or cut, or bodies (any face names its body).
+      const h = this.host.faceAt(e.clientX, e.clientY);
+      const fr = h ? this.faceRef(h.faceId) : null;
+      if (!fr || own(fr.name)) { toast(t(f.copy === "faces" ? "Pick a face." : "Click a face of a body.")); return; }
+      const list = f.copy === "faces" ? (f.faces ??= []) : (f.bodies ??= []);
+      const i = list.findIndex(x => x.name === fr.name && (!x.hint || !fr.hint || Math.hypot(x.hint[0] - fr.hint[0], x.hint[1] - fr.hint[1], x.hint[2] - fr.hint[2]) < 1e-3));
+      if (i >= 0) list.splice(i, 1); else list.push(fr);
+      this.draftChanged();
+      return;
+    }
+    if (f.type === "spattern" && m.focus === "psketch") { toast(t("Pick the sketch in the Features tree.")); return; }
     // Features to copy: the feature that made the clicked face.
     const hit = this.host.faceAt(e.clientX, e.clientY);
     const name = hit ? this.last?.faceNames[hit.faceId] : undefined;
@@ -2951,8 +2983,9 @@ export class ModelController {
         })()
         + (() => {
           // Pattern flyout: Linear ▾ Circular, Mirror.
-          const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
-          const open = m.kind === "feature" ? m.draft.type : null;
+          const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")],
+            ["spattern", t("Sketch driven pattern"), t("Sketch driven pattern: a copy at each point of a sketch")], ["tpattern", t("Table driven pattern"), t("Table driven pattern: copies at X/Y offsets from a table")]];
+          const open = m.kind === "feature" ? (m.draft.type === "spattern" && m.draft.src === "table" ? "tpattern" : m.draft.type) : null;
           const cur = pats.find(r => r[0] === open) ?? pats.find(r => r[0] === this.flyLast.get("pattern")) ?? pats[0];
           return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="pattern" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
         })()
@@ -2977,7 +3010,7 @@ export class ModelController {
       const mm = this.mode;
       if (b.dataset.fly === "pattern" && mm.kind !== "sketch") {
         const r = b.getBoundingClientRect();
-        this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+        this.showMenu(([["lpattern", t("Linear pattern")], ["cpattern", t("Circular pattern")], ["mirror", t("Mirror")], ["spattern", t("Sketch driven pattern")], ["tpattern", t("Table driven pattern")]] as const).map(([id, l]) => [l, () => { this.flyLast.set("pattern", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="pattern"]')?.focus());
         return;
       }
@@ -3196,7 +3229,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3389,7 +3422,11 @@ export class ModelController {
           this.draftChanged();
           return;
         }
-        if (mm.kind === "feature" && isCopy(mm.draft) && SEED_TYPES.has(this.store!.feature(id)?.type ?? "") && id !== mm.draft.id) { this.toggleSeed(mm.draft, id); return; }
+        if (mm.kind === "feature" && mm.draft.type === "spattern" && mm.draft.src === "sketch" && this.store!.feature(id)?.type === "sketch" && (mm.focus === "psketch" || !mm.draft.sketch)) {
+          mm.draft.sketch = id; delete mm.draft.refPt; mm.focus = "seeds"; this.draftChanged(); return;
+        }
+        if (mm.kind === "feature" && mm.draft.type === "spattern" && mm.draft.src === "table" && this.store!.feature(id)?.type === "csys") { mm.draft.csys = id; this.draftChanged(); return; }
+        if (mm.kind === "feature" && isCopy(mm.draft) && (mm.draft.copy ?? "features") === "features" && SEED_TYPES.has(this.store!.feature(id)?.type ?? "") && id !== mm.draft.id) { this.toggleSeed(mm.draft, id); return; }
         if (mm.kind === "feature" && (mm.draft.type === "extrude" || mm.draft.type === "revolve") && this.store!.feature(id)?.type === "sketch") {
           mm.draft.sketch = id;
           if (mm.draft.type === "revolve") { const sk = this.store!.feature(id) as SketchFeature; const ls = sk.ents.filter(x => x.t === "line"); mm.draft.axis = (ls.find(l => l.cons) ?? ls[0])?.id ?? ""; }
@@ -3843,8 +3880,15 @@ export class ModelController {
       const box = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
       const intField = (key: string, label: string, v: number) => `<label class="pm-field"><span>${esc(label)}</span><span class="pm-in"><input type="text" inputmode="numeric" data-int="${key}" value="${v}" spellcheck="false" /></span></label>`;
       const seeds = isCopy(f) ? (f.features.map(id => this.store!.feature(id)).filter(Boolean).map(x => featureLabel(x!.name)).join(", ") || t("None")) : "";
-      const seedGroup = isCopy(f) ? group(f.type === "mirror" ? t("Features to mirror") : t("Features to pattern"), box("seeds", t("Features"), seeds)
-        + `<p class="pm-help muted">${esc(f.type === "mirror" ? t("Click faces of the features (or rows in the tree); none mirrors the whole body.") : t("Click faces of the features, or rows in the tree."))}</p>`) : "";
+      const what = isCopy(f) ? f.copy ?? "features" : "features";
+      const whatSel = isCopy(f) ? `<label class="pm-field"><span>${esc(t("Copy"))}</span><select data-k="copyKind">${([["features", t("Features")], ["faces", t("Faces")], ["bodies", t("Bodies")]] as const).map(([v, l]) => `<option value="${v}"${what === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : "";
+      const picked = isCopy(f) ? (what === "faces" ? f.faces ?? [] : f.bodies ?? []) : [];
+      const seedGroup = !isCopy(f) ? "" : what === "features" ? group(f.type === "mirror" ? t("Features to mirror") : t("Features to pattern"), whatSel + box("seeds", t("Features"), seeds)
+        + `<p class="pm-help muted">${esc(f.type === "mirror" ? t("Click faces of the features (or rows in the tree); none mirrors the whole body.") : t("Click faces of the features, or rows in the tree."))}</p>`)
+        : group(what === "faces" ? t("Faces to copy") : t("Bodies to copy"), whatSel + `<p class="pm-count">${esc(what === "faces" ? t("{n} face|{n} faces", { n: picked.length }) : t("{n} body|{n} bodies", { n: picked.length }))}</p>`
+          + (picked.length ? `<button class="btn small" data-k="clearCopy">${esc(what === "faces" ? t("Clear faces") : t("Clear bodies"))}</button>` : "")
+          + (f.type === "mirror" && what === "bodies" ? chk("merge", f.merge, t("Merge solids")) : "")
+          + `<p class="pm-help muted">${esc(what === "faces" ? t("Click all the faces of a boss or a cut: the copies add or remove the same shape.") : t("Click a face of each body to copy; the copies become new bodies."))}</p>`);
       const skip = (f.type === "lpattern" || f.type === "cpattern") ? group(t("Instances to skip"), `<label class="pm-field"><span>${esc(t("Skip"))}</span><input type="text" data-k="skip" value="${esc((f.skip ?? []).join("; "))}" spellcheck="false" placeholder="${f.type === "lpattern" && f.dir2 ? "1,1; 2,0" : "2; 3"}" /></label><p class="pm-help muted">${esc(f.type === "lpattern" && f.dir2 ? t("Instance numbers as column,row from 0 (the seed is 0,0), separated by semicolons.") : t("Instance numbers from 0 (the seed is 0), separated by semicolons."))}</p>`) : "";
       if (f.type === "shell") {
         title = t("Shell");
@@ -3862,6 +3906,26 @@ export class ModelController {
             + (f.dir2 || m.focus === "dir2" ? box("dir2", t("Direction"), this.lineLabel(f.dir2)) + numField("spacing2", t("Spacing"), f.spacing2 ?? { v: f.spacing.v }, "length") + intField("count2", t("Instances"), f.count2 ?? 2) + chk("flip2", f.flip2, t("Reverse direction")) : ""))
           + seedGroup + skip
           + `<p class="pm-help muted">${esc(t("For a direction, click a straight edge, a flat face (its normal) or a reference axis in the tree."))}</p>`;
+      } else if (f.type === "spattern") {
+        title = f.src === "table" ? t("Table driven pattern") : t("Sketch driven pattern");
+        if (f.src === "sketch") {
+          const sk = sketches.find(x => x.id === f.sketch);
+          const pts = sk ? freePoints(sk) : [];
+          const u = { mm: 1 / UNITS[this.doc.units.length].f, label: this.doc.units.length };
+          body = group(t("Selections"), box("psketch", t("Reference sketch"), sk ? featureLabel(sk.name) : t("None"))
+            + `<label class="pm-field"><span>${esc(t("Reference point"))}</span><select data-k="refPt"><option value="">${esc(t("Centroid"))}</option>${pts.map(q => `<option value="${q.id}"${f.refPt === q.id ? " selected" : ""}>${esc(`(${trimNum(q.x / u.mm, 3)}, ${trimNum(q.y / u.mm, 3)})`)}</option>`).join("")}</select></label>`
+            + `<p class="pm-count">${esc(t("{n} point|{n} points", { n: pts.length }))}</p>`
+            + `<p class="pm-help muted">${esc(t("Pick a sketch in the Features tree: a copy goes to each of its points (not the ends of lines and arcs), moved from the seed's reference point."))}</p>`)
+            + seedGroup;
+        } else {
+          const u = { mm: 1 / UNITS[this.doc.units.length].f, label: this.doc.units.length };
+          const rows = (f.table ?? []).map(r => `${trimNum(r.x.v / u.mm, 6)}, ${trimNum(r.y.v / u.mm, 6)}`).join("\n");
+          const csyss = this.doc.features.slice(0, m.index).filter(x => x.type === "csys");
+          body = group(t("Coordinate system"), `<label class="pm-field"><span>${esc(t("Axes"))}</span><select data-k="csys"><option value="">${esc(t("Part origin"))}</option>${csyss.map(c => `<option value="${c.id}"${f.csys === c.id ? " selected" : ""} translate="no">${esc(featureLabel(c.name))}</option>`).join("")}</select></label>`)
+            + group(t("Points"), `<label class="pm-field pm-col"><span>${esc(t("X, Y offsets ({u}), one row per copy", { u: u.label }))}</span><textarea data-k="tableText" rows="5" spellcheck="false">${esc(rows)}</textarea></label>`
+              + `<p class="pm-help muted">${esc(t("Each row moves a copy of the seed by X and Y along the coordinate system's axes."))}</p>`)
+            + seedGroup;
+        }
       } else {
         title = t("Circular pattern");
         body = group(t("Parameters"), box("dir", t("Axis"), this.lineLabel(f.axis)) + numField("angle", t("Angle"), f.angle, "angle") + intField("count", t("Instances"), f.count)
@@ -3985,6 +4049,20 @@ export class ModelController {
               if (f.kind === "tapped") f.threadDepth ??= { v: f.diameter.v * 2 };
             }
           }, true);
+          return;
+        }
+        if (k === "copyKind" && isCopy(f)) {
+          upd(() => { if (val === "features") delete f.copy; else f.copy = val as "faces" | "bodies"; delete f.faces; delete f.bodies; delete (f as MirrorFeature).merge; f.features = []; m.focus = "seeds"; }, true);
+          return;
+        }
+        if (k === "merge" && f.type === "mirror") { upd(() => { if (val) f.merge = true; else delete f.merge; }, true); return; }
+        if (f.type === "spattern" && (k === "refPt" || k === "csys")) { upd(() => { if (val) f[k] = String(val); else delete f[k]; }, true); return; }
+        if (f.type === "spattern" && k === "tableText") {
+          const u = { mm: 1 / UNITS[this.doc.units.length].f, label: this.doc.units.length };
+          const rows = String(val).split(/\n/).map(l => l.trim()).filter(Boolean).map(l => l.split(/[\s,;]+/).map(x => parseFloat(x)));
+          if (rows.some(r => r.length < 2 || !r.slice(0, 2).every(Number.isFinite))) { el.setAttribute("aria-invalid", "true"); toast(t("Write one row per copy: X and Y, like 20, 0."), true); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { f.table = rows.map(r => ({ x: { v: r[0] * u.mm }, y: { v: r[1] * u.mm } })); }, true);
           return;
         }
         if (k === "skip" && (f.type === "lpattern" || f.type === "cpattern")) {
@@ -4199,6 +4277,7 @@ export class ModelController {
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
       if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; if (f.type === "intersect") f.exclude = []; this.draftChanged(); } });
     if (f.type === "intersect") {
@@ -5052,7 +5131,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
   if (g.type === "curve") return g.sketch === sketch;
   if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline);
-  if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf") return g.sketch === sketch;
+  if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
   return false;
 }
 
@@ -5163,6 +5242,8 @@ const ICON_SVG: Record<string, string> = {
   draft: S('<path d="M3 13.5h10"/><path d="M4.5 13.5 6.5 3h4l1 10.5" fill="currentColor" fill-opacity=".3"/><path d="M8 2.5v4" stroke-dasharray="1.5 1.2"/>'),
   mirror: S('<path d="M8 1.5v13" stroke-dasharray="2 1.5"/><path d="M6 4 2.5 11H6z"/><path d="M10 4l3.5 7H10z" opacity=".55"/>'),
   lpattern: S('<rect x="1.5" y="6" width="3.5" height="3.5"/><rect x="6.25" y="6" width="3.5" height="3.5" opacity=".7"/><rect x="11" y="6" width="3.5" height="3.5" opacity=".45"/><path d="M2 13h12M12 11.5l2 1.5-2 1.5"/>'),
+  spattern: S('<path d="M2 13 14 3" stroke-dasharray="1.5 1.5"/><rect x="1" y="11" width="3.5" height="3.5"/><rect x="6.25" y="6.25" width="3.5" height="3.5" opacity=".7"/><rect x="11.5" y="1.5" width="3.5" height="3.5" opacity=".45"/>'),
+  tpattern: S('<path d="M1.5 2.5h13v11h-13zM1.5 6h13M1.5 9.5h13M6 2.5v11"/>'),
   cpattern: S('<circle cx="8" cy="8" r="1"/><circle cx="8" cy="3" r="1.6"/><circle cx="12.5" cy="10.5" r="1.6" opacity=".7"/><circle cx="3.5" cy="10.5" r="1.6" opacity=".45"/>'),
   filter: S('<path d="M2 3h12l-4.5 5.5V13l-3 1.5v-6z"/>'),
   "sel:faces": S('<path d="M2.5 5.5 8 2.5l5.5 3v6L8 14.5l-5.5-3z" fill="currentColor" fill-opacity=".35"/>'),

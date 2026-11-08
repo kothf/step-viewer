@@ -18,7 +18,7 @@ export function newPart(name = "Part1"): PartDoc {
 }
 
 /** English base names; shown translated, stored as is. */
-const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect" };
+const BASE: Record<FeatureType, string> = { sketch: "Sketch", extrude: "Extrude", revolve: "Revolve", fillet: "Fillet", chamfer: "Chamfer", plane: "Plane", axis: "Axis", point: "Point", csys: "Coordinate system", shell: "Shell", draft: "Draft", mirror: "Mirror", lpattern: "LPattern", cpattern: "CirPattern", hole: "Hole", thread: "Thread", helix: "Helix", sweep: "Sweep", loft: "Loft", rib: "Rib", split: "Split Line", combine: "Combine", bsplit: "Split", delbody: "Body-Delete/Keep", movebody: "Body-Move/Copy", import: "Imported", scale: "Scale", delface: "DeleteFace", moveface: "MoveFace", planesurf: "Surface-Plane", extsurf: "Surface-Extrude", offsurf: "Surface-Offset", knit: "Surface-Knit", thicken: "Thicken", replaceface: "ReplaceFace", revsurf: "Surface-Revolve", loftsurf: "Surface-Loft", trimsurf: "Surface-Trim", fillsurf: "Surface-Fill", extendsurf: "Surface-Extend", curve: "Curve", sweepsurf: "Surface-Sweep", sketch3d: "3DSketch", untrimsurf: "Surface-Untrim", intersect: "Intersect", spattern: "SketchPattern" };
 /** Every feature type this version knows: a file with another one needs a newer app. */
 export const FEATURE_TYPES: readonly string[] = Object.keys(BASE);
 
@@ -153,6 +153,8 @@ export function featureRefs(f: Feature): { faces: string[]; features: string[] }
   if (f.type === "hole") plane(f.plane);
   if (f.type === "shell" || f.type === "delface" || f.type === "moveface") faces.push(...f.faces.map(x => x.name));
   if (f.type === "draft") { plane(f.plane); faces.push(...f.faces.map(x => x.name)); }
+  if (f.type === "mirror" || f.type === "lpattern" || f.type === "cpattern" || f.type === "spattern") faces.push(...(f.faces ?? []).map(x => x.name), ...(f.bodies ?? []).map(x => x.name));
+  if (f.type === "spattern") { features.push(...f.features); if (f.sketch) features.push(f.sketch); if (f.csys) features.push(f.csys); }
   if (f.type === "mirror") { plane(f.plane); features.push(...f.features); }
   if (f.type === "lpattern") { line(f.dir); line(f.dir2); features.push(...f.features); }
   if (f.type === "cpattern") { line(f.axis); features.push(...f.features); }

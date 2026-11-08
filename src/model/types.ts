@@ -279,15 +279,27 @@ export interface DraftFeature {
   flip?: boolean;
 }
 
+/**
+ * What a mirror or pattern copies (FR-FT-070..073): features (their tool solids, the default), faces (the
+ * boss or cut they bound, found by deleting them) or whole bodies (copies become new bodies).
+ */
+export interface CopySource {
+  copy?: "features" | "faces" | "bodies";
+  faces?: FaceRef[];
+  bodies?: FaceRef[];
+}
+
 /** Mirror (FR-FT-072): copies of features (or of the whole body, with none picked) about a plane. */
-export interface MirrorFeature {
+export interface MirrorFeature extends CopySource {
   id: string; type: "mirror"; name: string; suppressed?: boolean;
   plane?: PlaneRef;
   features: string[];
+  /** Bodies: join each mirrored body to its original (SolidWorks "Merge solids"). */
+  merge?: boolean;
 }
 
 /** Linear pattern (FR-FT-070): copies of features along one or two directions. */
-export interface LinearPatternFeature {
+export interface LinearPatternFeature extends CopySource {
   id: string; type: "lpattern"; name: string; suppressed?: boolean;
   features: string[];
   dir?: LineRef;
@@ -303,7 +315,7 @@ export interface LinearPatternFeature {
 }
 
 /** Circular pattern (FR-FT-071): copies of features about an axis. */
-export interface CircularPatternFeature {
+export interface CircularPatternFeature extends CopySource {
   id: string; type: "cpattern"; name: string; suppressed?: boolean;
   features: string[];
   axis?: LineRef;
@@ -313,6 +325,24 @@ export interface CircularPatternFeature {
   equal: boolean;
   flip?: boolean;
   skip?: string[];
+}
+
+/**
+ * Sketch-driven and table-driven patterns (FR-FT-073): a copy at each point of a sketch (moved from the
+ * seed's reference point, its centroid unless a sketch point is picked) or at each X/Y row of a table in a
+ * coordinate system (offsets from the seed).
+ */
+export interface SketchPatternFeature extends CopySource {
+  id: string; type: "spattern"; name: string; suppressed?: boolean;
+  features: string[];
+  src: "sketch" | "table";
+  sketch?: string;
+  /** Sketch point used as the seed's reference point; absent: the seed's centroid. */
+  refPt?: string;
+  /** Table rows: offsets from the seed along the coordinate system's X and Y. */
+  table?: { x: Num; y: Num }[];
+  /** Coordinate system feature for the table; absent: the part's axes. */
+  csys?: string;
 }
 
 /**
@@ -682,7 +712,7 @@ export interface IntersectFeature {
 export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes of the `exclude` points inside it. */ ex?: number[] }
 
 export type Feature = SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
-  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | HoleFeature | ThreadFeature
+  | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
   | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature;

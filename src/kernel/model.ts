@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2672,6 +2672,70 @@ export class Modeller {
     return body;
   }
 
+  /**
+   * What a mirror or pattern copies (FR-FT-070..073): feature tools (the default), the boss or cut that
+   * picked faces bound, or picked bodies. `whole` (a mirror with nothing picked) copies the whole body.
+   */
+  private seedSet(f: CopySource & { id: string; features: string[] }, doc: PartDoc, prev: Named | null, whole = false): { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] } {
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    if (f.copy === "bodies") {
+      if (!f.bodies?.length) throw new FeatureError("E-PAT-BODIES", "Pick the bodies to copy.");
+      const list = this.bodyList(prev);
+      return { tools: [], seeds: [], list, idx: this.pickedBodies(list, prev, f.bodies) };
+    }
+    if (f.copy === "faces") { const t = this.faceTool(f.faces, prev, f.id); return { tools: [t], seeds: [t], list: [], idx: [] }; }
+    if (whole && !f.features.length) return { tools: [{ shape: prev, op: "fuse" }], seeds: [], list: [], idx: [] };
+    const tools = this.seedTools(f.features, doc);
+    return { tools, seeds: tools, list: [], idx: [] };
+  }
+
+  /**
+   * The boss or cut some faces bound (FR-FT-070 faces): the faces are deleted (their neighbours grow to
+   * close the gap) and the difference from the body is the tool, fused when the faces stood out, cut when
+   * they went in.
+   */
+  private faceTool(refs: FaceRef[] | undefined, prev: Named, fid: string): Tool {
+    const oc = this.oc;
+    if (!refs?.length) throw new FeatureError("E-PAT-FACES", "Pick the faces to copy.");
+    const mk = new oc.BRepAlgoAPI_Defeaturing();
+    mk.SetShape(prev.shape);
+    for (const r of refs) mk.AddFaceToRemove(this.resolveFace(prev, r));
+    try { mk.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    const bad = () => new FeatureError("E-PAT-FACESET", "The faces could not be copied: pick all the faces of one boss or cut.");
+    if (!mk.IsDone() || mk.HasErrors()) throw bad();
+    const shape = mk.Shape(), faces = this.sub(shape, "FACE");
+    const rest: Named = { shape, faces, names: faces.map((_, i) => `${fid}:rest:${i}`) };
+    const vb = this.volume(prev.shape), vr = this.volume(shape);
+    if (Math.abs(vb - vr) < 1e-9 * Math.max(1, vb)) throw bad();
+    return vr < vb ? { shape: this.bool("cut", prev, rest, fid), op: "fuse" } : { shape: this.bool("cut", rest, prev, fid), op: "cut" };
+  }
+
+  /** The centre of what a pattern copies (the reference point of a sketch-driven pattern). */
+  private seedCentre(set: { tools: Tool[]; list: Named[]; idx: number[] }): V3 {
+    const oc = this.oc, p = new oc.GProp_GProps_1();
+    const shapes = set.idx.length ? set.idx.map(i => set.list[i].shape) : set.tools.map(t => t.shape.shape);
+    for (const sh of shapes) { const q = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(sh, q, true, false, false); p.Add(q, 1); }
+    return this.xyz(p.CentreOfMass());
+  }
+
+  /**
+   * Applies a mirror or pattern's transforms. Bodies: each copy becomes a new body (a mirror with merge
+   * joins it to its original). Otherwise the tools are applied as bosses and cuts (see `applyCopies`).
+   */
+  private copyBy(f: CopySource & { id: string; type: string; merge?: boolean }, prev: Named, set: { tools: Tool[]; seeds: Tool[]; list: Named[]; idx: number[] }, xfs: { trsf: any; tag: (k: number) => string; label: string }[]): Named {
+    if (f.copy === "bodies") {
+      const out = [...set.list];
+      for (const xf of xfs) for (const i of set.idx) {
+        const c = this.transformed({ shape: set.list[i], op: "fuse" }, xf.trsf, f.id, xf.tag(i)).shape;
+        if (f.merge) out[i] = this.bool("fuse", out[i], c, f.id);
+        else out.push(c);
+      }
+      return this.compoundOf(out.flatMap(b => this.solids(b.shape) > 1 ? this.bodyList(b) : [b]));
+    }
+    const copies = xfs.flatMap(xf => set.tools.map((t, k) => ({ tool: this.transformed(t, xf.trsf, f.id, xf.tag(k)), label: xf.label })));
+    return this.applyCopies(prev, copies, f.id, set.seeds);
+  }
+
   /** Mirror (FR-FT-072): the seed features' tools reflected in a plane, or the whole body joined to its reflection. */
   private mirror(f: MirrorFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
@@ -2680,21 +2744,21 @@ export class Modeller {
     const fr = this.planeFrame(f.plane, prev, frames);
     const trsf = new oc.gp_Trsf_1();
     trsf.SetMirror_3(new oc.gp_Ax2_3(this.P(fr.o), this.D(fr.n)));
-    const tools = f.features.length ? this.seedTools(f.features, doc) : [{ shape: prev, op: "fuse" as const }];
-    return this.applyCopies(prev, tools.map((t, i) => ({ tool: this.transformed(t, trsf, f.id, `m${i}`), label: "1" })), f.id, f.features.length ? tools : []);
+    const set = this.seedSet(f, doc, prev, true);
+    return this.copyBy(f, prev, set, [{ trsf, tag: k => f.copy === "bodies" ? `mb${k}` : `m${k}`, label: "1" }]);
   }
 
   /** Linear pattern (FR-FT-070): count × count2 copies; instance (0, 0) is the seed. */
   private linearPattern(f: LinearPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
-    const tools = this.seedTools(f.features, doc);
+    const set = this.seedSet(f, doc, prev);
     const d1 = mul(this.lineOf(f.dir, prev, frames, "a direction: an edge, a face or an axis").d, f.flip ? -1 : 1);
     const n1 = Math.max(1, Math.round(f.count)), n2 = f.dir2 ? Math.max(1, Math.round(f.count2 ?? 1)) : 1;
     const d2 = f.dir2 ? mul(this.lineOf(f.dir2, prev, frames, "the second direction").d, f.flip2 ? -1 : 1) : [0, 0, 0] as V3;
     if (n1 * n2 < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
     if (!(f.spacing.v > 1e-6) || (f.dir2 && n2 > 1 && !((f.spacing2?.v ?? 0) > 1e-6))) throw new FeatureError("E-FT-ZERO", "The spacing must be more than 0.");
     const skip = new Set(f.skip ?? []);
-    const copies: { tool: Tool; label: string }[] = [];
+    const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (i === 0 && j === 0) continue;
       const key = f.dir2 ? `${i},${j}` : `${i}`;
@@ -2702,15 +2766,16 @@ export class Modeller {
       const v = add(mul(d1, i * f.spacing.v), mul(d2, j * (f.spacing2?.v ?? 0)));
       const trsf = new oc.gp_Trsf_1();
       trsf.SetTranslation_1(this.V(v));
-      tools.forEach((t, k) => copies.push({ tool: this.transformed(t, trsf, f.id, `i${key.replace(",", "_")}s${k}`), label: String(key) }));
+      const tk = key.replace(",", "_");
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${tk}b${k}` : `i${tk}s${k}`, label: key });
     }
-    return this.applyCopies(prev, copies, f.id, tools);
+    return this.copyBy(f, prev!, set, xfs);
   }
 
   /** Circular pattern (FR-FT-071): copies turned about an axis; equal spacing spreads them over the angle. */
   private circularPattern(f: CircularPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
     const oc = this.oc;
-    const tools = this.seedTools(f.features, doc);
+    const set = this.seedSet(f, doc, prev);
     const ax = this.lineOf(f.axis, prev, frames, "an axis: a round edge or face, a straight edge or a reference axis");
     const n = Math.max(1, Math.round(f.count));
     if (n < 2) throw new FeatureError("E-PAT-COUNT", "The pattern needs at least 2 instances.");
@@ -2719,14 +2784,53 @@ export class Modeller {
     const full = Math.abs(total - 2 * Math.PI) < 1e-9;
     const step = f.equal ? total / (full ? n : n - 1) : total;
     const skip = new Set(f.skip ?? []);
-    const copies: { tool: Tool; label: string }[] = [];
+    const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
     for (let i = 1; i < n; i++) {
       if (skip.has(String(i))) continue;
       const trsf = new oc.gp_Trsf_1();
       trsf.SetRotation_1(new oc.gp_Ax1_2(this.P(ax.o), this.D(ax.d)), (f.flip ? -1 : 1) * step * i);
-      tools.forEach((t, k) => copies.push({ tool: this.transformed(t, trsf, f.id, `i${i}s${k}`), label: String(i) }));
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `i${i}b${k}` : `i${i}s${k}`, label: String(i) });
     }
-    return this.applyCopies(prev, copies, f.id, tools);
+    return this.copyBy(f, prev!, set, xfs);
+  }
+
+  /**
+   * Sketch-driven / table-driven pattern (FR-FT-073): a copy moved from the seed's reference point to each
+   * free point of a sketch (points that are not ends or centres of curves, construction or not), or by
+   * each table row's X/Y offset in a coordinate system.
+   */
+  private sketchPattern(f: SketchPatternFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
+    const oc = this.oc;
+    const set = this.seedSet(f, doc, prev);
+    const offs: V3[] = [];
+    if (f.src === "table") {
+      const fr = f.csys ? frames[f.csys] : { o: [0, 0, 0] as V3, x: [1, 0, 0] as V3, y: [0, 1, 0] as V3, n: [0, 0, 1] as V3 };
+      if (!fr) throw new FeatureError("E-FT-PARENT", "The coordinate system is missing or has an error.");
+      for (const r of f.table ?? []) offs.push(add(mul(fr.x, r.x.v), mul(fr.y, r.y.v)));
+    } else {
+      const sk = doc.features.find(x => x.id === f.sketch);
+      if (!sk || sk.type !== "sketch") throw new FeatureError("E-SPAT-SKETCH", "Pick a sketch with points.");
+      const fr = frames[sk.id];
+      if (!fr) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
+      const used = new Set<string>();
+      for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
+      for (const e of sk.ents) if (e.t === "spline") for (const q of e.pts) used.add(q);
+      const pts = sk.ents.filter(e => e.t === "point" && !used.has(e.id) && e.id !== f.refPt) as { id: string; x: number; y: number }[];
+      const ref = f.refPt ? sk.ents.find(e => e.id === f.refPt && e.t === "point") as { x: number; y: number } | undefined : undefined;
+      let r: [number, number];
+      if (ref) r = [ref.x, ref.y];
+      else { const c = sub3(this.seedCentre(set), fr.o); r = [dot(c, fr.x), dot(c, fr.y)]; }
+      for (const q of pts) offs.push(add(mul(fr.x, q.x - r[0]), mul(fr.y, q.y - r[1])));
+    }
+    const xfs: { trsf: any; tag: (k: number) => string; label: string }[] = [];
+    offs.forEach((v, i) => {
+      if (Math.hypot(...v) < 1e-6) return;
+      const trsf = new oc.gp_Trsf_1();
+      trsf.SetTranslation_1(this.V(v));
+      xfs.push({ trsf, tag: k => f.copy === "bodies" ? `p${i}b${k}` : `p${i}s${k}`, label: String(i + 1) });
+    });
+    if (!xfs.length) throw new FeatureError("E-SPAT-NONE", f.src === "table" ? "Add table rows with offsets other than 0, 0." : "The sketch has no free points away from the seed.");
+    return this.copyBy(f, prev!, set, xfs);
   }
 
   private size(shape: any) {
@@ -2848,6 +2952,7 @@ export class Modeller {
           else if (f.type === "scale") body = this.scaleBodies(f, body);
           else if (f.type === "lpattern") body = this.linearPattern(f, doc, body, frames);
           else if (f.type === "cpattern") body = this.circularPattern(f, doc, body, frames);
+          else if (f.type === "spattern") body = this.sketchPattern(f, doc, body, frames);
           else if (f.type === "thread") {
             // Cosmetic only: the edge must still be there; the body is unchanged.
             if (!body) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");

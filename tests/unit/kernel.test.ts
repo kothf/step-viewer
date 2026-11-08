@@ -1194,3 +1194,49 @@ test("Intersect bodies and surfaces into regions; untrim surface (FR-BODY-007, F
   close(props.props(r.sheets!).area, 400, 1e-6);
   assert.deepEqual(r.sheets!.names, ["ps:face:0"]);
 });
+
+test("Patterns of faces and bodies, sketch- and table-driven patterns (FR-FT-070..073)", async () => {
+  const m = new Modeller(await occ());
+  const top = { face: { name: "eb:end" } };
+  const base: Feature[] = [rect("b", 0, 0, 100, 60), { id: "eb", type: "extrude", name: "E1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+    circle("c", -40, -20, 5, top), { id: "ec", type: "extrude", name: "Boss", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } },
+    circle("h", -40, 20, 4, top), { id: "eh", type: "extrude", name: "Cut", sketch: "h", op: "cut", end: "blind", depth: { v: 5 } }];
+  const boss = Math.PI * 25 * 5, hole = Math.PI * 16 * 5, v0 = 60000 + boss - hole;
+  let r = run(m, doc(base));
+  close(r.props!.volume, v0);
+  const facesOf = (id: string) => r.body!.names.filter(n => n.startsWith(`${id}:`) && !n.endsWith(":start")).map(name => ({ name }));
+  const dir = { edge: { faces: ["eb:side:bl1", "eb:end"] } };
+  const lp = (o: object): Feature => ({ id: "p", type: "lpattern", name: "LPattern1", features: [], dir, spacing: { v: 20 }, count: 3, ...o } as Feature);
+  // Faces of the boss: two more bosses; faces of the cut: two more holes.
+  const bossFaces = facesOf("ec"), holeFaces = facesOf("eh");
+  r = run(m, doc([...base, lp({ copy: "faces", faces: bossFaces })]));
+  close(r.props!.volume, v0 + 2 * boss, 1e-5);
+  r = run(m, doc([...base, lp({ copy: "faces", faces: holeFaces })]));
+  close(r.props!.volume, v0 - 2 * hole, 1e-5);
+  // Faces that bound nothing are an error.
+  const bad = m.evaluate(doc([...base, lp({ copy: "faces", faces: [{ name: "eb:end" }] })]));
+  assert.ok(!bad.statuses.find(s => s.id === "p")!.ok);
+  // Bodies: a separate 10 mm cube patterned into new bodies.
+  const cube: Feature[] = [rect("q", 5, 100, 10, 10), { id: "eq", type: "extrude", name: "E2", sketch: "q", op: "boss", end: "blind", depth: { v: 10 }, merge: false } as Feature];
+  r = run(m, doc([...base, ...cube, lp({ copy: "bodies", bodies: [{ name: "eq:end" }] })]));
+  close(r.props!.volume, v0 + 3000, 1e-6);
+  assert.equal(r.props!.bodies, 4);
+  // Mirror a body about YZ: it touches its original, and merge joins them.
+  const mir = (o: object): Feature => ({ id: "mi", type: "mirror", name: "Mirror1", features: [], plane: { std: "YZ" }, copy: "bodies", bodies: [{ name: "eq:end" }], ...o } as Feature);
+  r = run(m, doc([...base, ...cube, mir({})]));
+  assert.equal(r.props!.bodies, 3);
+  r = run(m, doc([...base, ...cube, mir({ merge: true })]));
+  assert.equal(r.props!.bodies, 2);
+  close(r.props!.volume, v0 + 2000, 1e-6);
+  // Sketch-driven: the boss copied from its centre to two free points of a sketch (a line's ends don't count).
+  const pts: SketchFeature = { id: "k", type: "sketch", name: "Pts", plane: top, rels: [], dims: [], ents: [
+    { id: "k1", t: "point", x: 0, y: 0 }, { id: "k2", t: "point", x: 20, y: 0 }, { id: "k3", t: "point", x: 30, y: 20 }, { id: "k4", t: "point", x: 40, y: 20 }, { id: "kl", t: "line", a: "k3", b: "k4", cons: true }] };
+  r = run(m, doc([...base, pts, { id: "sp", type: "spattern", name: "SketchPattern1", features: ["ec"], src: "sketch", sketch: "k" } as Feature]));
+  close(r.props!.volume, v0 + 2 * boss, 1e-5);
+  // With a picked reference point at the first point, only the second gives a copy (the first is the seed's own place).
+  r = run(m, doc([...base, pts, { id: "sp", type: "spattern", name: "SketchPattern1", features: ["ec"], src: "sketch", sketch: "k", refPt: "k1" } as Feature]));
+  close(r.props!.volume, v0 + boss, 1e-5);
+  // Table-driven: offsets in the part's axes; a zero row is the seed itself.
+  r = run(m, doc([...base, { id: "tp", type: "spattern", name: "TablePattern1", features: ["eh"], src: "table", table: [{ x: { v: 0 }, y: { v: 0 } }, { x: { v: 20 }, y: { v: 0 } }, { x: { v: 40 }, y: { v: -10 } }] } as Feature]));
+  close(r.props!.volume, v0 - 2 * hole, 1e-5);
+});

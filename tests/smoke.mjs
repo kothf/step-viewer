@@ -5617,6 +5617,75 @@ try {
     await ctx.close();
   }
 
+  // --- 1.90: sketch- and table-driven patterns, patterns of faces (FR-FT-070, FR-FT-073) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), bodies: l.props?.bodies ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    const setDraft = fn => mp.evaluate(fn => { const m = window.__sv.model; new Function("f", "names", fn)(m.mode().draft, m.last().faceNames); m.panel(); void m.rebuild(); }, fn);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 60 × 10 block with a Ø10 × 5 boss at (−40, −20), and a sketch of two free points on top.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -50, -30), P("b2", 50, -30), P("b3", 50, 30), P("b4", -50, 30), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "eb", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 10 } },
+        { id: "c", type: "sketch", name: "Sketch2", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("c0", -40, -20), { id: "ck", t: "circle", c: "c0", r: 5 }] },
+        { id: "ec", type: "extrude", name: "Boss-Extrude2", sketch: "c", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch3", plane: { face: { name: "eb:end" } }, rels: [], dims: [], ents: [P("k1", 0, 0), P("k2", 20, 10)] });
+    }));
+    await settle();
+    const v0 = (await state()).v, boss = Math.PI * 25 * 5;
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Sketch driven pattern$/ }).click();
+    await settle();
+    const sk = await mp.evaluate(() => window.__sv.model.mode().draft.sketch);
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    const s1 = await state();
+    // Copy the boss's faces instead of the feature: the same result.
+    await mp.selectOption('#mc-pm select[data-k="copyKind"]', "faces");
+    await settle();
+    await setDraft('f.faces = names.filter(n => n.startsWith("ec:") && n !== "ec:start").map(name => ({ name }));');
+    await settle();
+    const s2 = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const s3 = await state();
+    check(sk === "k" && s1.title === "Sketch driven pattern" && Math.abs(s1.v - (v0 + 2 * boss)) < 2 && Math.abs(s2.v - s1.v) < 2 && !s3.bad && Math.abs(s3.v - s1.v) < 2,
+      `model 1.90: sketch driven pattern copies a boss (feature or faces) to the sketch's points (FR-FT-073, FR-FT-070) (${JSON.stringify({ sk, v0, s1, s2, s3 })})`);
+    // Table driven: rows typed as X, Y offsets.
+    await mp.click('#mc-tools [data-fly="pattern"]');
+    await mp.locator("#mc-menu button", { hasText: /^Table driven pattern$/ }).click();
+    await settle();
+    await setDraft('f.features = ["ec"];');
+    await settle();
+    await mp.fill('#mc-pm textarea[data-k="tableText"]', "0, 40\n20, 40\n40, 40");
+    await mp.dispatchEvent('#mc-pm textarea[data-k="tableText"]', "change");
+    await settle();
+    const t1 = await state();
+    const rows = await mp.evaluate(() => window.__sv.model.mode().draft.table.length);
+    // In Russian: the panel.
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(200);
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
+    await mp.click("#lang-btn");
+    await mp.click("#mc-ok");
+    await settle();
+    const t2 = await state();
+    check(rows === 3 && t1.title === "Table driven pattern" && Math.abs(t2.v - (v0 + 5 * boss)) < 3 && !t2.bad,
+      `model 1.90: table driven pattern adds a copy per X, Y row (FR-FT-073) (${JSON.stringify({ rows, t1, t2 })})`);
+    check(ru.title === "Массив, управляемый таблицей" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm|Enter|Esc|Boss-Extrude2/g, "")), `model 1.90: pattern panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   // --- 1.89: sketch snaps to model geometry (relations to the model) and middle-drag orbit while sketching ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
