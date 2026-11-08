@@ -3130,6 +3130,12 @@ export const RU: Record<string, string> = {
   "Each guide curve must touch every profile.": "Каждая направляющая кривая должна касаться всех профилей.",
   "Each guide curve must run from the first profile to the last.": "Каждая направляющая кривая должна идти от первого профиля до последнего.",
   "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
+  // 1.126.0: check and heal feature (FR-FT-131).
+  "Check-Heal": "Проверка-исправление",
+  "Check and heal: sew gaps, fix faces and close shells into solids, with a before and after report": "Проверить и исправить: сшить зазоры, исправить грани и замкнуть оболочки в тела, с отчётом до и после",
+  "Merge faces that lie on one surface": "Объединить грани, лежащие на одной поверхности",
+  "Every body is checked: faces whose edges are closer than the tolerance are sewn, faulty faces fixed and closed shells made solid. The report compares before and after.": "Проверяются все тела: грани, рёбра которых ближе допуска, сшиваются, ошибочные грани исправляются, замкнутые оболочки становятся телами. Отчёт сравнивает состояние до и после.",
+  "There is no body to check.": "Нет тела для проверки.",
   // 1.122.0: shaded drawing views (FR-DRW-010).
   "Shaded with edges": "Тонировка с рёбрами",
 };

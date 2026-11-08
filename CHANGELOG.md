@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
 
+## [1.126.0] - 2026-11-08
+
+### Added
+
+- **Check-Heal feature (FR-FT-131)** in Features → Bodies ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
+
 ## [1.125.0] - 2026-11-08
 
 ### Added
@@ -22,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Shaded drawing views** (FR-DRW-010): a view's Display style can be Shaded (grey faces, no lines) or Shaded with edges (grey faces under the visible edges), lit from over the viewer's left shoulder. Detail, crop and break views follow it. PDF, SVG, PNG and print show the shading; DXF keeps the lines only. Section views stay line drawings.
+
 ## [1.121.0] - 2026-11-08
 
 ### Added
@@ -1133,7 +1140,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.132.0...HEAD
-[1.132.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.132.0
+[1.132.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.132.0
+[1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0
 [1.125.0]: https://github.com/kothf/step-viewer/compare/v1.122.0...v1.125.0
 [1.122.0]: https://github.com/kothf/step-viewer/compare/v1.121.0...v1.122.0
 [1.121.0]: https://github.com/kothf/step-viewer/compare/v1.120.0...v1.121.0

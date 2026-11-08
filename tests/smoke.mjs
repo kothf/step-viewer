@@ -6081,6 +6081,43 @@ try {
     await ctx.close();
   }
 
+  // --- 1.126: Check-Heal feature (FR-FT-131) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: Math.round(l.props?.volume ?? 0), faces: l.faceNames.length, bad: l.statuses.filter(s => !s.ok && s.code !== "warning").map(s => s.message).join(";"), report: document.querySelector("#mc-pm [data-heal]")?.textContent ?? "", types: window.__sv.model.store.doc.features.map(f => f.type).join(",") }; });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // Two 10 mm blocks side by side: their top, bottom and two sides stay split in two.
+    await mp.evaluate(() => window.__sv.model.store.change("Two blocks", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      const sq = (id, x0, x1) => ({ id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [P(id + "1", x0, 0), P(id + "2", x1, 0), P(id + "3", x1, 10), P(id + "4", x0, 10), Ln(id + "a", id + "1", id + "2"), Ln(id + "b", id + "2", id + "3"), Ln(id + "c", id + "3", id + "4"), Ln(id + "d", id + "4", id + "1")] });
+      d.features.push({ ...sq("a", 0, 10), name: "Sketch1" }, { id: "ea", type: "extrude", name: "Boss-Extrude1", sketch: "a", op: "boss", end: "blind", depth: { v: 5 } },
+        { ...sq("b", 10, 20), name: "Sketch2" }, { id: "eb", type: "extrude", name: "Boss-Extrude2", sketch: "b", op: "boss", end: "blind", depth: { v: 5 } });
+    }));
+    await settle();
+    const s0 = await state();
+    await runCmd(mp, "Check-Heal");
+    await settle();
+    const h = await state();
+    await mp.check('#mc-pm input[data-k="unify"]');
+    await settle();
+    const u = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const done = await state();
+    check(s0.v === 1000 && h.v === 1000 && /^Check and heal: 0 free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(h.report) && u.faces === 6 && s0.faces > 6 && u.v === 1000 && done.faces === 6 && done.types.endsWith("heal") && !done.bad,
+      `model 1.126: Check-Heal reports the body and merges its split faces (FR-FT-131) (${JSON.stringify({ s0, h, u, done })})`);
+    await ctx.close();
+  }
+
   // --- 1.108: Indent a plate with a tool body, with a wall and as a cut (FR-BODY-007) ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
