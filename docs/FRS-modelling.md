@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | Document | FRS-MCAD-MOD, Functional Requirements Specification for parametric modelling in MöbiusCAD |
-| Version | 0.2 (draft; 2026-11-08 adds section 13.13 and Appendix F from the UI/UX parity audit) |
+| Version | 0.3 (draft; 2026-11-08 adds section 13.13 and Appendix F from the UI/UX parity audit, and Appendix G, the implementation status audit) |
 | Date | 2026-11-06 |
 | Owner | Andrey Dumchin |
 | Product baseline | MöbiusCAD 1.17.0 (viewer: STEP/IGES/BREP/SLDPRT/SLDASM/mesh, PCB view) |
@@ -317,6 +317,8 @@ Each phase ships as one or more minor versions through the normal release flow. 
 | **P5** | Drawings and extras | Drawing documents: sheets, templates, title block, standard/projected/section/detail/auxiliary views, dimensions and annotations, BOM and revision tables, PDF/DXF/SVG export; mechanical mates (hinge, slot, gear, screw); fastener library; in-context references; surfaces; direct edit; 3D sketch; **workflow editor, change orders (ECO), release packages, shared-folder vault** | AT-P5-1..6, AT-PDM-7..8 |
 | **P6** | Specialist | Sheet metal, basic weldments, simple motion animator, scripting console | per feature |
 | **P7** | Server vault and collaboration (optional) | Server PDM with authenticated users and permissions, git backend for vaults, real-time co-editing; any sharing beyond files needs a separate decision (C-1) | separate FRS |
+
+Status on 2026-11-08 (1.87.0): P0–P4 are built and released; P5 drawings, surfaces, direct editing and most part options are built; P6 and P7 have not started. Appendix G lists every requirement of P1–P5 that the code does not yet meet.
 
 Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–12 weeks, P2 8 weeks, P3 6 weeks, P4 8–10 weeks, P5 10–12 weeks. These are planning numbers, not commitments.
 
@@ -981,7 +983,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 - **FR-UI-027** (P1, M) **Drag handles** (SW habit: Instant3D) on the selected feature's faces: arrows for extrude depth, rings for revolve angle, radius handles for fillets; dragging shows a ruler with snap ticks and the live value; snapping to vertices and faces uses the Snapper.
 - **FR-UI-028** (P1, M) **Dimension editing on the model**: double-click a feature to show its dimensions; double-click a dimension to open the value box with a rebuild button and spin control; Enter rebuilds.
 - **FR-UI-029** (P1, M) Hover highlight (preselection) in a theme colour; selection in another; colours meet 3:1 contrast against the model and background in both themes.
-- **FR-UI-030** (P1, M) **Normal to** (Ctrl+8) on a face or plane; pressing it twice flips to the other side.
+- **FR-UI-030** (P1, M) **Normal to** (Ctrl+8, and N when no sketch tool is active) on a face or plane; pressing it twice flips to the other side.
 - **FR-UI-031** (P1, M) Standard views on keys **Ctrl+1 Front, Ctrl+2 Back, Ctrl+3 Left, Ctrl+4 Right, Ctrl+5 Top, Ctrl+6 Bottom, Ctrl+7 Isometric**, Spacebar opens a view-orientation picker (SW habits); the existing digits 1–5 for display modes and the NavCube stay.
 - **FR-UI-032** (P1, M) Selection highlight lists entity type and owning feature in the status bar ("Face of Extrude2, plane, 1 240 mm²").
 
@@ -1000,7 +1002,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 - **FR-UI-051** (P1, M) Cursor feedback: the tool icon next to the cursor, inference glyphs (coincident, horizontal, tangent ...), the live length/angle/radius beside the cursor, dotted inference lines.
 - **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard.
 - **FR-UI-053** (P1, M) Dimension value boxes appear at the dimension (SW habit: Modify box) with ✓, ✕, rebuild and spin; Esc keeps the previous value.
-- **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P polygon, T trim, O offset, D dimension, K add relation, Q construction toggle, Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
+- **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P point, G polygon, T trim, E extend, F sketch fillet, O offset, W slot, D dimension, K add relation, Q construction toggle (letters as built in 1.85.0, plus K), Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
 - **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching.
 
 ### 13.6 Tree UI
@@ -1484,7 +1486,7 @@ Each test is scripted in the smoke test where it can be (synthetic pointer and k
 | Ctrl+C / Ctrl+V | Copy / paste a feature or sketch (FR-HIS-014) | SW habit |
 | Enter / Esc | OK / Cancel command, end chain; Enter with no command repeats the last one (FR-UI-111) | SW habit |
 | Ctrl+Enter | Exit sketch | |
-| L, R, C, A, P, T, O, D, K, Q | Line, rectangle, circle, arc, polygon, trim, offset, dimension, relation, construction (in a sketch) | |
+| L, R, C, A, P, G, T, E, F, O, W, D, K, Q | Line, rectangle, circle, arc, point, polygon, trim, extend, fillet, offset, slot, dimension, relation, construction (in a sketch) | |
 | E | Extrude (part, no sketch active) | MöbiusCAD |
 | Alt+click | Select other | |
 | F2 | Rename in tree | |
@@ -1614,3 +1616,64 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Command search Ctrl+K | FR-UI-014 (S) | No | Weaker (not started) |
 | Units in the status bar | FR-UI-116 | No | New |
 | Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
+
+### Appendix G. Implementation status audit (2026-11-08, MöbiusCAD 1.87.0)
+
+Every requirement of phases P1–P5 was compared with the code: the feature schema in `src/model/types.ts`, the kernel in `src/kernel/model.ts`, the controllers and the UI. The table lists the ones that are **not built** or only **partly built**. A requirement not listed is built, or is a P6/P7 item. The UI/UX items of section 13.13 are tracked in Appendix F and not repeated here. Requirements done since the audit are struck out in later versions of this table rather than removed, so the history stays readable.
+
+**Documents, history, workspace (sections 7, 13)**
+
+| ID | Requirement | 1.87.0 | Class |
+| --- | --- | --- | --- |
+| FR-DOC-003 | Several documents open at once in tabs | One part, assembly or drawing at a time: opening one closes the other (`leaveOthers`) | Partly |
+| FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
+| FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
+| FR-UI-014 | Command search (Ctrl+K) | No | Not built |
+| FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
+| FR-UI-024 | Mouse gestures (P2, S) | No | Not built |
+| FR-UI-043 | Panels remember the last options per feature type | Only hole favourites | Not built |
+| FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | Selecting a row highlights its faces; no hover link | Partly |
+| FR-UI-080 | Preferences dialog with a Modelling page | Settings live in the Display menu; no Modelling page | Not built |
+| FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
+| FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
+| FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
+| FR-CFG-003 | Configuration table as CSV (P5, C) | No | Not built |
+
+**Sketcher (section 8)**
+
+| ID | Requirement | 1.87.0 | Class |
+| --- | --- | --- | --- |
+| FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
+| FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
+| FR-SK-073 | **Check sketch for feature** before starting it | Problems show only once a feature fails | Not built |
+| FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
+
+**Part features (section 9)**
+
+| ID | Requirement | 1.87.0 | Class |
+| --- | --- | --- | --- |
+| FR-FT-012 | Extrude end condition **Up to body** | The other P2 end conditions are built (`EndKind`); Up to body is missing | Partly |
+| FR-FT-033 | Setback fillets (P3, S) | No | Not built |
+| FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | Two distances is built; vertex and offset-face are missing | Partly |
+| FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | Simple, counterbore, countersink, tapped and heat-set insert; blind or through all | Partly |
+| FR-FT-060 | Shell with multi-thickness faces (P3) | One thickness | Partly |
+| FR-FT-061 | Parting-line draft (P5) | Neutral-plane draft only | Partly |
+| FR-FT-062 | Rib draft | Rib without draft | Partly |
+| FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
+| FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
+| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Tool solids are always copied | Not built |
+| FR-FT-080 | Sweep start/end tangency (P5) | Twist and guide curve are built; tangency is missing | Partly |
+| FR-FT-082 | Loft start/end constraints, connectors, guide curves | Ruled, close and centreline are built | Partly |
+| FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
+| FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
+| FR-FT-131 | Check and heal as a feature with a before/after report (S) | Healing runs in Insert body only | Partly |
+
+**Assemblies (section 10)**
+
+| ID | Requirement | 1.87.0 | Class |
+| --- | --- | --- | --- |
+| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Open part edits it apart from the assembly | Not built |
+
+**Planned, not started:** P6 sheet metal (FR-FT-120), weldments (FR-FT-121), motion (FR-FT-122) and the scripting console; P7 server vault and git backend (FR-PDM-072, FR-PDM-073).
+
+**Specification changes made with this audit:** FR-UI-054 and Appendix A now list the sketch letters as built (P point, G polygon, E extend, F fillet, W slot), plus K for Add relation; FR-UI-030 names the N key; section 5 gets a status line.
