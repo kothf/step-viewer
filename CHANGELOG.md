@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.244.0] - 2026-11-08
+## [1.247.0] - 2026-11-08
 
 ### Added
 
 - **More weldment profiles (FR-FT-121).** Structural Member's library adds EN 10056-1 unequal angles (30x20x3 to 150x100x10, standing on the short leg), EN 10365 HEB beams (100 to 300) and square bars (8 to 60 mm), named L, HEB and SQ in the cut list.
+## [1.245.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Proximity** (in Add track…) plots the smallest distance between two components over the study, or how fast it changes, like SolidWorks' proximity sensor. Pick the two components in its panel; the values save as CSV, and Alert below/above with Stop playback work on it as on the other results (FR-FT-122).
+
 ## [1.241.0] - 2026-11-08
 
 ### Fixed
@@ -1599,8 +1605,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.244.0...HEAD
-[1.244.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.244.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.247.0...HEAD
+[1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
+[1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
 [1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
 [1.240.0]: https://github.com/kothf/step-viewer/compare/v1.239.0...v1.240.0
 [1.239.0]: https://github.com/kothf/step-viewer/compare/v1.237.0...v1.239.0
