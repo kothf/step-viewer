@@ -52,6 +52,9 @@ export interface DrawingHost {
   download(blob: Blob, name: string): void;
   /** Called when the workspace opens or closes (the 3D view's keys and header step aside). */
   onToggle?(open: boolean): void;
+  /** Document tabs: a drawing is about to open (the one shown now is parked first), and one opened. */
+  beforeOpen?(): void;
+  opened?(label: string): void;
 }
 
 type Mode =
@@ -131,6 +134,9 @@ const ICON = {
   annot: I('<path d="M2.5 3h11M2.5 6.5h11M2.5 10h7"/><path d="m11 13 2-2"/>'),
   aux: I('<path d="M2 12 9 3"/><path d="m7.5 9.5 4 3.2M11.5 12.7l-.4-2.6M11.5 12.7l-2.5.3"/>'),
 };
+
+/** A drawing kept in a document tab while another document is shown. */
+export interface DrawingTab { store: DrawingStore; model: Uint8Array | undefined; fileName: string; info: DrawingModel["info"]; modelKey: string; sheetIdx: number }
 
 export class DrawingWorkspace {
   readonly el: HTMLElement;
@@ -219,6 +225,7 @@ export class DrawingWorkspace {
   private get bom(): Bom | null { return this.bomFor(this.sheet); }
 
   private load(doc: DrawingDoc, model: Uint8Array | undefined, fileName: string) {
+    this.host.beforeOpen?.();
     this.store = new DrawingStore(doc);
     this.store.onChange(() => this.renderAll());
     this.model = model;
@@ -230,6 +237,7 @@ export class DrawingWorkspace {
     this.show();
     this.build();
     this.fit();
+    this.host.opened?.(this.title);
   }
 
   /** (Re)loads the model into the worker from the drawing's source; the views then fill in. */
@@ -249,6 +257,37 @@ export class DrawingWorkspace {
       return null;
     } finally { this.loading--; this.renderStatus(); }
   }
+
+  /** Document tabs (FR-DOC-003): the open drawing with its undo history, kept while another document is shown. */
+  park(): DrawingTab | null {
+    if (!this.store) return null;
+    this.cancelMode();
+    const tab: DrawingTab = { store: this.store, model: this.model, fileName: this.fileName, info: this.info, modelKey: this.modelKey, sheetIdx: this.sheetIdx };
+    this.hide();
+    this.store = null;
+    return tab;
+  }
+
+  /** Shows a parked drawing again. */
+  async resume(tab: DrawingTab) {
+    this.store = tab.store;
+    this.model = tab.model;
+    this.fileName = tab.fileName;
+    this.info = tab.info;
+    this.modelKey = tab.modelKey;
+    this.sheetIdx = tab.sheetIdx;
+    this.sel = null;
+    this.mode = { kind: "none" };
+    this.facts = null;
+    this.show();
+    this.build();
+    this.fit();
+    await this.loadModel();
+  }
+
+  /** The drawing's name for its tab, and whether it has unsaved changes. */
+  get title() { return this.store ? this.fileName || `${this.doc.name}.mcaddrw` : ""; }
+  get dirty() { return !!this.store?.dirty; }
 
   show() {
     if (!this.store) return;

@@ -35,6 +35,10 @@ export interface AsmHost {
   selectLeftTab(tab: string): void;
   /** Another document kind takes over (the part modeller closes). */
   leaveOthers(): void;
+  /** An assembly was opened or made (document tabs). */
+  opened?(label: string): void;
+  /** Parts open in other document tabs, for Insert component. */
+  openParts?(): { doc: PartDoc; fileName: string }[];
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
   editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void): void;
   /** The part open in the modeller, if any (Make assembly from part). */
@@ -58,6 +62,9 @@ const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge",
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
 interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; problem?: string }
+
+/** An assembly kept in a document tab while another document is shown. */
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
 
 export class AsmController {
   doc: AsmDoc | null = null;
@@ -170,6 +177,25 @@ export class AsmController {
     catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); }
   }
 
+  /** Document tabs (FR-DOC-003): the open assembly with its undo history, kept while another document is shown. */
+  park(): AsmTab | null {
+    if (!this.doc) return null;
+    this.closeTools();
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
+    this.close();
+    return tab;
+  }
+
+  /** Shows a parked assembly again. */
+  resume(tab: AsmTab) {
+    this.load(tab.doc, tab.fileName, tab.handle);
+    this.undoStack = tab.undo;
+    this.redoStack = tab.redo;
+    this.savedAt = tab.savedAt;
+    this.selected = tab.sel;
+    this.renderAll();
+  }
+
   private load(doc: AsmDoc, fileName: string, handle: FileSystemFileHandle | null) {
     this.host.leaveOthers();
     this.motion?.close();
@@ -199,6 +225,7 @@ export class AsmController {
     this.host.selectLeftTab("asm");
     this.kernel.warm();
     this.renderAll();
+    this.host.opened?.(this.label());
     this.rebuild();
   }
 
@@ -1445,11 +1472,22 @@ export class AsmController {
       if (src) this.insertPart(src.pd, f.name, src.asm);
     };
     if (file) { void run(file); return; }
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
-    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
-    inp.click();
+    const browse = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
+      inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+      inp.click();
+    };
+    // Parts open in other tabs come first, as SolidWorks lists open documents (FR-DOC-003).
+    const open = this.host.openParts?.() ?? [];
+    const btn = document.querySelector<HTMLElement>('#asm-tools [data-ac="insert"]');
+    if (!open.length || !btn) { browse(); return; }
+    const r = btn.getBoundingClientRect();
+    this.popup([
+      ...open.map(o => [t("Open document: {name}", { name: o.fileName }), () => this.insertPart(JSON.parse(JSON.stringify(o.doc)) as PartDoc, o.fileName)] as [string, () => void]),
+      [t("Browse…"), browse],
+    ], r.left, r.bottom + 4);
   }
 
   /** Adds a component of this part (or sub-assembly) document, named after its file. */

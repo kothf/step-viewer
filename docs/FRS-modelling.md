@@ -1634,7 +1634,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-DOC-003 | Several documents open at once in tabs | One part, assembly or drawing at a time: opening one closes the other (`leaveOthers`) | Partly |
+| FR-DOC-003 | Several documents open at once in tabs | 1.122.0+: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); camera and selection are not kept yet | Partly |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |

@@ -3123,4 +3123,11 @@ export const RU: Record<string, string> = {
   "Each guide curve must touch every profile.": "Каждая направляющая кривая должна касаться всех профилей.",
   "Each guide curve must run from the first profile to the last.": "Каждая направляющая кривая должна идти от первого профиля до последнего.",
   "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
+  // Document tabs (FR-DOC-003, FR-UI-120)
+  "Open documents": "Открытые документы",
+  "Close {name}": "Закрыть {name}",
+  "{name} has unsaved changes. Close it anyway?": "В {name} есть несохранённые изменения. Всё равно закрыть?",
+  "Close document": "Закрыть документ",
+  "Open document: {name}": "Открытый документ: {name}",
+  "Browse…": "Обзор…",
 };

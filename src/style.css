@@ -78,7 +78,7 @@ h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 #app {
   display: grid;
   --top-h: auto;
-  grid-template: "top top top" var(--top-h) "cm cm cm" auto "left vp right" 1fr "status status status" 28px / 270px 1fr 300px;
+  grid-template: "top top top" var(--top-h) "cm cm cm" auto "left vp right" 1fr "tabs tabs tabs" auto "status status status" 28px / 270px 1fr 300px;
   height: 100vh; height: 100dvh;
   transition: grid-template-columns 180ms ease-in-out;
 }
@@ -380,7 +380,7 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
-  #app { grid-template: "top" var(--top-h) "cm" auto "vp" 1fr "right" 38vh "status" 28px / 1fr; }
+  #app { grid-template: "top" var(--top-h) "cm" auto "vp" 1fr "right" 38vh "tabs" auto "status" 28px / 1fr; }
   .left { display: none; }
   #app:not(.gerber) .nav-toggle, #app:not(.gerber) .panel-toggle { display: none; }
   .right { border-left: 0; border-top: 1px solid var(--line); }
@@ -1007,3 +1007,21 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .right .rp-tabs button { min-width: 30px; }
 .right .rp-tabs { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .cm-note { align-self: center; margin: 0 0 0 10px; font-size: 12px; white-space: nowrap; }
+
+/* ---------- document tabs (FR-DOC-003, FR-UI-120): one tab per open document, above the status bar ---------- */
+.doc-tabs { grid-area: tabs; display: flex; align-items: stretch; gap: 2px; min-width: 0; padding: 0 8px; height: 30px; background: var(--panel); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.doc-tabs[hidden] { display: none; }
+.doc-tabs .dt { display: flex; align-items: stretch; flex: none; max-width: 240px; border: 1px solid transparent; border-top: 0; border-radius: 0 0 6px 6px; }
+.doc-tabs .dt.on { background: var(--panel-2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
+.doc-tabs .dt-b { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 4px 0 10px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.doc-tabs .dt.on .dt-b { color: var(--text); font-weight: 600; }
+.doc-tabs .dt-b:hover { color: var(--text); }
+.doc-tabs .dt-b:focus-visible, .doc-tabs .dt-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.doc-tabs .dt-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-tabs .dt-dirty { color: var(--accent-text); }
+.doc-tabs .dt.under .dt-b svg { color: var(--accent-text); }
+.doc-tabs .dt-x { width: 22px; border: 0; background: none; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px; }
+.doc-tabs .dt-x:hover { color: var(--text); background: var(--panel-2); }
+/* Over a drawing the tabs stay at the bottom of the window. */
+#app.drawing .doc-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1060; }
+#app.drawing.has-doc-tabs .drw { bottom: 30px; }
