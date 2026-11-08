@@ -23,6 +23,7 @@ import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
+import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
 export function refPts(e: SkEnt): string[] {
@@ -50,7 +51,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -697,18 +698,57 @@ export class SketchEditor {
       this.render();
       return;
     }
-    if (this.tool === "slot") {
+    if (this.tool === "slot" || this.tool === "cslot") {
+      // Straight slot: two centres, or (centrepoint) the middle and one end, then the width (FR-SK-017).
       if (d.pts.length < 2) {
         if (d.pts.length && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < this.px(p) * 3) return;
         d.pts.push(p); d.ids.push(s.id); this.render(); return;
       }
-      const [c1, c2] = d.pts;
+      const centred = this.tool === "cslot";
+      const [c1, c2] = slotCentres(d.pts[0], d.pts[1], centred);
       const w = Math.abs(lineSide(c1, c2, p));
       if (w < this.px(p) * 2) return;
-      this.addSlot(c1, c2, w, d.ids[0], d.ids[1], rels);
-      finish("Add slot");
+      const made = this.addSlot(c1, c2, w, centred ? null : d.ids[0], d.ids[1], rels);
+      if (centred) rels.push({ id: uid("r"), t: "midpoint", e: [this.usePoint(d.pts[0], d.ids[0], null, rels), made.axis] });
+      const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]], g = this.px(p) * 28;
+      this.sk.rels.push(...rels.splice(0));
+      const sizes = this.slotSizes([
+        { t: "diameter", e: [made.cap1], pos: [c1[0] - u[0] * (w + g), c1[1] - u[1] * (w + g)] },
+        { t: "distance", e: [made.axis], pos: [(c1[0] + c2[0]) / 2 + n[0] * (w + g), (c1[1] + c2[1]) / 2 + n[1] * (w + g)] },
+      ]);
+      finish(centred ? "Add centerpoint slot" : "Add slot");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
+      this.openSizes(sizes);
+      return;
+    }
+    if (this.tool === "aslot" || this.tool === "aslot3") {
+      // Arc slots: centre, start, end (centrepoint) or start, end, a point on the arc (3-point), then the width.
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      if (d.pts.length < 3) {
+        if (d.pts.length === 2 && !this.slotAxis(d.pts[0], d.pts[1], p)) return;
+        d.pts.push(p); d.ids.push(s.id); this.render(); return;
+      }
+      const ax = this.slotAxis(d.pts[0], d.pts[1], d.pts[2])!;
+      const w = arcSlotHalfWidth(ax, p);
+      if (w < this.px(p) * 2) return;
+      const [oId, c1Id, c2Id] = this.tool === "aslot" ? [d.ids[0], d.ids[1], null]
+        : ax.swapped ? [null, d.ids[1], d.ids[0]] : [null, d.ids[0], d.ids[1]];
+      const k = arcSlotCorners(ax, w);
+      const P = (q: V2, id: string | null) => this.usePoint(q, id, null, rels);
+      const made = arcSlotEnts({ o: P(ax.o, oId), c1: P(ax.c1, c1Id), c2: P(ax.c2, c2Id), o1: P(k.o1, null), o2: P(k.o2, null), i1: P(k.i1, null), i2: P(k.i2, null) }, uid);
+      this.sk.ents.push(...made.ents);
+      this.sk.rels.push(...rels.splice(0), ...made.rels);
+      const out = (c: V2, r: number): V2 => { const v = norm2(sub2(c, ax.o)); return [ax.o[0] + v[0] * r, ax.o[1] + v[1] * r]; };
+      const g = this.px(p) * 28;
+      const sizes = this.slotSizes([
+        { t: "diameter", e: [made.cap1], pos: out(ax.c1, ax.r + w + g) },
+        { t: "radius", e: [made.centre], pos: out(arcSlotOutline(ax, 0)[0][24], ax.r * 0.55) },
+      ]);
+      finish("Add arc slot");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      this.openSizes(sizes);
       return;
     }
     if (this.tool === "polygon") {
@@ -914,7 +954,8 @@ export class SketchEditor {
   }
 
   /** Opens the Modify box on a dimension (FR-UI-114): the sketch follows the value as it is typed. */
-  editDim(id: string) {
+  editDim(id: string, then?: () => void) {
+    if (this.disposed) return;
     const dim = this.sk.dims.find(d => d.id === id);
     if (!dim || dim.driven) return;
     const label = this.labels.get(id);
@@ -958,11 +999,12 @@ export class SketchEditor {
         if (this.disposed) return true;
         const r = tryValue(text);
         if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); return true; }
-        if (!r) { restore(); return true; }
+        if (!r) { restore(); if (then) setTimeout(then, 0); return true; }
         this.sk = r.sk;
         this.info = r.r;
         this.commit("Change dimension");
         this.render();
+        if (then) setTimeout(then, 0);
         return true;
       },
       cancel: () => { if (this.input === box.input) this.input = null; restore(); },
@@ -1294,7 +1336,7 @@ export class SketchEditor {
   // ---------- slot (FR-SK-017) ----------
 
   /** Straight slot: two centres, half-width w; two lines and two end arcs, tangent, on a construction centre line. */
-  private addSlot(c1: V2, c2: V2, w: number, id1: string | null, id2: string | null, rels: SkRel[]) {
+  private addSlot(c1: V2, c2: V2, w: number, id1: string | null, id2: string | null, rels: SkRel[]): { axis: string; cap1: string } {
     const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]];
     const P = (c: V2, k: number): V2 => [c[0] + n[0] * w * k, c[1] + n[1] * w * k];
     const c1Id = this.usePoint(c1, id1, null, rels), c2Id = this.usePoint(c2, id2, null, rels);
@@ -1313,6 +1355,36 @@ export class SketchEditor {
     );
     if (Math.abs(u[1]) < 1e-9) rels.push({ id: uid("r"), t: "horizontal", e: [axis] });
     else if (Math.abs(u[0]) < 1e-9) rels.push({ id: uid("r"), t: "vertical", e: [axis] });
+    return { axis, cap1 };
+  }
+
+  /** The arc slot's centre line from the first three clicks of the tool in use. */
+  private slotAxis(a: V2, b: V2, c: V2): ArcSlotAxis | null {
+    return this.tool === "aslot" ? centreArcAxis(a, b, c) : threePointArcAxis(a, b, c);
+  }
+
+  /** Slot tools add their sizes as dimensions (SolidWorks' "Add dimensions"), unless turned off. */
+  slotDims = true;
+
+  /** Adds the dimensions that tell something (a snapped end may already fix one); returns their ids. */
+  private slotSizes(list: { t: SkDim["t"]; e: string[]; pos: V2 }[]): string[] {
+    if (!this.slotDims) return [];
+    const made: string[] = [];
+    for (const x of list) {
+      const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: x.t, e: x.e, val: { v: 0 }, pos: x.pos };
+      dim.val.v = measureDim(this.sk, dim);
+      const r = tryAdd(this.sk, { dim });
+      if (!r.ok || r.redundant) continue;
+      this.sk = r.sketch;
+      made.push(dim.id);
+    }
+    return made;
+  }
+
+  /** Opens the Modify box on each new size in turn: width, then length or radius (FR-UI-114). */
+  private openSizes(ids: string[]) {
+    if (!ids.length) return;
+    setTimeout(() => this.editDim(ids[0], () => this.openSizes(ids.slice(1))), 0);
   }
 
   // ---------- extend, split, chamfer (FR-SK-031, 032, 033) ----------
@@ -2071,6 +2143,9 @@ export class SketchEditor {
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       intersect: "Click model faces: the curves where the sketch plane cuts them are added",
       slot: "Click the two centres, then the width",
+      cslot: "Click the slot's centre, then one end, then the width",
+      aslot: "Click the arc's centre, the start, the end (counter-clockwise), then the width",
+      aslot3: "Click the start, the end, a point on the arc, then the width",
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
@@ -2242,10 +2317,19 @@ export class SketchEditor {
       const { a: p0, b: p1 } = this.box;
       poly([p0, [p1[0], p0[1]], p1, [p0[0], p1[1]], p0], C.sel, dimSegs, dimCols);
     }
-    if (this.tool === "slot" && d.pts.length && d.cursor) {
-      const [c1, c2] = d.pts.length === 1 ? [d.pts[0], d.cursor] : [d.pts[0], d.pts[1]];
+    if ((this.tool === "slot" || this.tool === "cslot") && d.pts.length && d.cursor) {
+      const [c1, c2] = slotCentres(d.pts[0], d.pts.length === 1 ? d.cursor : d.pts[1], this.tool === "cslot");
       const w = d.pts.length === 1 ? this.px(c1) * 12 : Math.abs(lineSide(c1, c2, d.cursor));
       for (const pl of slotOutline(c1, c2, w)) poly(pl, C.pre);
+    }
+    if ((this.tool === "aslot" || this.tool === "aslot3") && d.pts.length && d.cursor) {
+      const q = d.cursor;
+      if (d.pts.length === 1) poly([d.pts[0], q], C.pre);
+      else {
+        const ax = d.pts.length === 2 ? this.slotAxis(d.pts[0], d.pts[1], q) : this.slotAxis(d.pts[0], d.pts[1], d.pts[2]);
+        if (ax) for (const pl of arcSlotOutline(ax, d.pts.length === 2 ? 0 : arcSlotHalfWidth(ax, q))) poly(pl, C.pre);
+        else poly([d.pts[0], d.pts[1], q], C.pre);
+      }
     }
     // Dimension lines.
     const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
@@ -2623,6 +2707,11 @@ function cross2(a: V2, b: V2) { return a[0] * b[1] - a[1] * b[0]; }
 
 /** Signed distance of p from the line through a and b (left positive). */
 function lineSide(a: V2, b: V2, p: V2) { const u = norm2(sub2(b, a)); return cross2(u, sub2(p, a)); }
+
+/** Slot centres from the first two clicks: both centres, or the middle and one end (centrepoint slot). */
+function slotCentres(a: V2, b: V2, centred: boolean): [V2, V2] {
+  return centred ? [[2 * a[0] - b[0], 2 * a[1] - b[1]], b] : [a, b];
+}
 
 /** Outline of a straight slot round the centres c1, c2 with half-width w, as polylines. */
 function slotOutline(c1: V2, c2: V2, w: number): V2[][] {

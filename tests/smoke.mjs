@@ -2901,6 +2901,90 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.144.0: arc and centrepoint slot tools with the Modify box (FR-SK-017) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    const modify = async v => { await mp.waitForSelector(".mod-box .mod-in", { timeout: 10000 }); await mp.fill(".mod-box .mod-in", v); await mp.keyboard.press("Enter"); await mp.waitForTimeout(150); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q", t: "point", x: 100, y: 100 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; v.fit(false); v.camera.zoom = 1; });
+    // Slot ▾ lists the four slot tools; pick Centerpoint arc slot.
+    await mp.click('#mc-tools [data-fly="slot"]');
+    const fly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    const picked = await mp.evaluate(() => window.__sv.model.editor().tool);
+    // Centre (0, 0) on the origin, start (40, 0), end towards (0, 60), width click 5 out: R40 × 10, a quarter turn.
+    await click([0, 0]); await click([40, 0]); await click([0, 60]);
+    const preview = await mp.evaluate(() => window.__sv.model.editor().draft.pts.length);
+    await click([0, 45]);
+    // The Modify box opens on the width (12), then on the radius (50).
+    await modify("12");
+    await modify("50");
+    const arc = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      const rad = a => Math.hypot(P(a.a).x - P(a.c).x, P(a.a).y - P(a.c).y);
+      const arcs = sk.ents.filter(e => e.t === "arc");
+      return { arcs: arcs.length, cons: arcs.filter(a => a.cons).map(rad), caps: arcs.filter(a => !a.cons && rad(a) < 10).map(rad), dims: sk.dims.map(d => `${d.t}:${Math.round(d.val.v * 1000) / 1000}`).join(","), ok: ed.info.status, dof: ed.info.dof };
+    });
+    check(fly === "Straight slot|Centerpoint straight slot|Centerpoint arc slot|3-point arc slot" && picked === "aslot" && preview === 3 && arc.arcs === 5 && Math.abs(arc.cons[0] - 50) < 1e-3 && arc.caps.length === 2 && arc.caps.every(r => Math.abs(r - 6) < 1e-3) && arc.dims === "diameter:12,radius:50" && arc.ok === "ok" && arc.dof <= 4,
+      `model 1.144: Centerpoint arc slot from the Slot menu, width and radius set in the Modify box (${fly}, ${picked}, ${JSON.stringify(arc)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 5 } }); }));
+    await idle();
+    const vol = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0 }; });
+    const want = (Math.PI / 2 * 50 * 12 + Math.PI * 36) * 5;
+    check(vol.ok && Math.abs(vol.v - want) < want * 0.002, `model 1.144: the arc slot extrudes to (π/2·50·12 + π·6²)·5 = ${want.toFixed(1)} mm³ (${JSON.stringify(vol)})`);
+    // A second sketch: 3-point arc slot without dimensions, then a centrepoint straight slot.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: 100, y: 100 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s2"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { window.__sv.model.editor().setTool("aslot3"); window.__sv.modeller.renderPanel(); });
+    await mp.waitForSelector("#mc-pm [data-a=slotdims]");
+    await mp.click("#mc-pm [data-a=slotdims]");
+    // Start (-25, 10) → end (-25, 50) through (-15, 30): R25 about (-40, 30), half-width 3.
+    await click([-25, 10]); await click([-25, 50]); await click([-15, 30]); await click([-12, 30]);
+    const a3 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk; return { arcs: sk.ents.filter(e => e.t === "arc").length, dims: sk.dims.length, ok: ed.info.status, box: !!document.querySelector(".mod-box"), off: ed.slotDims, saved: localStorage.getItem("mc:slotDims") }; });
+    await mp.click("#mc-pm [data-a=slotdims]");
+    await mp.evaluate(() => window.__sv.model.editor().setTool("cslot"));
+    await click([15, 15]); await click([25, 15]); await click([20, 18]);
+    await modify("8");
+    await modify("30");
+    const cs = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
+      return { mid: m && ax ? [m.x, m.y, P(ax.a).x, P(ax.b).x].map(v => Math.round(v * 1000) / 1000) : null, dims: sk.dims.map(d => `${d.t}:${d.val.v}`).join(","), ok: ed.info.status };
+    });
+    check(a3.arcs === 5 && a3.dims === 0 && a3.ok === "ok" && !a3.box && a3.off === false && a3.saved === "0", `model 1.144: 3-point arc slot with Add dimensions off (${JSON.stringify(a3)})`);
+    check(cs.mid && cs.mid[0] === 15 && cs.mid[1] === 15 && cs.mid[2] === 0 && cs.mid[3] === 30 && cs.dims === "diameter:8,distance:30" && cs.ok === "ok",
+      `model 1.144: Centerpoint straight slot stays centred on its first click as the length changes (${JSON.stringify(cs)})`);
+    const ru = await (async () => {
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      await mp.waitForTimeout(300);
+      const r = await mp.evaluate(() => document.querySelector("#mc-pm [data-a=slotdims]").closest("label").textContent.trim());
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      return r;
+    })();
+    check(ru === "Добавить размеры", `model 1.144: Add dimensions in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
