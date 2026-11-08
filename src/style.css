@@ -78,15 +78,30 @@ h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 #app {
   display: grid;
   --top-h: auto;
-  grid-template: "top top top" var(--top-h) "cm cm cm" auto "left vp right" 1fr "status status status" 28px / 270px 1fr 300px;
+  grid-template: "top top top" var(--top-h) "cm cm cm" auto "left vp right" 1fr "tabs tabs tabs" auto "status status status" 28px / var(--left-w, 270px) 1fr var(--right-w, 300px);
   height: 100vh; height: 100dvh;
   transition: grid-template-columns 180ms ease-in-out;
 }
 /* Collapsible side panels (hamburger / Ctrl+[ and Ctrl+]); state kept in localStorage. */
-#app.no-left { grid-template-columns: 0 1fr 300px; }
-#app.no-right { grid-template-columns: 270px 1fr 0; }
+#app.no-left { grid-template-columns: 0 1fr var(--right-w, 300px); }
+#app.no-right { grid-template-columns: var(--left-w, 270px) 1fr 0; }
 #app.no-left.no-right { grid-template-columns: 0 1fr 0; }
 #app.no-left .left, #app.no-right .right { display: none; }
+/* Panel grips (FR-UI-002): drag a side panel's inner edge to resize it; double-click for the default. */
+.grip { touch-action: none; z-index: 20; background: transparent; outline-offset: -2px; }
+.grip-x { width: 7px; cursor: col-resize; }
+.grip-y { height: 7px; cursor: row-resize; }
+.grip:hover, .grip:focus-visible, html.resizing .grip { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.grip-left { grid-area: left; justify-self: end; align-self: stretch; margin-right: -4px; }
+.grip-right { grid-area: right; justify-self: start; align-self: stretch; margin-left: -4px; }
+#app.no-left .grip-left, #app.no-right .grip-right { display: none; }
+html.resizing, html.resizing * { user-select: none; }
+html.resizing #app { transition: none; }
+@media (max-width: 900px) { .grip-left, .grip-right { display: none; } }
+@media (min-width: 768px) and (max-width: 1279px) { #app.gerber .grip-left { display: none; } }
+/* Dialogs resize from their corner; one resized drops the default width cap. */
+dialog { resize: both; }
+dialog.sized { max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); min-width: 240px; min-height: 120px; }
 #app.gerber { --top-h: 46px; }
 
 /* ---------- top bar ---------- */
@@ -380,7 +395,7 @@ dialog td:first-child { font-family: var(--mono); font-size: 12px; white-space: 
 
 /* ---------- small screens ---------- */
 @media (max-width: 900px) {
-  #app { grid-template: "top" var(--top-h) "cm" auto "vp" 1fr "right" 38vh "status" 28px / 1fr; }
+  #app { grid-template: "top" var(--top-h) "cm" auto "vp" 1fr "right" 38vh "tabs" auto "status" 28px / 1fr; }
   .left { display: none; }
   #app:not(.gerber) .nav-toggle, #app:not(.gerber) .panel-toggle { display: none; }
   .right { border-left: 0; border-top: 1px solid var(--line); }
@@ -475,7 +490,7 @@ input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 1px 
 
 /* Tablet, 768–1279 px: the PCB layer panel floats over the board and collapses; the tool panel stays docked. */
 @media (min-width: 768px) and (max-width: 1279px) {
-  #app.gerber { grid-template: "top top top" 46px "left vp right" 1fr "status status status" 28px / 0 1fr 280px; }
+  #app.gerber { grid-template: "top top top" 46px "left vp right" 1fr "status status status" 28px / 0 1fr var(--right-w, 280px); }
   #app.gerber.no-right { grid-template-columns: 0 1fr 0; }
   #app.gerber .right { border-top: 0; border-left: 1px solid var(--line); }
   #app.gerber .snaps.gerber-only { display: flex; }
@@ -661,6 +676,26 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 /* Sizes typed while drawing (FR-UI-052): the field name, then its value box. */
 .sk-typed { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); pointer-events: auto; font-size: 12px; color: var(--text); }
 .sk-typed .sk-input { position: static; transform: none; width: 90px; }
+/* Modify box (FR-UI-114, FR-UI-115): value, spin arrows, ✓ ✕ ⟲, next to the dimension. */
+.mod-box { position: fixed; z-index: 1200; display: grid; gap: 4px; padding: 4px 6px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); color: var(--text); font-size: 12px; }
+.mod-h { display: flex; align-items: center; min-height: 16px; color: var(--muted); font: 600 11px var(--mono); }
+.mod-r { display: flex; align-items: stretch; }
+.mod-box .sk-input { position: static; transform: none; width: 120px; border-radius: 6px 0 0 6px; }
+.mod-spin { display: grid; grid-template-rows: 1fr 1fr; }
+.mod-spin button { width: 20px; padding: 0; border: 1px solid var(--line); border-left: 0; background: var(--bg, var(--panel)); color: var(--text); font-size: 10px; line-height: 1; cursor: pointer; }
+.mod-spin button:first-child { border-radius: 0 6px 0 0; border-bottom: 0; }
+.mod-spin button:last-child { border-radius: 0 0 6px 0; }
+.mod-b { display: flex; gap: 4px; }
+.mod-b button { min-width: 30px; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg, var(--panel)); color: var(--text); font-size: 14px; cursor: pointer; }
+.mod-b button:hover, .mod-spin button:hover { background: var(--accent-soft); }
+.mod-b .mod-ok { color: #1f7a35; font-weight: 700; }
+.mod-b .mod-x { color: var(--danger); }
+:root[data-theme="dark"] .mod-b .mod-ok { color: #51cf66; }
+/* Feature dimensions shown on the model (FR-UI-114, FR-UI-115): a click opens the Modify box. */
+.mc-fdim { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; padding: 1px 6px; border: 1px solid #1d4ed8; border-radius: 4px; background: #eef3ff; color: #1d4ed8; font: 600 12px var(--mono); cursor: pointer; white-space: nowrap; }
+.mc-fdim:hover, .mc-fdim.on { background: #1d4ed8; color: #fff; }
+:root[data-theme="dark"] .mc-fdim { background: #15233f; color: #8ab4ff; border-color: #8ab4ff; }
+:root[data-theme="dark"] .mc-fdim:hover, :root[data-theme="dark"] .mc-fdim.on { background: #8ab4ff; color: #0b1220; }
 .ft { overflow: auto; flex: 1; padding: 6px 4px 12px; }
 .ft-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; cursor: pointer; user-select: none; min-height: 26px; }
 .ft-row:hover { background: var(--panel-2); }
@@ -787,6 +822,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .ft-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .ft-row.dragging { opacity: .5; }
+.ft-ext { font-size: 11px; font-weight: 700; padding: 0 2px; color: var(--muted, #6b7280); font-family: ui-monospace, monospace; }
 .ft-rel { font-size: 11px; font-weight: 700; padding: 0 2px; }
 .ft-row.ft-parent .ft-rel { color: var(--accent-text); }
 .ft-row.ft-child .ft-rel { color: #7c3aed; }
@@ -794,6 +830,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .cfg-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 .cfg-row { display: flex; align-items: center; gap: 4px; }
 .cfg-row input { flex: 1; min-width: 0; font-size: 12px; }
+.cfg-tbl { display: flex; flex-wrap: wrap; gap: 6px; }
 .cfg-row.on input { font-weight: 600; }
 .cfg-act { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-size: 14px; padding: 2px 4px; }
 
@@ -936,6 +973,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-ib { width: 26px; height: 24px; font-size: 13px; color: var(--text); }
 .motion .mo-sp { flex: 1; }
 .motion .mo-time { font-family: var(--mono); min-width: 8.5em; text-align: center; }
+.motion .mo-grip { position: absolute; left: 0; right: 0; top: -4px; }
 .motion .mo-body { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; overflow: auto; min-height: 60px; flex: 1; }
 .motion .mo-names { border-right: 1px solid var(--line); }
 .motion .mo-name { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 6px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; overflow: hidden; }
@@ -948,6 +986,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-tn { overflow: hidden; text-overflow: ellipsis; }
 .motion .mo-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; }
 .motion .mo-acts .mo-ib { width: 20px; height: 18px; font-size: 10px; }
+.motion .mo-tlw { overflow-x: auto; overflow-y: hidden; min-width: 0; }
 .motion .mo-tl { position: relative; min-width: 240px; margin: 0 10px; }
 .motion .mo-ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: col-resize; touch-action: none; }
 .motion .mo-tick { position: absolute; top: 3px; transform: translateX(-50%); color: var(--muted); font-family: var(--mono); pointer-events: none; }
@@ -1007,3 +1046,21 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .right .rp-tabs button { min-width: 30px; }
 .right .rp-tabs { position: sticky; top: 0; z-index: 2; background: var(--panel); }
 .cm-note { align-self: center; margin: 0 0 0 10px; font-size: 12px; white-space: nowrap; }
+
+/* ---------- document tabs (FR-DOC-003, FR-UI-120): one tab per open document, above the status bar ---------- */
+.doc-tabs { grid-area: tabs; display: flex; align-items: stretch; gap: 2px; min-width: 0; padding: 0 8px; height: 30px; background: var(--panel); border-top: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.doc-tabs[hidden] { display: none; }
+.doc-tabs .dt { display: flex; align-items: stretch; flex: none; max-width: 240px; border: 1px solid transparent; border-top: 0; border-radius: 0 0 6px 6px; }
+.doc-tabs .dt.on { background: var(--panel-2); border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
+.doc-tabs .dt-b { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 4px 0 10px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.doc-tabs .dt.on .dt-b { color: var(--text); font-weight: 600; }
+.doc-tabs .dt-b:hover { color: var(--text); }
+.doc-tabs .dt-b:focus-visible, .doc-tabs .dt-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.doc-tabs .dt-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-tabs .dt-dirty { color: var(--accent-text); }
+.doc-tabs .dt.under .dt-b svg { color: var(--accent-text); }
+.doc-tabs .dt-x { width: 22px; border: 0; background: none; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; border-radius: 4px; }
+.doc-tabs .dt-x:hover { color: var(--text); background: var(--panel-2); }
+/* Over a drawing the tabs stay at the bottom of the window. */
+#app.drawing .doc-tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1060; }
+#app.drawing.has-doc-tabs .drw { bottom: 30px; }

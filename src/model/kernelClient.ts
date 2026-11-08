@@ -7,6 +7,7 @@ import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
+import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
 import type { FaceRef, RecognizedHole, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
@@ -17,6 +18,8 @@ export interface Rebuild {
   sketches?: Record<string, SketchFeature>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;
+  /** Sheet metal panels and bends (FR-FT-120), for the flat pattern and its DXF. */
+  sheet?: SheetState | null;
   /** Regions each intersect feature found (FR-BODY-007). */
   regions?: Record<string, IntersectRegion[]>;
   data: PartData | null;
@@ -37,6 +40,9 @@ const RECYCLE_HEAP = 1.5 * 1024 ** 3;
 
 /** An assembly feature's result: the components it cut, or why it cut none (FR-ASM-027). */
 export interface AsmFeatureStatus { id: string; ok: boolean; cut: string[]; message?: string }
+
+/** The message of calls cut short by `stop()`. */
+export const STOPPED = "The geometry kernel was stopped.";
 
 export class ModelKernel {
   private worker: Worker | null = null;
@@ -74,6 +80,9 @@ export class ModelKernel {
   }
 
   stop() {
+    // Calls in flight end now: a parked document's rebuild must not wait for ever (it held "Rebuilding…").
+    for (const p of this.pending.values()) p.reject(new Error(STOPPED));
+    this.pending.clear();
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
@@ -112,6 +121,8 @@ export class ModelKernel {
         this.heap = r.heap;
         job.resolve(r);
       } catch (err) {
+        // Stopped on purpose (the document was closed or parked): nobody waits for this result.
+        if ((err as Error).message === STOPPED) { job.resolve(null); continue; }
         // A crashed worker: start again from the document once.
         if (!this.worker) {
           try {

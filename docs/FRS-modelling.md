@@ -475,7 +475,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 - **FR-SK-014** (P1, M) Circle: centre-radius, 3-point (P2: perimeter tangent circle).
 - **FR-SK-015** (P1, M) Arc: centre-start-end, 3-point, tangent arc from an endpoint.
 - **FR-SK-016** (P1, M) Polygon: n sides (3–64), inscribed/circumscribed, centre + vertex; adds construction circle and equal relations.
-- **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension.
+- **FR-SK-017** (P2, M) Slot: straight (overall/centre-to-centre), centre straight, 3-point arc slot, centre arc slot; with width dimension. **Done (1.144.0)**: `slot`/`cslot`/`aslot`/`aslot3` tools, live preview, width + length/radius dims with the Modify box.
 - **FR-SK-018** (P2, M) Ellipse and elliptical arc.
 - **FR-SK-019** (P2, M) Spline: interpolating through points, with optional tangency handles at ends and points; degree 3; P5: control-polygon spline and curvature handles.
 - **FR-SK-020** (P4, S) Text: font (bundled open fonts), height, along a curve option; usable for extrude/cut (embossing).
@@ -1603,8 +1603,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
 | Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
 | Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
-| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | Plain value input (Enter/Esc) | Weaker |
-| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | Double-click opens Edit feature; no feature dimensions on the model | Weaker |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | No | New |
 | Typing a number while drawing | FR-UI-052 | No | Weaker |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
@@ -1634,7 +1634,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-DOC-003 | Several documents open at once in tabs | One part, assembly or drawing at a time: opening one closes the other (`leaveOthers`) | Partly |
+| FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); camera and selection are not kept yet | Partly |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
@@ -1646,13 +1646,14 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
 | FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
-| FR-CFG-003 | Configuration table as CSV (P5, C) | No | Not built |
+| FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
 **Sketcher (section 8)**
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
+| FR-SK-006 | Section view at the sketch plane (S) | Done in 1.139.0 (sketch bar Section toggle) | Done |
+| FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.137.0 (sans/serif/mono, bold, italic, angle); along a curve in 1.142.0 | Done |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
@@ -1662,7 +1663,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
 | FR-FT-012 | Extrude end condition **Up to body** | The other P2 end conditions are built (`EndKind`); Up to body is missing | Partly |
-| FR-FT-033 | Setback fillets (P3, S) | No | Not built |
+| FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
 | FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | Two distances is built; vertex and offset-face are missing | Partly |
 | FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | Simple, counterbore, countersink, tapped and heat-set insert; blind or through all | Partly |
 | FR-FT-060 | Shell with multi-thickness faces (P3) | One thickness | Partly |
@@ -1670,18 +1671,18 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-FT-062 | Rib draft | Rib without draft | Partly |
 | FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
 | FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
-| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Tool solids are always copied | Not built |
-| FR-FT-080 | Sweep start/end tangency (P5) | Twist and guide curve are built; tangency is missing | Partly |
-| FR-FT-082 | Loft start/end constraints, connectors, guide curves | Ruled, close, centreline, start/end normal and guide curves (1.119.0) are built; connectors are missing | Partly |
+| FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
+| FR-FT-080 | Sweep start/end tangency (P5) | Done: start tangency in 1.108.0, end tangency in 1.143.0 | Done |
+| FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
 | FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
 | FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
-| FR-FT-131 | Check and heal as a feature with a before/after report (S) | Healing runs in Insert body only | Partly |
+| FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.126.0 (Check-Heal feature; Insert body also heals) | Built |
 
 **Assemblies (section 10)**
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Open part edits it apart from the assembly | Not built |
+| FR-ASM-030 | In-context design: edit a part inside the assembly, references to other components | Edit in context (1.135.0): the assembly shown around the part, sketches on other components' flat faces, External References list with lock / lock all | Built (planes; converted edges not yet) |
 
 **Planned, not started:** P6 sheet metal (FR-FT-120), weldments (FR-FT-121), motion (FR-FT-122) and the scripting console; P7 server vault and git backend (FR-PDM-072, FR-PDM-073).
 

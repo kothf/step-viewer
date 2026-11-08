@@ -7,6 +7,7 @@
 import type { SketchFeature, SkEnt, V2 } from "../model/types";
 import { ellOf, ellParam, ellPts, ellSweep, type Ell } from "./ellipse";
 import { bezPts, splineBezier } from "./spline";
+import { textLoops } from "./text";
 
 export type Seg =
   | { ent: string; kind: "line"; a: V2; b: V2 }
@@ -142,6 +143,8 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
     }
     loops.push(loop);
   }
+  // Text (FR-SK-020): each glyph contour is a closed loop of its own; letter holes nest like any other.
+  for (const e of sk.ents) if (e.t === "text" && !e.cons && !skip.has(e.id)) loops.push(...textLoops(e, pt(m, e.p), textPath(sk.ents, e)));
   // Crossing lines (a figure eight, overlapping rectangles) are not supported yet.
   const lines = loops.flatMap(l => l.filter(s => s.kind === "line")) as Extract<Seg, { kind: "line" }>[];
   for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
@@ -222,7 +225,31 @@ export function sketchCurves(sk: SketchFeature): Seg[] {
     else if (e.t === "ellipse") {
       const el = ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b));
       out.push(e.p0 && e.p1 ? { ent: e.id, kind: "earc", el, a: pt(m, e.p0), b: pt(m, e.p1), ccw: true } : { ent: e.id, kind: "ellipse", el });
-    }
+    } else if (e.t === "text") out.push(...textLoops(e, pt(m, e.p), textPath(sk.ents, e)).flat());
   }
   return out;
+}
+
+/**
+ * The curve a text follows (FR-SK-020), as a polyline in the direction of travel (reversed by `flip`);
+ * undefined when the text is straight or its curve is gone.
+ */
+export function textPath(ents: SkEnt[], e: Extract<SkEnt, { t: "text" }>): V2[] | undefined {
+  if (!e.along) return undefined;
+  const m = new Map(ents.map(x => [x.id, x] as const));
+  const c = m.get(e.along);
+  if (!c) return undefined;
+  let out: V2[];
+  try {
+    if (c.t === "line") out = [pt(m, c.a), pt(m, c.b)];
+    else if (c.t === "arc") { const cc = pt(m, c.c), a = pt(m, c.a), b = pt(m, c.b); out = [...loopPolygon([{ ent: c.id, kind: "arc", c: cc, r: Math.hypot(a[0] - cc[0], a[1] - cc[1]), a, b, ccw: true }], 64), b]; }
+    else if (c.t === "circle") { out = loopPolygon([{ ent: c.id, kind: "circle", c: pt(m, c.c), r: c.r }], 48); out.push(out[0]); }
+    else if (c.t === "spline") { if (c.pts.length < 2) return undefined; const bz = splineBezier(c.pts.map(q => pt(m, q)), !!c.closed && c.pts.length >= 3); out = bezPts(bz, 16); }
+    else if (c.t === "ellipse") {
+      const el = ellOf(pt(m, c.c), pt(m, c.a), pt(m, c.b));
+      if (c.p0 && c.p1) { const ta = ellParam(el, pt(m, c.p0)); out = ellPts(el, ta, ellSweep(ta, ellParam(el, pt(m, c.p1))), 64); }
+      else out = ellPts(el, 0, 2 * Math.PI, 96);
+    } else return undefined;
+  } catch { return undefined; }
+  return e.flip ? out.reverse() : out;
 }

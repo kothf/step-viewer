@@ -14,11 +14,12 @@ import { activateState, addState, deleteState } from "./states";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
+import { ctxRefs, syncCtx, type CtxComp, type PartContext } from "../model/context";
 import { mateDefaults, mateTypes, placeGeo, solve, type Geo, type SolveResult } from "./solver";
 import { folderPath, hashBytes, planLinks, type LinkFile } from "./links";
 import { FASTENERS, defaultLength, fastenerInfo, fastenerLengths, fastenerName, fastenerPart, fastenerSizes, type FastenerKind } from "./fasteners";
 import { applySolved, autoExplode, expandPatterns, explodeOffsets, flattenSubs, patternSteps, solveView, topOf, type Expanded } from "./patterns";
-import type { AsmFeatureStatus } from "../model/kernelClient";
+import { STOPPED, type AsmFeatureStatus } from "../model/kernelClient";
 import type { AsmComponentStatus, AsmDoc, AsmFeature, CompPattern, Component, ExplodeStep, ExplodeView, Mate, MateRef, MateType, Tf } from "./types";
 import type { BodyProps, PartDoc, V3 } from "../model/types";
 import type { PartData, TreeNode } from "../topology";
@@ -35,8 +36,12 @@ export interface AsmHost {
   selectLeftTab(tab: string): void;
   /** Another document kind takes over (the part modeller closes). */
   leaveOthers(): void;
+  /** An assembly was opened or made (document tabs). */
+  opened?(label: string): void;
+  /** Parts open in other document tabs, for Insert component. */
+  openParts?(): { doc: PartDoc; fileName: string }[];
   /** Opens a part in the modeller (edit part in place); `back` is called with the edited part. */
-  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void): void;
+  editPart?(doc: PartDoc, fileName: string, label: string, back: (doc: PartDoc) => void, ctx?: PartContext): void;
   /** The part open in the modeller, if any (Make assembly from part). */
   openPart?(): { doc: PartDoc; fileName: string } | null;
   appVersion: string;
@@ -59,6 +64,9 @@ const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symme
 /** The mate being made or edited in the Mate panel. */
 interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; problem?: string }
 
+/** An assembly kept in a document tab while another document is shown. */
+export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
+
 export class AsmController {
   doc: AsmDoc | null = null;
   private undoStack: string[] = [];
@@ -76,6 +84,7 @@ export class AsmController {
   private moving: string | null = null;
   private building = false;
   private again = false;
+  private gen = 0;
   private first = true;
   private drag: { id: string; idx: number; plane: THREE.Plane; start: THREE.Vector3; delta: THREE.Vector3; moved: boolean; mated: boolean; result?: Record<string, Tf>; touching?: Set<string>; stopped?: boolean; grab?: MateRef } | null = null;
   /** Collision detection while dragging (FR-MATE-002): the drag stops where a component would enter another. */
@@ -88,6 +97,8 @@ export class AsmController {
   /** The top-level transforms the shown meshes were built with (sub-assembly children follow theirs). */
   private builtTf: Record<string, Tf> = {};
   private faceNames: string[][] = [];
+  /** Rebuilds in a row that moved in-context references (stops a part chasing its own faces). */
+  private ctxPasses = 0;
   /** The last mate solve: degrees of freedom and failing mates. */
   solved: SolveResult | null = null;
   mating: MateDraft | null = null;
@@ -170,6 +181,25 @@ export class AsmController {
     catch (err) { toast(t("Could not open {name}: {err}", { name: file.name, err: t((err as Error).message) }), true); }
   }
 
+  /** Document tabs (FR-DOC-003): the open assembly with its undo history, kept while another document is shown. */
+  park(): AsmTab | null {
+    if (!this.doc) return null;
+    this.closeTools();
+    const tab: AsmTab = { doc: this.doc, fileName: this.fileName, handle: this.handle, undo: this.undoStack, redo: this.redoStack, savedAt: this.savedAt, sel: this.selected };
+    this.close();
+    return tab;
+  }
+
+  /** Shows a parked assembly again. */
+  resume(tab: AsmTab) {
+    this.load(tab.doc, tab.fileName, tab.handle);
+    this.undoStack = tab.undo;
+    this.redoStack = tab.redo;
+    this.savedAt = tab.savedAt;
+    this.selected = tab.sel;
+    this.renderAll();
+  }
+
   private load(doc: AsmDoc, fileName: string, handle: FileSystemFileHandle | null) {
     this.host.leaveOthers();
     this.motion?.close();
@@ -199,6 +229,7 @@ export class AsmController {
     this.host.selectLeftTab("asm");
     this.kernel.warm();
     this.renderAll();
+    this.host.opened?.(this.label());
     this.rebuild();
   }
 
@@ -213,6 +244,10 @@ export class AsmController {
     this.exploding = null;
     this.exploded = null;
     this.clearOverlay();
+    this.gen++;
+    this.building = false;
+    this.again = false;
+    $("#asm-busy").hidden = true;
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("asm");
     this.host.viewer.emptySize = 1;
@@ -233,6 +268,7 @@ export class AsmController {
     const next = JSON.parse(before) as AsmDoc;
     fn(next);
     this.applySolve(next);
+    this.syncContext(next);
     if (this.interfere?.pairs) { this.interfere.pairs = null; this.clearOverlay(); }
     if (JSON.stringify(next) === before) { this.renderTree(); return; }
     this.undoStack.push(before);
@@ -262,6 +298,8 @@ export class AsmController {
     if (!this.doc) return;
     if (this.building) { this.again = true; return; }
     this.building = true;
+    // Closing or parking the assembly starts a new generation: a build still in flight then just ends.
+    const gen = this.gen;
     this.idle = (async () => {
       do {
         this.again = false;
@@ -271,6 +309,7 @@ export class AsmController {
         try {
           const ex = this.expand(doc);
           const r = await this.kernel.assembly(ex.doc);
+          if (gen !== this.gen) return;
           if (this.doc !== doc && this.again) continue;
           this.statuses = r.statuses;
           this.featStatus = r.features ?? [];
@@ -281,7 +320,10 @@ export class AsmController {
           this.host.show(r.parts.map(p => p.data), tree, this.first && r.parts.length > 0);
           if (r.parts.length) this.first = false;
           this.applyOpacity();
-        } catch (err) { toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true); }
+        } catch (err) {
+          if (gen !== this.gen || (err as Error).message === STOPPED) return;
+          toast(t("The assembly could not be rebuilt: {err}", { err: (err as Error).message }), true);
+        }
       } while (this.again);
       $("#asm-busy").hidden = true;
       this.building = false;
@@ -293,6 +335,10 @@ export class AsmController {
         this.solved = r;
         if (r.ok && r.moved) { applySolved(this.doc, r.tfs); this.renderTree(); this.rebuild(); return; }
       }
+      // In-context parts (FR-ASM-030) follow the faces they reference, now that the faces are known.
+      if (this.doc && this.syncContext(this.doc)) {
+        if (++this.ctxPasses <= 3) { this.renderTree(); this.rebuild(); return; }
+      } else this.ctxPasses = 0;
       // Patterns whose direction was learnt only now: build again with their instances.
       const before = this.expanded?.bad.length ?? 0;
       if (this.doc?.patterns?.length && before && this.expand(this.doc).bad.length < before) { this.rebuild(); return; }
@@ -1445,11 +1491,22 @@ export class AsmController {
       if (src) this.insertPart(src.pd, f.name, src.asm);
     };
     if (file) { void run(file); return; }
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
-    inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
-    inp.click();
+    const browse = () => {
+      const inp = document.createElement("input");
+      inp.type = "file";
+      inp.accept = `${PART_EXT},${ASM_EXT},.step,.stp,.iges,.igs,.brep`;
+      inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
+      inp.click();
+    };
+    // Parts open in other tabs come first, as SolidWorks lists open documents (FR-DOC-003).
+    const open = this.host.openParts?.() ?? [];
+    const btn = document.querySelector<HTMLElement>('#asm-tools [data-ac="insert"]');
+    if (!open.length || !btn) { browse(); return; }
+    const r = btn.getBoundingClientRect();
+    this.popup([
+      ...open.map(o => [t("Open document: {name}", { name: o.fileName }), () => this.insertPart(JSON.parse(JSON.stringify(o.doc)) as PartDoc, o.fileName)] as [string, () => void]),
+      [t("Browse…"), browse],
+    ], r.left, r.bottom + 4);
   }
 
   /** Adds a component of this part (or sub-assembly) document, named after its file. */
@@ -1700,7 +1757,7 @@ export class AsmController {
   }
 
   /** Open part (FR-ASM-007): the part goes to the modeller; Return to assembly brings the edit back as one undo step. */
-  editPart(id: string) {
+  editPart(id: string, inContext = false) {
     const c = this.comp(id), doc = this.doc, entry = c && doc?.parts[c.part];
     if (!c || !doc || !entry || !this.host.editPart) return;
     if (entry.asm) { toast(t("Open the sub-assembly's own file to edit it."), true); return; }
@@ -1713,7 +1770,64 @@ export class AsmController {
       this.selected = parked.sel;
       if (JSON.stringify(pd) !== JSON.stringify(parked.doc.parts[parked.key]?.doc)) this.change(d => { if (d.parts[parked.key]) d.parts[parked.key].doc = pd; });
       else this.renderAll();
+    }, inContext ? this.contextOf(c.id) : undefined);
+  }
+
+  /**
+   * Edit in context (FR-ASM-030): the other shown components as the modeller sees them, in world mm, with
+   * their face names and the planes of their flat faces. Components that use the same part are left out
+   * (a part cannot reference itself).
+   */
+  private contextOf(id: string): PartContext | undefined {
+    const c = this.comp(id);
+    if (!c) return undefined;
+    const comps: CtxComp[] = [];
+    const v = new THREE.Vector3();
+    this.shownIds.forEach((sid, i) => {
+      const top = this.comp(topOf(sid)), part = this.host.viewer.parts[i], names = this.faceNames[i];
+      const own = this.anyComp(sid);
+      if (!top || top.id === c.id || !part || !names || !part.mesh.visible || own?.part === c.part) return;
+      part.mesh.updateMatrixWorld(true);
+      const m = part.mesh.matrixWorld, src = part.data.positions, pos = new Float32Array(src.length);
+      for (let k = 0; k < src.length; k += 3) { v.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(m); pos[k] = v.x; pos[k + 1] = v.y; pos[k + 2] = v.z; }
+      const nm = new THREE.Matrix3().getNormalMatrix(m);
+      const faces = part.data.faces.map((f, j) => {
+        const out: CtxComp["faces"][number] = { triStart: f.triStart, triCount: f.triCount, name: names[j] ?? "" };
+        if (f.type === "plane" && f.normal) {
+          const p = new THREE.Vector3(...f.centroid).applyMatrix4(m), n = new THREE.Vector3(...f.normal).applyMatrix3(nm).normalize();
+          out.plane = { p: [p.x, p.y, p.z], n: [n.x, n.y, n.z] };
+        }
+        return out;
+      });
+      comps.push({ comp: sid, label: own?.name ?? sid, positions: pos, index: part.data.index.slice(), faces });
     });
+    return { host: c.id, tf: c.tf.slice(), comps };
+  }
+
+  /**
+   * Moves the unlocked external references of in-context parts (FR-ASM-030) to where their faces are now:
+   * the face's plane from the learnt part geometry, placed by its component, seen from the host component.
+   * Returns whether a part changed (the document is changed in place).
+   */
+  private syncContext(doc: AsmDoc): boolean {
+    let any = false;
+    for (const entry of Object.values(doc.parts)) {
+      if (!entry.doc || entry.asm || !ctxRefs(entry.doc).length) continue;
+      const r = syncCtx(entry.doc, ref => {
+        const host = doc.components.find(x => x.id === ref.host), c = this.anyCompIn(doc, ref.comp);
+        const g = c && this.geo.get(c.part)?.get(ref.face);
+        if (!host || !c || !g || g.k !== "plane") return null;
+        const inv = invert(host.tf), w = placeGeo(g, c.tf) as { p: V3; n: V3 };
+        return { p: applyPoint(inv, w.p), n: unit(applyDir(inv, w.n)) };
+      });
+      if (r.changed) any = true;
+    }
+    return any;
+  }
+
+  /** A component of `doc` by id, pattern and sub-assembly instances included. */
+  private anyCompIn(doc: AsmDoc, id: string): Component | undefined {
+    return (doc === this.doc ? this.anyComp(id) : doc.components.find(x => x.id === id) ?? this.anyComp(id)) ?? undefined;
   }
 
   setColor(id: string, color: V3 | null) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (color) c.color = color; else delete c.color; } }); }
@@ -2141,7 +2255,7 @@ export class AsmController {
 
   private menu(c: Component, x: number, y: number) {
     this.popup([
-      ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void]]),
+      ...(this.doc?.parts[c.part]?.asm ? [[c.flexible ? t("Make rigid") : t("Make flexible"), () => this.setFlexible(c.id, !c.flexible)] as [string, () => void]] : [[t("Open part"), () => this.editPart(c.id)] as [string, () => void], [t("Edit in context"), () => this.editPart(c.id, true)] as [string, () => void]]),
       ...(this.doc?.parts[c.part]?.asm ? [] : [[t("Mate references…"), () => this.startMateRef(c.id)] as [string, () => void]]),
       ...(this.partConfigs(c.id).names.length > 1 ? [[t("Configuration…"), () => this.popup(this.partConfigs(c.id).names.map(n => [`${n === this.partConfigs(c.id).current ? "● " : ""}${n}`, () => this.setComponentConfig(c.id, n)] as [string, () => void]), x, y)] as [string, () => void]] : []),
       [c.fixed ? t("Float") : t("Fix"), () => this.setFixed(c.id, !c.fixed)],

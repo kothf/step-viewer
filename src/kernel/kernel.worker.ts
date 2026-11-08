@@ -151,7 +151,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         }
         preview = { position, status };
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, regions: res.regions, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, cutList: cut, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, regions: res.regions, sheet: res.sheet, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, cutList: cut, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
       shared ??= new WeakMap();

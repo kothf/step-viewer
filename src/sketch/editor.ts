@@ -9,7 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import type { Viewer } from "../viewer/Viewer";
-import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, V2 } from "../model/types";
+import type { EdgeRef, Frame, RelKind, SkDim, SkEnt, SketchFeature, SkRel, TextFont, TextOutline, V2 } from "../model/types";
 import { applyExt, projectEdge, uvOf, type ExtGeo, type ModelEdge } from "./external";
 import { renameIn } from "../model/params";
 import { ORIGIN, freeDirections, measureDim, solve, tryAdd, type SolveResult } from "./solver";
@@ -18,8 +18,12 @@ import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
+import { ModifyBox } from "../modifyBox";
 import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
+import { textBox, textKey, textOutline, textPolys } from "./text";
+import { inPolygon, textPath } from "./profile";
+import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
 export function refPts(e: SkEnt): string[] {
@@ -28,6 +32,7 @@ export function refPts(e: SkEnt): string[] {
   if (e.t === "circle") return [e.c];
   if (e.t === "arc") return [e.c, e.a, e.b];
   if (e.t === "spline") return e.pts.slice();
+  if (e.t === "text") return [e.p];
   return [e.c, e.a, e.b, ...(e.p0 ? [e.p0] : []), ...(e.p1 ? [e.p1] : [])];
 }
 
@@ -46,7 +51,7 @@ export type SketchPattern =
   | { kind: "rotate"; c: V2; centre: string | null; angle: number; copy: boolean; keep: boolean }
   | { kind: "scale"; c: V2; centre: string | null; k: number; copy: boolean; keep: boolean };
 
-export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "ellipse" | "earc" | "spline" | "point" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
+export type SkTool = "select" | "line" | "rect" | "crect" | "circle" | "circle3" | "arc" | "arc3" | "polygon" | "slot" | "cslot" | "aslot" | "aslot3" | "ellipse" | "earc" | "spline" | "point" | "text" | "trim" | "extend" | "split" | "fillet" | "chamfer" | "offset" | "convert" | "intersect" | "dim" | "hord" | "vord";
 
 export interface SketchHost {
   viewer: Viewer;
@@ -109,6 +114,8 @@ export class SketchEditor {
   tool: SkTool = "select";
   /** Polygon sides (3–64) and the sketch fillet radius (mm), set in the panel. */
   polySides = 6;
+  /** Text tool settings (FR-SK-020): what a click places; the panel edits a selected text's own. */
+  textOpts: { text: string; h: number; font: TextFont; bold: boolean; italic: boolean } = { text: "Text", h: 5, font: "sans", bold: false, italic: false };
   filletRadius = 2;
   /** Sketch chamfer distance and offset distance (mm), set in the panel. */
   chamferDist = 2;
@@ -270,6 +277,12 @@ export class SketchEditor {
       else if (e.t === "arc") d = arcDist(p, this.pt(e.c), this.pt(e.a), this.pt(e.b));
       else if (e.t === "spline") d = nearestOn(this.splineLine(e), p).d;
       else if (e.t === "ellipse") d = e.p0 && e.p1 ? earcDist(this.ell(e), this.pt(e.p0), this.pt(e.p1), p) : ellDist(this.ell(e), p);
+      else if (e.t === "text") {
+        // Anywhere in the text's box picks it, the outline a little more surely.
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e);
+        d = Math.min(...textPolys(e, at, path).map(l => nearestOn(l, p).d), Infinity);
+        if (d >= tol && inPolygon(p, textBox(e, at, path))) d = tol * 0.6;
+      }
       if (d < tol) out.push({ id: e.id, kind: e.t as Hit["kind"], d: d + tol * 0.25 });
     }
     return out.sort((a, b) => a.d - b.d);
@@ -507,6 +520,47 @@ export class SketchEditor {
     return { c, u, r1, r2 };
   }
 
+  /** Text tool: the outline is made first (the font loads once), then the text goes in as one step and is selected. */
+  private async placeText(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]) {
+    const o = { ...this.textOpts };
+    if (!o.text.trim()) { this.host.toast(t("Type the text first."), "error"); return; }
+    let gl: TextOutline;
+    try { gl = await textOutline(o); } catch { this.host.toast(t("The font could not be loaded."), "error"); return; }
+    const pid = this.usePoint(p, snapId, curve, rels);
+    const id = uid("t");
+    this.sk.ents.push({ id, t: "text", p: pid, text: o.text, h: o.h, ...(o.font !== "sans" ? { font: o.font } : {}), ...(o.bold ? { bold: true } : {}), ...(o.italic ? { italic: true } : {}), gl });
+    this.sk.rels.push(...rels);
+    this.commit("Add text");
+    this.setTool("select");
+    this.selection = new Set([id]);
+    this.render();
+    this.host.onSelection?.([id]);
+  }
+
+  /** Changes a text (FR-SK-020): its outline is remade when the text or the font changes, then one undo step. */
+  async setText(id: string, patch: Partial<Pick<Extract<SkEnt, { t: "text" }>, "text" | "h" | "ang" | "font" | "bold" | "italic" | "along" | "flip">>) {
+    const e = this.ent(id);
+    if (!e || e.t !== "text") return;
+    const next = { ...e, ...patch };
+    if (!next.text.trim()) { this.host.toast(t("Type the text first."), "error"); return; }
+    if (!(next.h > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
+    let gl = e.gl;
+    if (!gl || gl.key !== textKey(next)) {
+      try { gl = await textOutline(next); } catch { this.host.toast(t("The font could not be loaded."), "error"); return; }
+    }
+    const cur = this.ent(id);
+    if (!cur || cur.t !== "text") return;
+    Object.assign(cur, patch, { gl });
+    if (cur.font === "sans") delete cur.font;
+    if (!cur.bold) delete cur.bold;
+    if (!cur.italic) delete cur.italic;
+    if (!cur.ang) delete cur.ang;
+    if (!cur.along) { delete cur.along; delete cur.flip; }
+    if (!cur.flip) delete cur.flip;
+    this.commit("Edit text");
+    this.render();
+  }
+
   /** A point for a new entity: an existing point, the origin (fixed by a relation), or a new one. */
   private usePoint(p: V2, snapId: string | null, curve: string | null, rels: SkRel[]): string {
     if (snapId && snapId !== ORIGIN) return snapId;
@@ -529,6 +583,7 @@ export class SketchEditor {
       this.commit(label);
     };
     if (this.tool === "point") { this.usePoint(p, s.id, s.curve, rels); finish("Add point"); return; }
+    if (this.tool === "text") { void this.placeText(p, s.id, s.curve, rels); return; }
     if (this.tool === "line") {
       if (!d.pts.length) { d.pts = [p]; d.ids = [s.id && s.id !== ORIGIN ? s.id : null]; d.chainStart = s.id ?? undefined; d.snapCurve = s.curve; d.snapOrigin = s.id === ORIGIN; this.render(); return; }
       const a0 = d.pts.at(-1)!;
@@ -643,18 +698,57 @@ export class SketchEditor {
       this.render();
       return;
     }
-    if (this.tool === "slot") {
+    if (this.tool === "slot" || this.tool === "cslot") {
+      // Straight slot: two centres, or (centrepoint) the middle and one end, then the width (FR-SK-017).
       if (d.pts.length < 2) {
         if (d.pts.length && Math.hypot(p[0] - d.pts[0][0], p[1] - d.pts[0][1]) < this.px(p) * 3) return;
         d.pts.push(p); d.ids.push(s.id); this.render(); return;
       }
-      const [c1, c2] = d.pts;
+      const centred = this.tool === "cslot";
+      const [c1, c2] = slotCentres(d.pts[0], d.pts[1], centred);
       const w = Math.abs(lineSide(c1, c2, p));
       if (w < this.px(p) * 2) return;
-      this.addSlot(c1, c2, w, d.ids[0], d.ids[1], rels);
-      finish("Add slot");
+      const made = this.addSlot(c1, c2, w, centred ? null : d.ids[0], d.ids[1], rels);
+      if (centred) rels.push({ id: uid("r"), t: "midpoint", e: [this.usePoint(d.pts[0], d.ids[0], null, rels), made.axis] });
+      const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]], g = this.px(p) * 28;
+      this.sk.rels.push(...rels.splice(0));
+      const sizes = this.slotSizes([
+        { t: "diameter", e: [made.cap1], pos: [c1[0] - u[0] * (w + g), c1[1] - u[1] * (w + g)] },
+        { t: "distance", e: [made.axis], pos: [(c1[0] + c2[0]) / 2 + n[0] * (w + g), (c1[1] + c2[1]) / 2 + n[1] * (w + g)] },
+      ]);
+      finish(centred ? "Add centerpoint slot" : "Add slot");
       this.draft = { pts: [], ids: [], cursor: null, snap: null };
       this.render();
+      this.openSizes(sizes);
+      return;
+    }
+    if (this.tool === "aslot" || this.tool === "aslot3") {
+      // Arc slots: centre, start, end (centrepoint) or start, end, a point on the arc (3-point), then the width.
+      if (d.pts.length && Math.hypot(p[0] - d.pts.at(-1)![0], p[1] - d.pts.at(-1)![1]) < this.px(p) * 3) return;
+      if (d.pts.length < 3) {
+        if (d.pts.length === 2 && !this.slotAxis(d.pts[0], d.pts[1], p)) return;
+        d.pts.push(p); d.ids.push(s.id); this.render(); return;
+      }
+      const ax = this.slotAxis(d.pts[0], d.pts[1], d.pts[2])!;
+      const w = arcSlotHalfWidth(ax, p);
+      if (w < this.px(p) * 2) return;
+      const [oId, c1Id, c2Id] = this.tool === "aslot" ? [d.ids[0], d.ids[1], null]
+        : ax.swapped ? [null, d.ids[1], d.ids[0]] : [null, d.ids[0], d.ids[1]];
+      const k = arcSlotCorners(ax, w);
+      const P = (q: V2, id: string | null) => this.usePoint(q, id, null, rels);
+      const made = arcSlotEnts({ o: P(ax.o, oId), c1: P(ax.c1, c1Id), c2: P(ax.c2, c2Id), o1: P(k.o1, null), o2: P(k.o2, null), i1: P(k.i1, null), i2: P(k.i2, null) }, uid);
+      this.sk.ents.push(...made.ents);
+      this.sk.rels.push(...rels.splice(0), ...made.rels);
+      const out = (c: V2, r: number): V2 => { const v = norm2(sub2(c, ax.o)); return [ax.o[0] + v[0] * r, ax.o[1] + v[1] * r]; };
+      const g = this.px(p) * 28;
+      const sizes = this.slotSizes([
+        { t: "diameter", e: [made.cap1], pos: out(ax.c1, ax.r + w + g) },
+        { t: "radius", e: [made.centre], pos: out(arcSlotOutline(ax, 0)[0][24], ax.r * 0.55) },
+      ]);
+      finish("Add arc slot");
+      this.draft = { pts: [], ids: [], cursor: null, snap: null };
+      this.render();
+      this.openSizes(sizes);
       return;
     }
     if (this.tool === "polygon") {
@@ -717,7 +811,7 @@ export class SketchEditor {
         const r = this.materialize(ms);
         const id = r.id ?? r.curve;
         const ent = id ? this.ent(id) : undefined;
-        if (ent && ent.t !== "ellipse" && ent.t !== "spline") h = { id: ent.id, kind: ent.t, d: 0 };
+        if (ent && ent.t !== "ellipse" && ent.t !== "spline" && ent.t !== "text") h = { id: ent.id, kind: ent.t, d: 0 };
       }
     }
     if (!h) { this.selection.clear(); dd.picks = []; this.render(); return; }
@@ -859,58 +953,73 @@ export class SketchEditor {
     setTimeout(() => this.editDim(dim.id), 0);
   }
 
-  /** Opens the value box on a dimension. */
-  editDim(id: string) {
+  /** Opens the Modify box on a dimension (FR-UI-114): the sketch follows the value as it is typed. */
+  editDim(id: string, then?: () => void) {
+    if (this.disposed) return;
     const dim = this.sk.dims.find(d => d.id === id);
     if (!dim || dim.driven) return;
     const label = this.labels.get(id);
     if (!label) return;
     this.closeInput(false);
-    const inp = document.createElement("input");
-    inp.className = "sk-input";
-    inp.setAttribute("aria-label", t("Dimension value"));
     const u = this.host.unit();
-    inp.value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
-    inp.style.left = label.style.left;
-    inp.style.top = label.style.top;
-    this.host.layer.appendChild(inp);
-    this.input = inp;
-    inp.dataset.dim = id;
-    inp.focus();
-    inp.select();
-    inp.addEventListener("keydown", e => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); this.closeInput(true); }
-      else if (e.key === "Escape") { e.preventDefault(); this.closeInput(false); }
+    const orig = this.sk, origInfo = this.info;
+    const lr = label.getBoundingClientRect();
+    const value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
+    // The sketch with the typed value, solved; an error key when it cannot be.
+    const tryValue = (text: string): { sk: SketchFeature; r: SolveResult } | { err: string; params?: Record<string, string | number> } | null => {
+      let v: number;
+      try { v = evaluate(text, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
+      catch (err) { return { err: (err as ExprError).key ?? String(err), params: (err as ExprError).params }; }
+      if (dim.t !== "angle" && !(v > 0)) return { err: "The value must be more than 0." };
+      if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(text) ? "" : text.trim())) return null;
+      const next: SketchFeature = structuredClone(orig);
+      const nd = next.dims.find(d => d.id === dim.id)!;
+      nd.val = isPlain(text) ? { v } : { v, expr: text.trim() };
+      const r = solve(next);
+      if (r.status !== "ok") return { err: "That value cannot be reached with the other relations and dimensions." };
+      return { sk: next, r };
+    };
+    const restore = () => { if (this.sk !== orig && !this.disposed) { this.sk = orig; this.info = origInfo; this.render(); } };
+    const box = new ModifyBox({
+      at: { x: lr.right, y: lr.top + lr.height / 2 },
+      title: `${dim.name}@${this.sk.name}`,
+      value,
+      step: dim.t === "angle" ? 1 : u.name === "in" ? 0.1 : 1,
+      live: true,
+      preview: text => {
+        if (this.disposed) return;
+        const r = tryValue(text);
+        if (!r || "err" in r) { restore(); return; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.render();
+      },
+      accept: text => {
+        if (this.input === box.input) this.input = null;
+        if (this.disposed) return true;
+        const r = tryValue(text);
+        if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); return true; }
+        if (!r) { restore(); if (then) setTimeout(then, 0); return true; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.commit("Change dimension");
+        this.render();
+        if (then) setTimeout(then, 0);
+        return true;
+      },
+      cancel: () => { if (this.input === box.input) this.input = null; restore(); },
     });
-    inp.addEventListener("blur", () => setTimeout(() => this.closeInput(true), 0));
+    this.input = box.input;
+    this.modify = box;
   }
 
+  private modify: ModifyBox | null = null;
+
   private closeInput(apply: boolean) {
-    const inp = this.input;
-    if (!inp) return;
+    const box = this.modify;
+    this.modify = null;
+    if (box) box.close(apply);
     this.input = null;
-    inp.remove();
-    if (!apply || this.disposed) return;
-    const dim = this.sk.dims.find(d => d.id === inp.dataset.dim);
-    if (!dim) return;
-    let v: number;
-    try { v = evaluate(inp.value, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
-    catch (err) { this.host.toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), "error"); return; }
-    if (dim.t !== "angle" && !(v > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
-    if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(inp.value) ? "" : inp.value)) return;
-    const next: SketchFeature = structuredClone(this.sk);
-    const nd = next.dims.find(d => d.id === dim.id)!;
-    nd.val = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
-    const r = solve(next);
-    if (r.status !== "ok") {
-      this.host.toast(t("That value cannot be reached with the other relations and dimensions."), "error");
-      return;
-    }
-    this.sk = next;
-    this.info = r;
-    this.commit("Change dimension");
-    this.render();
   }
 
   /** Renames a dimension (FR-SK-065); expressions that use "old@Sketch" follow. Returns an error key, or "". */
@@ -1208,6 +1317,7 @@ export class SketchEditor {
       if (e.t === "point") return [[e.x, e.y]];
       if (e.t === "ellipse") return this.ellLine(e);
       if (e.t === "spline") return this.splineLine(e);
+      if (e.t === "text") return textBox(e, this.pt(e.p), textPath(this.sk.ents, e));
       const g = curveOf(e, q => this.pt(q));
       if (!g) return [];
       const n = 48;
@@ -1226,7 +1336,7 @@ export class SketchEditor {
   // ---------- slot (FR-SK-017) ----------
 
   /** Straight slot: two centres, half-width w; two lines and two end arcs, tangent, on a construction centre line. */
-  private addSlot(c1: V2, c2: V2, w: number, id1: string | null, id2: string | null, rels: SkRel[]) {
+  private addSlot(c1: V2, c2: V2, w: number, id1: string | null, id2: string | null, rels: SkRel[]): { axis: string; cap1: string } {
     const u = norm2(sub2(c2, c1)), n: V2 = [-u[1], u[0]];
     const P = (c: V2, k: number): V2 => [c[0] + n[0] * w * k, c[1] + n[1] * w * k];
     const c1Id = this.usePoint(c1, id1, null, rels), c2Id = this.usePoint(c2, id2, null, rels);
@@ -1245,6 +1355,36 @@ export class SketchEditor {
     );
     if (Math.abs(u[1]) < 1e-9) rels.push({ id: uid("r"), t: "horizontal", e: [axis] });
     else if (Math.abs(u[0]) < 1e-9) rels.push({ id: uid("r"), t: "vertical", e: [axis] });
+    return { axis, cap1 };
+  }
+
+  /** The arc slot's centre line from the first three clicks of the tool in use. */
+  private slotAxis(a: V2, b: V2, c: V2): ArcSlotAxis | null {
+    return this.tool === "aslot" ? centreArcAxis(a, b, c) : threePointArcAxis(a, b, c);
+  }
+
+  /** Slot tools add their sizes as dimensions (SolidWorks' "Add dimensions"), unless turned off. */
+  slotDims = true;
+
+  /** Adds the dimensions that tell something (a snapped end may already fix one); returns their ids. */
+  private slotSizes(list: { t: SkDim["t"]; e: string[]; pos: V2 }[]): string[] {
+    if (!this.slotDims) return [];
+    const made: string[] = [];
+    for (const x of list) {
+      const dim: SkDim = { id: uid("d"), name: this.nextDimName(), t: x.t, e: x.e, val: { v: 0 }, pos: x.pos };
+      dim.val.v = measureDim(this.sk, dim);
+      const r = tryAdd(this.sk, { dim });
+      if (!r.ok || r.redundant) continue;
+      this.sk = r.sketch;
+      made.push(dim.id);
+    }
+    return made;
+  }
+
+  /** Opens the Modify box on each new size in turn: width, then length or radius (FR-UI-114). */
+  private openSizes(ids: string[]) {
+    if (!ids.length) return;
+    setTimeout(() => this.editDim(ids[0], () => this.openSizes(ids.slice(1))), 0);
   }
 
   // ---------- extend, split, chamfer (FR-SK-031, 032, 033) ----------
@@ -1486,6 +1626,7 @@ export class SketchEditor {
       // A mirror image runs the other way round: the ends swap.
       else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p1), p1: point(e.p0) } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
       else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
+      else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) }); made.push(id); }
       else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.b), b: point(e.a), ...(e.cons ? { cons: true } : {}) }); made.push(id); }
     }
     this.selection = new Set(made);
@@ -1561,6 +1702,7 @@ export class SketchEditor {
         else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
         else if (e.t === "ellipse") out.push(this.ellLine(e, mv));
         else if (e.t === "spline") out.push(this.splineLine(e, mv));
+        else if (e.t === "text") out.push(...textPolys(e, this.pt(e.p), textPath(this.sk.ents, e)).map(l => l.map(mv)));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -1613,6 +1755,10 @@ export class SketchEditor {
           const id = uid("e");
           this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons(e) });
           made.push(id);
+        } else if (e.t === "text") {
+          const id = uid("t");
+          this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p) });
+          made.push(id);
         } else {
           const id = uid("a");
           this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons(e) });
@@ -1654,6 +1800,7 @@ export class SketchEditor {
         else if (e.t === "circle") { const id = uid("c"); this.sk.ents.push({ id, t: "circle", c: point(e.c), r: e.r * mv.k, ...cons }); made.push(id); }
         else if (e.t === "ellipse") { const id = uid("e"); this.sk.ents.push({ id, t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons }); made.push(id); }
         else if (e.t === "spline") { const id = uid("s"); this.sk.ents.push({ id, t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...cons }); made.push(id); }
+        else if (e.t === "text") { const id = uid("t"); this.sk.ents.push({ ...structuredClone(e), id, p: point(e.p), h: e.h * mv.k }); made.push(id); }
         else { const id = uid("a"); this.sk.ents.push({ id, t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons }); made.push(id); }
       }
     } else {
@@ -1983,6 +2130,7 @@ export class SketchEditor {
       circle: "Click the centre, then a point on the circle",
       arc: "Click the centre, the start, then the end (counter-clockwise)",
       point: "Click to place a point",
+      text: "Type the text and its height in the panel, then click where it starts",
       circle3: "Click three points on the circle",
       arc3: "Click the start, the end, then a point on the arc",
       polygon: "Click the centre, then a corner; set the sides in the panel",
@@ -1995,6 +2143,9 @@ export class SketchEditor {
       convert: "Click model edges (or a face for all its edges) to copy them into the sketch",
       intersect: "Click model faces: the curves where the sketch plane cuts them are added",
       slot: "Click the two centres, then the width",
+      cslot: "Click the slot's centre, then one end, then the width",
+      aslot: "Click the arc's centre, the start, the end (counter-clockwise), then the width",
+      aslot3: "Click the start, the end, a point on the arc, then the width",
       spline: "Click points the spline passes through; double-click ends it, clicking the first point closes it",
       ellipse: "Click the centre, the end of the major axis, then a point on the ellipse",
       earc: "Click the centre, the end of the major axis, the start, then the end (counter-clockwise)",
@@ -2076,6 +2227,12 @@ export class SketchEditor {
         poly(arcPts(cc, Math.hypot(a[0] - cc[0], a[1] - cc[1]), a0, a1), c);
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") poly(this.splineLine(e), c);
+      else if (e.t === "text") {
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
+        for (const l of ls) poly(l, c);
+        // Text whose outline is still loading: its box, dashed by the colour of construction.
+        if (!ls.length) { const b = textBox(e, at, path); poly([...b, b[0]], C.cons); }
+      }
     }
     // Under-defined analysis (FR-SLV-010): orange arrows show where the selected items can still move.
     if (this.tool === "select" && this.selection.size && this.info.status === "ok" && this.info.dof > 0) {
@@ -2160,10 +2317,19 @@ export class SketchEditor {
       const { a: p0, b: p1 } = this.box;
       poly([p0, [p1[0], p0[1]], p1, [p0[0], p1[1]], p0], C.sel, dimSegs, dimCols);
     }
-    if (this.tool === "slot" && d.pts.length && d.cursor) {
-      const [c1, c2] = d.pts.length === 1 ? [d.pts[0], d.cursor] : [d.pts[0], d.pts[1]];
+    if ((this.tool === "slot" || this.tool === "cslot") && d.pts.length && d.cursor) {
+      const [c1, c2] = slotCentres(d.pts[0], d.pts.length === 1 ? d.cursor : d.pts[1], this.tool === "cslot");
       const w = d.pts.length === 1 ? this.px(c1) * 12 : Math.abs(lineSide(c1, c2, d.cursor));
       for (const pl of slotOutline(c1, c2, w)) poly(pl, C.pre);
+    }
+    if ((this.tool === "aslot" || this.tool === "aslot3") && d.pts.length && d.cursor) {
+      const q = d.cursor;
+      if (d.pts.length === 1) poly([d.pts[0], q], C.pre);
+      else {
+        const ax = d.pts.length === 2 ? this.slotAxis(d.pts[0], d.pts[1], q) : this.slotAxis(d.pts[0], d.pts[1], d.pts[2]);
+        if (ax) for (const pl of arcSlotOutline(ax, d.pts.length === 2 ? 0 : arcSlotHalfWidth(ax, q))) poly(pl, C.pre);
+        else poly([d.pts[0], d.pts[1], q], C.pre);
+      }
     }
     // Dimension lines.
     const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
@@ -2405,6 +2571,7 @@ export class SketchEditor {
     if (e.t === "circle") { const c = this.pt(e.c); return [c[0] + e.r * 0.7071, c[1] + e.r * 0.7071]; }
     if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
     if (e.t === "spline") { const l = this.splineLine(e); return l[Math.floor(l.length / 2)]; }
+    if (e.t === "text") { const b = textBox(e, this.pt(e.p), textPath(this.sk.ents, e)); return b[b.length >> 1]; }
     return this.pt(e.a);
   }
 
@@ -2540,6 +2707,11 @@ function cross2(a: V2, b: V2) { return a[0] * b[1] - a[1] * b[0]; }
 
 /** Signed distance of p from the line through a and b (left positive). */
 function lineSide(a: V2, b: V2, p: V2) { const u = norm2(sub2(b, a)); return cross2(u, sub2(p, a)); }
+
+/** Slot centres from the first two clicks: both centres, or the middle and one end (centrepoint slot). */
+function slotCentres(a: V2, b: V2, centred: boolean): [V2, V2] {
+  return centred ? [[2 * a[0] - b[0], 2 * a[1] - b[1]], b] : [a, b];
+}
 
 /** Outline of a straight slot round the centres c1, c2 with half-width w, as polylines. */
 function slotOutline(c1: V2, c2: V2, w: number): V2[][] {
