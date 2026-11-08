@@ -16,7 +16,7 @@ import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
-import { MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -62,6 +62,8 @@ export class MotionManager {
   private tracePts = new Map<string, V3[]>();
   /** Mate value results: distance and angle per frame. */
   private mateVals = new Map<string, { dist: number[]; angle: number[] }>();
+  /** Each sensor's out-of-range bands for its timeline lane (made when the traces are solved). */
+  private alertHtml = new Map<string, string>();
   /** Each trace's component angle (degrees from the first frame) per frame (by trace id). */
   private traceAng = new Map<string, number[]>();
   /** The last interference check (Results → Interference): pairs with their time spans, for the frames it was run on. */
@@ -514,6 +516,17 @@ export class MotionManager {
         sub.add(line, dot);
         g.add(sub);
       }
+      this.alertHtml.clear();
+      for (const x of tr) {
+        if (!x.alert) continue;
+        const f = 1 / s.fps;
+        this.alertHtml.set(x.id, alertSpans(this.seriesOf(x), s.fps, x.alert).map(([a, b]) =>
+          `<span class="mo-aspan" aria-hidden="true" style="left:${this.x(a)};width:calc(${this.x(Math.min(s.duration, b + f) - a)})"></span>`).join(""));
+      }
+    }
+    for (const lane of this.pane.querySelectorAll<HTMLElement>(".mo-tlane[data-tlane]")) {
+      const h = this.alertHtml.get(lane.dataset.tlane!) ?? "";
+      if (lane.dataset.ah !== h) { lane.innerHTML = h; lane.dataset.ah = h; }
     }
     if (!g.parent) this.viewer.scene.add(g);
     const now = tr.some(x => x.rel) ? this.tfsAt(i) : null;
@@ -537,6 +550,43 @@ export class MotionManager {
   }
 
   private plotHtml(x: TracePath, i: number): string {
+    const body = this.plotBody(x, i);
+    if (!x.alert || !body) return body;
+    const v = this.seriesOf(x), j = Math.min(v.length - 1, Math.max(0, i));
+    return body + (j >= 0 && outOfRange([v[j]], x.alert)[0] ? `<span class="mo-alert" role="status">${esc(t("Out of range"))}</span>` : "");
+  }
+
+  /** The plotted quantity of a trace or mate value result at every frame (as its plot shows it). */
+  private seriesOf(x: TracePath): number[] {
+    const q = (x.plot ?? "dist") as TracePlot, fps = this.study.fps;
+    if (x.mate) {
+      const mv = this.mateVals.get(x.id);
+      if (!mv?.dist.length) return [];
+      return q === "speed" ? rates(mv.dist, fps) : q === "angle" ? mv.angle : q === "aspeed" ? rates(mv.angle, fps) : mv.dist;
+    }
+    const pts = this.tracePts.get(x.id) ?? [];
+    return pts.length ? traceSeries(pts, fps, q, this.traceAng.get(x.id) ?? []) : [];
+  }
+
+  /** A sensor's out-of-range spans as [first, last] times (s), every frame solved. */
+  alertSpansOf(id: string): [number, number][] {
+    this.tracePath(id);
+    const x = this.traces.find(k => k.id === id);
+    return x?.alert ? alertSpans(this.seriesOf(x), this.study.fps, x.alert) : [];
+  }
+
+  /** The earliest frame in (i0, i1] where a stopping sensor trips. */
+  private tripAt(i0: number, i1: number): { i: number; x: TracePath } | null {
+    let best: { i: number; x: TracePath } | null = null;
+    for (const x of this.traces) {
+      if (!x.alert?.stop) continue;
+      const k = tripFrame(this.seriesOf(x), x.alert, i0, i1);
+      if (k >= 0 && (!best || k < best.i)) best = { i: k, x };
+    }
+    return best;
+  }
+
+  private plotBody(x: TracePath, i: number): string {
     if (x.mate) return this.matePlotHtml(x, i);
     const pts = this.tracePts.get(x.id) ?? [], s = this.study, q = (x.plot ?? "dist") as TracePlot;
     if (!pts.length) return "";
@@ -564,6 +614,7 @@ export class MotionManager {
       const i = Math.round(this.time * this.study.fps);
       return `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-tr="plot">${MATE_PLOTS.map(([k, l]) => `<option value="${k}"${(x.plot ?? "dist") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
         + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
+        + this.alertFields(x)
         + `<button class="btn small" data-tr="csv" title="${esc(t("Save the values as CSV (time, distance, angle)"))}">CSV</button>`
         + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
         + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
@@ -573,9 +624,18 @@ export class MotionManager {
       + this.relField(x)
       + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
+      + this.alertFields(x)
       + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
+  }
+
+  /** Sensor limits on the plotted quantity (empty = no limit) and whether playback stops where it trips. */
+  private alertFields(x: TracePath): string {
+    const a = x.alert ?? {}, u = t(plotUnit((x.plot ?? "dist") as TracePlot));
+    const f = (k: "amin" | "amax", l: string, v?: number) => `<label class="mo-f"><span>${esc(t(l))} (${esc(u)})</span><input type="number" step="any" data-tr="${k}" value="${v ?? ""}" placeholder="${esc(t("none"))}" /></label>`;
+    return f("amin", "Alert below", a.min) + f("amax", "Alert above", a.max)
+      + `<label class="mo-f" title="${esc(t("Pause playback where the value goes out of range"))}"><input type="checkbox" data-tr="astop"${a.stop ? " checked" : ""} /><span>${esc(t("Stop playback"))}</span></label>`;
   }
 
   /** "Relative to": world, or another top-level component the path is seen from (it then moves with that component). */
@@ -603,9 +663,21 @@ export class MotionManager {
     this.playing = true;
     this.playStart = performance.now();
     this.playFrom = this.time;
+    const sensors = this.traces.find(x => x.alert?.stop);
+    if (sensors) this.tracePath(sensors.id);
+    let last = Math.round(this.time * s.fps);
     const step = () => {
       if (!this.playing) return;
       const p = playTime(this.playFrom + ((performance.now() - this.playStart) / 1000) * this.speed, this.study);
+      const i = Math.round(p.t * this.study.fps), trip = sensors && i > last ? this.tripAt(last, i) : null;
+      last = i;
+      if (trip) {
+        this.time = trip.i / this.study.fps;
+        this.showAt(this.time);
+        this.pause();
+        toast(t("Sensor tripped at {t} s", { t: fmt(this.time) }));
+        return;
+      }
       this.time = p.t;
       this.showAt(p.t);
       if (p.done) { this.pause(); return; }
@@ -974,6 +1046,15 @@ export class MotionManager {
     on("select[data-tr=plot]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value as TracePlot; this.setTrace(this.selTrace!, x => { if (v === "dist") delete x.plot; else x.plot = v; }); });
     on("select[data-tr=rel]", "change", (_e, el) => { const v = (el as HTMLSelectElement).value; this.setTrace(this.selTrace!, x => { if (v) x.rel = v; else delete x.rel; }); });
     on("input[data-tr=color]", "change", (_e, el) => { const v = (el as HTMLInputElement).value; this.setTrace(this.selTrace!, x => { x.color = v; }); });
+    on("input[data-tr=amin], input[data-tr=amax]", "change", (_e, el) => {
+      const raw = (el as HTMLInputElement).value.trim(), v = num(raw), k = el.dataset.tr === "amin" ? "min" : "max";
+      if (raw && !Number.isFinite(v)) { el.setAttribute("aria-invalid", "true"); return; }
+      this.setTrace(this.selTrace!, x => { const a = { ...(x.alert ?? {}) }; if (raw) a[k] = v; else delete a[k]; if (a.min === undefined && a.max === undefined && !a.stop) delete x.alert; else x.alert = a; });
+    });
+    on("input[data-tr=astop]", "change", (_e, el) => {
+      const v = (el as HTMLInputElement).checked;
+      this.setTrace(this.selTrace!, x => { const a = { ...(x.alert ?? {}) }; if (v) a.stop = true; else delete a.stop; if (a.min === undefined && a.max === undefined && !a.stop) delete x.alert; else x.alert = a; });
+    });
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
