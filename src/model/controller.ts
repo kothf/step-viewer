@@ -732,6 +732,7 @@ export class ModelController {
         : { id, type: "chamfer", name: nextName(d, "chamfer"), distance: { v: 1 }, edges: [] } satisfies ChamferFeature;
       if (pre) (draft as FilletFeature).edges = [pre];
     }
+    this.recallOptions(type, draft);
     const index = end;
     const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "offsurf" ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
@@ -886,8 +887,42 @@ export class ModelController {
     this.clearDecor();
     this.renderAll();
     // Pushpin or Ctrl+Enter: the same command again once the part has rebuilt (FR-UI-106).
+    if (m.isNew && this.activeCmd) this.rememberOptions(this.activeCmd, f);
     const again = m.isNew && (repeat || this.pinned) ? this.activeCmd : null;
     void Promise.resolve(this.rebuild()).then(() => { if (again && this.mode.kind === "none") this.command(again); });
+  }
+
+  /**
+   * Options a new feature panel starts with: the ones used last for that command (FR-UI-043). Only
+   * choices are kept (end condition, merge, side...), never sizes or picked geometry.
+   */
+  private static readonly OPTION_KEYS: Record<string, { keys: string[]; ok?: (k: string, v: unknown) => boolean }> = {
+    extrude: { keys: ["end", "merge"], ok: (k, v) => k !== "end" || ["blind", "through", "mid", "through2"].includes(String(v)) },
+    cut: { keys: ["end", "flip", "outside"], ok: (k, v) => k !== "end" || ["blind", "through", "mid", "through2"].includes(String(v)) },
+    revolve: { keys: ["mid", "merge"] },
+    fillet: { keys: ["keepFit"] },
+    chamfer: { keys: ["mode"] },
+    shell: { keys: ["outward"] },
+    rib: { keys: ["side", "dir"] },
+    cpattern: { keys: ["equal"] },
+  };
+  private rememberOptions(cmd: string, f: Feature) {
+    const spec = ModelController.OPTION_KEYS[cmd];
+    if (!spec) return;
+    const g = f as unknown as Record<string, unknown>;
+    const keep: Record<string, unknown> = {};
+    for (const k of spec.keys) if (g[k] !== undefined && (spec.ok?.(k, g[k]) ?? true)) keep[k] = g[k];
+    try { localStorage.setItem(`mc:opts:${cmd}`, JSON.stringify(keep)); } catch { /* storage blocked: not remembered */ }
+  }
+  private recallOptions(cmd: string, f: Feature) {
+    const spec = ModelController.OPTION_KEYS[cmd];
+    if (!spec) return;
+    let saved: Record<string, unknown> = {};
+    try { saved = JSON.parse(localStorage.getItem(`mc:opts:${cmd}`) ?? "{}"); } catch { return; }
+    const g = f as unknown as Record<string, unknown>;
+    for (const k of spec.keys) if (k in saved && (spec.ok?.(k, saved[k]) ?? true) && ["string", "boolean"].includes(typeof saved[k])) g[k] = saved[k];
+    // A chamfer mode needs its second value.
+    if (f.type === "chamfer") { if (f.mode === "two") f.distance2 ??= { v: f.distance.v }; if (f.mode === "angle") f.angle ??= { v: Math.PI / 4 }; }
   }
 
   /** Undo/redo step names in the UI language; null when a name has no translation (FR-UND-005). */

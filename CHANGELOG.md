@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.90.0] - 2026-11-08
+## [1.91.0] - 2026-11-08
 
 ### Added
 
@@ -17,12 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Space** opens the orientation picker at the cursor: the six views laid out as an unfolded cube, plus Isometric, Normal to, Zoom to fit, Zoom to selection, Zoom to area and Previous view.
   - **Zoom to area** frames a box you drag.
   - **Zoom to selection** frames the picked face, edge or parts.
-- Part modelling commands (FR-UND-005, FR-UI-106, FR-UI-107, FR-UI-111, FR-HIS-022):
+- Part modelling commands (FR-UND-005, FR-UI-043, FR-UI-106, FR-UI-107, FR-UI-111, FR-HIS-022):
   - The **Undo** and **Redo** tooltips name the step ("Undo: Add Extrude1").
   - **Undo ▾** lists the last 20 steps; picking one undoes back to it.
   - **Enter** with no command running repeats the last feature command.
   - The feature panel's **📌 Keep visible** pushpin opens the same command again after OK; **Ctrl+Enter** does it once.
   - A **right-click** without a drag while a command runs offers **OK** and **Cancel** (fillet and chamfer keep their edge helpers below).
+  - New feature panels start with the options used last for that command (end condition, merge, chamfer type, shell outward, rib side; never sizes or picked geometry).
   - **What's wrong**: the error count above the feature tree opens a list of the features with errors and warnings. A click selects one; a double click edits it.
 
 ### Changed
@@ -904,8 +905,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.90.0...HEAD
-[1.90.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.90.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.91.0...HEAD
+[1.91.0]: https://github.com/kothf/step-viewer/compare/v1.88.0...v1.91.0
 [1.88.0]: https://github.com/kothf/step-viewer/compare/v1.87.0...v1.88.0
 [1.87.0]: https://github.com/kothf/step-viewer/compare/v1.86.0...v1.87.0
 [1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0

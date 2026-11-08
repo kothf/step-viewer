@@ -5961,6 +5961,21 @@ try {
     await cp.click('#mc-pm [data-k="pin"]');
     await cp.keyboard.press("Escape");
     check(pinned.n === 4 && pinned.mode === "feature:extrude" && pinned.store === "1" && pinned.on === "true", `commands: with the pushpin on, OK keeps the Extrude panel open for the next one (${JSON.stringify(pinned)})`);
+    // Remembered options (FR-UI-043): an extrude made Mid plane makes the next one start as Mid plane.
+    await rect("s3", -20, 30, 20, 50);
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    await cp.selectOption('#mc-pm select[data-k="end"]', "mid");
+    await cp.waitForTimeout(150);
+    await cp.click("#mc-ok");
+    await settle();
+    await cp.click('[data-c="extrude"]');
+    await cp.waitForFunction(() => window.__sv.model.mode().kind === "feature");
+    const endNext = await cp.evaluate(() => window.__sv.model.mode().draft.end);
+    await cp.keyboard.press("Escape");
+    await cp.waitForTimeout(150);
+    check(endNext === "mid", `commands: a new extrude starts with the end condition used last (${endNext})`);
     // What's wrong: a fillet far too big fails; the list names it and a click selects it in the tree.
     await cp.evaluate(() => window.__sv.model.store.change("Add Fillet1", d => { const ex = d.features.find(f => f.type === "extrude"); d.features.push({ id: "fbad", type: "fillet", name: "Fillet1", radius: { v: 500 }, edges: [{ faces: [`${ex.id}:end`, `${ex.id}:side:s1l1`], hint: [0, -10, 10] }] }); }));
     await settle();
