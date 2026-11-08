@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Conic, parabola and equation driven curve (FR-SK-021)**: the Circle ▾ menu adds Parabola (focus, vertex, then the start and the end) and Conic (start, end, the top vertex where the end tangents meet, then a point that sets rho, shown at the cursor; rho can be changed in the panel). The Line ▾ menu adds Equation driven curve: y = f(x) or x(t), y(t) with a range, typed in the panel, added with fixed ends. Conics reach the kernel as exact rational curves, so their volumes and areas are exact; equation curves follow their two end points when moved, rotated, scaled or mirrored.
 
+## [1.153.0] - 2026-11-08
+
+### Added
+
+- **Trim/Extend End miter and End butt (FR-FT-121).** Trim/Extend has an End miter type, as in SolidWorks: pick a face of one member, then a face of the other. Both are lengthened (or shortened) to where their axes meet and cut on the plane that halves the corner, so two members from separate sketches or features meet in a clean mitre. Members that run parallel are refused with a message. **End butt 1** and **End butt 2** join the same two members square: one stops at the other's side and the other runs on to its far side.
+
 ## [1.152.0] - 2026-11-08
 
 ### Added
@@ -1280,7 +1286,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.154.0...HEAD
-[1.154.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.154.0
+[1.154.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.154.0
+[1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
 [1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
 [1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0
