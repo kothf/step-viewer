@@ -74,6 +74,8 @@ export interface MotionStudy {
 /** A point on a component whose path is drawn and plotted over the study. */
 export interface TracePath {
   id: string;
+  /** A mate value result instead of a point (Results → Plot of a mate): the distance and angle between the mate's two references; `comp`/`p` are unused. */
+  mate?: string;
   /** The component (as the solver names it) the point moves with. */
   comp: string;
   /** The point in the component's own coordinates (mm). */
