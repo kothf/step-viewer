@@ -5770,6 +5770,13 @@ try {
       document.querySelector('#motion [data-mo="clashclose"]')?.click();
       const closed = !document.querySelector("#motion .mo-clashes");
       const interfere = { found: !!pair, starts: sp[0]?.[0], ends: sp.at(-1)?.[1], listed, bands, sought, all0, withTouching, ignoredAfter, closed, clashAll: m.clashAll };
+      // Explode keys: Step by step on the key panel sets the track's seq; the one-step wizard leaves it off.
+      m.wizard("explode");
+      const et = m.study.tracks.find(k => k.kind === "explode");
+      m.sel = { track: et.id, key: 0 }; m.render();
+      const seqBox = document.querySelector('#motion input[data-p="seq"]'), seqBefore = !!et.seq;
+      if (seqBox) { seqBox.checked = true; seqBox.dispatchEvent(new Event("change")); }
+      interfere.seq = { box: !!seqBox, before: seqBefore, after: !!m.study.tracks.find(k => k.id === et.id)?.seq };
       m.deleteStudy();
       m.studyId = prevStudy; m.render(); m.seek(prevTime);
       trace.interfere = interfere;
@@ -5843,7 +5850,8 @@ try {
       && tc.mateVal.mopt && tc.mateVal.mate === "md" && tc.mateVal.plot0 === "dist" && tc.mateVal.n && tc.mateVal.finite && tc.mateVal.a180 && tc.mateVal.mrow && tc.mateVal.msvg
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
-      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false,
+      && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false
+      && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
       `motion study: a trace path follows a picked point, is drawn, plotted (speed, acceleration, angle), traced relative to another component, a mate value plotted, interference listed over the study, and deleted (FR-FT-122) (${JSON.stringify(tc)})`);
     const st = stretched;
     check(st.scaleField === 1 && JSON.stringify(st.half) === "[1,24,31]" && JSON.stringify(st.back) === "[1,46,60]"
