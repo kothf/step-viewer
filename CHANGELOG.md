@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.82.0] - 2026-11-08
+## [1.83.0] - 2026-11-08
 
 ### Added
 
@@ -14,6 +14,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - The selected assembly lists its outdated links. **Update links** on the checked-out assembly brings them to the latest versions; check it in to keep them.
   - Opening an assembly with its latest components updates the link hashes too, and renaming a part rewrites the link path.
 - **Crop view and break view** in drawings (FR-DRW-015): select a view for **Crop** (click two corners; only what is inside stays) or a **Vertical / Horizontal break** (click the two ends of the part to leave out). The view closes up to a 6 mm gap with zig-zag break lines. Dimensions and annotations stay on their geometry and keep their true values. **Remove crop** and **Remove breaks** undo them.
+
+## [1.82.0] - 2026-11-08
+
+### Added
+
+- 3D curves (FR-FT-085) in Sweep ▾:
+  - **Curve Through XYZ Points**: a smooth curve through points in part coordinates. Type them in a table, or read them from a CSV or text file with one `x, y, z` per line (semicolon files with decimal commas work too). It can be closed.
+  - **Composite Curve**: model edges joined end to end into one curve.
+  - **Projected Curve**: a sketch's chain of curves projected along its normal onto faces. It projects onto all faces or only the ones you click, and keeps the nearest piece in front of the sketch. Reverse projection looks the other way first.
+  - All three are drawn in the view, can be hidden like a helix, and work as **Sweep** paths. A new sweep picks the last curve as its path.
+- **Swept Surface** (FR-FT-100) in Surface ▾: a sketch's chain of curves, open or closed, moved along a path (a sketch, helix or curve) into an open surface. Follow path or Keep normal constant.
 
 ## [1.81.0] - 2026-11-08
 
@@ -813,7 +824,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.82.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.83.0...HEAD
+[1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0
 [1.82.0]: https://github.com/kothf/step-viewer/compare/v1.81.0...v1.82.0
 [1.81.0]: https://github.com/kothf/step-viewer/compare/v1.80.0...v1.81.0
 [1.80.0]: https://github.com/kothf/step-viewer/compare/v1.79.0...v1.80.0

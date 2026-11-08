@@ -1045,3 +1045,44 @@ test("surfaces: fill openings and extend (FR-FT-100)", async () => {
   close(area(r.sheets!), 1500, 1e-6);
   assert.deepEqual(r.sheets!.names, ["f5:face:0"]);
 });
+
+test("3D curves through XYZ points, composite and projected, as sweep paths; swept surface (FR-FT-085, FR-FT-100)", async () => {
+  const m = new Modeller(await occ());
+  const len = (pts: number[][]) => pts.reduce((s, q, i) => i ? s + Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1], q[2] - pts[i - 1][2]) : 0, 0);
+  // Through XYZ points: collinear points give a straight curve; a circular profile swept along it is a cylinder.
+  const xyz: Feature = { id: "c1", type: "curve", name: "Curve1", kind: "xyz", pts: [[0, 0, 0], [0, 0, 10], [0, 0, 20], [0, 0, 30]] };
+  let r = run(m, doc([xyz, { id: "w1", type: "sweep", name: "Sweep1", op: "boss", circular: { v: 4 }, path: { curve: "c1" } }]));
+  close(r.props!.volume, Math.PI * 4 * 30, 1e-6);
+  // Eight points on a circle of radius 20, closed: the smooth curve is nearly the circle.
+  const ring = Array.from({ length: 8 }, (_, k) => [20 * Math.cos(k * Math.PI / 4), 20 * Math.sin(k * Math.PI / 4), 5]);
+  r = run(m, doc([{ ...xyz, pts: ring, closed: true } as Feature]));
+  close(len(r.curves.c1), 2 * Math.PI * 20, 5e-3);
+  // Composite: the four top edges of a 30 mm cube make a closed square of 120 mm.
+  const cube: Feature[] = [rect("b", 0, 0, 30, 30), { id: "e", type: "extrude", name: "E", sketch: "b", op: "boss", end: "blind", depth: { v: 30 } }];
+  const edges = ["bl1", "bl2", "bl3", "bl4"].map(l => ({ faces: [`e:side:${l}`, "e:end"] as [string, string] }));
+  r = run(m, doc([...cube, { id: "c2", type: "curve", name: "Curve2", kind: "composite", edges }]));
+  close(len(r.curves.c2), 120, 1e-6);
+  // Two edges that do not touch cannot be joined.
+  const bad = m.evaluate(doc([...cube, { id: "c2", type: "curve", name: "Curve2", kind: "composite", edges: [edges[0], edges[2]] }]));
+  assert.equal(bad.statuses.find(s => s.id === "c2")?.code, "E-CRV-JOIN");
+  // Projected: a 20 mm line on a plane 50 above the base, projected down onto the cube's top (the bottom is further).
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } } as Feature;
+  const ln: SketchFeature = { id: "k", type: "sketch", name: "K", plane: { plane: "p1" }, rels: [], dims: [], ents: [{ id: "ka", t: "point", x: -10, y: 0 }, { id: "kb", t: "point", x: 10, y: 5 }, { id: "kl", t: "line", a: "ka", b: "kb" }] };
+  const pc: Feature = { id: "c3", type: "curve", name: "Curve3", kind: "projected", sketch: "k", flip: true };
+  r = run(m, doc([...cube, pl, ln, pc]));
+  close(len(r.curves.c3), Math.hypot(20, 5), 1e-6);
+  assert.ok(r.curves.c3.every(q => Math.abs(q[2] - 30) < 1e-6), JSON.stringify(r.curves.c3.slice(0, 2)));
+  // Looking up first finds nothing in front of the sketch, so it looks down: the same curve.
+  r = run(m, doc([...cube, pl, ln, { ...pc, flip: false } as Feature]));
+  assert.ok(r.curves.c3.every(q => Math.abs(q[2] - 30) < 1e-6));
+  // A sketch beside the cube projects onto nothing.
+  const off: SketchFeature = { ...ln, ents: [{ id: "ka", t: "point", x: 40, y: 0 }, { id: "kb", t: "point", x: 60, y: 5 }, { id: "kl", t: "line", a: "ka", b: "kb" }] };
+  const miss = m.evaluate(doc([...cube, pl, off, pc]));
+  assert.equal(miss.statuses.find(s => s.id === "c3")?.code, "E-CRV-MISS");
+  // Swept surface: an open 10 mm line on Top swept 30 up the straight curve: a 300 mm² strip named after the line.
+  const prof: SketchFeature = { id: "sp", type: "sketch", name: "SP", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "sa", t: "point", x: -5, y: 0 }, { id: "sb", t: "point", x: 5, y: 0 }, { id: "sl", t: "line", a: "sa", b: "sb" }] };
+  r = run(m, doc([prof, xyz, { id: "s1", type: "sweepsurf", name: "Surface-Sweep1", profile: "sp", path: { curve: "c1" } }]));
+  const props = (m as never as { props(b: unknown): { area: number } });
+  close(props.props(r.sheets!).area, 300, 1e-6);
+  assert.ok(r.sheets!.names.every(n => n === "s1:side:sl"), r.sheets!.names.join());
+});

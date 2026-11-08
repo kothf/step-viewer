@@ -5277,6 +5277,111 @@ try {
     await ctx.close();
   }
 
+  // --- 1.82: 3D curves (FR-FT-085) as sweep paths, and the swept surface (FR-FT-100) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const len = pts => pts.reduce((s, q, i) => i ? s + Math.hypot(q[0] - pts[i - 1][0], q[1] - pts[i - 1][1], q[2] - pts[i - 1][2]) : 0, 0);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 40 × 20 block.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -20), P("b2", 20, -20), P("b3", 20, 20), P("b4", -20, 20), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    // Curve Through XYZ Points: the table, then points from a CSV file (a 30 mm vertical line at x = 50).
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Curve Through XYZ Points")');
+    await settle();
+    const rows0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, rows: document.querySelectorAll("#mc-pm input[data-cx]").length, drawn: window.__sv.modeller.decor.children.length }));
+    const chooser = mp.waitForEvent("filechooser");
+    await mp.click('#mc-pm [data-crv="csv"]');
+    await (await chooser).setFiles({ name: "pts.csv", mimeType: "text/csv", buffer: Buffer.from("x,y,z\n50,0,0\n50,0,10\n50,0,20\n50,0,30\n") });
+    await mp.waitForFunction(() => document.querySelectorAll("#mc-pm input[data-cx]").length === 12);
+    await settle();
+    const xyz = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { id: m.draft.id, pts: m.draft.pts, curve: window.__sv.model.last().curves?.[m.draft.id] ?? [] }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(rows0.title === "Curve Through XYZ Points" && rows0.rows === 9 && rows0.drawn > 0 && xyz.pts.length === 4 && Math.abs(len(xyz.curve) - 30) < 1e-6,
+      `model 1.82: Curve Through XYZ Points from a table and a CSV file, drawn in the view (FR-FT-085) (${JSON.stringify({ rows0, n: xyz.pts.length, len: len(xyz.curve) })})`);
+    // Sweep picks the curve as its path: a Ø4 rod 30 long beside the block.
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Sweep")');
+    await settle();
+    const swPath = await mp.evaluate(() => window.__sv.model.mode().draft?.path);
+    await mp.fill('#mc-pm input[data-num="circular"]', "4");
+    await mp.press('#mc-pm input[data-num="circular"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const rod = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
+    check(swPath?.curve === xyz.id && Math.abs(rod.v - (32000 + Math.PI * 4 * 30)) < 1e-3 && !rod.bad, `model 1.82: Sweep along the XYZ curve (${JSON.stringify({ swPath, rod })})`);
+    // Composite curve: two top edges of the block joined (an L of 80 mm).
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Composite Curve")');
+    await settle();
+    const comp = await mp.evaluate(async () => {
+      const md = window.__sv.modeller, m = window.__sv.model.mode();
+      m.draft.edges = [{ faces: ["e:side:bl1", "e:end"] }, { faces: ["e:side:bl2", "e:end"] }];
+      md.draftChanged();
+      return { title: document.querySelector("#mc-pm h3")?.textContent, id: m.draft.id };
+    });
+    await settle();
+    const compPts = await mp.evaluate(id => window.__sv.model.last().curves?.[id] ?? [], comp.id);
+    const compPanel = await mp.evaluate(() => document.querySelector("#mc-pm .pm-count")?.textContent);
+    await mp.click("#mc-ok");
+    await settle();
+    check(comp.title === "Composite Curve" && /2/.test(compPanel ?? "") && Math.abs(len(compPts) - 80) < 1e-6 && compPts.every(q => Math.abs(q[2] - 20) < 1e-6),
+      `model 1.82: Composite Curve joins two top edges (${JSON.stringify({ comp, compPanel, len: len(compPts) })})`);
+    // Projected curve: a line sketched 30 above the top, projected down onto it (the sketch is picked by default).
+    await mp.evaluate(() => window.__sv.model.store.change("Line above", d => {
+      d.features.push({ id: "p1", type: "plane", name: "Plane1", mode: "offset", base: { std: "XY" }, offset: { v: 50 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { plane: "p1" }, rels: [], dims: [], ents: [{ id: "ka", t: "point", x: -10, y: 0 }, { id: "kb", t: "point", x: 10, y: 5 }, { id: "kl", t: "line", a: "ka", b: "kb" }] });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-fly="sweep"]');
+    await mp.click('#mc-menu button:has-text("Projected Curve")');
+    await settle();
+    const pj = await mp.evaluate(() => { const m = window.__sv.model.mode(); return { title: document.querySelector("#mc-pm h3")?.textContent, sketch: m.draft.sketch, pts: window.__sv.model.last().curves?.[m.draft.id] ?? [] }; });
+    await mp.click("#mc-ok");
+    await settle();
+    check(pj.title === "Projected Curve" && pj.sketch === "k" && Math.abs(len(pj.pts) - Math.hypot(20, 5)) < 1e-6 && pj.pts.every(q => Math.abs(q[2] - 20) < 1e-6),
+      `model 1.82: Projected Curve lands on the block's top (${JSON.stringify({ ...pj, pts: pj.pts.length, len: len(pj.pts) })})`);
+    // Swept surface: an open 10 mm line swept along the XYZ curve (picked in the panel).
+    await mp.evaluate(() => window.__sv.model.store.change("Open profile", d => {
+      d.features.push({ id: "sp", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "sa", t: "point", x: 45, y: 10 }, { id: "sb", t: "point", x: 55, y: 10 }, { id: "sl", t: "line", a: "sa", b: "sb" }] });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-fly="surf"]');
+    await mp.click('#mc-menu button:has-text("Swept Surface")');
+    await settle();
+    const ss0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, profile: window.__sv.model.mode().draft?.profile }));
+    await mp.selectOption('#mc-pm select[data-k="swPath"]', `c:${xyz.id}`);
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const ss = await mp.evaluate(() => { const l = window.__sv.model.last(); return { sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(","), path: window.__sv.model.store.doc.features.at(-1).path }; });
+    check(ss0.title === "Swept Surface" && ss0.profile === "sp" && ss.sheets === 1 && !ss.bad && ss.path?.curve === xyz.id && /Curve1,Sweep1,Curve2,.*Curve3,Sketch3,Surface-Sweep1$/.test(ss.names),
+      `model 1.82: Swept Surface along the curve (FR-FT-100) (${JSON.stringify({ ss0, ss })})`);
+    // In Russian: the XYZ curve panel.
+    await mp.click("#lang-btn");
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), xyz.id);
+    await settle();
+    const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    check(ru.title === "Кривая через точки XYZ" && !/[A-Za-z]{3}/.test(ru.text.replace(/CSV|XYZ|Enter|Esc|\(mm\)/g, "")), `model 1.82: curve panel in Russian (${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
   // 1.78.0: surface analyses (FR-MEA-005) on a modelled block, and the drawing view palette (FR-UI-072).
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
