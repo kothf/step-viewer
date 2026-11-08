@@ -2993,4 +2993,16 @@ export const RU: Record<string, string> = {
   "Click a point: a corner or a circle centre.": "Щёлкните точку: угол или центр окружности.",
   "Click the base point: a corner or a circle centre.": "Щёлкните базовую точку: угол или центр окружности.",
   "Click the next point. Enter or Esc ends.": "Щёлкните следующую точку. Enter или Esc — завершить.",
+  // 1.109.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
+  "Hole table": "Таблица отверстий",
+  "Tag": "Обозн.",
+  "X LOC": "X",
+  "Y LOC": "Y",
+  "{n} holes, measured from the origin along the view's axes.": "Отверстий: {n}, координаты от начала по осям вида.",
+  "Update holes": "Обновить отверстия",
+  "Take the holes the view shows now, after the model changed": "Взять отверстия, которые вид показывает сейчас, после изменения модели",
+  "Inspection dimension": "Контрольный размер",
+  "Click where the hole table goes.": "Щёлкните, где разместить таблицу отверстий.",
+  "Click the origin of the hole table on a view: a corner or a circle centre.": "Щёлкните начало координат таблицы отверстий на виде: угол или центр окружности.",
+  "This view shows no holes end-on.": "На этом виде нет отверстий, видимых с торца.",
 };

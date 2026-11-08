@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.109.0] - 2026-11-08
+
+### Added
+
+- **Hole table** in drawings (FR-DRW-024; Annotate ▾ and the Annotation tab). Click the origin on a view (a corner or a circle centre), then place the table. It lists every hole the view shows end-on with its X and Y from the origin along the view's axes and its size from the hole feature (Ø16 THRU, M6-6H…). Each size gets a letter from the smallest up (A1, A2, B1…), and the tags are written beside the holes, with X and Y arrows at the origin. The table follows the model; select it to set the decimals or to take the holes again after the model changed (Update holes). A hole that disappears frames the table in orange.
+- **Inspection dimensions** (FR-DRW-021): tick Inspection dimension in a dimension's panel and its text sits in an obround frame.
+
 ## [1.106.0] - 2026-11-08
 
 ### Added
@@ -1002,7 +1009,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.106.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.109.0...HEAD
+[1.109.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.109.0
 [1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
 [1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
 [1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
