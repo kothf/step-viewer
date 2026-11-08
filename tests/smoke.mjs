@@ -5699,7 +5699,9 @@ try {
       const gif = await m.recordGif(160), head = new Uint8Array(await gif.slice(0, 6).arrayBuffer());
       const webm = await m.recordWebm();
       const wh = webm ? new Uint8Array(await webm.slice(0, 4).arrayBuffer()) : [];
-      return { gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
+      const pz = await m.recordFrames(160), pb = new Uint8Array(await pz.arrayBuffer());
+      const eocd = new DataView(pb.buffer, pb.length - 22), pngs = { pk: String.fromCharCode(pb[0], pb[1]), n: eocd.getUint16(10, true), want: Math.round(m.study.duration * m.study.fps) + 1, name: new TextDecoder().decode(pb.slice(30, 30 + (pb[26] | (pb[27] << 8)))) };
+      return { pngs, gif: String.fromCharCode(...head), gifSize: gif.size, webm: webm ? [...wh].map(b => b.toString(16)).join("") : null, webmSize: webm?.size ?? 0 };
     });
     // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
     const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
@@ -5707,7 +5709,7 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(150);
     const ru = await mp.evaluate(() => {
-      const bad = [], ok = /^(fps|mm|GIF|WebM)$/;
+      const bad = [], ok = /^(fps|mm|GIF|WebM|PNG|ZIP)$/;
       const test = s => { for (const w of s.split(/[^A-Za-z0-9]+/)) if (/^[A-Za-z]{2,}$/.test(w) && !ok.test(w)) bad.push(s.trim().slice(0, 40)); };
       const root = document.querySelector("#motion");
       const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -6003,7 +6005,7 @@ try {
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
-      && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
+      && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
       `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
@@ -8489,6 +8491,20 @@ try {
     await settle();
     const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
     check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
+    // Trim/Extend to a reference plane chosen in the panel (no face picked): Beam A cut at x = 2200.
+    await mp.evaluate(() => window.__sv.model.store.change("Plane", d => { d.features.push({ id: "xpl", type: "plane", name: "Cut plane", base: { std: "YZ" }, mode: "offset", offset: { v: 2200 } }); d.rollback = null; }));
+    await settle();
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xma:ua:start" }]; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wplane"]', "plane:xpl");
+    await settle();
+    const noFaceBox = await mp.evaluate(() => !document.querySelector('#mc-pm [data-k="wbound"]'));
+    await mp.click("#mc-ok");
+    await settle();
+    const tp = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { plane: f.plane, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 200) < 0.01).map(c => c.qty) }; });
+    check(noFaceBox && tp.plane?.plane === "xpl" && !tp.bad && JSON.stringify(tp.rows) === "[1]", `weldments: Trim/Extend to a reference plane (${JSON.stringify({ noFaceBox, tp })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));

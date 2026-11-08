@@ -7,6 +7,7 @@ import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
+import { frameName, frameTimes } from "../../src/motion/frames";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
 import type { PartDoc } from "../../src/model/types";
 
@@ -338,4 +339,15 @@ test("result sensors: out-of-range frames, spans and the frame where they trip",
 
 test("proximity CSV: one row per frame", () => {
   assert.equal(gapCsv([1, 0.5, 0.25], 2), "t (s),distance (mm)\n0,1\n0.5,0.5\n1,0.25\n");
+});
+
+test("image sequence: frame names sort in order and times cover the study", () => {
+  assert.equal(frameName("a", 0, 31), "a_0001.png");
+  assert.equal(frameName("a", 30, 31), "a_0031.png");
+  assert.equal(frameName("a", 0, 12000), "a_00001.png");
+  const ts = frameTimes(1, 30);
+  assert.equal(ts.length, 31);
+  assert.equal(ts[0], 0);
+  assert.equal(ts[30], 1);
+  assert.deepEqual(frameTimes(0, 24), [0, 0]);
 });

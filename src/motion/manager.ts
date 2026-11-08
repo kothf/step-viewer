@@ -15,6 +15,8 @@ import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
 import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
+import { frameName, frameTimes } from "./frames";
+import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
 import { GAP_PLOTS, gapCsv, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
@@ -95,7 +97,7 @@ export class MotionManager {
   /** Recording: the canvas frames are composed on, and what to do after each render. */
   private capture: ((src: HTMLCanvasElement) => void) | null = null;
   private renderWaiters: (() => void)[] = [];
-  recording: "webm" | "gif" | null = null;
+  recording: "webm" | "gif" | "png" | null = null;
   private grip: HTMLDivElement;
 
   constructor(private asm: AsmController, private viewer: Viewer) {
@@ -872,6 +874,38 @@ export class MotionManager {
     return blob;
   }
 
+  /** Renders every frame of the study at its own frame rate (up to `maxW` px wide) and saves them as numbered PNG images in a ZIP. */
+  async recordFrames(maxW = 1920): Promise<Blob | null> {
+    if (this.recording || !this.asm.doc) return null;
+    const s = this.study, times = frameTimes(s.duration, s.fps), n = times.length, base = this.fileBase();
+    this.pause();
+    this.ensure(frameCount(s) - 1);
+    this.recording = "png";
+    this.renderTransport();
+    const c = this.composer(maxW), shots: Promise<Blob | null>[] = [];
+    this.capture = from => { c.draw(from); shots.push(new Promise(res => c.out.toBlob(res, "image/png"))); };
+    try {
+      for (let i = 0; i < n && this.recording; i++) {
+        this.time = times[i];
+        this.showAt(this.time);
+        await this.nextRender();
+        this.setStatus(t("Recording frame {i} of {n}…", { i: i + 1, n }));
+      }
+    } finally { this.capture = null; }
+    if (!this.recording) { this.renderTransport(); return null; }
+    this.setStatus(t("Writing the ZIP…"));
+    const blobs = await Promise.all(shots);
+    const files: { name: string; data: Uint8Array }[] = [];
+    for (let i = 0; i < blobs.length; i++) if (blobs[i]) files.push({ name: frameName(base, i, n), data: new Uint8Array(await blobs[i]!.arrayBuffer()) });
+    const bytes = await zip(files);
+    this.recording = null;
+    this.renderTransport();
+    this.setStatus("");
+    const blob = new Blob([bytes as BlobPart], { type: "application/zip" });
+    download(blob, `${base}-frames.zip`);
+    return blob;
+  }
+
   private fileBase() { return `${this.asm.doc?.name ?? "Assembly"}-${this.study.name}`.replace(/[\\/:*?"<>|]+/g, "_"); }
 
   // ---------- pane ----------
@@ -1004,6 +1038,7 @@ export class MotionManager {
       + `<span class="mo-sp"></span>`
       + `<button class="btn small" data-mo="webm" title="${esc(t("Record the study as a WebM video"))}">${esc(this.recording === "webm" ? t("Stop recording") : t("Video"))}</button>`
       + `<button class="btn small" data-mo="gif" title="${esc(t("Save the study as an animated GIF"))}">${esc(this.recording === "gif" ? t("Stop recording") : "GIF")}</button>`
+      + `<button class="btn small" data-mo="png" title="${esc(t("Save every frame of the study as PNG images in a ZIP"))}">${esc(this.recording === "png" ? t("Stop recording") : t("Images"))}</button>`
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
       + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}${this.clashLane()}</div>${lanes}${tlanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
@@ -1102,8 +1137,10 @@ export class MotionManager {
     const p = this.pane.querySelector<HTMLButtonElement>("[data-mo=play]");
     if (p) { p.textContent = this.playing ? "⏸" : "▶"; const l = this.playing ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
     const w = this.pane.querySelector<HTMLButtonElement>("[data-mo=webm]"), g = this.pane.querySelector<HTMLButtonElement>("[data-mo=gif]");
-    if (w) { w.textContent = this.recording === "webm" ? t("Stop recording") : t("Video"); w.disabled = this.recording === "gif"; }
-    if (g) { g.textContent = this.recording === "gif" ? t("Stop recording") : "GIF"; g.disabled = this.recording === "webm"; }
+    if (w) { w.textContent = this.recording === "webm" ? t("Stop recording") : t("Video"); w.disabled = !!this.recording && this.recording !== "webm"; }
+    if (g) { g.textContent = this.recording === "gif" ? t("Stop recording") : "GIF"; g.disabled = !!this.recording && this.recording !== "gif"; }
+    const pg = this.pane.querySelector<HTMLButtonElement>("[data-mo=png]");
+    if (pg) { pg.textContent = this.recording === "png" ? t("Stop recording") : t("Images"); pg.disabled = !!this.recording && this.recording !== "png"; }
   }
 
   private bind() {
@@ -1128,6 +1165,7 @@ export class MotionManager {
       else if (a === "orbit") this.wizard("orbit");
       else if (a === "webm") { if (this.recording) this.recording = null; else void this.recordWebm(); }
       else if (a === "gif") { if (this.recording) this.recording = null; else void this.recordGif(); }
+      else if (a === "png") { if (this.recording) this.recording = null; else void this.recordFrames(); }
       else if (a.startsWith("del:")) this.deleteTrack(a.slice(4));
       else if (a.startsWith("tdel:")) this.deleteTrace(a.slice(5));
       else if (a === "clash") this.checkInterference();

@@ -5,11 +5,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.255.0] - 2026-11-08
+## [1.258.0] - 2026-11-08
 
 ### Added
 
 - **Datum targets on drawings (ISO 5459, FR-DRW-023)**: Annotate ▾ Datum target (also on the Annotation tab) marks where a part rests on a datum. Click a point on an edge, then place the frame circle: the lower half shows the target label (A1, A2… after the last datum letter), the upper half the area size. In the panel the target can be a point (a cross), a line (a cross on a phantom line of the length you type) or a hatched area of the diameter you type. The target follows the model like the other annotations and is framed in orange when its edge is gone.
+## [1.256.0] - 2026-11-08
+
+### Added
+
+- Motion studies: **Images** saves every frame of the study at its frame rate as numbered PNG images (up to 1920 px wide) in a ZIP, like SolidWorks' Save Animation as a series of images, for editing in a video program (FR-FT-122).
+
+## [1.253.0] - 2026-11-08
+
+### Added
+
+- **Trim/Extend to a plane (FR-FT-121).** With *Face or plane*, the Trimming boundary's new **Plane** list takes Top, Front, Right or any reference plane above the feature, so members can be cut at, or lengthened up to, a plane that isn't a face of the model, as in SolidWorks. Picking a face again goes back to the face.
 
 ## [1.252.0] - 2026-11-08
 
@@ -1636,8 +1647,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.255.0...HEAD
-[1.255.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.255.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.258.0...HEAD
+[1.258.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.258.0
+[1.256.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.256.0
+[1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0
 [1.251.0]: https://github.com/kothf/step-viewer/compare/v1.250.0...v1.251.0
 [1.250.0]: https://github.com/kothf/step-viewer/compare/v1.248.0...v1.250.0

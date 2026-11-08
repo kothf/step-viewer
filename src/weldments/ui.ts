@@ -57,6 +57,16 @@ export const WELD_ICONS: Record<string, string> = {
 /** Trim/Extend types that join two members (End miter, End butt). */
 const pair = (f: TrimExtendFeature) => f.kind === "mitre" || f.kind === "butt1" || f.kind === "butt2";
 
+/** Trim/Extend boundary planes: a picked face, the standard planes or a reference plane before the feature. */
+function planeOpts(ctx: WeldCtx): [string, string][] {
+  return [["", t("Picked face")], ["std:XY", t("Top (XY)")], ["std:XZ", t("Front (XZ)")], ["std:YZ", t("Right (YZ)")],
+    ...ctx.before.filter(x => x.type === "plane").map(x => [`plane:${x.id}`, x.name] as [string, string])];
+}
+function planeKey(f: TrimExtendFeature): string {
+  const p = f.plane;
+  return !p ? "" : "std" in p ? `std:${p.std}` : "plane" in p ? `plane:${p.plane}` : "";
+}
+
 function pathSketches(ctx: WeldCtx): (SketchFeature | Sketch3dFeature)[] {
   return ctx.before.filter((x): x is SketchFeature | Sketch3dFeature => (x.type === "sketch" && x.ents.some(e => (e.t === "line" || e.t === "arc") && !e.cons)) || (x.type === "sketch3d" && x.segs.some(s => s.t === "line")));
 }
@@ -118,7 +128,7 @@ export function weldMissing(f: Feature): string | null {
   if (f.type === "member" && !f.segs.length) return "Pick the sketch lines the member runs along.";
   if (f.type === "member" && f.profile === "sketch" && !f.psketch) return "Pick a closed sketch for the profile.";
   if (f.type === "trimext" && !f.bodies.length) return "Pick the member bodies to trim.";
-  if (f.type === "trimext" && !f.boundary) return "Pick the boundary: a flat face or a body.";
+  if (f.type === "trimext" && !f.boundary && !(f.kind === "face" && f.plane)) return "Pick the boundary: a flat face or a body.";
   if (f.type === "endcap" && !f.faces.length) return "Pick the end faces of members to cap.";
   if (f.type === "gusset" && (!f.face1 || !f.face2)) return "Pick two flat faces that meet at a corner.";
   if (f.type === "weldbead" && (!f.faces1.length || !f.faces2.length)) return "Pick the faces of set 1 and set 2: the bead runs where they meet.";
@@ -197,9 +207,10 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + group(t("Bodies to be trimmed"), box("wbodies", t("Bodies"), t("{n} body|{n} bodies", { n: f.bodies.length }))
           + (f.bodies.length ? `<button class="btn small" data-k="wclear" data-wlist="bodies">${esc(t("Clear selections"))}</button>` : "")
           + help(t("Click faces of the members to trim or extend.")))
-        + group(t("Trimming boundary"), box("wbound", f.kind === "face" ? t("Face") : pair(f) ? t("Member") : t("Body"), f.boundary ? t("Picked") : t("None"))
+        + group(t("Trimming boundary"), (f.kind === "face" ? sel("wplane", t("Plane"), planeOpts(ctx), planeKey(f)) : "")
+          + (f.kind === "face" && f.plane ? "" : box("wbound", f.kind === "face" ? t("Face") : pair(f) ? t("Member") : t("Body"), f.boundary ? t("Picked") : t("None")))
           + chk("allowExt", !f.noExtend, t("Allow extension"))
-          + help(f.kind === "face" ? t("Click a flat face: members are cut at its plane, or lengthened up to it.") : f.kind === "mitre" ? t("Click a face of the other member: both are lengthened to where their axes meet and cut on the plane halving the corner.") : f.kind === "butt1" ? t("Click a face of the other member: the first member stops at its side, the other runs on to the first one's far side.") : f.kind === "butt2" ? t("Click a face of the other member: it stops at the first member's side, the first runs on to its far side.") : t("Click any face of the body the members stop at."))),
+          + help(f.kind === "face" ? t("Click a flat face, or choose a plane: members are cut at that plane, or lengthened up to it.") : f.kind === "mitre" ? t("Click a face of the other member: both are lengthened to where their axes meet and cut on the plane halving the corner.") : f.kind === "butt1" ? t("Click a face of the other member: the first member stops at its side, the other runs on to the first one's far side.") : f.kind === "butt2" ? t("Click a face of the other member: it stops at the first member's side, the first runs on to its far side.") : t("Click any face of the body the members stop at."))),
     };
   }
   if (f.type === "endcap") {
@@ -290,7 +301,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k.startsWith("wgmirror:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val) g.mirror = true; else delete g.mirror; };
   }
   if (f.type === "trimext") {
-    if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; if (pair(f)) f.bodies = f.bodies.slice(0, 1); };
+    if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; delete f.plane; if (pair(f)) f.bodies = f.bodies.slice(0, 1); };
+    if (k === "wplane") return () => { const v = String(val); if (!val) delete f.plane; else { f.plane = v.startsWith("std:") ? { std: v.slice(4) as "XY" | "XZ" | "YZ" } : { plane: v.slice(6) }; delete f.boundary; } };
     if (k === "allowExt") return () => { if (val) delete f.noExtend; else f.noExtend = true; };
   }
   if (f.type === "endcap") {
@@ -411,6 +423,7 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
       if (i >= 0) f.bodies.splice(i, 1); else if (pair(f)) { f.bodies = [fr]; next = "wbound"; } else f.bodies.push(fr);
     } else {
       if (f.kind === "face" && !flat) { toast(t("Pick a flat face.")); return focus; }
+      delete f.plane;
       if (pair(f) && !memberFace(ctx, fr.name)) { toast(t("Only structural member bodies can be trimmed: pick a face of a member.")); return focus; }
       f.boundary = fr;
     }

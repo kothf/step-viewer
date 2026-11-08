@@ -405,13 +405,14 @@ function boxSize(h: WeldHost, shape: any) {
 export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named | null, frames: Record<string, Frame>): Named {
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.bodies.length) throw new FeatureError("E-WLD-TRIM", "Pick the member bodies to trim.");
-  if (!f.boundary) throw new FeatureError("E-WLD-TRIM", "Pick the boundary: a flat face or a body.");
+  const byPlane = f.kind === "face" && !!f.plane;
+  if (!f.boundary && !byPlane) throw new FeatureError("E-WLD-TRIM", "Pick the boundary: a flat face or a body.");
   const list = h.bodyList(prev);
-  const bi = bodyOf(h, list, prev, f.boundary);
+  const bi = byPlane ? -1 : bodyOf(h, list, prev, f.boundary!);
   if (f.kind === "mitre" || f.kind === "butt1" || f.kind === "butt2") return endMitre(h, f, doc, prev, list, bi, frames);
   let plane: { p: V3; n: V3 } | null = null;
   if (f.kind === "face") {
-    const fr = h.planeFrame({ face: f.boundary }, prev, frames);
+    const fr = h.planeFrame(f.plane ?? { face: f.boundary! }, prev, frames);
     plane = { p: fr.o, n: fr.n };
   }
   const bound = list[bi];
