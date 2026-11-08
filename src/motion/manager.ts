@@ -2,6 +2,7 @@
 // distance/angle mates, motors on mates, exploded view and camera keys; play, loop, back and forth; record
 // a WebM video or an animated GIF of the view. Frames are solved in order with the assembly's mate solver
 // (each from the one before, so linkages do not flip) and cached until the study or the assembly changes.
+import { makeGrip } from "../resize";
 import { t, onLangChange } from "../i18n";
 import { toast } from "../ui";
 import { uid } from "../model/doc";
@@ -55,6 +56,7 @@ export class MotionManager {
   private capture: ((src: HTMLCanvasElement) => void) | null = null;
   private renderWaiters: (() => void)[] = [];
   recording: "webm" | "gif" | null = null;
+  private grip: HTMLDivElement;
 
   constructor(private asm: AsmController, private viewer: Viewer) {
     this.pane = document.createElement("section");
@@ -63,6 +65,9 @@ export class MotionManager {
     this.pane.setAttribute("aria-label", "Motion study");
     this.pane.hidden = true;
     $("#viewport").appendChild(this.pane);
+    // The timeline pane resizes from its top edge and keeps its height (FR-UI-002).
+    this.grip = makeGrip({ key: "motion", axis: "y", sign: -1, def: 240, min: 120, measure: () => this.pane.offsetHeight, max: () => Math.max(160, this.viewer.size.y - 60), apply: px => { this.pane.style.height = px == null ? "" : `${px}px`; this.pane.style.maxHeight = px == null ? "" : "none"; }, label: "Resize the motion study" });
+    this.grip.classList.add("mo-grip");
     asm.motion = { open: () => this.show(), rebuilt: () => this.rebuilt(), close: () => this.hide() };
     viewer.onRender(() => {
       if (this.capture) this.capture(viewer.renderer.domElement);
@@ -507,6 +512,7 @@ export class MotionManager {
       + `</div><div class="mo-body"><div class="mo-names"><div class="mo-name mo-rhead">${esc(t("Tracks"))}</div>${names}</div>`
       + `<div class="mo-tlw"><div class="mo-tl" style="width:calc(${this.zoom * 100}% - 20px)"><div class="mo-ruler" data-ruler title="${esc(t("Click or drag to move the playhead"))}">${ticks}</div>${lanes}${empty}<div class="mo-head-line" aria-hidden="true"></div></div></div></div>`
       + `<div class="mo-props">${this.propsHtml()}</div><div class="mo-status muted" role="status"></div>`;
+    this.pane.prepend(this.grip);
     const tlw = this.pane.querySelector<HTMLElement>(".mo-tlw");
     if (tlw) tlw.scrollLeft = this.scrollX;
     this.bind();

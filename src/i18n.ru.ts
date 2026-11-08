@@ -3281,4 +3281,18 @@ export const RU: Record<string, string> = {
   "A setback needs a corner where three or more filleted edges meet.": "Для отступа нужен угол, в котором сходятся три или более скругляемых ребра.",
   "The setback is longer than an edge at the corner.": "Отступ длиннее одного из рёбер у угла.",
   "The corner could not be set back.": "Не удалось сделать отступ на углу.",
+  // Modify box and feature dimensions on the model (FR-UI-114, FR-UI-115)
+  "Modify": "Изменить",
+  "Increase": "Увеличить",
+  "Decrease": "Уменьшить",
+  "Rebuild with this value": "Перестроить с этим значением",
+  "Rebuild": "Перестроить",
+  "{name} has no dimensions to show on the model.": "У {name} нет размеров для показа на модели.",
+  "{name}: click to change": "{name}: нажмите, чтобы изменить",
+  "The geometry kernel was stopped.": "Геометрическое ядро остановлено.",
+  "Resize the left panel": "Изменить ширину левой панели",
+  "Resize the right panel": "Изменить ширину правой панели",
+  "Resize the side panel": "Изменить ширину боковой панели",
+  "Resize the motion study": "Изменить высоту исследования движения",
+  "Drag to resize; double-click for the default size": "Перетащите, чтобы изменить размер; двойной щелчок возвращает размер по умолчанию",
 };

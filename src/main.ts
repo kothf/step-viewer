@@ -47,6 +47,7 @@ import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
+import { makeGrip, rememberDialogSizes } from "./resize";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -108,6 +109,7 @@ const modeller = new ModelController({
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { docs?.before3d(); asm.close(); },
   opened: label => docs?.opened("part", label),
+  openNames: () => (docs?.tabs ?? []).map(x => x.label.replace(/\s*•$/, "").replace(/\.[^.]+$/, "")),
   appVersion: __APP_VERSION__,
 }, new URL("occt/", document.baseURI).href);
 // Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
@@ -1250,6 +1252,17 @@ function fitToolbar() {
   for (const c of ["tb-icons", "tb-nodisp", "tb-nobrand", "tb-wrap"]) if (full()) top.classList.add(c);
 }
 new ResizeObserver(() => fitToolbar()).observe($(".topbar"));
+// Resizable side panels and dialogs (FR-UI-002): the widths are remembered per panel side.
+{
+  const app = $("#app");
+  const width = (name: string) => (px: number | null) => { if (px == null) app.style.removeProperty(name); else app.style.setProperty(name, `${px}px`); };
+  const gl = makeGrip({ key: "left", axis: "x", sign: 1, def: 270, min: 200, max: () => Math.min(640, window.innerWidth * 0.4), apply: width("--left-w"), measure: () => document.querySelector<HTMLElement>("#app > .left:not([hidden])")?.offsetWidth || 270, label: "Resize the left panel" });
+  const gr = makeGrip({ key: "right", axis: "x", sign: -1, def: 300, min: 240, max: () => Math.min(760, window.innerWidth * 0.45), apply: width("--right-w"), measure: () => document.querySelector<HTMLElement>("#app > .right:not([hidden])")?.offsetWidth || 300, label: "Resize the right panel" });
+  gl.classList.add("grip-left");
+  gr.classList.add("grip-right");
+  app.append(gl, gr);
+  rememberDialogSizes();
+}
 // Text that changes inside the header (the open file, its status, the kernel's state) can overflow it
 // without resizing the bar itself, so fit again after such changes too.
 {

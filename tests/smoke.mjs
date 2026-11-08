@@ -7342,6 +7342,92 @@ try {
     await ctx.close();
   }
 
+  // --- Tabs + assembly rebuild, Modify box, feature dimensions on the model, resizable panels (FR-UI-114, FR-UI-115, FR-UI-002) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug&nokernel`);
+    await dp.waitForFunction(() => window.__sv);
+    const idle = () => dp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const plate = w => dp.evaluate(w => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [{ id: "d1", name: "D1", t: "distance", e: ["l1"], val: { v: 2 * w } }], ents: [P("a", -w, -10), P("b", w, -10), P("c", w, 10), P("d", -w, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
+        { id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } });
+    }), w);
+    await dp.click("#new-part");
+    await dp.waitForFunction(() => window.__sv.model?.store);
+    await plate(20); await dp.waitForTimeout(150); await idle();
+    await dp.click("#new-part");
+    await dp.waitForFunction(() => window.__sv.model?.store?.doc.features.length === 0);
+    const name2 = await dp.evaluate(() => window.__sv.model.store.doc.name);
+    await plate(30); await dp.waitForTimeout(150); await idle();
+    // An assembly parked while it rebuilds used to keep "Rebuilding…" for ever once shown again.
+    await dp.click("#new-more"); await dp.click("#new-asm");
+    await dp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
+    await dp.click('#asm-tools [data-ac="insert"]'); await dp.click("#asm-menu button >> nth=0");
+    await dp.click("#doc-tabs .dt >> nth=0 >> .dt-b");
+    await dp.waitForFunction(() => window.__sv.model?.store);
+    await dp.click("#doc-tabs .dt >> nth=2 >> .dt-b");
+    await dp.waitForFunction(() => window.__sv.asm.doc);
+    await dp.click('#asm-tools [data-ac="insert"]'); await dp.click("#asm-menu button >> nth=1");
+    const built = await dp.waitForFunction(() => document.querySelector("#asm-busy").hidden && window.__sv.viewer.parts.length === 2, null, { timeout: 90000 }).then(() => true, () => false);
+    check(name2 === "Part2" && built, `asm: an assembly parked while it rebuilds builds again when shown, and both open parts insert (second part ${name2}, built ${built})`);
+    // Back to Part2: double-clicking its face shows the feature's dimensions on the model.
+    await dp.click("#doc-tabs .dt >> nth=1 >> .dt-b");
+    await dp.waitForFunction(() => window.__sv.model?.store && window.__sv.model.last());
+    await idle();
+    const vb = await dp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    await dp.mouse.dblclick(vb.x, vb.y);
+    await dp.waitForSelector(".mc-fdim", { timeout: 5000 }).catch(() => {});
+    const fdims = await dp.evaluate(() => [...document.querySelectorAll(".mc-fdim")].map(b => b.textContent).sort());
+    check(fdims.join() === "10,60", `modify: double-clicking a face shows its feature's dimensions on the model (${fdims})`);
+    // The depth in the Modify box: ✕ leaves it, ✓ (Enter) changes it as one undo step.
+    const clickDim = async v => { const i = await dp.evaluate(v => [...document.querySelectorAll(".mc-fdim")].findIndex(b => b.textContent === v), v); await dp.click(`.mc-fdim >> nth=${i}`); };
+    await clickDim("10");
+    await dp.waitForSelector(".mod-box .sk-input");
+    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box input").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
+    await dp.fill(".mod-box input", "25");
+    await dp.click(".mod-box [data-m=x]");
+    await dp.waitForTimeout(100);
+    const kept = await dp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v);
+    await clickDim("10");
+    await dp.waitForSelector(".mod-box .sk-input");
+    await dp.fill(".mod-box input", "25");
+    await dp.press(".mod-box input", "Enter");
+    await dp.waitForTimeout(150);
+    await idle();
+    const after = await dp.evaluate(() => ({ depth: window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v, undo: window.__sv.model.store.undoLabel, labels: [...document.querySelectorAll(".mc-fdim")].map(b => b.textContent).sort().join() }));
+    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
+      `modify: the Modify box changes a feature dimension (✕ keeps it, Enter takes it as one undo step) (${JSON.stringify({ box, kept, after })})`);
+    // A sketch dimension: ⟲ rebuilds with the typed value, ✕ puts it back.
+    const width = () => dp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return b.max.x - b.min.x; });
+    await clickDim("60");
+    await dp.waitForSelector(".mod-box .sk-input");
+    await dp.fill(".mod-box input", "80");
+    await dp.click(".mod-box [data-m=rebuild]");
+    await dp.waitForTimeout(300);
+    await idle();
+    const prev = { size: await width(), stored: await dp.evaluate(() => window.__sv.model.store.doc.features[0].dims[0].val.v) };
+    await dp.click(".mod-box [data-m=x]");
+    await dp.waitForTimeout(300);
+    await idle();
+    const back = await width();
+    check(Math.abs(prev.size - 80) < 1e-6 && prev.stored === 60 && Math.abs(back - 60) < 1e-6, `modify: ⟲ rebuilds with the typed value and ✕ goes back (${JSON.stringify({ prev, back })})`);
+    // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
+    const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
+    await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();
+    await dp.waitForTimeout(250);
+    const w1 = await dp.evaluate(() => ({ w: document.querySelector("#tree-panel").getBoundingClientRect().width, saved: localStorage.getItem("mc:size:left") }));
+    await dp.dblclick("#app > .grip-left");
+    await dp.waitForTimeout(250);
+    const w2 = await dp.evaluate(() => document.querySelector("#tree-panel").getBoundingClientRect().width);
+    check(grip.role === "separator" && Math.abs(w1.w - 350) <= 2 && w1.saved === "350" && Math.abs(w2 - 270) <= 2, `ui: the side panel resizes from its grip, the width is remembered and double-click restores it (${JSON.stringify({ grip, w1, w2 })})`);
+    await ctx.close();
+  }
+
   // --- Document tabs (FR-DOC-003, FR-UI-120): parts, assemblies and drawings stay open in tabs at the bottom ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

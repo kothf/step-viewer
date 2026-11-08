@@ -13,6 +13,7 @@
 .drw-menu button:hover, .drw-menu button:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
 .drw-body { flex: 1; display: flex; min-height: 0; }
 .drw-side { width: 280px; flex: none; background: var(--panel); border-right: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
+.drw-body > .grip { flex: none; margin: 0 -4px; position: relative; }
 .drw-tree { padding: 6px 0; border-bottom: 1px solid var(--line); }
 .drw-ti { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
 .drw-ti span { overflow: hidden; text-overflow: ellipsis; }
@@ -53,7 +54,8 @@
 .drw-status.warn { color: var(--warn-text); }
 @media (max-width: 767px) {
   .drw-body { flex-direction: column-reverse; }
-  .drw-side { width: auto; max-height: 40vh; border-right: 0; border-top: 1px solid var(--line); }
+  .drw-side { width: auto !important; max-height: 40vh; border-right: 0; border-top: 1px solid var(--line); }
+  .drw-body > .grip { display: none; }
   .drw-top .btn span { display: none; }
   .drw-name { max-width: 14ch; }
 }

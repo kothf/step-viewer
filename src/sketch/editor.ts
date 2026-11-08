@@ -18,6 +18,7 @@ import { cutTriangles, thin } from "./intersect";
 import { evaluate, ExprError, isPlain, type VarValue } from "../model/expr";
 import type { DxfShape } from "./dxf";
 import { t } from "../i18n";
+import { ModifyBox } from "../modifyBox";
 import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 
@@ -859,58 +860,71 @@ export class SketchEditor {
     setTimeout(() => this.editDim(dim.id), 0);
   }
 
-  /** Opens the value box on a dimension. */
+  /** Opens the Modify box on a dimension (FR-UI-114): the sketch follows the value as it is typed. */
   editDim(id: string) {
     const dim = this.sk.dims.find(d => d.id === id);
     if (!dim || dim.driven) return;
     const label = this.labels.get(id);
     if (!label) return;
     this.closeInput(false);
-    const inp = document.createElement("input");
-    inp.className = "sk-input";
-    inp.setAttribute("aria-label", t("Dimension value"));
     const u = this.host.unit();
-    inp.value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
-    inp.style.left = label.style.left;
-    inp.style.top = label.style.top;
-    this.host.layer.appendChild(inp);
-    this.input = inp;
-    inp.dataset.dim = id;
-    inp.focus();
-    inp.select();
-    inp.addEventListener("keydown", e => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); this.closeInput(true); }
-      else if (e.key === "Escape") { e.preventDefault(); this.closeInput(false); }
+    const orig = this.sk, origInfo = this.info;
+    const lr = label.getBoundingClientRect();
+    const value = dim.val.expr ?? (dim.t === "angle" ? trimNum((dim.val.v * 180) / Math.PI, 4) : trimNum(dim.val.v / u.mm, 6));
+    // The sketch with the typed value, solved; an error key when it cannot be.
+    const tryValue = (text: string): { sk: SketchFeature; r: SolveResult } | { err: string; params?: Record<string, string | number> } | null => {
+      let v: number;
+      try { v = evaluate(text, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
+      catch (err) { return { err: (err as ExprError).key ?? String(err), params: (err as ExprError).params }; }
+      if (dim.t !== "angle" && !(v > 0)) return { err: "The value must be more than 0." };
+      if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(text) ? "" : text.trim())) return null;
+      const next: SketchFeature = structuredClone(orig);
+      const nd = next.dims.find(d => d.id === dim.id)!;
+      nd.val = isPlain(text) ? { v } : { v, expr: text.trim() };
+      const r = solve(next);
+      if (r.status !== "ok") return { err: "That value cannot be reached with the other relations and dimensions." };
+      return { sk: next, r };
+    };
+    const restore = () => { if (this.sk !== orig && !this.disposed) { this.sk = orig; this.info = origInfo; this.render(); } };
+    const box = new ModifyBox({
+      at: { x: lr.right, y: lr.top + lr.height / 2 },
+      title: `${dim.name}@${this.sk.name}`,
+      value,
+      step: dim.t === "angle" ? 1 : u.name === "in" ? 0.1 : 1,
+      live: true,
+      preview: text => {
+        if (this.disposed) return;
+        const r = tryValue(text);
+        if (!r || "err" in r) { restore(); return; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.render();
+      },
+      accept: text => {
+        if (this.input === box.input) this.input = null;
+        if (this.disposed) return true;
+        const r = tryValue(text);
+        if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); return true; }
+        if (!r) { restore(); return true; }
+        this.sk = r.sk;
+        this.info = r.r;
+        this.commit("Change dimension");
+        this.render();
+        return true;
+      },
+      cancel: () => { if (this.input === box.input) this.input = null; restore(); },
     });
-    inp.addEventListener("blur", () => setTimeout(() => this.closeInput(true), 0));
+    this.input = box.input;
+    this.modify = box;
   }
 
+  private modify: ModifyBox | null = null;
+
   private closeInput(apply: boolean) {
-    const inp = this.input;
-    if (!inp) return;
+    const box = this.modify;
+    this.modify = null;
+    if (box) box.close(apply);
     this.input = null;
-    inp.remove();
-    if (!apply || this.disposed) return;
-    const dim = this.sk.dims.find(d => d.id === inp.dataset.dim);
-    if (!dim) return;
-    let v: number;
-    try { v = evaluate(inp.value, dim.t === "angle" ? "angle" : "length", dim.t === "angle" ? "deg" : this.host.unit().name, this.host.vars?.() ?? {}); }
-    catch (err) { this.host.toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), "error"); return; }
-    if (dim.t !== "angle" && !(v > 0)) { this.host.toast(t("The value must be more than 0."), "error"); return; }
-    if (Math.abs(v - dim.val.v) < 1e-12 && (dim.val.expr ?? "") === (isPlain(inp.value) ? "" : inp.value)) return;
-    const next: SketchFeature = structuredClone(this.sk);
-    const nd = next.dims.find(d => d.id === dim.id)!;
-    nd.val = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
-    const r = solve(next);
-    if (r.status !== "ok") {
-      this.host.toast(t("That value cannot be reached with the other relations and dimensions."), "error");
-      return;
-    }
-    this.sk = next;
-    this.info = r;
-    this.commit("Change dimension");
-    this.render();
   }
 
   /** Renames a dimension (FR-SK-065); expressions that use "old@Sketch" follow. Returns an error key, or "". */

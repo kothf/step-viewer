@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.136.0] - 2026-11-08
+
+### Fixed
+
+- **Assembly stuck on "Rebuilding…"**: switching to another document tab while an assembly was still rebuilding (the first build takes a few seconds while the geometry kernel starts) left the assembly waiting for ever once you came back, so inserting more components did nothing. Parking a document now ends its kernel work cleanly, and the assembly builds again when shown. The same fix covers parts parked mid-rebuild.
+- A new part no longer takes the name of a part already open in another tab (two empty parts were both Part1).
+
+### Added
+
+- **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in SolidWorks. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
+- **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
+- **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
+
 ## [1.134.0] - 2026-11-08
 
 ### Added
@@ -1173,7 +1186,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.134.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.136.0...HEAD
+[1.136.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.136.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
