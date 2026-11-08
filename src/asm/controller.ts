@@ -2554,20 +2554,31 @@ export class AsmController {
    * proximity result): 0 when they touch or overlap, NaN when either has no mesh.
    */
   motionGap(a: string, b: string): number {
+    return this.motionGapPts(a, b)?.d ?? NaN;
+  }
+
+  /** The same with the two nearest points (world mm), or null when either component has no mesh. */
+  motionGapPts(a: string, b: string): { d: number; p: [[number, number, number], [number, number, number]] } | null {
     const parts = this.host.viewer.parts, m = new THREE.Matrix4();
     const of = (c: string) => parts.map((_, i) => i).filter(i => topOf(this.shownIds[i]) === c);
     const ia = of(a), ib = of(b);
-    let best = Infinity;
+    let best = Infinity, out: { d: number; p: [[number, number, number], [number, number, number]] } | null = null;
+    const t1 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 }, t2 = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
     for (const i of ia) for (const j of ib) {
       const bvh = parts[i].mesh.geometry.boundsTree;
       if (!bvh) continue;
       parts[i].mesh.updateWorldMatrix(true, false);
       parts[j].mesh.updateWorldMatrix(true, false);
       m.copy(parts[i].mesh.matrixWorld).invert().multiply(parts[j].mesh.matrixWorld);
-      const hit = bvh.closestPointToGeometry(parts[j].mesh.geometry, m, undefined, undefined, 0, best);
-      if (hit && hit.distance < best) best = hit.distance;
+      // target1 comes back in part i's mesh coordinates, target2 in part j's.
+      const hit = bvh.closestPointToGeometry(parts[j].mesh.geometry, m, t1, t2, 0, best);
+      if (hit && hit.distance < best) {
+        best = hit.distance;
+        const p1 = t1.point.clone().applyMatrix4(parts[i].mesh.matrixWorld), p2 = t2.point.clone().applyMatrix4(parts[j].mesh.matrixWorld);
+        out = { d: best, p: [[p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]] };
+      }
     }
-    return Number.isFinite(best) ? best : NaN;
+    return out;
   }
 
   /** Parts whose look a motion study changed: viewer part index → what it had. */
