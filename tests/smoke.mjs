@@ -3542,6 +3542,21 @@ try {
     const ov = await vp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-overlay")].map(x => [+x.dataset.removed, +x.dataset.added, x.querySelectorAll('[stroke="#d32f2f"]').length]));
     check(ov.length === 1 && ov[0][0] >= 4 && ov[0][1] === 0 && ov[0][2] >= 4, `vault: drawing compare overlays the versions, the removed view in red (${JSON.stringify(ov)})`);
     if (process.env.SMOKE_SHOTS) await vp.screenshot({ path: `${process.env.SMOKE_SHOTS}/vault-drawing-compare.png` });
+    await vp.keyboard.press("Escape");
+    // Full-text search: a component name inside the assembly.
+    const found = await vp.evaluate(async () => (await window.__sv.vault.vault.search({ content: "Plate<1>" })).map(f => f.path).sort());
+    check(JSON.stringify(found) === '["Base.mcadasm"]', `vault: full-text search finds the assembly by a component name (${JSON.stringify(found)})`);
+    // Releasing the part and the drawing stores Plate_revA.step (revision in it) and Base_revA.pdf beside them.
+    const rel = await vp.evaluate(async did => {
+      const p = window.__sv.vault, v = p.vault;
+      const part = (await v.files()).find(f => f.path === "Plate.mcadprt");
+      for (const id of [part.id, did]) { await p.transitionDlg(id, "Submit for review", "ok", [], ""); await p.transitionDlg(id, "Approve", "ok", [], ""); }
+      const files = await v.files(), step = files.find(f => f.path === "Plate_revA.step"), pdf = files.find(f => f.path === "Base_revA.pdf");
+      const text = step ? new TextDecoder().decode(await v.versionBytes(step.id, 1)) : "";
+      const head = pdf ? new TextDecoder().decode((await v.versionBytes(pdf.id, 1)).slice(0, 5)) : "";
+      return { step: !!step, rev: /PRODUCT_DEFINITION_FORMATION[A-Z_]*\('A'/.test(text), pdf: head };
+    }, id);
+    check(rel.step && rel.rev && rel.pdf === "%PDF-", `vault: a release stores the part's STEP with its revision and the drawing's PDF (${JSON.stringify(rel)})`);
     await ctx.close();
   }
 
@@ -4505,7 +4520,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.77: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
+  // --- 1.78: fastener library (FR-ASM-028), mate references (FR-MATE-011) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const fp = await ctx.newPage();
@@ -4587,7 +4602,7 @@ try {
       && JSON.stringify(fast.screw) === "[10,10,5,1]" && JSON.stringify(fast.nut) === "[10,10,0,-1]" && JSON.stringify(fast.dof) === "[1,1]" && /2 fasteners placed/.test(fast.status ?? "") && fast.configs === 11
       && refs.title === "Mate reference" && refs.plate === 2 && refs.pin === 2
       && JSON.stringify(auto.mates) === '[["concentric",true,true],["coincident",true,true]]' && JSON.stringify(auto.at) === "[30,10,5]",
-      `asm 1.77: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
+      `asm 1.78: ISO fasteners placed on a hole with concentric + coincident mates; mate references mate a part on insert (FR-ASM-028, FR-MATE-011) (${JSON.stringify({ panel, fast, refs, auto })})`);
     await ctx.close();
   }
 

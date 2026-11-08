@@ -34,9 +34,25 @@ export function bomMode(sheet: Sheet): BomMode {
  * pattern instances; a sub-assembly's parts count as the sub-assembly. "parts": one row per part,
  * wherever it is used (the same part document at the top and inside sub-assemblies is one row).
  */
-export function bomOf(top: AsmDoc, flat: AsmDoc, mode: BomMode = "top"): Bom {
+export function bomOf(top: AsmDoc, flat: AsmDoc, mode: BomMode = "top", sub?: string): Bom {
+  // One sub-assembly's own parts list (FR-DRW-030): its parts, wherever they sit inside it.
+  if (sub) return partsBom({ ...flat, components: flat.components.filter(c => c.id.startsWith(`${sub}/`)) });
   return mode === "parts" ? partsBom(flat) : topBom(top, flat);
 }
+
+/** The BOM a sheet's balloons and parts list follow: its BOM table's mode and sub-assembly (memoised in `cache`). */
+export function sheetBom(sheet: Sheet, top: AsmDoc, flat: AsmDoc, cache?: Map<string, Bom>): Bom {
+  const t = (sheet.annots ?? []).find(a => a.t === "table" && a.kind === "bom");
+  const sub = t && t.t === "table" && t.sub && top.components.some(c => c.id === t.sub) ? t.sub : undefined;
+  const mode = bomMode(sheet), key = `${mode}|${sub ?? ""}`;
+  let b = cache?.get(key);
+  if (!b) { b = bomOf(top, flat, mode, sub); cache?.set(key, b); }
+  return b;
+}
+
+/** The sub-assemblies at the top of an assembly, for the BOM's choice. */
+export const subsOf = (top: AsmDoc): { id: string; name: string }[] =>
+  top.components.filter(c => !c.suppressed && top.parts[c.part]?.asm).map(c => ({ id: c.id, name: c.name }));
 
 function topBom(top: AsmDoc, flat: AsmDoc): Bom {
   const byId = new Map(top.components.map(c => [c.id, c]));

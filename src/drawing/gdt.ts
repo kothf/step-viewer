@@ -56,8 +56,16 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
     const y0 = at[1] - (i + 1) * ROW, cy = y0 + ROW / 2, base = cy - H / 2 + 0.2;
     let x = at[0];
     const cell = (w: number) => { out.push(L([x, y0], [x + w, y0]), L([x + w, y0], [x + w, y0 + ROW]), L([x + w, y0 + ROW], [x, y0 + ROW]), L([x, y0 + ROW], [x, y0])); x += w; };
-    out.push(...symbolPrims(r.sym, x + 4, cy));
-    cell(8);
+    // A composite frame: one characteristic cell spans the row and the composite rows under it.
+    if (i > 0 && r.composite) x += 8;
+    else {
+      let n = 1;
+      while (a.rows[i + n]?.composite) n++;
+      const yb = y0 - (n - 1) * ROW;
+      out.push(...symbolPrims(r.sym, x + 4, (yb + y0 + ROW) / 2));
+      out.push(L([x, yb], [x + 8, yb]), L([x + 8, yb], [x + 8, y0 + ROW]), L([x + 8, y0 + ROW], [x, y0 + ROW]), L([x, y0 + ROW], [x, yb]));
+      x += 8;
+    }
     const tol = (r.dia ? "Ø" : "") + (dec === "." ? r.tol : r.tol.replace(".", dec));
     const modW = r.mod ? 4.2 : 0, w = Math.max(8, tw(tol) + 3 + modW);
     out.push(T(x + 1.5, base, tol, H, "l"));
@@ -72,6 +80,7 @@ export function gtolPrims(a: GtolAnnot, at: P2, to: P2 | null, dec: string): { p
     const s: P2 = [sx, at[1] - ROW / 2], knee: P2 = [sx + (right ? 4 : -4), s[1]];
     const dl = Math.hypot(to[0] - knee[0], to[1] - knee[1]) || 1;
     out.push(L(s, knee), L(knee, to), arrowHead(to[0], to[1], (to[0] - knee[0]) / dl, (to[1] - knee[1]) / dl, 3, 1));
+    if (a.around) out.push(C(knee, 1.5));
   }
   return { prims: out, box: [at[0], at[1] - a.rows.length * ROW, at[0] + wMax, at[1]] };
 }

@@ -83,15 +83,17 @@ export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; p
 /** Geometric characteristics (ISO 1101 / ASME Y14.5). */
 export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";
 /** One row of a feature control frame: symbol, tolerance (Ø for a cylindrical zone, M/L material condition), datums. */
-export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[] }
+/** `composite`: shares the characteristic of the row above (a composite frame, ISO 5458 / ASME Y14.5). */
+export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[]; composite?: boolean }
 /** Geometric tolerance (FR-DRW-023): a feature control frame with a leader to the model (or free). */
-export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef }
+/** `around`: the all-around circle at the leader's bend (the tolerance applies all around the profile). */
+export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef; around?: boolean }
 /** Datum feature symbol: a filled triangle on an edge and a framed letter. */
 export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
 /** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
 export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string }
 /** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), its top-right one with `anchor: "tr"` (revision tables grow to the left), or its bottom-right one with `anchor: "br"` (a BOM on the title block: header at the bottom, items upwards). A BOM's rows come from the assembly when drawn. */
-export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br"; /** BOM only: "parts" lists the parts inside sub-assemblies (FR-ASM-024). */ mode?: "top" | "parts" }
+export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general" | "bom"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" | "br"; /** BOM only: "parts" lists the parts inside sub-assemblies (FR-ASM-024). */ mode?: "top" | "parts"; /** BOM only: list just this top-level sub-assembly's parts. */ sub?: string }
 
 /**
  * A balloon (FR-DRW-030) on a component of an assembly view: `ref` is an edge of it (its face names

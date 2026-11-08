@@ -8,7 +8,7 @@
 // `log/` (append-only, so concurrent writers never overwrite each other, FR-PDM-071).
 
 import { defaultCards, defaultWorkflow, formatNumber, PART_NUMBER, preLabel, revLabel, revIndex, ROLES, type CardField, type Numbering, type RevScheme, type Role, type Workflow, type WfTransition } from "./workflow";
-import { docJson, docRefs, embedDocs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
+import { docJson, docRefs, docText, embedDocs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
 
 /** The little a vault needs from a directory. Names are single path segments. */
 export interface VDir {
@@ -31,6 +31,8 @@ export interface VaultInfo {
   /** Roles per user name in a shared vault (FR-PDM-037); a personal vault gives its one user every role. */
   roles?: Record<string, Role[]>; shared?: boolean;
   searches?: SavedSearch[];
+  /** FR-PDM-036: a release stores the PDF of drawings and the STEP of parts and assemblies beside them (absent: on). */
+  outputs?: boolean;
 }
 /** A reference from one version to another file (FR-PDM-020): the version it was checked in against, and how many. */
 export interface RefRec { id: string; path: string; version: number; qty: number }
@@ -62,6 +64,8 @@ export interface FileRec {
   /** Record sequence number: the highest wins when a shared vault holds several (FR-PDM-071). */ seq?: number;
 }
 export interface SearchQuery {
+  /** FR-PDM-043: text inside the latest versions (drawing notes and tables, document properties, text files). */
+  content?: string;
   text?: string; state?: string; revision?: string; checkedOutBy?: string; kind?: string;
   /** ISO dates: the latest version's date range. */ from?: string; to?: string;
   /** Data card fields that must contain the value (case-insensitive). */ fields?: Record<string, string>;
@@ -504,7 +508,7 @@ export class Vault {
   has(role: Role) { return this.rolesOf().includes(role); }
 
   /** Changes vault settings (Admin); logged as a settings change (FR-PDM-060). */
-  async saveSettings(patch: Partial<Pick<VaultInfo, "revScheme" | "workflow" | "cards" | "numbering" | "roles" | "shared" | "commentRequired" | "searches" | "name">>, what = "settings") {
+  async saveSettings(patch: Partial<Pick<VaultInfo, "revScheme" | "workflow" | "cards" | "numbering" | "roles" | "shared" | "commentRequired" | "searches" | "name" | "outputs">>, what = "settings") {
     if (what !== "saved search" && !this.has("Admin")) throw new VaultError("Only an Admin can change the vault settings.");
     if (patch.workflow) {
       const w = patch.workflow, names = new Set(w.states.map(s => s.name));
@@ -977,6 +981,11 @@ export class Vault {
       for (const [k, v] of Object.entries(q.fields ?? {})) if (v.trim() && !has(card[k], v)) return false;
       return true;
     });
+    if (q.content?.trim()) {
+      const needle = q.content.trim().toLowerCase(), keep: FileRec[] = [];
+      for (const f of out) if ((await this.contentText(f)).toLowerCase().includes(needle)) keep.push(f);
+      out = keep;
+    }
     if (q.contains?.value.trim()) {
       const byId = new Map(files.map(f => [f.id, f]));
       const hit = (id: string, seen: Set<string>): boolean => {
@@ -988,6 +997,20 @@ export class Vault {
       out = out.filter(f => hit(f.id, new Set()));
     }
     return out;
+  }
+
+  private texts = new Map<string, string>();
+
+  /** The searchable text of a file's latest version (cached by content). */
+  async contentText(f: FileRec): Promise<string> {
+    const lv = this.latest(f);
+    if (lv.purged) return "";
+    let s = this.texts.get(lv.sha);
+    if (s === undefined) {
+      try { s = await docText(f.path, await this.object(lv.sha)); } catch { s = ""; }
+      this.texts.set(lv.sha, s);
+    }
+    return s;
   }
 
   // ---------- shared vault: conflicts (FR-PDM-070) ----------
