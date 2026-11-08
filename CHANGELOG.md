@@ -13,6 +13,7 @@ More from modelling the Leuenberger steam engine through the UI:
 
 - Faces the mesh fit misread (a short boss taken for a sphere, a hole cut by a cross hole taken as "other") take the exact cylinder from the B-rep, so they can be measured as cylinders and picked for Concentric mates.
 - View keys (arrows, Ctrl+arrows, Z) pressed while a standard view is still turning the camera start from where that move ends, not from the half-way camera.
+
 ## [1.169.0] - 2026-11-08
 
 ### Fixed
