@@ -3009,7 +3009,7 @@ export const RU: Record<string, string> = {
   "Click the edges of the parting line.": "Щёлкните рёбра линии разъёма.",
   "Draft works on ribs normal to the sketch.": "Уклон работает для рёбер жёсткости, перпендикулярных эскизу.",
   "The draft angle must be between 0° and 45°.": "Угол уклона должен быть от 0° до 45°.",
-  // Next: sketch relations to model edges picked in the view (FR-SK-064).
+  // 1.101.0: sketch relations to model edges picked in the view (FR-SK-064).
   "Select sketch items or model edges to add relations (Ctrl+click for more).": "Выберите элементы эскиза или рёбра модели, чтобы добавить взаимосвязи (Ctrl+щелчок добавляет).",
   "Reference model edge": "Ссылка на ребро модели",
   // 1.104.0: arc length, chamfer, chain, baseline and ordinate dimensions (FR-DRW-021).
@@ -3054,4 +3054,20 @@ export const RU: Record<string, string> = {
   "Reference geometry": "Справочная геометрия",
   "Presentation": "Представление",
   "Pick a plane or a flat face, then Sketch; the sketch tools show here while you draw.": "Выберите плоскость или плоскую грань, затем «Эскиз»; инструменты эскиза появятся здесь во время рисования.",
+  // 1.108.0: Indent (FR-BODY-007) and sweep start tangency.
+  "Indent": "Вдавливание",
+  "Indent: a body takes the shape of tool bodies pressed into it, with a wall or as a cut": "Вдавливание: тело принимает форму вдавленных в него тел-инструментов, со стенкой или вырезом",
+  "Pick the target body and at least one tool body.": "Выберите целевое тело и хотя бы одно тело-инструмент.",
+  "Target body": "Целевое тело",
+  "Tool bodies": "Тела-инструменты",
+  "Cut (no wall)": "Вырез (без стенки)",
+  "The target body takes the shape of the tool bodies: they are cut out, grown by the clearance, and a wall of the thickness follows them on the side they press into. The tool bodies stay.": "Целевое тело принимает форму тел-инструментов: они вырезаются с учётом зазора, а стенка заданной толщины повторяет их с той стороны, куда они вдавлены. Тела-инструменты остаются.",
+  "Give a thickness.": "Задайте толщину.",
+  "The tool body could not be offset: try a smaller clearance or thickness.": "Не удалось сместить тело-инструмент: попробуйте меньший зазор или толщину.",
+  "A tool body does not touch the target body.": "Тело-инструмент не касается целевого тела.",
+  "Nothing is left of the target body.": "От целевого тела ничего не осталось.",
+  "Start and End Tangency": "Касательность в начале и конце",
+  "Start tangency": "Касательность в начале",
+  "Path tangent": "Касательно к траектории",
+  "The profile is turned square to the path where the path starts.": "Профиль поворачивается перпендикулярно траектории в её начале.",
 };
