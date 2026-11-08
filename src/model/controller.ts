@@ -51,6 +51,10 @@ import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
+import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
+import { isSheet } from "../sheetmetal/types";
+import { flatBendLines } from "../sheetmetal/sheet";
+import { flatDxf } from "../sheetmetal/flat";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
 
@@ -151,8 +155,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
+const ICONS: Record<string, string> = { sketch3d: "⟁", curve: "〰", sweepsurf: "⤼", helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", indent: "⊔", intersect: "⧇", untrimsurf: "⬚", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", revsurf: "◠", loftsurf: "⏥", trimsurf: "✂", fillsurf: "◈", extendsurf: "⇱", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", spattern: "⁘", part: "◆", material: "▦", ...SM_TREE_ICONS };
+const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace", "Surface-Revolve", "Surface-Loft", "Surface-Trim", "Structural Member", "Trim/Extend", "End cap", "Gusset", "Fillet Bead", "SketchPattern", "TablePattern"];
 
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -674,7 +678,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -682,6 +686,7 @@ export class ModelController {
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
+    const smEdge = type === "smflange" || type === "smhem" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -766,6 +771,11 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
+    } else if (type === "smbase" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog") {
+      // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
+      const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, hasBody: !!this.last?.data });
+      if (typeof sm === "string") { toast(sm, true); return; }
+      draft = sm;
     } else if (type === "sketch3d") {
       draft = { id, type: "sketch3d", name: nextName(d, "sketch3d"), pts: [], segs: [], rels: [], dims: [] } satisfies Sketch3dFeature;
       this.sk3 = { id, tool: "line", plane: "XY", anchor: null, spline: null, sel: [] };
@@ -832,7 +842,8 @@ export class ModelController {
       if (pre) (draft as FilletFeature).edges = [pre];
     }
     this.recallOptions(type, draft);
-    const index = end;
+    // The flat pattern stays last (SolidWorks): new features go in before it.
+    const index = d.features[end - 1]?.type === "smflat" ? end - 1 : end;
     const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "offsurf" ? "faces" : type === "trimsurf" ? ((draft as TrimSurfFeature).surface ? "ttool" : "tsurf") : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
@@ -988,6 +999,8 @@ export class ModelController {
     if (wm) { toast(t(wm), true); return; }
     if (f.type === "rib" && !f.sketch) { toast(t("Pick an open sketch: the line the rib is built on."), true); return; }
     if (f.type === "loft" && f.profiles.length < 2) { toast(t("Pick two or more profile sketches."), true); return; }
+    const smWhy = smCheck(f);
+    if (smWhy) { toast(smWhy, true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
     this.mode = { kind: "none" };
     this.store!.change(m.isNew ? `Add ${f.name}` : `Edit ${f.name}`, d => {
@@ -1548,6 +1561,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
+      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -1802,6 +1816,37 @@ export class ModelController {
     this.draftChanged();
   }
 
+  /** Edge flange and hem (FR-FT-120): a click toggles a straight sheet edge; edges the draft itself made are skipped. */
+  private pickSmEdge(e: PointerEvent, f: { id: string; edges: EdgeRef[] }) {
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit?.edge || hit.edge.type !== "line") { toast(t("Pick a straight edge of the sheet.")); return; }
+    const ref = this.edgeRefs([hit.edge])[0];
+    if (!ref || ref.faces.some(n => n.startsWith(`${f.id}:`))) { toast(t("Pick a straight edge of the sheet.")); return; }
+    const key = (r: EdgeRef) => [...r.faces].sort().join("|");
+    const i = f.edges.findIndex(x => key(x) === key(ref));
+    if (i >= 0) f.edges.splice(i, 1); else f.edges.push(ref);
+    this.draftChanged();
+  }
+
+  /** Flatten (FR-FT-120): shows the flat pattern (a Flat-Pattern feature kept last), or folds the part back. */
+  private toggleFlat() {
+    if (!this.store) return;
+    const d = this.doc;
+    if (!d.features.some(f => f.type === "smbase")) { toast(t("Make a base flange first."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    const fp = d.features.find(f => f.type === "smflat");
+    if (fp) this.store.change(fp.suppressed ? "Flatten" : "Fold", dd => { const x = dd.features.find(g => g.id === fp.id)!; if (x.suppressed) delete x.suppressed; else x.suppressed = true; });
+    else this.store.change("Flatten", dd => { dd.features.push({ id: uid("f_"), type: "smflat", name: nextName(dd, "smflat") }); if (dd.rollback != null) dd.rollback = null; });
+  }
+
+  /** The flat pattern with its bend lines as DXF (R12, mm). */
+  private exportFlatDxf() {
+    const st = this.last?.sheet;
+    if (!st) { toast(t("Make a base flange first."), true); return; }
+    downloadBlob(new Blob([flatDxf(st, this.doc.name)], { type: "image/vnd.dxf" }), `${this.doc.name}-flat.dxf`);
+    toast(t("Flat pattern saved as DXF."));
+  }
+
   /** The edge list a click toggles: fillet and chamfer edges, or a composite curve's (FR-FT-085). */
   private pickedEdges(): { edges: EdgeRef[] } | null {
     const m = this.mode;
@@ -1864,8 +1909,8 @@ export class ModelController {
     if (m.kind === "sketch") return [["exit", t("Exit sketch"), "Exit sketch"]];
     if (m.kind !== "none") return [];
     const fixed: [string, string][] = [["sketch", "Sketch"], ["extrude", "Extrude"], ["cut", "Cut"], ["revolve", "Revolve"], ["fillet", "Fillet"], ["chamfer", "Chamfer"], ["hole", "Hole"], ["thread", "Thread"], ["shell", "Shell"], ["draft", "Draft"], ["mirror", "Mirror"], ["lpattern", "Linear pattern"], ["cpattern", "Circular pattern"], ["plane", "Plane"], ["axis", "Axis"], ["point", "Point"], ["csys", "Coordinate system"], ["import", "Insert body"], ["save", "Save"], ["step", "Export STEP"], ["filter", "Selection filter"], ["undo", "Undo"], ["redo", "Redo"]];
-    const en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
-    const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS()].map(x => [x[0] as string, x[1]]));
+    const en = withLang("en", () => [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0], x[1]] as [string, string]));
+    const loc = new Map([...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS()].map(x => [x[0] as string, x[1]]));
     return [...fixed.map(([id, l]) => [id, t(l), l] as [string, string, string]), ...en.map(([id, l]) => [id, loc.get(id) ?? l, l] as [string, string, string])];
   }
 
@@ -2602,6 +2647,16 @@ export class ModelController {
       this.lines(pos, editing ? 0xf08c00 : dark ? 0x8ab4ff : 0x1d4ed8, editing ? 2.2 : 1.4);
     }
     this.draw3dSketches();
+    // Flattened sheet metal (FR-FT-120): bend lines on the flat pattern, up bends one colour, down the other.
+    const fp = this.doc.features.find(f => f.type === "smflat");
+    const fpAt = fp ? this.doc.features.indexOf(fp) : -1;
+    if (fp && !fp.suppressed && fpAt < end && this.last?.sheet && this.last.statuses.find(s => s.id === fp.id)?.ok) {
+      for (const up of [true, false]) {
+        const pos: number[] = [];
+        for (const b of flatBendLines(this.last.sheet)) if (b.up === up) pos.push(...b.a, ...b.b);
+        if (pos.length) this.lines(pos, up ? 0x2f9e44 : 0xc2255c, 1.6);
+      }
+    }
     const picksPlanes = m.kind === "plane" || (m.kind === "feature" && ((m.draft.type === "plane" && m.focus !== "axis") || (m.draft.type === "extrude" && (this.extrudeTarget(m.draft, m.focus) === "upto" || this.extrudeTarget(m.draft, m.focus) === "start-surface")) || (m.draft.type === "revolve" && m.draft.end === "upto")));
     this.drawPlanes(picksPlanes);
     this.drawHoles();
@@ -3154,7 +3209,7 @@ export class ModelController {
   private drawFeatureFaces() {
     const m = this.mode;
     // While an extrude or revolve is open, its faces are tinted yellow like a SolidWorks preview.
-    const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve") ? m.draft.id : null;
+    const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve" || isSheet(m.draft)) ? m.draft.id : null;
     const id = draft ?? (m.kind === "none" ? this.selected : null);
     if (!id) return;
     const part = this.host.viewer.parts[0];
@@ -3315,7 +3370,7 @@ export class ModelController {
       csys: [t("Coordinate system"), t("Coordinate system: an origin and X and Z directions, for measurements and export")],
     };
     if (base[id]) return base[id];
-    const hit = [...P3_TOOLS(), ...SURF_TOOLS(), ...WELD_TOOLS()].find(x => x[0] === id);
+    const hit = [...P3_TOOLS(), ...SURF_TOOLS(), ...SM_TOOLS(), ...WELD_TOOLS()].find(x => x[0] === id);
     return hit ? [hit[1], hit[2]] : [id, id];
   }
 
@@ -3324,6 +3379,7 @@ export class ModelController {
     if ((d.type === "sweep" || d.type === "loft") && d.op === "cut") return `${d.type}cut`;
     if (d.type === "extrude" && d.op === "cut") return "cut";
     if (d.type === "spattern" && d.src === "table") return "tpattern";
+    if (d.type === "smtab") return "smbase";
     return d.type;
   }
 
@@ -3418,6 +3474,11 @@ export class ModelController {
       html = tab === "sketch" ? group(t("Sketch"), one("sketch") + one("sketch3d"))
         + `<p class="cm-note muted">${esc(t("Pick a plane or a flat face, then Sketch; the sketch tools show here while you draw."))}</p>`
         : tab === "surfaces" ? group(t("Surfaces"), SURF_TOOLS().map(([id]) => one(id)).join(""))
+        : tab === "sheetmetal" ? (() => {
+          // Sheet metal tab (FR-FT-120): Flatten stays pressed while the flat pattern shows.
+          const flat = this.doc.features.some(f => f.type === "smflat" && !f.suppressed);
+          return group(t("Sheet Metal"), SM_TOOLS().map(([id]) => id === "smflat" ? (() => { const [l, ti] = this.cmdInfo(id); return btn(id, l, ti, flat); })() : one(id)).join(""));
+        })()
         : tab === "weldments" ? group(t("Weldments"), WELD_TOOLS().map(([id]) => one(id)).join(""))
         : group(t("Sketch"), one("sketch")) + sep
           + group(t("Boss"), one("extrude") + one("revolve") + fly("sweep")) + sep
@@ -3637,6 +3698,9 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": showCutList(this.last?.cutList, this.doc); break;
       case "import": this.importBodyFile(); break;
+      case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": this.startFeature(c); break;
+      case "smflat": this.toggleFlat(); break;
+      case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -4393,6 +4457,7 @@ export class ModelController {
     if (f.type === "sketch3d") ({ title, body } = this.sk3Panel(f, group));
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split" || f.type === "curve" || f.type === "sweepsurf") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
+    if (isSheet(f)) ({ title, body } = smPanel(f, { esc, group, numField, chk, sketches, label: featureLabel, sheet: this.last?.sheet, unit, f: UNITS[unit].f }));
     if (isWeldFeature(f)) ({ title, body } = weldPanel(f, this.weldCtx(m.index), m.focus, group, numField, chk));
     if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface" || f.type === "revsurf" || f.type === "loftsurf" || f.type === "trimsurf" || f.type === "fillsurf" || f.type === "extendsurf" || f.type === "untrimsurf") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
     if (f.type === "import") {
@@ -4695,6 +4760,7 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
+    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true));
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
       const apply = () => {
         if (f.type !== "fillet") return;
@@ -5739,7 +5805,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** Whether a feature uses a sketch up (SolidWorks hides it once used). */
 function absorbs(g: Feature, sketch: string): boolean {
-  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix") return g.sketch === sketch;
+  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab") return g.sketch === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
   if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
@@ -5818,6 +5884,7 @@ const SURF_TOOLS = (): [SurfTool, string, string][] => [
 ];
 
 const ICON_SVG: Record<string, string> = {
+  ...SM_ICONS,
   extsurf: S('<path d="M2 12c2-3 4-3 6 0s4 3 6 0"/><path d="M2 7c2-3 4-3 6 0s4 3 6 0"/><path d="M2 7v5M14 7v5"/>'),
   planesurf: S('<path d="M2 11l4-7h8l-4 7z" fill="currentColor" fill-opacity=".2"/>'),
   offsurf: S('<path d="M2 13c3-4 9-4 12 0"/><path d="M2 8c3-4 9-4 12 0" stroke-dasharray="2 1.5"/><path d="M8 10V6"/>'),

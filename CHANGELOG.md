@@ -11,6 +11,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Setback fillets (FR-FT-033)**: an edge fillet's Setback parameters take corners where three or more filleted edges meet. At each one the fillets stop a setback distance from the corner and one smooth patch, tangent to the faces around it, blends the corner instead of the rolling-ball corner. Each corner has its own distance.
 
+## [1.133.0] - 2026-11-08
+
+### Added
+
+- Sheet metal, first slice of FRS P6 (FR-FT-120), on a new **Sheet Metal** tab of the part's command bar:
+  - **Base Flange/Tab**: a closed sketch becomes a flat plate; an open chain of lines becomes a bent flange of a given depth, with bends at the corners.
+  - Sheet metal parameters on the base flange: thickness, bend radius, K-factor, bend allowance or bend deduction, rectangular bend relief and its ratio, and gauge tables (mild steel, stainless steel, aluminium) that fill in thickness, radius and K-factor.
+  - **Edge Flange** on straight edges picked in the view, with a live preview: angle, length to the outer or inner virtual sharp, material inside / material outside / bend outside, a custom bend radius, and offsets from the edge ends (bend reliefs are cut automatically).
+  - **Hem**: closed or open (with a gap), material inside or outside.
+  - **Flatten** shows the flat pattern on the plane of the base flange, with up and down bend lines; click again to fold it back. The flat pattern is exact: every bend takes its bend allowance.
+  - **Flat pattern DXF**: the outline and the bend lines (layers OUTLINE, BEND_UP, BEND_DOWN) as DXF R12 in millimetres.
+  - **Sketched Bend**: a line sketched on a flat face folds the face along it: angle, bend centerline / bend starts at the line / bend ends at it, which side folds, direction and a custom radius. The flat pattern keeps the face's size.
+  - **Tab**: on a part with a base flange, Base Flange/Tab turns a closed sketch drawn beside a flat face (touching its edge) into a tab of the sheet's thickness that joins the flat pattern.
+  - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
+
+
 ## [1.131.0] - 2026-11-08
 
 ### Added
@@ -1158,7 +1174,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.134.0...HEAD
-[1.134.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.134.0
+[1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
+[1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0
 [1.131.0]: https://github.com/kothf/step-viewer/compare/v1.129.0...v1.131.0
 [1.129.0]: https://github.com/kothf/step-viewer/compare/v1.126.0...v1.129.0
 [1.126.0]: https://github.com/kothf/step-viewer/compare/v1.125.0...v1.126.0

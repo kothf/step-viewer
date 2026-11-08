@@ -7,6 +7,7 @@ import { compile } from "../kernel/client";
 import KernelWorker from "../kernel/kernel.worker?worker";
 import type { PartData } from "../topology";
 import type { AsmDoc, AsmComponentStatus } from "../asm/types";
+import type { SheetState } from "../sheetmetal/sheet";
 import type { CutItem } from "../weldments/types";
 import type { FaceRef, RecognizedHole, BodyProps, FeatureStatus, Frame, IntersectRegion, PartDoc, SketchFeature, V3 } from "./types";
 
@@ -17,6 +18,8 @@ export interface Rebuild {
   sketches?: Record<string, SketchFeature>;
   /** Points along curve features (helix), for the view. */
   curves?: Record<string, V3[]>;
+  /** Sheet metal panels and bends (FR-FT-120), for the flat pattern and its DXF. */
+  sheet?: SheetState | null;
   /** Regions each intersect feature found (FR-BODY-007). */
   regions?: Record<string, IntersectRegion[]>;
   data: PartData | null;

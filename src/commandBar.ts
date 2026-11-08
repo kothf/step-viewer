@@ -1,14 +1,14 @@
 // Command manager (FRS 13.2, FR-UI-010..013): one tabbed command bar below the header for every 3D
 // document. The tabs depend on what is open (a plain model: Evaluate; a part: Features, Sketch, Surfaces,
-// Weldments, Evaluate; an assembly: Assembly, Evaluate). Each pane in #cm-body names the tabs it serves in
+// Sheet Metal, Weldments, Evaluate; an assembly: Assembly, Evaluate). Each pane in #cm-body names the tabs it serves in
 // `data-cm-pane`; the owner of a pane (main.ts, the part or assembly controller) fills it and re-renders
 // on `onCmTab`. Entering a sketch selects the Sketch tab; leaving it goes back to Features.
 import { t } from "./i18n";
 
-export type CmTabId = "features" | "sketch" | "surfaces" | "weldments" | "assembly" | "evaluate";
+export type CmTabId = "features" | "sketch" | "surfaces" | "sheetmetal" | "weldments" | "assembly" | "evaluate";
 
 const LABELS: Record<CmTabId, string> = {
-  features: "Features", sketch: "Sketch", surfaces: "Surfaces", weldments: "Weldments", assembly: "Assembly", evaluate: "Evaluate",
+  features: "Features", sketch: "Sketch", surfaces: "Surfaces", sheetmetal: "Sheet Metal", weldments: "Weldments", assembly: "Assembly", evaluate: "Evaluate",
 };
 
 let tabs: CmTabId[] = [];

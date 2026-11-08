@@ -1268,7 +1268,7 @@ bindCommandBar();
 function syncCmTabs() {
   const app = $("#app");
   const list: CmTabId[] = app.classList.contains("gerber") ? []
-    : app.classList.contains("model") ? ["features", "sketch", "surfaces", "weldments", "evaluate"]
+    : app.classList.contains("model") ? ["features", "sketch", "surfaces", "sheetmetal", "weldments", "evaluate"]
     : app.classList.contains("asm") ? ["assembly", "evaluate"]
     : $("#empty").hidden ? ["evaluate"] : [];
   setCmTabs(list);
