@@ -49,7 +49,8 @@ export class Assembler {
       const trsf = new oc.gp_Trsf_1();
       trsf.SetValues(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11]);
       const loc = new oc.TopLoc_Location_2(trsf);
-      const body: Named = { shape: s.body.shape.Moved(loc, false), faces: s.body.faces.map(f => f.Moved(loc, false)), names: s.body.names };
+      // Moved() gives a TopoDS_Shape: faces must stay TopoDS_Face, or the exact patch (BRepAdaptor_Surface) rejects every one.
+      const body: Named = { shape: s.body.shape.Moved(loc, false), faces: s.body.faces.map(f => oc.TopoDS.Face_1(f.Moved(loc, false))), names: s.body.names };
       const src = s;
       placed.push({
         id: c.id, name: c.name, part: c.part, tf: t, body, src,

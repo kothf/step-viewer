@@ -37,7 +37,14 @@ export function bindNavigation(host: NavHost): Navigation {
   // The keys act when nothing that takes keys has focus: the page itself or the view.
   const free = (e: KeyboardEvent) => {
     const el = e.target as HTMLElement;
-    return el === document.body || el === document.documentElement || el === canvas || (el.id === "viewport");
+    return el === document.body || el === document.documentElement || el === canvas || el.id === "viewport";
+  };
+  const arrowsFree = (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement;
+    if (free(e)) return true;
+    // A plain command button keeps focus after a click (Mate, a tree row's button…): its arrows still turn the view,
+    // unless it sits in a widget that moves focus with them (those prevent the default before this runs).
+    return el.tagName === "BUTTON" && !el.closest("[role=menu], [role=menubar], [role=tablist], [role=radiogroup], [role=listbox], [role=toolbar], dialog");
   };
 
   const zoomToSelection = () => {
@@ -173,10 +180,10 @@ export function bindNavigation(host: NavHost): Navigation {
   window.addEventListener("keydown", e => {
     if (e.defaultPrevented) return;
     if (areaArmed && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endArea(); return; }
-    if (!free(e) || !host.active() || e.metaKey) return;
     const k = e.key;
-    const stop = () => { e.preventDefault(); e.stopPropagation(); };
     const arrow = k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown";
+    if (!(arrow ? arrowsFree(e) : free(e)) || !host.active() || e.metaKey) return;
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
     if (arrow && !e.altKey) {
       stop();
       const sx = k === "ArrowLeft" ? -1 : k === "ArrowRight" ? 1 : 0, sy = k === "ArrowUp" ? 1 : k === "ArrowDown" ? -1 : 0;
