@@ -7961,9 +7961,16 @@ try {
     // Its weld symbol sits on the bead in the view; a click opens the bead for editing.
     const sym = await mp.evaluate(() => { const el = document.querySelector('#mc-layer .wld-sym[data-weld="w5"]'); const t = el?.textContent; el?.click(); return { t, mode: window.__sv.model.mode().kind, id: window.__sv.model.mode().draft?.id }; });
     await settle();
+    // All around and field flags show on the symbol while editing.
+    await mp.click('#mc-pm input[data-k="wAround"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wField"]');
+    await settle();
+    const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
+    check(symFlags === "○ ⚑ ◺ z4 50 (100)", `weldments: all-around and field weld flags on the symbol (${symFlags})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });
@@ -8323,6 +8330,24 @@ try {
     const ru = await dp.evaluate(() => ({ nav: document.querySelector("#doc-tabs").getAttribute("aria-label"), x: document.querySelector("#doc-tabs .dt-x").getAttribute("aria-label") }));
     await dp.click("#lang-btn");
     check(asked && t4.join() === "*Assembly1.mcadasm,Assembly1.mcaddrw" && ru.nav === "Открытые документы" && /^Закрыть /.test(ru.x), `tabs: closing a changed part asks first; Russian labels (${t4}; ${JSON.stringify(ru)})`);
+    await ctx.close();
+  }
+
+  // --- STEP names written as raw Windows-1251 bytes (Russian CAD exports) show as Cyrillic, not "ÏË31à" ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const pg = await ctx.newPage();
+    pg.on("pageerror", e => errors.push(e.message));
+    const want = "ПЛ31а-п_черн";
+    const cp = Buffer.from([...want].map(c => { const u = c.charCodeAt(0); return u < 0x80 ? u : u - 0x350; }));
+    const src = await readFile("src/worker/warmup.step", "latin1");
+    const parts = src.split("warm-up").map(x => Buffer.from(x, "latin1"));
+    const file = Buffer.concat(parts.flatMap((x, i) => i ? [cp, x] : [x]));
+    await pg.goto(`${origin}/index.html?debug&nokernel`);
+    await pg.setInputFiles("#file-input", { name: "socket.step", mimeType: "application/step", buffer: file });
+    await pg.waitForFunction(() => window.__sv?.viewer.parts.length > 0 && document.querySelector("#loading").hidden, null, { timeout: 60000 });
+    const names = await pg.$$eval("#tree .row-n", els => els.map(e => e.textContent.trim()));
+    check(names.some(n => n.includes(want)) && !names.some(n => /[ÏËà÷åðí]/.test(n)), `STEP names in Windows-1251 read as Cyrillic in the model tree (${names.join(" | ")})`);
     await ctx.close();
   }
 

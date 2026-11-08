@@ -3,6 +3,7 @@
 // off the main thread, then hands typed arrays back as transferables.
 import { analyzeMesh, convertTree, type PartData, type TreeNode } from "../topology";
 import { facetFaces } from "../meshFaces";
+import { fixResultNames } from "../names";
 // A 16×10×4 mm block with a hole (written by the app's own STEP export), read once while idle.
 import warmupStep from "./warmup.step?raw";
 
@@ -105,6 +106,8 @@ self.onmessage = async (e: MessageEvent<ImportRequest | MeshRequest | WarmReques
       : ext === "brep" ? occt.ReadBrepFile(bytes, params)
       : occt.ReadStepFile(bytes, params);
     if (!res?.success) throw new Error("OpenCASCADE could not read this file.");
+    // Windows-1251 / UTF-8 / UTF-16 names that OCCT read as Latin-1 (Russian CAD exports).
+    fixResultNames(res);
     lap("read");
 
     const parts: PartData[] = [];

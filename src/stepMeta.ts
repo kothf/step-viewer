@@ -1,6 +1,8 @@
 // Reads what the tessellation does not carry straight from the STEP text:
 // header, schema (AP203/214/242), product revisions, materials and PMI presence.
 
+import { nameFixer } from "./names";
+
 export interface StepMeta {
   schema: string;
   protocol: string;
@@ -16,7 +18,7 @@ export interface StepMeta {
   entityCount: number;
 }
 
-/** Decodes STEP string escapes: \X2\…\X0\ (UTF-16), \X\hh (Latin-1), '' quotes. */
+/** Decodes STEP string escapes: \X2\…\X0\ (UTF-16), \X4\…\X0\ (UTF-32), \X\hh and \S\c (Latin-1), \P?\ (dropped), '' quotes. */
 export function decodeStepString(s: string) {
   return s
     .replace(/\\X2\\([0-9A-F]+)\\X0\\/gi, (_, hex: string) => {
@@ -24,7 +26,14 @@ export function decodeStepString(s: string) {
       for (let i = 0; i + 4 <= hex.length; i += 4) out += String.fromCharCode(parseInt(hex.slice(i, i + 4), 16));
       return out;
     })
+    .replace(/\\X4\\([0-9A-F]+)\\X0\\/gi, (_, hex: string) => {
+      let out = "";
+      for (let i = 0; i + 8 <= hex.length; i += 8) out += String.fromCodePoint(parseInt(hex.slice(i, i + 8), 16));
+      return out;
+    })
     .replace(/\\X\\([0-9A-F]{2})/gi, (_, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\S\\([\s\S])/g, (_, c: string) => String.fromCharCode(c.charCodeAt(0) + 0x80))
+    .replace(/\\P[A-I]\\/g, "")
     .replace(/''/g, "'");
 }
 
@@ -34,8 +43,15 @@ const PMI_ENTITIES = [
   "DATUM", "DATUM_FEATURE", "DRAUGHTING_CALLOUT", "ANNOTATION_OCCURRENCE", "TESSELLATED_ANNOTATION_OCCURRENCE",
 ];
 
+/** Byte b → U+00b (TextDecoder's "latin1" is really Windows-1252, which would hide 0x80–0x9F from the name repair). */
+function latin1(bytes: Uint8Array) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return out;
+}
+
 export function readStepMeta(bytes: Uint8Array): StepMeta | null {
-  const text = new TextDecoder("latin1").decode(bytes);
+  const text = latin1(bytes);
   if (!/ISO-10303-21/.test(text.slice(0, 200))) return null;
   const header = text.slice(0, text.indexOf("ENDSEC") + 6);
   const strings = (block: string) => [...block.matchAll(/'((?:[^']|'')*)'/g)].map(m => decodeStepString(m[1]));
@@ -63,13 +79,17 @@ export function readStepMeta(bytes: Uint8Array): StepMeta | null {
     const n = (text.match(new RegExp(`=\\s*${e}\\s*\\(`, "g")) ?? []).length;
     if (n) pmi[e] = n;
   }
+  // Raw Windows-1251 bytes come through the Latin-1 decode above as mojibake: repair them.
+  const products = [...productById.values()];
+  const fix = nameFixer([...fnS, ...fd, ...materials, ...products.flatMap(p => [p.id, p.name, p.revision])]);
+  for (const p of products) { p.id = fix(p.id); p.name = fix(p.name); p.revision = fix(p.revision); }
   return {
     schema, protocol,
-    fileName: fnS[0] ?? "", timestamp: fnS[1] ?? "", author: fnS[2] ?? "", organization: fnS[3] ?? "",
-    system: [fnS[5], fnS[4]].filter(Boolean).join(" / "),
-    description: fd[0] ?? "",
-    products: [...productById.values()],
-    materials, pmi,
+    fileName: fix(fnS[0] ?? ""), timestamp: fnS[1] ?? "", author: fix(fnS[2] ?? ""), organization: fix(fnS[3] ?? ""),
+    system: [fnS[5], fnS[4]].filter(Boolean).map(fix).join(" / "),
+    description: fix(fd[0] ?? ""),
+    products,
+    materials: materials.map(fix), pmi,
     entityCount: (text.match(/^#\d+\s*=/gm) ?? []).length,
   };
 }
