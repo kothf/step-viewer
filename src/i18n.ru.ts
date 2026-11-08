@@ -2874,6 +2874,8 @@ export const RU: Record<string, string> = {
   "Acceleration": "Ускорение",
   "Relative to": "Относительно",
   "Mate value": "Значение сопряжения",
+  "Step by step": "По шагам",
+  "Move the explode steps one after another instead of all at once": "Выполнять шаги разнесения по очереди, а не одновременно",
   "Go to {t} s": "Перейти к {t} с",
   "{n} pairs of components interfere.": "Пар компонентов с пересечениями: {n}.",
   "No interference found.": "Пересечений не найдено.",
