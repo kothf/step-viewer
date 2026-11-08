@@ -7529,6 +7529,14 @@ try {
     check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
     await np.keyboard.press("ArrowRight"); await settleCam();
     await np.evaluate(() => document.activeElement?.blur());
+    // An arrow pressed while Ctrl+1 is still turning the camera turns from where Ctrl+1 ends (exam bug 31).
+    await np.keyboard.press("Control+1"); await settleCam();
+    const cq0 = await cam();
+    await np.keyboard.press("Control+5");
+    await np.keyboard.press("Control+1");
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    const cq1 = await cam();
+    check(Math.abs(ang(cq0, cq1) - 15) < 0.5, `navigation: an arrow pressed mid-move turns from where the move ends (${ang(cq0, cq1).toFixed(2)}°)`);
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();

@@ -46,7 +46,15 @@ export function applyPatch(d: PartData, p: PartPatch): boolean {
 function patchFace(f: FaceInfo, fp: NonNullable<PartPatch["faces"]>[number] & object) {
   f.area = fp.area;
   f.surface = fp.type;
-  if (fp.type === "cylinder" && f.type === "cylinder" && fp.axis && fp.center && fp.radius) {
+  if (fp.type === "cylinder" && f.type !== "cylinder" && f.type !== "plane" && fp.axis && fp.center && fp.radius) {
+    // The mesh fit missed it (a short boss read as a sphere, a hole cut by a cross hole as "other"): the B-rep knows.
+    const a = fp.axis, c = fp.center, w: V3 = [f.centroid[0] - c[0], f.centroid[1] - c[1], f.centroid[2] - c[2]];
+    const t = dot(w, a);
+    f.type = "cylinder";
+    f.center = [c[0] + a[0] * t, c[1] + a[1] * t, c[2] + a[2] * t];
+    f.axis = a;
+    f.radius = fp.radius;
+  } else if (fp.type === "cylinder" && f.type === "cylinder" && fp.axis && fp.center && fp.radius) {
     // Keep our centre (the middle of the face along its axis), moved onto the exact axis.
     const a = fp.axis, c = fp.center, w: V3 = [f.center[0] - c[0], f.center[1] - c[1], f.center[2] - c[2]];
     const t = dot(w, a);
