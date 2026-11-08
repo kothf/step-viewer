@@ -226,7 +226,10 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length") : "")
           + numField("thickness", t("Thickness"), f.thickness, "length")
           + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : ""))
-        + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)),
+        + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)
+          + (f.loc !== "mid" ? sel("wgside", t("Thickness"), [["in", t("Inner side")], ["both", t("Both sides")], ["out", t("Outer side")]], f.side ?? "in") : "")
+          + chk("wgOffset", !!f.offset, t("Offset")) + (f.offset ? numField("offset", t("Offset"), f.offset, "length") : "")
+          + help(f.loc === "mid" ? t("The offset moves the plate from the middle of the corner towards its end.") : t("The offset moves the plate in from the end; the thickness goes inwards, both ways or outwards from there."))),
     };
   }
   return {
@@ -298,7 +301,9 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
   }
   if (f.type === "gusset") {
     if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
-    if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; };
+    if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; if (f.loc === "mid") delete f.side; };
+    if (k === "wgside") return () => { if (val === "in") delete f.side; else f.side = val as "both" | "out"; };
+    if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };

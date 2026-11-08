@@ -658,7 +658,11 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   let t0 = Math.max(a0, b0), t1 = Math.min(a1, b1);
   if (t1 < t0) { t0 = Math.min(a0, b0); t1 = Math.max(a1, b1); }
   const th = f.thickness.v;
-  const tc = f.loc === "start" ? t0 + th / 2 : f.loc === "end" ? t1 - th / 2 : (t0 + t1) / 2;
+  // The location point (moved by the offset), then the plate's centre from the thickness side.
+  const off = f.offset?.v ?? 0, side = f.loc === "mid" ? "both" : f.side ?? "in";
+  const R = f.loc === "start" ? t0 + off : f.loc === "end" ? t1 - off : (t0 + t1) / 2 + off;
+  const inward = f.loc === "end" ? -1 : 1;
+  const tc = side === "both" ? R : R + inward * (side === "in" ? 1 : -1) * th / 2;
   const P = add(o, mul(L, tc));
   // Legs: along each face, away from the other (into the space the other face looks at).
   const leg = (n: V3, other: V3) => { let d = unit(cross(L, n)); if (dot(d, other) < 0) d = mul(d, -1); return d; };
