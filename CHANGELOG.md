@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like SolidWorks' cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
 
+## [1.157.0] - 2026-11-08
+
+### Added
+
+- **Conic, parabola and equation driven curve (FR-SK-021)**: the Circle ▾ menu adds Parabola (focus, vertex, then the start and the end) and Conic (start, end, the top vertex where the end tangents meet, then a point that sets rho, shown at the cursor; rho can be changed in the panel). The Line ▾ menu adds Equation driven curve: y = f(x) or x(t), y(t) with a range, typed in the panel, added with fixed ends. Conics reach the kernel as exact rational curves, so their volumes and areas are exact; equation curves follow their two end points when moved, rotated, scaled or mirrored.
+
 ## [1.156.0] - 2026-11-08
 
 ### Added
@@ -1292,7 +1298,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.160.0...HEAD
-[1.160.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.160.0
+[1.160.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.160.0
+[1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0
 [1.153.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.153.0
 [1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
