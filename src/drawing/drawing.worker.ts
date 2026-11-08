@@ -38,7 +38,18 @@ function solidOf(src: DiffSrc): any {
 let oc: any = null;
 let shape: any = null;
 /** An assembly's placed component shapes by id, for alternate positions. */
-let placedShapes: { id: string; shape: any }[] = [];
+let placedShapes: { id: string; shape: any; mat: string | null }[] = [];
+/** The loaded model's material (a part) for section hatching. */
+let modelMat: string | null = null;
+/** Who each solid of a shape belongs to (TopExp order), for hatching each component or body on its own (FR-DRW-012). */
+function solidOwners(list: { id: string; shape: any; mat: string | null }[]): { key: string; mat: string | null }[] {
+  const A = oc.TopAbs_ShapeEnum, out: { key: string; mat: string | null }[] = [];
+  for (const pc of list) {
+    let k = 0;
+    for (const ex = new oc.TopExp_Explorer_2(pc.shape, A.TopAbs_SOLID, A.TopAbs_SHAPE); ex.More(); ex.Next(), k++) out.push({ key: pc.id || `body${k}`, mat: pc.mat });
+  }
+  return out;
+}
 const post = (msg: unknown) => (self as DedicatedWorkerGlobalScope).postMessage(msg);
 
 self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
@@ -53,12 +64,14 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
       post({ id: r.id, ok: true });
     } else if (r.type === "load") {
       placedShapes = [];
+      modelMat = null;
       if (!oc) throw new Error("Kernel not started");
       let extra = {};
       if (r.part) {
         const md = new Modeller(oc), res = md.evaluate(r.part);
         if (!res.body) throw new Error("The part has no body yet.");
         shape = res.body.shape;
+        modelMat = r.part.material?.name ?? null;
         const body = res.body;
         // A cosmetic thread's round edge, found by its persistent name.
         const edgeCircle = (ref: EdgeRef) => {
@@ -80,7 +93,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
         b.MakeCompound(comp);
         const names: string[] = [], comps: { id: string; part: string; name: string }[] = [];
-        placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape }));
+        placedShapes = placed.map(pc => ({ id: pc.id, shape: pc.body.shape, mat: r.asm!.parts[pc.part]?.doc?.material?.name ?? null }));
         for (const pc of placed) { b.Add(comp, pc.body.shape); names.push(...pc.body.names.map(n => `${pc.id}@${n}`)); comps.push({ id: pc.id, part: pc.part, name: pc.name }); }
         shape = comp;
         extra = { topo: topology(oc, shape, names), items: [], holes: [], comps };
@@ -114,7 +127,7 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
       // Components left whole (FR-DRW-012) are drawn but not cut; a top-level id takes its sub-components along.
-      let cutShape = shape, keep: any;
+      let cutShape = shape, keep: any, cutList = placedShapes.length ? placedShapes : [{ id: "", shape, mat: modelMat }];
       if (r.exclude?.length && placedShapes.length) {
         const out = (id: string) => r.exclude!.some(x => id === x || id.startsWith(`${x}/`));
         const b = new oc.BRep_Builder(), a = new oc.TopoDS_Compound(), k = new oc.TopoDS_Compound();
@@ -123,10 +136,14 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
         for (const pc of placedShapes) { if (out(pc.id)) { b.Add(k, pc.shape); nk++; } else { b.Add(a, pc.shape); na++; } }
         if (nk) {
           if (!na) { post({ id: r.id, ok: true, proj: { ...project(oc, k, r.view), cut: [] } }); return; }
-          cutShape = a; keep = k;
+          cutShape = a; keep = k; cutList = placedShapes.filter(pc => !out(pc.id));
         }
       }
-      post({ id: r.id, ok: true, proj: section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep }) });
+      const proj = section(oc, cutShape, r.view, r.p, 0.02, r.poly, { stair: r.stair, keep });
+      const own = solidOwners(cutList);
+      proj.cutKey = (proj.cutOf ?? []).map(i => own[i]?.key ?? "");
+      proj.cutMat = (proj.cutOf ?? []).map(i => own[i]?.mat ?? modelMat);
+      post({ id: r.id, ok: true, proj });
     }
   } catch (err) {
     post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });

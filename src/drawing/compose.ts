@@ -6,7 +6,7 @@
 import type { Projection, Seg2, V3 } from "../kernel/drawing";
 import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
-import type { DrawingView, Sheet } from "./types";
+import type { DrawingView, HatchPattern, Sheet } from "./types";
 import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import { altReq, boxInView, cutLegs, findView, isShaded, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
@@ -241,8 +241,8 @@ export function clipToCircle(segs: Seg2[], c: [number, number], R: number): Seg2
 
 // ---------- hatching (section views) ----------
 
-/** 45° hatch lines inside closed loops (sheet mm, even-odd), `gap` apart. */
-export function hatch(loops: number[][], gap = 2.5, angle = Math.PI / 4): [number, number, number, number][] {
+/** 45° hatch lines inside closed loops (sheet mm, even-odd), `gap` apart, shifted `offset` across; `dash` = [on, off] lengths. */
+export function hatch(loops: number[][], gap = 2.5, angle = Math.PI / 4, offset = 0, dash?: [number, number]): [number, number, number, number][] {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   // Rotate so the hatch lines are horizontal: y' = −x·sin + y·cos.
   const rot = loops.map(l => { const r: number[] = []; for (let i = 0; i < l.length; i += 2) r.push(l[i] * ca + l[i + 1] * sa, -l[i] * sa + l[i + 1] * ca); return r; });
@@ -250,7 +250,7 @@ export function hatch(loops: number[][], gap = 2.5, angle = Math.PI / 4): [numbe
   for (const l of rot) for (let i = 1; i < l.length; i += 2) { y0 = Math.min(y0, l[i]); y1 = Math.max(y1, l[i]); }
   const out: [number, number, number, number][] = [];
   if (!isFinite(y0)) return out;
-  for (let y = Math.ceil(y0 / gap) * gap; y <= y1; y += gap) {
+  for (let y = Math.ceil((y0 - offset) / gap) * gap + offset; y <= y1; y += gap) {
     const xs: number[] = [];
     for (const l of rot) {
       const n = l.length / 2;
@@ -263,7 +263,13 @@ export function hatch(loops: number[][], gap = 2.5, angle = Math.PI / 4): [numbe
     for (let i = 0; i + 1 < xs.length; i += 2) {
       const a = xs[i], b = xs[i + 1];
       if (b - a < 1e-6) continue;
-      out.push([a * ca - y * sa, a * sa + y * ca, b * ca - y * sa, b * sa + y * ca]);
+      if (!dash) { out.push([a * ca - y * sa, a * sa + y * ca, b * ca - y * sa, b * sa + y * ca]); continue; }
+      // Dashes keep their phase from the origin, so neighbouring loops line up.
+      const per = dash[0] + dash[1];
+      for (let s0 = Math.floor(a / per) * per; s0 < b; s0 += per) {
+        const p = Math.max(a, s0), q = Math.min(b, s0 + dash[0]);
+        if (q - p > 1e-6) out.push([p * ca - y * sa, p * sa + y * ca, q * ca - y * sa, q * sa + y * ca]);
+      }
     }
   }
   return out;
@@ -271,9 +277,72 @@ export function hatch(loops: number[][], gap = 2.5, angle = Math.PI / 4): [numbe
 
 // ---------- a view's primitives ----------
 
-/** Hatch spacing (sheet mm) and angle (degrees) of a view. */
-export function hatchOf(v: DrawingView): { gap: number; angle: number } {
-  return { gap: Math.max(0.5, v.hatch?.gap ?? 2.5), angle: v.hatch?.angle ?? 45 };
+/** Hatch spacing (sheet mm), angle (degrees) and pattern of a view. */
+export function hatchOf(v: DrawingView): { gap: number; angle: number; pattern: HatchPattern } {
+  return { gap: Math.max(0.5, v.hatch?.gap ?? 2.5), angle: v.hatch?.angle ?? 45, pattern: v.hatch?.pattern ?? "material" };
+}
+
+/** The hatch patterns a view can use, in menu order. */
+export const HATCH_PATTERNS: { id: HatchPattern; name: string }[] = [
+  { id: "material", name: "By material" },
+  { id: "ansi31", name: "ANSI31 (iron, general)" },
+  { id: "ansi32", name: "ANSI32 (steel)" },
+  { id: "ansi33", name: "ANSI33 (brass, bronze, copper)" },
+  { id: "ansi34", name: "ANSI34 (plastic, rubber)" },
+  { id: "ansi37", name: "ANSI37 (lead, zinc, insulation)" },
+  { id: "ansi38", name: "ANSI38 (aluminium)" },
+];
+
+/** The ANSI pattern for a material name (ANSI Y14.2); anything unknown is general use (ANSI31). */
+export function materialPattern(mat: string | null | undefined): Exclude<HatchPattern, "material"> {
+  const m = (mat ?? "").toLowerCase();
+  if (/steel/.test(m)) return "ansi32";
+  if (/brass|bronze|copper/.test(m)) return "ansi33";
+  if (/alumin|magnes/.test(m)) return "ansi38";
+  if (/lead|zinc|insulat/.test(m)) return "ansi37";
+  if (/\b(abs|pla|petg|nylon|pa\d*|pom|delrin|peek|rubber|plastic|polycarbonate|polyamide|polypropylene|polyethylene|pvc|ptfe)\b/.test(m)) return "ansi34";
+  return "ansi31";
+}
+
+/**
+ * Hatch lines of one pattern inside loops (sheet mm, even-odd): `gap` is the pattern's base spacing, `angle` its
+ * main direction (radians). Line families follow the ANSI patterns' look at drawing scale.
+ */
+export function patternHatch(loops: number[][], pattern: Exclude<HatchPattern, "material">, gap: number, angle: number): [number, number, number, number][] {
+  const g = gap, q = Math.PI / 2;
+  switch (pattern) {
+    case "ansi32": return [...hatch(loops, 2 * g, angle), ...hatch(loops, 2 * g, angle, 0.5 * g)];
+    case "ansi33": return [...hatch(loops, 2 * g, angle), ...hatch(loops, 2 * g, angle, g, [g, 0.5 * g])];
+    case "ansi34": return [0, 0.3, 0.6, 0.9].flatMap(k => hatch(loops, 2.5 * g, angle, k * g));
+    case "ansi37": return [...hatch(loops, g, angle), ...hatch(loops, g, angle + q)];
+    case "ansi38": return [...hatch(loops, g, angle), ...hatch(loops, 2 * g, angle + q, 0, [g, g])];
+    default: return hatch(loops, g, angle);
+  }
+}
+
+/**
+ * The hatch lines of a section's cut loops (sheet mm). Loops are grouped by who they belong to (`keys`: component or
+ * body); each group gets its material's pattern (or the view's), and neighbouring groups turn 90° and change spacing so
+ * parts in an assembly section tell apart (FR-DRW-012).
+ */
+export function sectionHatch(loops: number[][], hs: { gap: number; angle: number; pattern: HatchPattern }, keys?: string[], mats?: (string | null)[]): [number, number, number, number][] {
+  const groups = new Map<string, { loops: number[][]; mat: string | null }>();
+  loops.forEach((l, i) => {
+    const k = keys?.[i] ?? "";
+    let g = groups.get(k);
+    if (!g) groups.set(k, g = { loops: [], mat: mats?.[i] ?? null });
+    g.loops.push(l);
+  });
+  const SCALE = [1, 1, 0.75, 0.75, 1.4, 1.4], out: [number, number, number, number][] = [];
+  let j = 0;
+  for (const g of groups.values()) {
+    const pat = hs.pattern === "material" ? materialPattern(g.mat) : hs.pattern;
+    const multi = groups.size > 1;
+    const ang = (hs.angle + (multi && j % 2 ? 90 : 0)) * Math.PI / 180, gap = hs.gap * (multi ? SCALE[j % SCALE.length] : 1);
+    out.push(...patternHatch(g.loops, pat, gap, ang));
+    j++;
+  }
+  return out;
 }
 
 /** A view's lines in sheet mm. */
@@ -299,7 +368,7 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
     // Hatch lines are spaced on the sheet but made in model axes, so a detail circle, crop or break trims them like the lines.
     const loops = proj.cut.map(l => l.map(x => x * pl.s));
     const hs = hatchOf(v);
-    let hs2: Seg2[] = hatch(loops, hs.gap, hs.angle * Math.PI / 180).map(h => ({ k: "l", c: 0, p: h.map(x => x / pl.s) as [number, number, number, number] }));
+    let hs2: Seg2[] = sectionHatch(loops, hs, proj.cutKey, proj.cutMat).map(h => ({ k: "l", c: 0, p: h.map(x => x / pl.s) as [number, number, number, number] }));
     if (v.kind === "detail" && v.c && v.r) hs2 = clipToCircle(hs2, v.c, v.r);
     for (const g of trimSegs(v, pl.s, hs2)) put(g, "thin", "HATCH");
   }

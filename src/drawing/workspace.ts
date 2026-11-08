@@ -12,7 +12,7 @@ import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from ".
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
-import { BREAK_GAP, composeSheet, fromSheet, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
+import { BREAK_GAP, composeSheet, fromSheet, HATCH_PATTERNS, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
@@ -20,7 +20,7 @@ import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
@@ -2142,16 +2142,22 @@ export class DrawingWorkspace {
     }
   }
 
+  /** Hatch pattern, spacing and angle of a section or broken-out view (FR-DRW-012). */
+  private hatchFields(v: DrawingView): string {
+    const h = hatchOf(v);
+    return `<label class="drw-f">${esc(t("Hatch pattern"))}<select data-v="hpat" title="${esc(t("By material: each component or body gets its material's pattern, and neighbouring ones turn and change spacing"))}">${HATCH_PATTERNS.map(p => `<option value="${p.id}"${p.id === h.pattern ? " selected" : ""}>${esc(t(p.name))}</option>`).join("")}</select></label>
+      <label class="drw-f">${esc(t("Hatch spacing (mm)"))}<input data-v="hgap" inputmode="decimal" value="${h.gap}"></label>
+      <label class="drw-f">${esc(t("Hatch angle"))}<select data-v="hang">${[45, 135, 30, 60].map(a => `<option value="${a}"${a === h.angle ? " selected" : ""}>${a}°</option>`).join("")}</select></label>`;
+  }
+
   /** The broken-out section group of the view panel. */
   private brokenProps(v: DrawingView): string {
     const r = this.depthRange(v), b = v.broken;
     let s = `<fieldset class="pm-group drw-broken"><legend>${esc(t("Broken-out section"))}</legend>`;
     if (!b) s += `<div class="row"><button class="btn small" data-a="brokenout" title="${esc(t("Click the corners of an area; the material in it is cut away down to a depth and hatched"))}">${esc(t("Broken-out section"))}</button></div>`;
     else {
-      const h = hatchOf(v);
       s += `<label class="drw-f">${esc(t("Depth from the front (mm)"))}<input data-v="bdepth" inputmode="decimal" value="${r ? round(r[1] - b.d) : ""}"></label>
-        <label class="drw-f">${esc(t("Hatch spacing (mm)"))}<input data-v="hgap" inputmode="decimal" value="${h.gap}"></label>
-        <label class="drw-f">${esc(t("Hatch angle"))}<select data-v="hang">${[45, 135, 30, 60].map(a => `<option value="${a}"${a === h.angle ? " selected" : ""}>${a}°</option>`).join("")}</select></label>
+        ${this.hatchFields(v)}
         <div class="row"><button class="btn small" data-a="brokenout">${esc(t("Redraw the outline"))}</button><button class="btn small" data-a="unbroken">${esc(t("Remove broken-out section"))}</button></div>`;
     }
     return s + `</fieldset>`;
@@ -2165,9 +2171,7 @@ export class DrawingWorkspace {
     if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
     else s += `<div class="row"><button class="btn small" data-a="flip" title="${esc(t("Look at the other side of the line"))}">${esc(t("Flip direction"))}</button></div>`;
     if (v.kind === "section") {
-      const h = hatchOf(v);
-      s += `<label class="drw-f">${esc(t("Hatch spacing (mm)"))}<input data-v="hgap" inputmode="decimal" value="${h.gap}"></label>
-        <label class="drw-f">${esc(t("Hatch angle"))}<select data-v="hang">${[45, 135, 30, 60].map(a => `<option value="${a}"${a === h.angle ? " selected" : ""}>${a}°</option>`).join("")}</select></label>`;
+      s += this.hatchFields(v);
       s += this.excludeProps(v);
     }
     return s;
@@ -2320,6 +2324,7 @@ export class DrawingWorkspace {
       if (!r || !v0?.broken || !(dep > 0 && dep < r[1] - r[0])) { toast(t("Type a depth between 0 and {max} mm.", { max: r ? round(r[1] - r[0]) : "?" }), true); this.renderProps(); return; }
       this.setView("Broken-out depth", v => { if (v.broken) v.broken = { ...v.broken, d: round(r[1] - dep) }; });
     } else if (vk === "hang") this.setView("Hatch angle", v => { v.hatch = { ...v.hatch, angle: +val }; });
+    else if (vk === "hpat") this.setView("Hatch pattern", v => { v.hatch = { ...v.hatch, pattern: val as HatchPattern }; if (val === "material") delete v.hatch.pattern; });
     else if (vk === "exfast" || el.dataset.ex) {
       const on = (el as HTMLInputElement).checked;
       const ids = vk === "exfast" ? this.sectionComps().filter(c => c.fastener).map(c => c.id) : [el.dataset.ex!];

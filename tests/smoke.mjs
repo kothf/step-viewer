@@ -3591,6 +3591,17 @@ try {
     const exc = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].views.find(v => v.id === i)?.exclude ?? null, asec);
     check(asec && Math.abs(a0 - (100 * 20 + 2 * 8 * 15)) < 0.5 && Math.abs(a1 - (100 * 20 + 8 * 15)) < 0.5 && JSON.stringify(exc) === '["c2"]',
       `drawing: an assembly section cuts both pins, and Don't cut leaves Pin<1> whole (${a0.toFixed(1)} → ${a1.toFixed(1)} mm²; ${JSON.stringify(exc)})`);
+    // 1.127.0 (FR-DRW-012): hatched by material, the base and the cut pin are told apart (the pin at 135°); ANSI37 crosses every cut face.
+    const hatchLines = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "HATCH" && p.t === "l").map(p => Math.round(Math.atan2(p.p[3] - p.p[1], p.p[2] - p.p[0]) * 180 / Math.PI + 360) % 180));
+    const ckeys = await dp.evaluate(i => [...new Set(window.__sv.drw.proj(i)?.cutKey ?? [])].sort().join(), asec);
+    const hl0 = await hatchLines();
+    await dp.selectOption('#drw .drw-props [data-v="hpat"]', "ansi37");
+    await ready();
+    const hl1 = await hatchLines();
+    const hpat = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].views.find(v => v.id === i)?.hatch?.pattern ?? null, asec);
+    const angs = l => [...new Set(l)].sort((a, b) => a - b).join();
+    check(ckeys === "c1,c3" && angs(hl0) === "45,135" && hl0.filter(a => a === 135).length < hl0.length / 4 && hpat === "ansi37" && hl1.length > 1.5 * hl0.length,
+      `drawing: assembly section hatching follows each component, and a fixed pattern applies to all (${ckeys}; ${angs(hl0)} ${hl0.length} → ${hl1.length} lines; ${hpat})`);
     await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.

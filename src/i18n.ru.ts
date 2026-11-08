@@ -3125,4 +3125,14 @@ export const RU: Record<string, string> = {
   "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
   // 1.122.0: shaded drawing views (FR-DRW-010).
   "Shaded with edges": "Тонировка с рёбрами",
+  // 1.127.0: section hatching by material and component (FR-DRW-012).
+  "Hatch pattern": "Тип штриховки",
+  "By material": "По материалу",
+  "By material: each component or body gets its material's pattern, and neighbouring ones turn and change spacing": "По материалу: каждый компонент или тело штрихуется по своему материалу, а соседние — под другим углом и с другим шагом",
+  "ANSI31 (iron, general)": "ANSI31 (чугун, общий случай)",
+  "ANSI32 (steel)": "ANSI32 (сталь)",
+  "ANSI33 (brass, bronze, copper)": "ANSI33 (латунь, бронза, медь)",
+  "ANSI34 (plastic, rubber)": "ANSI34 (пластмасса, резина)",
+  "ANSI37 (lead, zinc, insulation)": "ANSI37 (свинец, цинк, изоляция)",
+  "ANSI38 (aluminium)": "ANSI38 (алюминий)",
 };
