@@ -47,6 +47,8 @@ export interface DrawingView {
   /** Detail: circle centre (parent's view axes, model mm) and radius (model mm). */
   c?: [number, number];
   r?: number;
+  /** Detail drawn by a profile instead of a circle (FR-DRW-013): corners u, v in the parent's view axes; `c`/`r` are its box centre and reach. */
+  outline?: number[];
   /** Letter of a section, detail or auxiliary view (A, B, …). */
   letter?: string;
   /** Section hatching: line spacing on the sheet (mm) and angle (degrees); default 2.5 mm at 45°. `pattern` (FR-DRW-012):

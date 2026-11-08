@@ -23,7 +23,8 @@ export interface Placement {
 export function placement(sheet: Sheet, v: DrawingView, proj: Projection | undefined, modelBox: [V3, V3] | null): Placement {
   const s = viewScale(sheet, v);
   let box: [number, number, number, number];
-  if (v.kind === "detail" && v.c && v.r) box = [v.c[0] - v.r, v.c[1] - v.r, v.c[0] + v.r, v.c[1] + v.r];
+  if (v.kind === "detail" && v.outline && v.outline.length >= 6) box = polyBox(v.outline);
+  else if (v.kind === "detail" && v.c && v.r) box = [v.c[0] - v.r, v.c[1] - v.r, v.c[0] + v.r, v.c[1] + v.r];
   else box = proj && (proj.vis.length || proj.hid.length) ? proj.box : modelBox ? boxInView(modelBox, viewDir(sheet, v)) : [-10, -10, 10, 10];
   const c = cropOf(v);
   if (c) {
@@ -157,7 +158,7 @@ export function trimSegs(v: DrawingView, s: number, segs: Seg2[]): Seg2[] {
 
 /** Extra lines of a view in its model axes (threads, sketches), clipped and closed up like its edges. */
 export function decorPrims(v: DrawingView, pl: Placement, segs: Seg2[], pen: Pen, layer: Layer): Prim[] {
-  if (v.kind === "detail" && v.c && v.r) segs = clipToCircle(segs, v.c, v.r);
+  segs = clipDetail(v, segs);
   const X = (u: number) => pl.x + (u - pl.uc) * pl.s, Y = (w: number) => pl.y + (w - pl.vc) * pl.s;
   const out: Prim[] = [];
   for (const g of trimSegs(v, pl.s, segs)) {
@@ -185,6 +186,99 @@ function breakLines(v: DrawingView, pl: Placement): Prim[] {
         const pts = [[k, lo], [k, m - 1.5], [k + 1.2, m - 0.7], [k - 1.2, m + 0.7], [k, m + 1.5], [k, hi]];
         out.push({ t: "p", p: pts.flatMap(([q, w]) => (ax ? [w, q] : [q, w])), pen: "thin", layer: "VISIBLE" });
       }
+    }
+  }
+  return out;
+}
+
+// ---------- clipping to a detail profile (FR-DRW-013) ----------
+
+export function polyBox(p: number[]): [number, number, number, number] {
+  const b: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 1 < p.length; i += 2) { b[0] = Math.min(b[0], p[i]); b[1] = Math.min(b[1], p[i + 1]); b[2] = Math.max(b[2], p[i]); b[3] = Math.max(b[3], p[i + 1]); }
+  return b;
+}
+
+/** Even-odd test of (x, y) against a closed polygon of u, v pairs. */
+export function inPoly(p: number[], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, n = p.length, j = n - 2; i < n; j = i, i += 2) {
+    const xi = p[i], yi = p[i + 1], xj = p[j], yj = p[j + 1];
+    if ((yi > y) !== (yj > y) && x < xj + (y - yj) * (xi - xj) / (yj - yi)) inside = !inside;
+  }
+  return inside;
+}
+
+/** The detail view's boundary trims its lines: the profile when it has one, else the circle. */
+export function clipDetail(v: DrawingView, segs: Seg2[]): Seg2[] {
+  if (v.kind !== "detail") return segs;
+  if (v.outline && v.outline.length >= 6) return clipToPoly(segs, v.outline);
+  return v.c && v.r ? clipToCircle(segs, v.c, v.r) : segs;
+}
+
+/** Parameters where segment a→b crosses the polygon's edges, with 0 and 1, sorted. */
+function polyCuts(p: number[], ax: number, ay: number, bx: number, by: number): number[] {
+  const ts = [0, 1], dx = bx - ax, dy = by - ay;
+  for (let i = 0, n = p.length, j = n - 2; i < n; j = i, i += 2) {
+    const ex = p[i] - p[j], ey = p[i + 1] - p[j + 1], den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-15) continue;
+    const wx = p[j] - ax, wy = p[j + 1] - ay;
+    const t = (wx * ey - wy * ex) / den, s = (wx * dy - wy * dx) / den;
+    if (t > 1e-12 && t < 1 - 1e-12 && s >= -1e-12 && s <= 1 + 1e-12) ts.push(t);
+  }
+  return ts.sort((a, b) => a - b);
+}
+
+export function clipToPoly(segs: Seg2[], poly: number[]): Seg2[] {
+  const out: Seg2[] = [];
+  const pieces = (ax: number, ay: number, bx: number, by: number) => {
+    const ts = polyCuts(poly, ax, ay, bx, by), keep: [number, number][] = [];
+    for (let i = 0; i + 1 < ts.length; i++) {
+      const m = (ts[i] + ts[i + 1]) / 2;
+      if (ts[i + 1] - ts[i] > 1e-12 && inPoly(poly, ax + (bx - ax) * m, ay + (by - ay) * m)) {
+        // Pieces meeting at a corner of the profile are one piece.
+        const last = keep[keep.length - 1];
+        if (last && Math.abs(last[1] - ts[i]) < 1e-12) last[1] = ts[i + 1]; else keep.push([ts[i], ts[i + 1]]);
+      }
+    }
+    return keep;
+  };
+  for (const g of segs) {
+    if (g.k === "l") {
+      const L = (k: number) => [g.p[0] + (g.p[2] - g.p[0]) * k, g.p[1] + (g.p[3] - g.p[1]) * k];
+      for (const [t0, t1] of pieces(g.p[0], g.p[1], g.p[2], g.p[3])) out.push({ ...g, p: [...L(t0), ...L(t1)] as [number, number, number, number] });
+    } else if (g.k === "a") {
+      // Split where the arc's circle meets each polygon edge; keep the pieces whose middle is inside.
+      const cuts = [g.a0, g.a1];
+      for (let i = 0, n = poly.length, j = n - 2; i < n; j = i, i += 2) {
+        const ax = poly[j] - g.o[0], ay = poly[j + 1] - g.o[1], dx = poly[i] - poly[j], dy = poly[i + 1] - poly[j + 1];
+        const A = dx * dx + dy * dy, B = 2 * (ax * dx + ay * dy), C = ax * ax + ay * ay - g.r * g.r, D = B * B - 4 * A * C;
+        if (A < 1e-18 || D < 0) continue;
+        for (const t of [(-B - Math.sqrt(D)) / (2 * A), (-B + Math.sqrt(D)) / (2 * A)]) {
+          if (t < -1e-12 || t > 1 + 1e-12) continue;
+          const a = Math.atan2(ay + dy * t, ax + dx * t);
+          for (let k = -2; k <= 2; k++) { const x = a + k * 2 * Math.PI; if (x > g.a0 && x < g.a1) cuts.push(x); }
+        }
+      }
+      cuts.sort((p, q) => p - q);
+      for (let i = 0; i + 1 < cuts.length; i++) {
+        const m = (cuts[i] + cuts[i + 1]) / 2;
+        if (cuts[i + 1] - cuts[i] > 1e-9 && inPoly(poly, g.o[0] + g.r * Math.cos(m), g.o[1] + g.r * Math.sin(m))) out.push({ ...g, a0: cuts[i], a1: cuts[i + 1] });
+      }
+    } else {
+      let run: number[] = [];
+      const flush = () => { if (run.length >= 4) out.push({ k: "p", c: g.c, p: run }); run = []; };
+      for (let i = 0; i + 3 < g.p.length; i += 2) {
+        const P = (k: number) => [g.p[i] + (g.p[i + 2] - g.p[i]) * k, g.p[i + 1] + (g.p[i + 3] - g.p[i + 1]) * k];
+        const keep = pieces(g.p[i], g.p[i + 1], g.p[i + 2], g.p[i + 3]);
+        if (!keep.length) { flush(); continue; }
+        for (const [t0, t1] of keep) {
+          if (t0 > 1e-9 || !run.length) { flush(); run.push(...P(t0)); }
+          run.push(...P(t1));
+          if (t1 < 1 - 1e-9) flush();
+        }
+      }
+      flush();
     }
   }
   return out;
@@ -362,14 +456,14 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
     hid = [];
     if (style === "shaded") vis = [];
   }
-  if (v.kind === "detail" && v.c && v.r) { vis = clipToCircle(vis, v.c, v.r); hid = clipToCircle(hid, v.c, v.r); }
+  vis = clipDetail(v, vis); hid = clipDetail(v, hid);
   vis = trimSegs(v, pl.s, vis); hid = trimSegs(v, pl.s, hid);
   if (proj.cut?.length) {
     // Hatch lines are spaced on the sheet but made in model axes, so a detail circle, crop or break trims them like the lines.
     const loops = proj.cut.map(l => l.map(x => x * pl.s));
     const hs = hatchOf(v);
     let hs2: Seg2[] = sectionHatch(loops, hs, proj.cutKey, proj.cutMat).map(h => ({ k: "l", c: 0, p: h.map(x => x / pl.s) as [number, number, number, number] }));
-    if (v.kind === "detail" && v.c && v.r) hs2 = clipToCircle(hs2, v.c, v.r);
+    hs2 = clipDetail(v, hs2);
     for (const g of trimSegs(v, pl.s, hs2)) put(g, "thin", "HATCH");
   }
   // Hidden lines first, so visible ones draw over them.
@@ -381,7 +475,8 @@ export function viewPrims(v: DrawingView, proj: Projection, pl: Placement): Prim
     if (g.c === 1) { if (tan !== "hidden") put(g, tan === "thin" ? "thin" : "thick", "TANGENT"); }
     else put(g, "thick", "VISIBLE");
   }
-  if (v.kind === "detail" && v.r) out.push({ t: "a", o: [pl.x, pl.y], r: v.r * pl.s, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
+  if (v.kind === "detail" && v.outline && v.outline.length >= 6) out.push({ t: "p", p: v.outline.map((x, i) => i % 2 ? pl.y + (x - pl.vc) * pl.s : pl.x + (x - pl.uc) * pl.s), pen: "thin", layer: "ANNOT", closed: true });
+  else if (v.kind === "detail" && v.r) out.push({ t: "a", o: [pl.x, pl.y], r: v.r * pl.s, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
   out.push(...breakLines(v, pl));
   return out;
 }
@@ -396,7 +491,7 @@ export function shadePrims(v: DrawingView, tris: number[], pl: Placement): Prim[
   const det = v.kind === "detail" && v.c && v.r ? { c: v.c, r2: v.r * v.r } : null, trim = !!(v.crop || v.breaks?.length);
   for (let i = 0; i + 6 < tris.length; i += 7) {
     const cu = (tris[i] + tris[i + 2] + tris[i + 4]) / 3, cv = (tris[i + 1] + tris[i + 3] + tris[i + 5]) / 3;
-    if (det && (cu - det.c[0]) ** 2 + (cv - det.c[1]) ** 2 > det.r2) continue;
+    if (det && (v.outline ? !inPoly(v.outline, cu, cv) : (cu - det.c[0]) ** 2 + (cv - det.c[1]) ** 2 > det.r2)) continue;
     let du = 0, dv = 0;
     if (trim) {
       const kept = trimSegs(v, pl.s, [{ k: "l", c: 0, p: [cu, cv, cu + 1e-6, cv] }]);
@@ -421,6 +516,16 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
   for (const v of sheet.views) {
     if (v.parent !== parent.id || !v.kind) continue;
     const letter = v.letter ?? "";
+    if (v.kind === "detail" && v.outline && v.outline.length >= 6) {
+      const q: number[] = [];
+      for (let i = 0; i + 1 < v.outline.length; i += 2) q.push(...toSheet(pl, v.outline[i], v.outline[i + 1]));
+      out.push({ t: "p", p: q, pen: "thin", layer: "ANNOT", closed: true });
+      // The letter beside the corner furthest up and right.
+      let k = 0;
+      for (let i = 2; i < q.length; i += 2) if (q[i] + q[i + 1] > q[k] + q[k + 1]) k = i;
+      out.push({ t: "t", x: q[k] + 1.5, y: q[k + 1] + 1.5, s: letter, h: 5, al: "l", layer: "ANNOT" });
+      continue;
+    }
     if (v.kind === "detail" && v.c && v.r) {
       const [cx, cy] = toSheet(pl, v.c[0], v.c[1]), R = v.r * pl.s;
       out.push({ t: "a", o: [cx, cy], r: R, a0: 0, a1: 2 * Math.PI, pen: "thin", layer: "ANNOT" });
