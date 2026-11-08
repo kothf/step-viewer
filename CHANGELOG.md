@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.116.0] - 2026-11-08
+## [1.121.0] - 2026-11-08
 
 ### Added
 
@@ -24,6 +24,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - The right panel's tabs (Measurements, Section, Display, Properties) moved from the header to the top of the right panel.
 - The part and assembly status lines keep their place below the view; the filter bar no longer shifts the view.
+
+## [1.118.0] - 2026-11-08
+
+### Added
+
+- Motion studies: the key point menu (right-click a key, the menu key or Shift+F10) sets how the motion runs into the key, as in SolidWorks: Linear, Snap (jump: the value holds, then jumps at the key), Ease in, Ease out or Ease in/out. Keys show it by their shape (FR-FT-122).
+- Copy and paste keys: Ctrl+C copies the selected key, Ctrl+V pastes it onto the selected track at the playhead; right-clicking an empty part of a track offers Add key here and Paste here. Keys paste onto tracks of the same kind (a distance key onto distance mates, an angle key onto angle mates).
+
+## [1.116.0] - 2026-11-08
+
+### Added
+
+- **Recognize Holes (FR-FT-102).** Sweep ▾ → Recognize Holes finds the round holes in the body, through or blind with a flat or drilled bottom, like SolidWorks FeatureWorks. A Delete Face fills them, and they come back as Hole features, one per face and size. An imported STEP body gets holes you can resize, move or delete, and the solid stays the same.
+
+## [1.115.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121), Structural Member:
+  - **Corners**: each corner where the member's lines meet can have its own treatment (mitre, butt 1, butt 2 or none), kept when the member's corner treatment changes, like picking a corner in SolidWorks.
+  - **Weld gap**: a gap at every corner, split between the two ends of a mitre; a butted member stops that far short of the one running through. The cut list lengths follow.
+  - **Description** for the cut list, in place of the profile's name.
 
 ## [1.114.0] - 2026-11-08
 
@@ -1081,8 +1103,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.116.0...HEAD
-[1.116.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.116.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.121.0...HEAD
+[1.121.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.121.0
+[1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
+[1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
+[1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0
 [1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0
 [1.110.0]: https://github.com/kothf/step-viewer/compare/v1.108.0...v1.110.0

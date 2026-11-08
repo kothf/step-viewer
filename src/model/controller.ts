@@ -23,7 +23,7 @@ import { parseXyz } from "./curves";
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -1216,6 +1216,38 @@ export class ModelController {
     inp.accept = `.step,.stp,.iges,.igs,.brep,${PART_EXT}`;
     inp.addEventListener("change", () => { const f = inp.files?.[0]; if (f) void run(f); });
     inp.click();
+  }
+
+  /**
+   * Feature recognition (FR-FT-102), like FeatureWorks: round holes in the body (an imported one above
+   * all) are filled with a Delete Face and made again as Hole features, so their sizes can be edited.
+   */
+  async recognizeHoles() {
+    if (!this.store) return;
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+    if (this.mode.kind !== "none") this.exitMode(false);
+    this.setBusy(1);
+    let rec: { faces: FaceRef[]; holes: RecognizedHole[] };
+    try { rec = await this.kernel.recognizeHoles(this.doc); }
+    catch (err) { toast(t("Feature recognition failed: {msg}", { msg: (err as Error).message }), true); return; }
+    finally { this.setBusy(-1); }
+    if (!rec.holes.length) { toast(t("No holes were found to recognise.")); return; }
+    // One Hole feature per opening face and size.
+    const groups = new Map<string, { h: RecognizedHole; pts: [number, number][] }>();
+    for (const h of rec.holes) {
+      const k = `${"face" in h.plane ? h.plane.face.name : ""}|${h.diameter.toFixed(6)}|${h.end}|${h.end === "blind" ? h.depth.toFixed(6) : ""}|${h.flat}`;
+      const g = groups.get(k);
+      if (g) g.pts.push(h.pt); else groups.set(k, { h, pts: [h.pt] });
+    }
+    this.store.change("Recognize holes", d => {
+      let at = d.rollback ?? d.features.length;
+      const add = (f: Feature) => { d.features.splice(at++, 0, f); if (d.rollback != null) d.rollback++; };
+      add({ id: uid("f_"), type: "delface", name: nextName(d, "delface"), faces: rec.faces } satisfies DeleteFaceFeature);
+      for (const { h, pts } of groups.values()) {
+        add({ id: uid("f_"), type: "hole", name: nextName(d, "hole"), plane: h.plane, pts, kind: "simple", diameter: { v: h.diameter }, end: h.end, depth: { v: h.end === "blind" ? h.depth : 10 }, ...(h.flat && h.end === "blind" ? { flat: true } : {}) } satisfies HoleFeature);
+      }
+    });
+    toast(t("{n} hole recognised|{n} holes recognised", { n: rec.holes.length }));
   }
 
   /** Configurations (FR-CFG-001/002): list, switch, add, rename, delete. */
@@ -3560,6 +3592,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": showCutList(this.last?.cutList, this.doc); break;
       case "import": this.importBodyFile(); break;
+      case "recognize": void this.recognizeHoles(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
       case "save": void this.save(); break;
@@ -5616,7 +5649,7 @@ const CM_FLY: Record<string, string[]> = {
   plane: ["plane", "axis", "point", "csys"],
   curves: ["helix", "sketch3d", "xyzcurve", "compcurve", "projcurve", "split"],
   bodies: ["import", "combine", "indent", "intersect", "bsplit", "movebody", "delbody", "scale"],
-  direct: ["moveface", "delface"],
+  direct: ["moveface", "delface", "recognize"],
 };
 
 const P3_TOOLS = (): [string, string, string][] => [
@@ -5641,6 +5674,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["scale", t("Scale"), t("Scale bodies: uniform or per axis, about the centroid or the origin")],
   ["moveface", t("Move Face"), t("Move face: push flat faces out or in along their normals, on any body")],
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
+  ["recognize", t("Recognize Holes"), t("Recognize holes: round holes in the body become Hole features you can edit")],
 ];
 
 /** The surface flyout's commands (FRS 9.11). */
@@ -5693,6 +5727,7 @@ const ICON_SVG: Record<string, string> = {
   scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
   delbody: S('<path d="M3 5h10v9H3z"/><path d="M5 7l6 6M11 7l-6 6"/>'),
   moveface: S('<path d="M2 8h9v6H2z"/><path d="M6 8V3M4 5l2-2 2 2"/><path d="M2 8l3-3h9l-3 3M14 5v6l-3 3"/>'),
+  recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),
   rib: S('<path d="M2 14h12M3 14V3"/><path d="M3 5l9 9" stroke-width="2.6"/>'),

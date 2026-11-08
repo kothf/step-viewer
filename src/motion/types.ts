@@ -4,7 +4,8 @@
 import type { V3 } from "../model/types";
 
 /** How a segment eases into the key that ends it. */
-export type Interp = "linear" | "ease";
+/** Between the previous key and this one: straight, a jump at this key (SolidWorks Snap), or eased at the start, the end or both. */
+export type Interp = "linear" | "snap" | "easein" | "easeout" | "ease";
 
 /** A value at a time. */
 export interface Key { t: number; v: number; interp?: Interp }
