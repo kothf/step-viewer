@@ -28,7 +28,7 @@ export async function docRefs(path: string, bytes: Uint8Array): Promise<DocRef[]
   if (!isDoc(path)) return [];
   const m = await entries(bytes);
   const refs = m && readJson(m, "manifest.json")?.references;
-  if (!Array.isArray(refs)) return [];
+  if (!Array.isArray(refs)) return m && /\.mcadasm$/i.test(path) ? embeddedRefs(m) : [];
   const out = new Map<string, number>();
   for (const r of refs as { path?: unknown; qty?: unknown }[]) {
     if (typeof r?.path !== "string" || !r.path) continue;
@@ -37,20 +37,81 @@ export async function docRefs(path: string, bytes: Uint8Array): Promise<DocRef[]
   return [...out].map(([p, qty]) => ({ path: p, qty }));
 }
 
+/**
+ * The files an assembly's embedded parts came from (FR-PDM-020), when its manifest lists none: `parts[k].file`
+ * (a name in the assembly's folder), counted by the unsuppressed components that use it.
+ */
+function embeddedRefs(m: Map<string, Uint8Array>): DocRef[] {
+  const doc = readJson(m, "document.json") as { parts?: Record<string, { file?: unknown }>; components?: { part?: unknown; suppressed?: unknown }[] } | null;
+  if (!doc?.parts || typeof doc.parts !== "object") return [];
+  const uses = new Map<string, number>();
+  for (const c of Array.isArray(doc.components) ? doc.components : []) if (typeof c?.part === "string" && !c.suppressed) uses.set(c.part, (uses.get(c.part) ?? 0) + 1);
+  const out = new Map<string, number>();
+  for (const [k, p] of Object.entries(doc.parts)) {
+    const n = uses.get(k) ?? 0;
+    if (typeof p?.file !== "string" || !p.file || !n || p.file.startsWith("/")) continue;
+    out.set(p.file, (out.get(p.file) ?? 0) + n);
+  }
+  return [...out].map(([path, qty]) => ({ path, qty }));
+}
+
+/** An assembly's embedded part documents, packed as part files named by where they came from (FR-PDM-003). */
+export async function embeddedParts(bytes: Uint8Array): Promise<{ file: string; doc: Record<string, unknown> }[]> {
+  const m = await entries(bytes);
+  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown }> } | null;
+  if (!doc?.parts) return [];
+  const out: { file: string; doc: Record<string, unknown> }[] = [];
+  for (const p of Object.values(doc.parts)) {
+    if (typeof p?.file !== "string" || !/\.mcadprt$/i.test(p.file) || p.asm || !p.doc || typeof p.doc !== "object") continue;
+    if (!out.some(x => x.file === p.file)) out.push({ file: p.file, doc: p.doc as Record<string, unknown> });
+  }
+  return out;
+}
+
+/**
+ * An assembly with some embedded documents replaced (FR-PDM-022): `parts` maps a part's file name to the
+ * part document now in force, `subs` a sub-assembly's file name to its assembly document. Null when nothing changed.
+ */
+export async function embedDocs(bytes: Uint8Array, parts: Map<string, unknown>, subs: Map<string, unknown>): Promise<Uint8Array | null> {
+  const m = await entries(bytes);
+  const doc = m && readJson(m, "document.json") as { parts?: Record<string, { file?: unknown; doc?: unknown; asm?: unknown; name?: unknown }> } | null;
+  if (!m || !doc?.parts) return null;
+  let n = 0;
+  for (const p of Object.values(doc.parts)) {
+    if (typeof p?.file !== "string") continue;
+    if (p.asm && subs.has(p.file)) { const a = subs.get(p.file); if (JSON.stringify(a) !== JSON.stringify(p.asm)) { p.asm = a; n++; } }
+    else if (!p.asm && parts.has(p.file)) { const d = parts.get(p.file); if (JSON.stringify(d) !== JSON.stringify(p.doc)) { p.doc = d; n++; } }
+  }
+  if (!n) return null;
+  m.set("document.json", new TextEncoder().encode(toJson(doc)));
+  return rezip(m);
+}
+
+/** A document's own JSON (`document.json` for parts and assemblies), or null. */
+export async function docJson(bytes: Uint8Array): Promise<Record<string, unknown> | null> {
+  const m = await entries(bytes);
+  return m ? readJson(m, "document.json") : null;
+}
+
 /** Rewrites the references of a document (`map` gives the new relative path, or null to keep it). Null when nothing changed. */
 export async function rewriteRefs(path: string, bytes: Uint8Array, map: (rel: string) => string | null): Promise<Uint8Array | null> {
   if (!isDoc(path)) return null;
   const m = await entries(bytes);
   const mf = m && readJson(m, "manifest.json");
-  if (!m || !mf || !Array.isArray(mf.references)) return null;
+  if (!m || !mf) return null;
   const changes = new Map<string, string>();
-  for (const r of mf.references as { path?: string }[]) {
-    if (typeof r?.path !== "string") continue;
-    const n = map(r.path);
-    if (n && n !== r.path) { changes.set(r.path, n); r.path = n; }
+  if (Array.isArray(mf.references)) {
+    for (const r of mf.references as { path?: string }[]) {
+      if (typeof r?.path !== "string") continue;
+      const n = map(r.path);
+      if (n && n !== r.path) { changes.set(r.path, n); r.path = n; }
+    }
+    if (changes.size) m.set("manifest.json", new TextEncoder().encode(toJson(mf)));
+  } else if (/\.mcadasm$/i.test(path)) {
+    // An assembly without a list names its parts' files in the document; those names follow.
+    for (const r of embeddedRefs(m)) { const n = map(r.path); if (n && n !== r.path) changes.set(r.path, n); }
   }
   if (!changes.size) return null;
-  m.set("manifest.json", new TextEncoder().encode(toJson(mf)));
   // The document may name the same files (components, views): exact string matches follow.
   const doc = readJson(m, "document.json");
   if (doc) {

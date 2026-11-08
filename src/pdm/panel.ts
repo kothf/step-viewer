@@ -4,6 +4,9 @@
 import { onLangChange, t } from "../i18n";
 import { confirmModal, storage, toast } from "../ui";
 import { unzipLimited, zip } from "../model/zip";
+import { packPart } from "../model/file";
+import type { PartDoc } from "../model/types";
+import { embeddedParts } from "./codec";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
 import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
 
@@ -139,12 +142,31 @@ export class VaultPanel {
     await this.refresh();
   }
 
-  async addFiles(list: File[]) {
+  async addFiles(list: File[], withParts?: boolean) {
     const v = this.vault;
     if (!v) return;
+    const items = await Promise.all(list.map(async f => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+    // FR-PDM-003: an assembly's parts that are not in the vault yet can go in as files of their own first,
+    // so the assembly's references point at them.
+    const missing: { file: string; doc: Record<string, unknown> }[] = [];
+    for (const it of items) {
+      if (!/\.mcadasm$/i.test(it.name)) continue;
+      for (const p of await embeddedParts(it.data)) {
+        if (missing.some(x => x.file === p.file) || items.some(x => x.name.toLowerCase() === p.file.toLowerCase()) || await v.byPath(p.file)) continue;
+        missing.push(p);
+      }
+    }
+    let chosen = missing;
+    if (missing.length && withParts === undefined) {
+      const r = await this.form(t("Add to vault"), `<p>${esc(t("The assembly uses parts that are not in the vault. Add them as files too, so it can be opened with the latest versions?"))}</p>${missing.map((p, i) => `<label class="chk" translate="no"><input type="checkbox" name="p:${i}" checked /> ${esc(p.file)}</label>`).join("")}`, t("Add"));
+      if (!r) return;
+      chosen = missing.filter((_p, i) => r[`p:${i}`]);
+    } else if (withParts === false) chosen = [];
     await this.run(async () => {
-      for (const f of list) await v.add(f.name, new Uint8Array(await f.arrayBuffer()));
-      toast(t("Added {n} file to the vault|Added {n} files to the vault", { n: list.length }), "success");
+      for (const p of chosen) await v.add(p.file, await packPart(p.doc as unknown as PartDoc, "MöbiusCAD vault"), "Added from an assembly");
+      for (const it of items) await v.add(it.name, it.data);
+      const n = items.length + chosen.length;
+      toast(t("Added {n} file to the vault|Added {n} files to the vault", { n }), "success");
     });
   }
 
@@ -163,13 +185,30 @@ export class VaultPanel {
     });
   }
 
-  async openFile(id: string, version?: number) {
+  /** How to open an assembly's components (FR-PDM-022), or null when cancelled. */
+  private async askResolve(): Promise<Resolve | null> {
+    const r = await this.form(t("Open assembly"), `<label class="v-lbl">${esc(t("Components"))}<select name="mode" autofocus>${([["built", "As checked in"], ["latest", "Latest"], ["released", "Latest released"]] as const).map(([k, l]) => `<option value="${k}">${esc(t(l))}</option>`).join("")}</select></label><p class="muted">${esc(t("Latest and Latest released put those versions of the part files in place of the copies saved in the assembly."))}</p>`, t("Open"));
+    return r ? r.mode as Resolve : null;
+  }
+
+  async openFile(id: string, version?: number, resolveAs?: Resolve) {
     const v = this.vault;
     if (!v) return;
     const f = this.rec(id);
     try {
-      const data = version ? await v.versionBytes(id, version) : await v.working(f.path) ?? await v.versionBytes(id, v.latest(f).n);
+      let data = version ? await v.versionBytes(id, version) : await v.working(f.path) ?? await v.versionBytes(id, v.latest(f).n);
       const name = f.path.split("/").pop()!;
+      // FR-PDM-022: an assembly whose parts are vault files opens as checked in, or with the latest (released) parts.
+      const ver = version ? f.versions.find(x => x.n === version) : v.latest(f);
+      if (f.kind === "assembly" && ver?.refs?.some(r => r.id) && (version || !f.checkout)) {
+        const mode = resolveAs ?? await this.askResolve();
+        if (!mode) return;
+        if (mode !== "built") {
+          const r = await v.resolvedBytes(id, ver.n, mode);
+          data = r.bytes;
+          toast(r.changed.length ? t("Opened with newer versions of: {files}", { files: r.changed.join(", ") }) : t("The parts are already the versions the assembly was checked in with."));
+        }
+      }
       await this.app.open(version ? name.replace(/(\.[^.]+)$/, ` (v${version})$1`) : name, data);
       if (f.kind === "part" && !version) { this.openId = id; this.tieOpen(f); }
       else this.openId = null;
@@ -494,6 +533,7 @@ export class VaultPanel {
         if (ft.removed.length) parts.push(`<p><b>${esc(t("Removed features"))}:</b> <span translate="no">${esc(ft.removed.join(", "))}</span></p>`);
         if (ft.changed.length) parts.push(`<h4>${esc(t("Changed parameters"))}</h4>${table([t("Feature"), t("Parameter"), `v${a}`, `v${b}`], ft.changed.slice(0, 200).map(x => [x.feature, x.param, x.from, x.to]))}`);
       }
+      if (/\.mcaddrw$/i.test(c.path) && !c.same && !c.a.purged && !c.b.purged) parts.push(await this.drawingOverlay(id, a, b));
       if (c.refs.length) {
         parts.push(`<h4>${esc(t("References"))}</h4>${table([t("File"), `v${a}`, `v${b}`], c.refs.map(x => [x.path, x.from, x.to]))}`);
         const bc = await v.bomCompare(id, a, b);
@@ -501,6 +541,27 @@ export class VaultPanel {
       }
       this.dialog(t("Compare v{a} and v{b} of {name}", { a, b, name: c.path }), `<div class="v-scroll">${parts.join("")}</div>`, [[t("Close"), "cancel"]]);
     } catch (e) { toast(errText(e), true); }
+  }
+
+  /** FR-PDM-051: both versions of a drawing drawn and overlaid, sheet by sheet; only in the older one red, only in the newer one green. */
+  private async drawingOverlay(id: string, a: number, b: number): Promise<string> {
+    const v = this.vault!;
+    try {
+      toast(t("Drawing the two versions…"));
+      const { renderDrawing, overlaySvg } = await import("../drawing/render");
+      // One at a time: each takes a geometry kernel of its own.
+      const ra = await renderDrawing(await v.versionBytes(id, a));
+      const rb = await renderDrawing(await v.versionBytes(id, b));
+      const out: string[] = [`<h4>${esc(t("Drawing overlay"))}</h4><p class="v-legend"><span class="v-old">${esc(t("only in v{n}", { n: a }))}</span> <span class="v-new">${esc(t("only in v{n}", { n: b }))}</span></p>`];
+      for (let i = 0; i < Math.max(ra.length, rb.length); i++) {
+        const o = overlaySvg(ra[i], rb[i]), name = (rb[i] ?? ra[i]).name;
+        const sheet = /^Sheet(\d+)$/.test(name) ? t("Sheet {n}", { n: name.slice(5) }) : name;
+        out.push(`<p class="v-sheet"><b translate="no">${esc(sheet)}</b>: ${esc(o.removed || o.added ? t("{r} removed, {a} added", { r: o.removed, a: o.added }) : t("no visible change"))}</p><div class="v-overlay" data-removed="${o.removed}" data-added="${o.added}">${o.svg}</div>`);
+      }
+      return out.join("");
+    } catch (e) {
+      return `<p class="muted">${esc(t("The drawings could not be drawn for comparing: {err}", { err: (e as Error).message }))}</p>`;
+    }
   }
 
   // ---------- rename, copy, delete (FR-PDM-023..025) ----------

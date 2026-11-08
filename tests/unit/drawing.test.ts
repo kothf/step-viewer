@@ -311,3 +311,18 @@ test("parts-only BOM, stacked balloons, surface symbol on a slanted edge, GOST s
   assert.equal(fieldAt(sheet as never, bx + 20, by + 7), "ncontrol");
   assert.equal(fieldAt(sheet as never, bx + 142, by + 25), "litera");
 });
+
+test("drawing compare: unchanged, removed and added primitives (FR-PDM-051)", async () => {
+  const { diffPrims, overlaySvg } = await import("../../src/drawing/diff");
+  const L = (x0: number, y0: number, x1: number, y1: number) => ({ t: "l" as const, p: [x0, y0, x1, y1] as [number, number, number, number], pen: "thick" as const, layer: "VISIBLE" as const });
+  const a = [L(0, 0, 10, 0), L(0, 0, 0, 10), { t: "t" as const, x: 5, y: 5, s: "A", h: 3.5, al: "c" as const, layer: "TEXT" as const }];
+  // The same line drawn the other way round is the same; a moved line and new text are changes.
+  const b = [L(10, 0, 0, 0), L(0, 0, 0, 12), { t: "t" as const, x: 5, y: 5, s: "B", h: 3.5, al: "c" as const, layer: "TEXT" as const }];
+  const d = diffPrims(a, b);
+  assert.equal(d.same.length, 1);
+  assert.equal(d.removed.length, 2);
+  assert.equal(d.added.length, 2);
+  const o = overlaySvg({ name: "Sheet1", W: 20, H: 20, prims: a }, { name: "Sheet1", W: 20, H: 20, prims: b });
+  assert.ok(o.svg.includes("#d32f2f") && o.svg.includes("#1b8a3a") && o.removed === 2 && o.added === 2);
+  assert.equal(overlaySvg({ name: "S", W: 20, H: 20, prims: a }, { name: "S", W: 20, H: 20, prims: a }).added, 0);
+});
