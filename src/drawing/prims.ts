@@ -2,10 +2,10 @@
 // The sheet is composed once into primitives; the screen (SVG), PDF, DXF and print
 // all draw the same list, so every output matches what is on screen.
 
-/** Line types (ISO 128): thick visible, thin, hidden (dashed), centre (long dash dot). */
-export type Pen = "thick" | "thin" | "hidden" | "center" | "frame";
+/** Line types (ISO 128): thick visible, thin, hidden (dashed), centre (long dash dot), phantom (long dash double dot). */
+export type Pen = "thick" | "thin" | "hidden" | "center" | "frame" | "phantom";
 /** DXF layers / SVG classes. */
-export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT" | "THREAD";
+export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT" | "THREAD" | "PHANTOM";
 
 export type Prim =
   | { t: "l"; p: [number, number, number, number]; pen: Pen; layer: Layer }
@@ -19,9 +19,9 @@ export type Prim =
 /** Text `rot` is in degrees, counter-clockwise, about the baseline point. */
 
 /** Line widths in mm (ISO 128 pen group 0.35 / 0.18; the frame 0.5). */
-export const PEN_W: Record<Pen, number> = { thick: 0.35, thin: 0.18, hidden: 0.18, center: 0.18, frame: 0.5 };
+export const PEN_W: Record<Pen, number> = { thick: 0.35, thin: 0.18, hidden: 0.18, center: 0.18, frame: 0.5, phantom: 0.18 };
 /** Dash patterns in mm (ISO 128: hidden 3/1.5, centre 12/3/1.5/3). */
-export const PEN_DASH: Record<Pen, number[] | null> = { thick: null, thin: null, frame: null, hidden: [3, 1.5], center: [12, 2, 1.5, 2] };
+export const PEN_DASH: Record<Pen, number[] | null> = { thick: null, thin: null, frame: null, hidden: [3, 1.5], center: [12, 2, 1.5, 2], phantom: [12, 1.5, 1.5, 1.5, 1.5, 1.5] };
 
 export function rect(x: number, y: number, w: number, h: number, pen: Pen, layer: Layer): Prim[] {
   return [

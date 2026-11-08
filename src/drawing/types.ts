@@ -58,7 +58,15 @@ export interface DrawingView {
   /** Broken-out section (FR-DRW-015): material inside `poly` (u, v pairs in view axes, model mm) is cut away
    * from the viewer down to the plane at `d` along the view direction (n · p, model mm), and the cut is hatched. */
   broken?: { poly: number[]; d: number };
+  /** Alternate position (FR-DRW-015, assembly drawings): components drawn again, moved, in phantom lines. */
+  alt?: AltMove[];
 }
+
+/**
+ * A component's alternate position, in the view's axes: turned by `ang` degrees (counter-clockwise as seen)
+ * about `c` (model mm), then moved by `du`, `dv` (mm). `comp` is a top-level component id; its sub-components go with it.
+ */
+export interface AltMove { comp: string; du: number; dv: number; ang?: number; c?: [number, number] }
 
 export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 

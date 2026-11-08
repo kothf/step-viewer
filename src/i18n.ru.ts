@@ -2880,4 +2880,17 @@ export const RU: Record<string, string> = {
   "Remove broken-out section": "Удалить местный разрез",
   "Broken-out depth": "Глубина местного разреза",
   "Type a depth between 0 and {max} mm.": "Введите глубину от 0 до {max} мм.",
+  // 1.99.0: alternate position view (FR-DRW-015).
+  "Click where that point of the component goes in its other position.": "Щёлкните, куда эта точка компонента переходит в другом положении.",
+  "Click an edge of the component to show in another position.": "Щёлкните по ребру компонента, который нужно показать в другом положении.",
+  "Alternate positions are for drawings of an assembly.": "Альтернативные положения доступны в чертежах сборок.",
+  "Alternate position": "Альтернативное положение",
+  "Move across (mm)": "Сдвиг по горизонтали (мм)",
+  "Move up (mm)": "Сдвиг по вертикали (мм)",
+  "Turn (°)": "Поворот (°)",
+  "Show components again in another position, in phantom lines.": "Показывает компоненты ещё раз в другом положении штрихпунктирной линией с двумя точками.",
+  "Click an edge of a component, then where that point goes in its other position": "Щёлкните по ребру компонента, затем туда, куда эта точка переходит в другом положении",
+  "Add component…": "Добавить компонент…",
+  "Remove alternate position": "Удалить альтернативное положение",
+  "Type a number.": "Введите число.",
 };

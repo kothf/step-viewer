@@ -10,7 +10,7 @@ import { unpackDrawing } from "./file";
 import type { Prim } from "./prims";
 import { sheetSize, type Fields } from "./sheet";
 import type { DrawingDoc, Sheet } from "./types";
-import { scaleText, viewReq } from "./views";
+import { altReq, scaleText, viewReq } from "./views";
 
 export interface SheetPrims { name: string; W: number; H: number; prims: Prim[] }
 
@@ -36,6 +36,7 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     const src = doc.source;
     const facts = await k.load(src.kind === "part" ? { part: src.doc } : src.kind === "asm" ? { asm: src.flat } : { file: { name: src.name, bytes: model! } });
     await Promise.all(doc.sheets.flatMap(sh => sh.views.map(v => k.request(viewReq(sh, v)))));
+    await Promise.all(doc.sheets.flatMap(sh => sh.views.map(v => altReq(sh, v)).filter(r => !!r).map(r => k.alt(r!).catch(() => null))));
     const pd = src.kind === "part" ? src.doc : null;
     const kg = pd?.material ? facts.volume * pd.material.density * 1e-6 : null;
     const mass = kg != null ? `${kg < 10 ? kg.toFixed(3) : kg.toFixed(2)} kg` : "";

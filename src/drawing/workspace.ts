@@ -22,7 +22,7 @@ import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
 import type { Annot, BalloonAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
-import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, altReq, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 
@@ -72,6 +72,8 @@ type Mode =
   | { kind: "break"; view: string; axis: "u" | "v"; a: number | null; at: Pt | null }
   /** Broken-out section (FR-DRW-015): the outline's corners on the selected view (model view axes); Enter or a click on the first corner closes it. */
   | { kind: "brokenout"; view: string; pts: Pt[]; at: Pt | null }
+  /** Alternate position (FR-DRW-015): click a component on the view, then where that point goes. */
+  | { kind: "altpos"; view: string; comp: string | null; from: Pt | null; at: Pt | null }
   | AnnotMode;
 type Pt = [number, number];
 /** A pick for a dimension: a point (edge end or circle centre), a line or a circle, in a view. */
@@ -415,6 +417,7 @@ export class DrawingWorkspace {
     else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
     else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
     else if (m.kind === "crop") s = m.p1 ? t("Click the opposite corner of the crop rectangle.") : t("Click the first corner of the crop rectangle on the view.");
+    else if (m.kind === "altpos") s = m.comp ? t("Click where that point of the component goes in its other position.") : t("Click an edge of the component to show in another position.");
     else if (m.kind === "brokenout") s = m.pts.length < 3 ? t("Click the corners of the area to cut away on the view.") : t("Click more corners; click the first corner or press Enter to cut.");
     else if (m.kind === "break") s = m.a != null ? t("Click where the break ends.") : t("Click where the break starts on the view.");
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
@@ -455,6 +458,15 @@ export class DrawingWorkspace {
     return p;
   }
 
+  /** A view's alternate position lines, asked for when missing. */
+  private altFor(sheet: Sheet, v: DrawingView): Projection | undefined {
+    const req = altReq(sheet, v);
+    if (!req) return undefined;
+    const p = this.kernel.cache.get(req.key);
+    if (!p && this.facts) void this.kernel.alt(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+    return p;
+  }
+
   private renderSheet() {
     const sh = this.sheet, [W, H] = sheetSize(sh);
     this.placements.clear();
@@ -466,7 +478,7 @@ export class DrawingWorkspace {
       const pl = placement(sh, v, proj, this.facts?.box ?? null);
       this.placements.set(v.id, pl);
       const r = viewRect(pl);
-      let body = svgBody(viewBody(sh, v, proj, pl, (s, p) => t(s, p)), H);
+      let body = svgBody(viewBody(sh, v, proj, pl, (s, p) => t(s, p), undefined, this.altFor(sh, v)), H);
       const an = viewAnnots(sh, v, pl, this.ctx());
       body += `<g class="drw-annots">${svgBody(an.prims, H)}</g>`;
       for (const h of an.hits) this.annotHits.push({ ...h, view: v.id });
@@ -608,6 +620,7 @@ export class DrawingWorkspace {
     if (m.kind === "section" || m.kind === "detail" || m.kind === "aux") { this.kindClick(m, p); return; }
     if (m.kind === "crop" || m.kind === "break") { this.trimClick(m, p); return; }
     if (m.kind === "brokenout") { this.brokenClick(m, p); return; }
+    if (m.kind === "altpos") { this.altClick(m, p); return; }
     if (isAnnotMode(m)) { this.annotClick(m, p); return; }
     if (m.kind === "projected") {
       if (!m.parent) { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; m.at = p; this.renderStatus(); this.renderOverlay(); } return; }
@@ -1597,6 +1610,71 @@ export class DrawingWorkspace {
     this.setView("Broken-out section", w => { w.broken = { poly, d: round(d) }; });
   }
 
+  // ---------- alternate position (FR-DRW-015) ----------
+
+  /** A top-level component's name in an assembly drawing. */
+  private compName(id: string): string {
+    const src = this.doc.source;
+    return (src.kind === "asm" ? src.doc.components.find(c => c.id === id)?.name : undefined) ?? id;
+  }
+
+  private startAlt() {
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    if (this.doc.source.kind !== "asm") { toast(t("Alternate positions are for drawings of an assembly."), true); return; }
+    if (!v || v.kind === "detail" || v.kind === "section" || !this.placements.get(v.id)) { toast(t("Select a model, projected or auxiliary view first.")); return; }
+    this.mode = { kind: "altpos", view: v.id, comp: null, from: null, at: null };
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private altClick(m: Extract<Mode, { kind: "altpos" }>, p: Pt) {
+    const pl = this.placements.get(m.view);
+    if (!pl) return;
+    if (!m.comp) {
+      const id = compOfKey(this.pickAt(m.view, p)?.e.k ?? "");
+      if (!id) { toast(t("Click an edge of a component.")); return; }
+      m.comp = id.split("/")[0];
+      m.from = fromSheet(pl, p[0], p[1]);
+      this.renderStatus();
+      this.renderOverlay();
+      return;
+    }
+    const q = fromSheet(pl, p[0], p[1]), from = m.from!, comp = m.comp;
+    this.mode = { kind: "none" };
+    this.setView("Alternate position", v => {
+      const moves = (v.alt ?? []).filter(x => x.comp !== comp);
+      moves.push({ comp, du: round(q[0] - from[0]), dv: round(q[1] - from[1]), c: [round(from[0]), round(from[1])] });
+      v.alt = moves;
+    });
+  }
+
+  /** The move being picked: from the clicked point to the cursor. */
+  private altMarks(H: number): string {
+    const m = this.mode;
+    if (m.kind !== "altpos" || !m.from || !m.at) return "";
+    const pl = this.placements.get(m.view);
+    if (!pl) return "";
+    const a = toSheet(pl, m.from[0], m.from[1]);
+    return `<line class="drw-cut" x1="${a[0]}" y1="${H - a[1]}" x2="${m.at[0]}" y2="${H - m.at[1]}"/><circle class="drw-snap" cx="${a[0]}" cy="${H - a[1]}" r="${this.snapTol() / 3}"/>`;
+  }
+
+  /** The alternate position group of an assembly view's panel. */
+  private altProps(v: DrawingView): string {
+    const rows = (v.alt ?? []).map((m, i) => `<div class="drw-alt" data-i="${i}">
+        <p class="drw-note" translate="no">${esc(this.compName(m.comp))}</p>
+        <div class="row">
+          <label class="drw-f">${esc(t("Move across (mm)"))}<input data-v="alt:${i}:du" inputmode="decimal" value="${m.du}"></label>
+          <label class="drw-f">${esc(t("Move up (mm)"))}<input data-v="alt:${i}:dv" inputmode="decimal" value="${m.dv}"></label>
+          <label class="drw-f">${esc(t("Turn (°)"))}<input data-v="alt:${i}:ang" inputmode="decimal" value="${m.ang ?? 0}"></label>
+        </div>
+        <div class="row"><button class="btn small" data-a="altrm" data-i="${i}">${esc(t("Remove"))}</button></div>
+      </div>`).join("");
+    return `<fieldset class="pm-group drw-altpos"><legend>${esc(t("Alternate position"))}</legend>
+      ${rows || `<p class="drw-note">${esc(t("Show components again in another position, in phantom lines."))}</p>`}
+      <div class="row"><button class="btn small" data-a="altpos" title="${esc(t("Click an edge of a component, then where that point goes in its other position"))}">${esc(t("Add component…"))}</button></div>
+    </fieldset>`;
+  }
+
   /** The outline of a broken-out section being drawn. */
   private brokenMarks(H: number): string {
     const m = this.mode;
@@ -1635,6 +1713,7 @@ export class DrawingWorkspace {
     const m = this.mode;
     if (m.kind === "crop" || m.kind === "break") return this.trimMarks(H);
     if (m.kind === "brokenout") return this.brokenMarks(H);
+    if (m.kind === "altpos") return this.altMarks(H);
     if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
     const at = m.at;
     const id = at ? this.kindParent(m, at) : m.parent;
@@ -1765,6 +1844,7 @@ export class DrawingWorkspace {
           ${v.crop || v.breaks?.length ? `<div class="row">${v.crop ? `<button class="btn small" data-a="uncrop">${esc(t("Remove crop"))}</button>` : ""}${v.breaks?.length ? `<button class="btn small" data-a="unbreak">${esc(t("Remove breaks"))}</button>` : ""}</div>` : ""}
         </fieldset>`}
         ${v.kind === "detail" || v.kind === "section" ? "" : this.brokenProps(v)}
+        ${v.kind === "detail" || v.kind === "section" || this.doc.source.kind !== "asm" ? "" : this.altProps(v)}
         <div class="row"><button class="btn small danger" data-a="del">${esc(t("Delete view"))}</button></div>`;
       return;
     }
@@ -1867,6 +1947,8 @@ export class DrawingWorkspace {
       case "uncrop": this.setView("Remove crop", v => { delete v.crop; }); break;
       case "unbreak": this.setView("Remove breaks", v => { delete v.breaks; }); break;
       case "brokenout": this.startBroken(); break;
+      case "altpos": this.startAlt(); break;
+      case "altrm": { const i = +b.dataset.i!; this.setView("Remove alternate position", v => { v.alt = (v.alt ?? []).filter((_, j) => j !== i); if (!v.alt.length) delete v.alt; }); break; }
       case "unbroken": this.setView("Remove broken-out section", v => { delete v.broken; }); break;
       case "unalign": this.setView("Break alignment", v => { v.free = true; }); break;
       case "tbedit": void this.editFormat(); break;
@@ -2046,6 +2128,10 @@ export class DrawingWorkspace {
       const g = parseFloat(val.replace(",", "."));
       if (!(g >= 0.5)) { toast(t("Type a spacing of at least 0.5 mm."), true); this.renderProps(); return; }
       this.setView("Hatch spacing", v => { v.hatch = { ...v.hatch, gap: g }; });
+    } else if (vk?.startsWith("alt:")) {
+      const [, i, k] = vk.split(":"), x = parseFloat(val.replace(",", "."));
+      if (!Number.isFinite(x)) { toast(t("Type a number."), true); this.renderProps(); return; }
+      this.setView("Alternate position", v => { const m = v.alt?.[+i]; if (m) m[k as "du" | "dv" | "ang"] = x; });
     } else if (vk === "bdepth") {
       const v0 = this.sel ? findView(this.sheet, this.sel) : null, r = v0 ? this.depthRange(v0) : null;
       const dep = parseFloat(val.replace(",", "."));
@@ -2106,6 +2192,7 @@ export class DrawingWorkspace {
   /** Waits until every view of the sheets has its lines. */
   private async allProjected(sheets: Sheet[]) {
     await Promise.all(sheets.flatMap(sh => sh.views.map(v => this.kernel.request(viewReq(sh, v)))));
+    await Promise.all(sheets.flatMap(sh => sh.views.map(v => altReq(sh, v)).filter(r => !!r).map(r => this.kernel.alt(r!).catch(() => null))));
   }
 
   private composed(sh: Sheet) {
@@ -2142,7 +2229,7 @@ export class DrawingWorkspace {
     return {
       doc: () => this.store?.doc ?? null,
       prims: () => (this.store ? this.composed(this.sheet).prims : []),
-      ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key)),
+      ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key) && (!altReq(this.sheet, v) || this.kernel.cache.has(altReq(this.sheet, v)!.key))),
       svg: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetSvg(this.composed(sh).prims, W, H); })() : ""),
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
