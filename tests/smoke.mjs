@@ -4058,6 +4058,40 @@ try {
     const qty = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT" && p.h === 2.5).map(p => p.s));
     const dangle = await dp.evaluate(() => document.querySelectorAll("#drw .drw-dangle").length);
     check(qty[qty.indexOf("PN-7") + 2] === "1" && dangle === 0, `drawing: the BOM follows the assembly (one pin left: ${qty.join(" ")}; ${dangle} warnings)`);
+    // A model view of one component alone (a part's detail views on the assembly drawing); its projected views follow.
+    await dp.keyboard.press("Escape");
+    const vb = () => dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.filter(v => !v.kind).map(v => { const p = window.__sv.drw.placement(v.id); return { id: v.id, parent: v.parent ?? null, w: +((p.box[2] - p.box[0]) / p.s).toFixed(2), h: +((p.box[3] - p.box[1]) / p.s).toFixed(2), only: v.only ?? null }; }));
+    const fv = await dp.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return window.__sv.drw.sheetPt(v.x, v.y); }, front);
+    await dp.mouse.click(fv[0], fv[1]);
+    await dp.waitForSelector('#drw .drw-props [data-v="only"]');
+    const onlyOpts = await dp.evaluate(() => [...document.querySelectorAll('#drw .drw-props [data-v="only"] option')].map(o => o.textContent));
+    await dp.selectOption('#drw .drw-props [data-v="only"]', "c2");
+    await dp.waitForTimeout(200);
+    await ready();
+    const ob = await vb(), of = ob.find(v => v.id === front), okid = ob.find(v => v.parent === front);
+    check(onlyOpts.join("|").startsWith("All components|Plate<1>|Pin<1>") && of?.only?.[0] === "c2" && Math.abs(of.w - 8) < 0.3 && Math.abs(of.h - 15) < 0.3 && okid && Math.abs(okid.w - 8) < 0.3,
+      `drawing: a model view shows one component of the assembly alone and its projected views follow (${JSON.stringify({ onlyOpts, ob })})`);
+    // Its centre marks come from that component only (the plate's holes no longer draw centre lines across the sheet).
+    const stray = await dp.evaluate(id => { const pl = window.__sv.drw.placement(id), b = pl.box, m = 8; const inb = (x, y, e) => x >= b[0] - e && x <= b[2] + e && y >= b[1] - e && y <= b[3] + e; return window.__sv.drw.prims().filter(p => p.layer === "CENTER" && p.t === "l").filter(p => { const i0 = inb(p.p[0], p.p[1], 0.5), i1 = inb(p.p[2], p.p[3], 0.5); return (i0 || i1) && !(inb(p.p[0], p.p[1], m) && inb(p.p[2], p.p[3], m)); }).length; }, front);
+    check(stray === 0, `drawing: a one-component view draws no centre lines of other components (${stray} outside it)`);
+    // First → third angle: the projected views keep showing the same thing and move across their parent (exam bug 34).
+    const pv0 = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0]; return { proj: s.projection, v: s.views.filter(v => v.side).map(v => ({ id: v.id, side: v.side, y: v.y, x: v.x, py: s.views.find(p => p.id === v.parent).y, px: s.views.find(p => p.id === v.parent).x })) }; });
+    await dp.keyboard.press("Escape");
+    await dp.mouse.click(...(await dp.evaluate(() => window.__sv.drw.sheetPt(15, 290))));
+    await dp.waitForSelector('#drw .drw-props [data-s="projection"]');
+    await dp.selectOption('#drw .drw-props [data-s="projection"]', pv0.proj === "first" ? "third" : "first");
+    await ready();
+    const pv1 = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0]; return { proj: s.projection, v: s.views.filter(v => v.side).map(v => ({ id: v.id, side: v.side, y: v.y, x: v.x, py: s.views.find(p => p.id === v.parent).y, px: s.views.find(p => p.id === v.parent).x })) }; });
+    const crossed = pv0.v.every(a => { const b = pv1.v.find(x => x.id === a.id); return b && b.side[0] === -a.side[0] && b.side[1] === -a.side[1] && Math.abs((b.y - b.py) + (a.y - a.py)) < 1e-6 && Math.abs((b.x - b.px) + (a.x - a.px)) < 1e-6; });
+    check(pv1.proj !== pv0.proj && pv0.v.length >= 2 && crossed, `drawing: switching first/third angle moves the projected views across their parent and keeps what they show (${JSON.stringify({ pv0, pv1 })})`);
+    // Dragging a projected view across its parent stops on its own side (exam bug 34).
+    const tv = pv1.v.find(a => a.side[1] !== 0);
+    const [ax0, ay0] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [tv.x, tv.y]);
+    const [ax1, ay1] = await dp.evaluate(([x, y]) => window.__sv.drw.sheetPt(x, y), [tv.x, tv.py - 2 * (tv.y - tv.py)]);
+    await dp.mouse.move(ax0, ay0); await dp.mouse.down(); await dp.mouse.move((ax0 + ax1) / 2, (ay0 + ay1) / 2, { steps: 4 }); await dp.mouse.move(ax1, ay1, { steps: 4 }); await dp.mouse.up();
+    await ready();
+    const tv2 = await dp.evaluate(id => { const s = window.__sv.drw.doc().sheets[0], v = s.views.find(x => x.id === id), p = s.views.find(x => x.id === v.parent); return { y: v.y, py: p.y, side: v.side }; }, tv.id);
+    check((tv2.y - tv2.py) * tv2.side[1] > 0 && tv2.side[1] === tv.side[1], `drawing: a projected view dragged across its parent stops on its own side (${JSON.stringify({ tv, tv2 })})`);
     await ctx.close();
   }
 

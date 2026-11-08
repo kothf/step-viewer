@@ -10,7 +10,7 @@ import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
 import type { CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
-import { viewDir } from "./views";
+import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 
 type P2 = [number, number];
@@ -529,6 +529,8 @@ export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInf
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
   const own = ctx.forView?.(v);
   if (own) ctx = { ...ctx, ...own, forView: undefined };
+  const only = viewOnly(sheet, v);
+  if (only && ctx.topo) ctx = { ...ctx, topo: topoOnly(ctx.topo, only) };
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
   const vd = viewDir(sheet, v), { P, n } = projector(vd);
   if (v.marks !== false && ctx.topo) out.prims.push(...centreMarks(v, pl, ctx.topo, P, n));
