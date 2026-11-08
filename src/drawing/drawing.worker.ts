@@ -2,14 +2,15 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
-import { project, readShape, shapeInfo, type ViewDir } from "../kernel/drawing";
+import { project, readShape, section, shapeInfo, type V3, type ViewDir } from "../kernel/drawing";
 import { Modeller } from "../kernel/model";
 import type { PartDoc } from "../model/types";
 
 export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; file?: { name: string; bytes: Uint8Array } }
-  | { id: number; type: "project"; view: ViewDir };
+  | { id: number; type: "project"; view: ViewDir }
+  | { id: number; type: "section"; view: ViewDir; p: V3 };
 
 let oc: any = null;
 let shape: any = null;
@@ -37,6 +38,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
       post({ id: r.id, ok: true, proj: project(oc, shape, r.view) });
+    } else if (r.type === "section") {
+      if (!shape) throw new Error("No model loaded");
+      post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p) });
     }
   } catch (err) {
     post({ id: r.id, ok: false, error: err instanceof Error ? err.message : typeof err === "number" ? `OpenCASCADE error ${err}` : String(err) });

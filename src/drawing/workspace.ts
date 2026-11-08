@@ -9,14 +9,14 @@ import type { PartDoc } from "../model/types";
 import { t, onLangChange } from "../i18n";
 import { toast, confirmModal } from "../ui";
 import { DrawingKernel, type ModelFacts } from "./client";
-import { composeSheet, placement, viewPrims, viewRect, type Placement } from "./compose";
+import { composeSheet, fromSheet, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
 import { sheetDxf, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
 import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, TB_H, type Fields } from "./sheet";
 import type { DisplayStyle, DrawingDoc, DrawingProps, DrawingView, Orient, Sheet, SheetSize, TangentEdges } from "./types";
-import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, dirKey, findView, fitScale, parseScale, projectedDir, scaleText, sideOf, viewDir, viewScalePair } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq } from "./views";
 import "./drawing.css";
 
 export interface DrawingModel {
@@ -48,7 +48,15 @@ type Mode =
   /** A model view follows the cursor. */
   | { kind: "model"; orient: Orient; dir: ViewDir; at: [number, number] | null }
   /** Projected views come off `parent`. */
-  | { kind: "projected"; parent: string | null; at: [number, number] | null };
+  | { kind: "projected"; parent: string | null; at: [number, number] | null }
+  /** Section view (FR-DRW-012): pick the cutting line on a view (horizontal, vertical or through two points), then place the view. */
+  | { kind: "section"; how: "h" | "v" | "2p"; parent: string | null; p1: Pt | null; line: Line4 | null; at: Pt | null }
+  /** Detail view (FR-DRW-013): click the centre, then the radius, then place. */
+  | { kind: "detail"; parent: string | null; c: Pt | null; r: number | null; at: Pt | null }
+  /** Auxiliary view (FR-DRW-014): click a straight edge, then place the view square to it. */
+  | { kind: "aux"; parent: string | null; line: Line4 | null; at: Pt | null };
+type Pt = [number, number];
+type Line4 = [number, number, number, number];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -68,6 +76,9 @@ const ICON = {
   hlr: I('<rect x="2.5" y="2.5" width="11" height="11"/>'),
   wire: I('<rect x="2.5" y="2.5" width="11" height="11"/><path d="M6 2.5v11"/>'),
   ok: I('<path d="m3 8.5 3.2 3L13 4.5"/>'),
+  section: I('<rect x="3" y="3.5" width="10" height="9"/><path d="M3 12.5l4-9M6.5 12.5l4-9M10 12.5l3-6.5" stroke-width="1"/><path d="M1 8h14" stroke-dasharray="3 1.2 1 1.2"/>'),
+  detail: I('<circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/>'),
+  aux: I('<path d="M2 12 9 3"/><path d="m7.5 9.5 4 3.2M11.5 12.7l-.4-2.6M11.5 12.7l-2.5.3"/>'),
 };
 
 export class DrawingWorkspace {
@@ -227,6 +238,14 @@ export class DrawingWorkspace {
           <div class="drw-dd"><button class="btn small" data-a="model" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model view: pick an orientation, then place it on the sheet"))}">${ICON.model}<span>${esc(t("Model view"))}</span> ▾</button>
             <div class="drw-menu" role="menu" hidden>${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<button role="menuitem" data-orient="${o}">${esc(t(ORIENT_NAMES[o]))}</button>`).join("")}</div></div>
           <button class="btn small" data-a="proj" title="${esc(t("Projected view: move the cursor around a view and click"))}">${ICON.proj}<span>${esc(t("Projected view"))}</span></button>
+          <div class="drw-dd"><button class="btn small" data-a="section" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Section view: draw the cutting line on a view, then place the section"))}">${ICON.section}<span>${esc(t("Section"))}</span> ▾</button>
+            <div class="drw-menu" role="menu" hidden>
+              <button role="menuitem" data-cut="h">${esc(t("Horizontal cutting line"))}</button>
+              <button role="menuitem" data-cut="v">${esc(t("Vertical cutting line"))}</button>
+              <button role="menuitem" data-cut="2p">${esc(t("Cutting line through two points"))}</button>
+            </div></div>
+          <button class="btn small" data-a="detail" title="${esc(t("Detail view: click the centre of the circle on a view, then its radius, then place the view"))}">${ICON.detail}<span>${esc(t("Detail"))}</span></button>
+          <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
           <button class="icon" data-a="redo" aria-label="${esc(t("Redo (Ctrl+Y)"))}" title="${esc(t("Redo (Ctrl+Y)"))}">${ICON.redo}</button>
@@ -297,6 +316,9 @@ export class DrawingWorkspace {
     if (this.loading) s = t("Loading the model into the drawing kernel…");
     else if (m.kind === "model") s = t("Click on the sheet to place the {orient} view. Esc cancels.", { orient: t(ORIENT_NAMES[m.orient]).toLowerCase() });
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
+    else if (m.kind === "section") s = m.line ? t("Move the cursor to the side the section looks from and click to place it. Esc cancels.") : m.how === "2p" ? (m.p1 ? t("Click the second point of the cutting line.") : t("Click the first point of the cutting line on a view.")) : t("Click on a view to place the cutting line. It snaps to circle centres, line ends and midpoints.");
+    else if (m.kind === "detail") s = m.r ? t("Click on the sheet to place the detail view. Esc cancels.") : m.c ? t("Move the cursor to size the circle and click.") : t("Click the centre of the detail circle on a view.");
+    else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
     st.textContent = s;
@@ -320,9 +342,9 @@ export class DrawingWorkspace {
   }
 
   private projFor(sheet: Sheet, v: DrawingView): Projection | undefined {
-    const d = viewDir(sheet, v);
-    const p = this.kernel.cache.get(dirKey(d));
-    if (!p && this.facts) void this.kernel.project(d).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+    const req = viewReq(sheet, v);
+    const p = this.kernel.cache.get(req.key);
+    if (!p && this.facts) void this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
     return p;
   }
 
@@ -335,12 +357,8 @@ export class DrawingWorkspace {
       const pl = placement(sh, v, proj, this.facts?.box ?? null);
       this.placements.set(v.id, pl);
       const r = viewRect(pl);
-      let body = proj ? svgBody(viewPrims(v, proj, pl), H) : "";
-      if (!proj) body = `<rect class="drw-pending" x="${r[0]}" y="${H - r[3]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
-      if (v.label) {
-        body += svgBody([{ t: "t", x: v.x, y: r[1] - 6, s: v.name, h: 3.5, al: "c", layer: "TEXT" },
-          { t: "t", x: v.x, y: r[1] - 10.5, s: `${t("Scale")} ${scaleText(viewScalePair(sh, v))}`, h: 2.5, al: "c", layer: "TEXT" }], H);
-      }
+      let body = svgBody(viewBody(sh, v, proj, pl, (s, p) => t(s, p)), H);
+      if (!proj) body += `<rect class="drw-pending" x="${r[0]}" y="${H - r[3]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
       html += `<g class="drw-view" data-v="${v.id}">${body}</g>`;
     }
     html += `<g class="drw-ovl"></g>`;
@@ -375,6 +393,7 @@ export class DrawingWorkspace {
         if (pp) s += `<line class="drw-align" x1="${pp.x}" y1="${H - pp.y}" x2="${pl.x}" y2="${H - pl.y}"/>`;
       }
     }
+    s += this.modeMarks(H);
     g.innerHTML = s;
   }
 
@@ -384,6 +403,12 @@ export class DrawingWorkspace {
   /** The view the current command would place at the cursor. */
   private previewView(): { view: DrawingView; parent?: string } | null {
     const m = this.mode;
+    if (m.kind === "section" && m.parent && m.line && m.at) return { view: this.sideViewAt("section", m.parent, m.line, m.at), parent: m.parent };
+    if (m.kind === "aux" && m.parent && m.line && m.at) return { view: this.sideViewAt("aux", m.parent, m.line, m.at), parent: m.parent };
+    if (m.kind === "detail" && m.parent && m.c && m.r && m.at) {
+      const par = findView(this.sheet, m.parent);
+      return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
+    }
     if (m.kind === "model" && m.at) return { view: { id: "_pv", name: "", orient: m.orient, dir: m.dir, x: m.at[0], y: m.at[1], style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv" } };
     if (m.kind === "projected" && m.parent && m.at) {
       const v = this.projectedAt(m.parent, m.at);
@@ -460,6 +485,7 @@ export class DrawingWorkspace {
     const p = this.sheetPt(e);
     const m = this.mode;
     if (m.kind === "model") { this.placeModel(m, p); return; }
+    if (m.kind === "section" || m.kind === "detail" || m.kind === "aux") { this.kindClick(m, p); return; }
     if (m.kind === "projected") {
       if (!m.parent) { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; m.at = p; this.renderStatus(); this.renderOverlay(); } return; }
       const v = this.projectedAt(m.parent, p);
@@ -524,6 +550,7 @@ export class DrawingWorkspace {
     const ax = alignAxis(v);
     if (ax === "y") dy = 0;
     if (ax === "x") dx = 0;
+    if (Array.isArray(ax)) { const k = dx * ax[0] + dy * ax[1]; dx = k * ax[0]; dy = k * ax[1]; }
     const visit = (vid: string) => {
       const p = o.get(vid)!;
       out.set(vid, [p[0] + dx, p[1] + dy]);
@@ -632,6 +659,191 @@ export class DrawingWorkspace {
     this.renderStatus();
   }
 
+  // ---------- section, detail and auxiliary views ----------
+
+  private startKind(kind: "section" | "detail" | "aux", how: "h" | "v" | "2p" = "h") {
+    if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
+    if (!this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
+    // The first click picks the view (as in SolidWorks), unless there is only one.
+    const parent = this.sheet.views.length === 1 ? this.sheet.views[0].id : null;
+    if (kind === "section") this.mode = { kind, how, parent, p1: null, line: null, at: null };
+    else if (kind === "detail") this.mode = { kind, parent, c: null, r: null, at: null };
+    else this.mode = { kind, parent, line: null, at: null };
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  /** Snap distance on the sheet (mm): 8 screen pixels. */
+  private snapTol() {
+    const w = this.svg.getBoundingClientRect().width;
+    return w ? 8 * this.vb.w / w : 2;
+  }
+
+  /** The view a step of a section/detail/aux command works on: the chosen parent, else the view under the cursor. */
+  private kindParent(m: { parent: string | null }, p: Pt): string | null {
+    return m.parent ?? this.viewAt(p);
+  }
+
+  /**
+   * The model point (parent view axes) under a sheet point, snapped to circle centres,
+   * line ends and midpoints of the view's lines, and to the view's centre.
+   */
+  private snapIn(id: string, p: Pt): { m: Pt; snap: boolean } {
+    const pl = this.placements.get(id)!, v = findView(this.sheet, id)!;
+    const proj = this.projFor(this.sheet, v);
+    const tol = this.snapTol();
+    let best: Pt | null = null, bd = tol;
+    const tryPt = (u: number, w: number) => {
+      const [x, y] = toSheet(pl, u, w), d = Math.hypot(x - p[0], y - p[1]);
+      if (d < bd) { bd = d; best = [u, w]; }
+    };
+    tryPt(pl.uc, pl.vc);
+    if (proj) for (const g of [...proj.vis, ...proj.hid]) {
+      if (g.k === "l") { tryPt(g.p[0], g.p[1]); tryPt(g.p[2], g.p[3]); tryPt((g.p[0] + g.p[2]) / 2, (g.p[1] + g.p[3]) / 2); }
+      else if (g.k === "a") { tryPt(g.o[0], g.o[1]); tryPt(g.o[0] + g.r * Math.cos(g.a0), g.o[1] + g.r * Math.sin(g.a0)); tryPt(g.o[0] + g.r * Math.cos(g.a1), g.o[1] + g.r * Math.sin(g.a1)); }
+    }
+    return best ? { m: best, snap: true } : { m: fromSheet(pl, p[0], p[1]), snap: false };
+  }
+
+  /** The cutting line of a horizontal or vertical section through a model point: across the view. */
+  private cutLine(id: string, how: "h" | "v", m: Pt): Line4 {
+    const b = this.placements.get(id)!.box;
+    return how === "h" ? [b[0], m[1], b[2], m[1]] : [m[0], b[3], m[0], b[1]];
+  }
+
+  /** The straight visible edge of a view nearest to a sheet point (model coordinates), within the snap distance. */
+  private edgeAt(id: string, p: Pt): Line4 | null {
+    const pl = this.placements.get(id), v = findView(this.sheet, id);
+    const proj = v && this.projFor(this.sheet, v);
+    if (!pl || !proj) return null;
+    let best: Line4 | null = null, bd = this.snapTol();
+    for (const g of proj.vis) {
+      if (g.k !== "l") continue;
+      const [ax, ay] = toSheet(pl, g.p[0], g.p[1]), [bx, by] = toSheet(pl, g.p[2], g.p[3]);
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      if (L2 < 1e-6) continue;
+      const k = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2));
+      const d = Math.hypot(ax + dx * k - p[0], ay + dy * k - p[1]);
+      if (d < bd) { bd = d; best = [...g.p] as Line4; }
+    }
+    return best;
+  }
+
+  /** A section or auxiliary view of `parent` from `line`, on the cursor's side and lined up square to the line. */
+  private sideViewAt(kind: "section" | "aux", parent: string, line: Line4, at: Pt): DrawingView {
+    const pp = this.placements.get(parent)!, par = findView(this.sheet, parent);
+    const [a, b] = [toSheet(pp, line[0], line[1]), toSheet(pp, line[2], line[3])];
+    const n: Pt = [-(b[1] - a[1]), b[0] - a[0]];
+    const look: 1 | -1 = (at[0] - a[0]) * n[0] + (at[1] - a[1]) * n[1] >= 0 ? 1 : -1;
+    const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: at[0], y: at[1], letter: nextLetter(this.doc.sheets), style: kind === "section" ? "hlr" : par?.style, tangent: par?.tangent };
+    const [x, y] = this.alignedAt(v, at);
+    v.x = x; v.y = y;
+    return v;
+  }
+
+  /**
+   * Centre of a section/aux view near `at` that keeps it lined up with its parent: free along the
+   * viewing direction q, fixed across it so a model point lands on the same line square to q in both views.
+   */
+  private alignedAt(v: DrawingView, at: Pt): Pt {
+    const pp = this.placements.get(v.parent!);
+    if (!pp) return at;
+    const q = lookDir(v), r: Pt = [-q[1], q[0]];
+    const sh = this.sheetWith(v), vp = placement(sh, v, this.projFor(sh, v), this.facts?.box ?? null);
+    const dot = (p: Pt, d: Pt) => p[0] * d[0] + p[1] * d[1];
+    const across = dot([pp.x, pp.y], r) - vp.s * (dot([pp.uc, pp.vc], r) - dot([vp.uc, vp.vc], r));
+    const along = dot(at, q);
+    return [r[0] * across + q[0] * along, r[1] * across + q[1] * along];
+  }
+
+  /** Projects both sides of a section/aux line ahead, so the preview has its lines when the cursor gets there. */
+  private warmSides(kind: "section" | "aux", parent: string, line: Line4) {
+    for (const look of [1, -1] as const) {
+      const v: DrawingView = { id: "_pv", name: "", kind, parent, line, look, x: 0, y: 0 };
+      const sh = this.sheetWith(v);
+      void this.kernel.request(viewReq(sh, v)).then(() => this.renderOverlay(), () => {});
+    }
+  }
+
+  private kindClick(m: Extract<Mode, { kind: "section" | "detail" | "aux" }>, p: Pt) {
+    const id = this.kindParent(m, p);
+    if (m.kind === "section") {
+      if (m.line && m.parent) { this.placeKind(this.sideViewAt("section", m.parent, m.line, p)); return; }
+      if (!id || !this.placements.get(id)) return;
+      const sp = this.snapIn(id, p).m;
+      if (m.how !== "2p") m.line = this.cutLine(id, m.how, sp);
+      else if (!m.p1) { m.parent = id; m.p1 = sp; this.sel = id; this.renderStatus(); this.renderOverlay(); return; }
+      else {
+        if (Math.hypot(sp[0] - m.p1[0], sp[1] - m.p1[1]) < 1e-6) return;
+        m.line = [m.p1[0], m.p1[1], sp[0], sp[1]];
+      }
+      m.parent = id;
+      this.sel = id;
+      this.warmSides("section", id, m.line);
+    } else if (m.kind === "detail") {
+      if (m.r && m.c && m.parent) { const pv = this.previewView(); if (pv) this.placeKind(pv.view); return; }
+      if (!id || !this.placements.get(id)) return;
+      if (!m.c) { m.parent = id; m.c = this.snapIn(id, p).m; this.sel = id; }
+      else {
+        const pl = this.placements.get(m.parent!)!, [cx, cy] = toSheet(pl, m.c[0], m.c[1]);
+        const r = Math.hypot(p[0] - cx, p[1] - cy) / pl.s;
+        if (r * pl.s < 1) return;
+        m.r = Math.round(r * 100) / 100;
+      }
+    } else {
+      if (m.line && m.parent) { this.placeKind(this.sideViewAt("aux", m.parent, m.line, p)); return; }
+      if (!id) return;
+      const e = this.edgeAt(id, p);
+      if (!e) { toast(t("Click a straight edge of the view.")); return; }
+      m.parent = id; m.line = e; this.sel = id;
+      this.warmSides("aux", id, e);
+    }
+    this.renderStatus();
+    this.renderOverlay();
+  }
+
+  private placeKind(v: DrawingView) {
+    const id = uid("v_"), L = nextLetter(this.doc.sheets);
+    const name = v.kind === "section" ? `${t("Section View")} ${L}-${L}` : v.kind === "detail" ? `${t("Detail View")} ${L}` : `${t("Auxiliary View")} ${L}`;
+    const label = v.kind === "section" ? "Section view" : v.kind === "detail" ? "Detail view" : "Auxiliary view";
+    this.store!.change(label, d => {
+      d.sheets[this.sheetIdx].views.push({ ...v, id, name, letter: L, x: round(v.x), y: round(v.y) });
+    });
+    this.sel = id;
+    this.mode = { kind: "none" };
+    this.renderAll();
+  }
+
+  /** What a section/detail/aux command draws on the sheet before its view exists: the cutting line, circle or picked edge. */
+  private modeMarks(H: number): string {
+    const m = this.mode;
+    if (m.kind !== "section" && m.kind !== "detail" && m.kind !== "aux") return "";
+    const at = m.at;
+    const id = at ? this.kindParent(m, at) : m.parent;
+    const pl = id ? this.placements.get(id) : undefined;
+    if (!pl || !id) return "";
+    const L = (l: Line4, cls: string) => { const [a, b] = [toSheet(pl, l[0], l[1]), toSheet(pl, l[2], l[3])]; return `<line class="${cls}" x1="${a[0]}" y1="${H - a[1]}" x2="${b[0]}" y2="${H - b[1]}"/>`; };
+    const dot = (mp: Pt) => { const [x, y] = toSheet(pl, mp[0], mp[1]); return `<circle class="drw-snap" cx="${x}" cy="${H - y}" r="${this.snapTol() / 3}"/>`; };
+    let s = "";
+    if (m.kind === "section") {
+      if (m.line) return L(m.line, "drw-cut");
+      if (!at) return "";
+      const sp = this.snapIn(id, at);
+      if (m.how === "2p") { if (m.p1) s += L([m.p1[0], m.p1[1], sp.m[0], sp.m[1]], "drw-cut") + dot(m.p1); }
+      else s += L(this.cutLine(id, m.how, sp.m), "drw-cut");
+      if (sp.snap) s += dot(sp.m);
+    } else if (m.kind === "detail") {
+      if (!m.c) { if (at) { const sp = this.snapIn(id, at); if (sp.snap) s += dot(sp.m); } return s; }
+      const [cx, cy] = toSheet(pl, m.c[0], m.c[1]);
+      const R = m.r ? m.r * pl.s : at ? Math.hypot(at[0] - cx, at[1] - cy) : 0;
+      s += `<circle class="drw-cut" cx="${cx}" cy="${H - cy}" r="${R}"/>` + dot(m.c);
+    } else {
+      const e = m.line ?? (at ? this.edgeAt(id, at) : null);
+      if (e) s += L(e, "drw-edge");
+    }
+    return s;
+  }
+
   /** Standard 3 views (FR-DRW-011): front, top and side, lined up, at a scale that fits. */
   standard3(fresh = false) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
@@ -680,8 +892,9 @@ export class DrawingWorkspace {
     const host = this.el.querySelector<HTMLElement>(".drw-tree")!;
     const sh = this.sheet;
     const item = (v: DrawingView, depth: number): string => {
-      const kind = v.parent ? t("Projected") : t(ORIENT_NAMES[v.orient ?? "front"]);
-      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" style="padding-left:${12 + depth * 14}px">${v.parent ? ICON.proj : ICON.model}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
+      const kind = v.kind ? t(KIND_NAMES[v.kind]) : v.parent ? t("Projected") : t(ORIENT_NAMES[v.orient ?? "front"]);
+      const icon = v.kind ? ICON[v.kind === "section" ? "section" : v.kind === "detail" ? "detail" : "aux"] : v.parent ? ICON.proj : ICON.model;
+      let s = `<div role="treeitem" tabindex="${v.id === this.sel ? 0 : -1}" aria-selected="${v.id === this.sel}" class="drw-ti${v.id === this.sel ? " on" : ""}" data-sel="${v.id}" style="padding-left:${12 + depth * 14}px">${icon}<span translate="no">${esc(v.name)}</span><small>${esc(kind)}</small></div>`;
       for (const c of sh.views) if (c.parent === v.id) s += item(c, depth + 1);
       return s;
     };
@@ -699,7 +912,7 @@ export class DrawingWorkspace {
       host.innerHTML = `
         <fieldset class="pm-group"><legend>${esc(t("Drawing view"))}</legend>
           <label class="drw-f">${esc(t("Name"))}<input data-v="name" value="${esc(v.name)}" translate="no"></label>
-          ${v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
+          ${v.kind ? this.kindProps(v) : v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
           <label class="drw-f">${esc(t("Orientation"))}<select data-v="orient">${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<option value="${o}"${o === (v.orient ?? "front") ? " selected" : ""}>${esc(t(ORIENT_NAMES[o]))}</option>`).join("")}</select></label>`}
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Scale"))}</legend>
@@ -744,6 +957,7 @@ export class DrawingWorkspace {
     const a = b.dataset.a;
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
+    if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
     if (b.dataset.x) { this.closeMenus(); void this.exportAs(b.dataset.x as "pdf"); return; }
     if (b.dataset.sheet) { this.cancelMode(); this.sheetIdx = +b.dataset.sheet; this.sel = null; this.renderAll(); this.fit(); return; }
     if (b.dataset.style) { this.setView("Display style", v => { v.style = b.dataset.style as DisplayStyle; }); return; }
@@ -751,7 +965,7 @@ export class DrawingWorkspace {
     switch (a) {
       case "back": this.hide(); break;
       case "std3": this.cancelMode(); this.standard3(); break;
-      case "model": case "export": {
+      case "model": case "export": case "section": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
         this.closeMenus();
         menu.hidden = !open;
@@ -760,6 +974,9 @@ export class DrawingWorkspace {
         break;
       }
       case "proj": this.startProjected(); break;
+      case "detail": this.startKind("detail"); break;
+      case "aux": this.startKind("aux"); break;
+      case "flip": this.flipSel(); break;
       case "undo": this.store.undo(); break;
       case "redo": this.store.redo(); break;
       case "fit": this.fit(); break;
@@ -783,6 +1000,39 @@ export class DrawingWorkspace {
         this.fit();
       })(); break;
     }
+  }
+
+  /** Extra properties of section, detail and auxiliary views. */
+  private kindProps(v: DrawingView): string {
+    const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
+    let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
+      <label class="drw-f">${esc(t("Letter"))}<input data-v="letter" value="${esc(v.letter ?? "")}" maxlength="3" translate="no"></label>`;
+    if (v.kind === "detail") s += `<label class="drw-f">${esc(t("Radius (mm)"))}<input data-v="radius" inputmode="decimal" value="${v.r ?? ""}"></label>`;
+    else s += `<div class="row"><button class="btn small" data-a="flip" title="${esc(t("Look at the other side of the line"))}">${esc(t("Flip direction"))}</button></div>`;
+    if (v.kind === "section") {
+      const h = hatchOf(v);
+      s += `<label class="drw-f">${esc(t("Hatch spacing (mm)"))}<input data-v="hgap" inputmode="decimal" value="${h.gap}"></label>
+        <label class="drw-f">${esc(t("Hatch angle"))}<select data-v="hang">${[45, 135, 30, 60].map(a => `<option value="${a}"${a === h.angle ? " selected" : ""}>${a}°</option>`).join("")}</select></label>`;
+    }
+    return s;
+  }
+
+  /** Flips a section/aux view: it looks from the other side of its line and moves across to that side. */
+  private flipSel() {
+    const v = this.sel ? findView(this.sheet, this.sel) : null;
+    const pp = v?.parent ? this.placements.get(v.parent) : undefined;
+    if (!v || !v.line || !pp) return;
+    const q = lookDir(v);
+    const [a] = [toSheet(pp, v.line[0], v.line[1])];
+    const k = (v.x - a[0]) * q[0] + (v.y - a[1]) * q[1];
+    const moves = this.dragMoves(v.id, -2 * k * q[0], -2 * k * q[1], new Map(this.sheet.views.map(o => [o.id, [o.x, o.y] as [number, number]])));
+    this.store!.change("Flip direction", d => {
+      for (const o of d.sheets[this.sheetIdx].views) {
+        if (o.id === v.id) o.look = (o.look ?? 1) === 1 ? -1 : 1;
+        const mv = moves.get(o.id);
+        if (mv) { o.x = round(mv[0]); o.y = round(mv[1]); }
+      }
+    });
   }
 
   private setView(label: string, fn: (v: DrawingView) => void) {
@@ -821,6 +1071,25 @@ export class DrawingWorkspace {
       else if (s) this.setSheet("Sheet scale", sh => { sh.scale = s!; });
     } else if (vk === "tangent") this.setView("Tangent edges", v => { v.tangent = val as TangentEdges; });
     else if (vk === "label") this.setView("View label", v => { v.label = (el as HTMLInputElement).checked || undefined; });
+    else if (vk === "letter") {
+      const L = val.trim().toUpperCase();
+      if (!L) { this.renderProps(); return; }
+      if (this.doc.sheets.some(sh => sh.views.some(o => o.id !== this.sel && o.letter === L))) toast(t("Another view already uses the letter {a}.", { a: L }), true);
+      this.setView("View letter", v => {
+        const old = v.letter;
+        v.letter = L;
+        // The default names carry the letter: keep them in step.
+        if (old && v.name.endsWith(v.kind === "section" ? ` ${old}-${old}` : ` ${old}`)) v.name = v.name.slice(0, v.name.lastIndexOf(" ")) + (v.kind === "section" ? ` ${L}-${L}` : ` ${L}`);
+      });
+    } else if (vk === "radius") {
+      const r = parseFloat(val.replace(",", "."));
+      if (!(r > 0)) { toast(t("Type a radius above zero."), true); this.renderProps(); return; }
+      this.setView("Detail radius", v => { v.r = r; });
+    } else if (vk === "hgap") {
+      const g = parseFloat(val.replace(",", "."));
+      if (!(g >= 0.5)) { toast(t("Type a spacing of at least 0.5 mm."), true); this.renderProps(); return; }
+      this.setView("Hatch spacing", v => { v.hatch = { ...v.hatch, gap: g }; });
+    } else if (vk === "hang") this.setView("Hatch angle", v => { v.hatch = { ...v.hatch, angle: +val }; });
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
     else if (sk === "projection") this.setSheet("Projection type", sh => { sh.projection = val as Sheet["projection"]; });
     else if (sk === "format") this.setSheet("Sheet format", sh => { sh.format = val as Sheet["format"]; });
@@ -862,11 +1131,11 @@ export class DrawingWorkspace {
 
   /** Waits until every view of the sheets has its lines. */
   private async allProjected(sheets: Sheet[]) {
-    await Promise.all(sheets.flatMap(sh => sh.views.map(v => this.kernel.project(viewDir(sh, v)))));
+    await Promise.all(sheets.flatMap(sh => sh.views.map(v => this.kernel.request(viewReq(sh, v)))));
   }
 
   private composed(sh: Sheet) {
-    return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, s => t(s));
+    return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p));
   }
 
   async exportAs(kind: "pdf" | "svg" | "dxf" | "print") {
@@ -894,16 +1163,18 @@ export class DrawingWorkspace {
     return {
       doc: () => this.store?.doc ?? null,
       prims: () => (this.store ? this.composed(this.sheet).prims : []),
-      ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(dirKey(viewDir(this.sheet, v)))),
+      ready: () => !!this.store && !this.loading && this.sheet.views.every(v => this.kernel.cache.has(viewReq(this.sheet, v).key)),
       svg: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetSvg(this.composed(sh).prims, W, H); })() : ""),
       dxf: () => (this.store ? (() => { const sh = this.sheet, [W, H] = sheetSize(sh); return sheetDxf(this.composed(sh).prims, W, H); })() : ""),
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
+      proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
     };
   }
 }
 
 const STYLE_NAMES: Record<DisplayStyle, string> = { hlv: "Hidden lines visible", hlr: "Hidden lines removed", wire: "Wireframe" };
+const KIND_NAMES: Record<NonNullable<DrawingView["kind"]>, string> = { section: "Section", detail: "Detail", aux: "Auxiliary" };
 const TAN_NAMES: Record<TangentEdges, string> = { visible: "Visible", thin: "Thin", hidden: "Removed" };
 const round = (v: number) => Math.round(v * 100) / 100;
 function sheetName(s: Sheet) { const m = /^Sheet(\d+)$/.exec(s.name); return m ? t("Sheet {n}", { n: m[1] }) : s.name; }
