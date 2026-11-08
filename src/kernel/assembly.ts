@@ -104,6 +104,26 @@ export class Assembler {
     return out;
   }
 
+  /**
+   * Clearance check (FR-ASM-021): pairs of components closer than `min` (mm) without overlapping, with
+   * the distance and the two nearest points. Boxes grown by `min` skip pairs that are clearly far apart.
+   */
+  clearance(placed: Placed[], min: number): { a: string; b: string; distance: number; p1: V3; p2: V3 }[] {
+    const oc = this.oc;
+    const boxes = placed.map(p => { const b = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(p.body.shape, b, false); b.Enlarge(min / 2); return b; });
+    const out: { a: string; b: string; distance: number; p1: V3; p2: V3 }[] = [];
+    for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+      if (boxes[i].IsOut_4(boxes[j])) continue;
+      const dist = new oc.BRepExtrema_DistShapeShape_2(placed[i].body.shape, placed[j].body.shape, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+      if (!dist.IsDone() || dist.NbSolution() < 1) continue;
+      const d = dist.Value();
+      if (d >= min) continue;
+      const a = dist.PointOnShape1(1), b = dist.PointOnShape2(1);
+      out.push({ a: placed[i].id, b: placed[j].id, distance: d, p1: [a.X(), a.Y(), a.Z()], p2: [b.X(), b.Y(), b.Z()] });
+    }
+    return out.sort((x, y) => x.distance - y.distance);
+  }
+
   props(placed: Placed[]): BodyProps | null {
     if (!placed.length) return null;
     const m = new Modeller(this.oc);

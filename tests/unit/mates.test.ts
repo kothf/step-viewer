@@ -249,3 +249,58 @@ test("FR-ASM-003 / FR-IO-011: linked parts are found by path or by name, read ag
   assert.equal(folderPath("a.mcadprt"), "a.mcadprt");
   assert.equal(await hashBytes(new TextEncoder().encode("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 });
+
+test("FR-MATE-005: gear, screw, hinge and slot mates", () => {
+  const g2: Record<string, Record<string, Geo>> = { ...geos, plate: { ...geos.plate, hole2: { k: "axis", p: [60, 10, 0], d: [0, 0, 1], r: 6 }, slotA: { k: "plane", p: [0, 30, 0], n: [0, -1, 0] }, slotB: { k: "plane", p: [0, 40, 0], n: [0, 1, 0] } } };
+  const gg = (p: string, f: string) => g2[p]?.[f] ?? null;
+  const base = (): AsmDoc => ({
+    schema: 1, kind: "assembly", id: "a", name: "A", units: { length: "mm", decimals: 2 },
+    parts: { plate: { name: "plate", file: "p", doc: stub }, pin: { name: "pin", file: "q", doc: stub } },
+    components: [
+      { id: "p", name: "plate<1>", part: "plate", tf: IDENTITY, fixed: true },
+      { id: "q", name: "pin<1>", part: "pin", tf: translation([20, 10, -5]) },
+      { id: "r", name: "pin<2>", part: "pin", tf: translation([60, 10, -5]) },
+    ],
+    mates: [],
+  });
+  const M = (id: string, type: Mate["type"], a: [string, string], b: [string, string], more: Partial<Mate> = {}): Mate => ({ id, name: id, type, a: { comp: a[0], face: a[1] }, b: { comp: b[0], face: b[1] }, ...more });
+  const turn = (t: number[]) => Math.atan2(applyDir(t, [1, 0, 0])[1], applyDir(t, [1, 0, 0])[0]);
+  // Gear: both pins turn in their holes; turning q by 0.3 turns r by −0.6 (ratio 2).
+  const d = base();
+  d.mates = [M("c1", "concentric", ["p", "hole"], ["q", "shank"]), M("k1", "coincident", ["p", "top"], ["q", "under"], { align: "anti" }),
+    M("c2", "concentric", ["p", "hole2"], ["r", "shank"]), M("k2", "coincident", ["p", "top"], ["r", "under"], { align: "anti" }),
+    M("g", "gear", ["q", "shank"], ["r", "shank"], { ratio: 2, t0: [d.components[1].tf, d.components[2].tf] })];
+  const s0 = solve({ doc: d, geo: gg, size: 100 });
+  assert.ok(s0.ok, JSON.stringify(s0.bad));
+  for (const c of d.components) c.tf = s0.tfs[c.id];
+  d.mates[4].t0 = [d.components[1].tf, d.components[2].tf];
+  const q1 = compose(rotation([20, 10, 0], [0, 0, 1], 0.3), d.components[1].tf);
+  // q is held where it was dragged (as a drag does: fixed for the solve).
+  const dd = { ...d, components: d.components.map(c => (c.id === "q" ? { ...c, tf: q1, fixed: true } : c)) };
+  const s1 = solve({ doc: dd, geo: gg, size: 100 });
+  assert.ok(s1.ok, JSON.stringify(s1.bad));
+  assert.ok(Math.abs(turn(s1.tfs.r) - turn(d.components[2].tf) + 0.6) < 1e-5, String(turn(s1.tfs.r)));
+  assert.deepEqual([s0.dof.q, s0.dof.r], [1, 1], JSON.stringify(s0.dof));
+  // Screw: q concentric in the hole, 2 mm per turn; a quarter turn moves it 0.5 mm along the axis.
+  const e = base();
+  e.components = e.components.slice(0, 2);
+  e.mates = [M("s", "screw", ["p", "hole"], ["q", "shank"], { ratio: 2, t0: [IDENTITY, translation([20, 10, -5])] })];
+  const q2 = compose(rotation([20, 10, 0], [0, 0, 1], Math.PI / 2), translation([20, 10, -5]));
+  const s2 = solve({ doc: { ...e, components: [e.components[0], { ...e.components[1], tf: q2 }] }, geo: gg, size: 100 });
+  assert.ok(s2.ok, JSON.stringify(s2.bad));
+  const z = applyPoint(s2.tfs.q, [0, 0, 0])[2];
+  // Wherever it settled, travel = 2 mm × turns, and it moved (the turn was not simply undone).
+  const tq = turn(s2.tfs.q);
+  assert.ok(Math.abs((z + 5) - (2 * tq) / (2 * Math.PI)) < 1e-5 && Math.abs(z + 5) > 0.05, JSON.stringify({ z, tq }));
+  // Hinge: concentric + coincident in one mate; slot: the pin centred between the slot faces.
+  const h = base();
+  h.components = h.components.slice(0, 2);
+  h.mates = [{ ...M("h", "hinge", ["p", "hole"], ["q", "shank"]), c: { comp: "p", face: "top" }, d: { comp: "q", face: "under" } }];
+  const s3 = solve({ doc: h, geo: gg, size: 100 });
+  assert.ok(s3.ok && s3.dof.q === 1, JSON.stringify(s3));
+  assert.ok(Math.abs(applyPoint(s3.tfs.q, [0, 0, 10])[2] - 5) < 1e-5);
+  h.mates = [{ ...M("sl", "slot", ["p", "slotA"], ["q", "shank"]), c: { comp: "p", face: "slotB" } }];
+  const s4 = solve({ doc: h, geo: gg, size: 100 });
+  assert.ok(s4.ok, JSON.stringify(s4.bad));
+  assert.ok(Math.abs(applyPoint(s4.tfs.q, [0, 0, 0])[1] - 35) < 1e-5, String(applyPoint(s4.tfs.q, [0, 0, 0])));
+});
