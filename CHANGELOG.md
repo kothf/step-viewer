@@ -5,12 +5,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.102.0] - 2026-11-08
+## [1.106.0] - 2026-11-08
 
 ### Added
 
 - Motion studies: placement tracks move and turn a component that no mate holds over the study (keys with a move along X/Y/Z in mm and turns about X/Y/Z in degrees about its own origin), as dragging a component at a time in SolidWorks' animator (FR-FT-122).
 - Camera keys keep the orthographic zoom, which changes smoothly between keys.
+
+## [1.104.0] - 2026-11-08
+
+### Added
+
+- More dimension types in drawings (FR-DRW-021):
+  - **Arc length.** Select a radius dimension on an arc seen end-on and set its Type to Arc length: a dimension arc concentric with the edge, radial extension lines and the value with the arc symbol (◠15.71).
+  - **Chamfer.** Select an angle dimension between a chamfer and the edge next to it and set its Type to Chamfer: a leader to the chamfer and "2 × 45°" (the run along the other edge and the angle). Either line can be picked first; the shorter one is the chamfer.
+  - **Chain, baseline and ordinate dimensions** (Annotate ▾ and the Annotation tab): click a base point (a corner or a circle centre), then one point after another. Each click adds its dimension at once, above the view for horizontal ones and to its right for vertical ones (the first step decides which). Baseline dimensions stack 7 mm apart; ordinate dimensions start with a 0 at the base and stand their values at the end of each extension line. Enter or Esc ends; every dimension can be dragged and follows the model like any other.
 
 ## [1.101.0] - 2026-11-08
 
@@ -993,8 +1002,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.102.0...HEAD
-[1.102.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.102.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.106.0...HEAD
+[1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
+[1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
 [1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
 [1.100.0]: https://github.com/kothf/step-viewer/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/kothf/step-viewer/compare/v1.98.0...v1.99.0

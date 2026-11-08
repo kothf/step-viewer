@@ -93,7 +93,11 @@ export function projector(vd: ViewDir) {
 
 // ---------- dimension geometry ----------
 
-export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number }
+/** `a0`/`sw`: an arc's start angle and sweep in view axes; `ang`: a chamfer's angle in degrees. */
+export interface DimGeo { k: DimAnnot["k"]; pts: P2[]; c?: P2; r?: number; lines?: [P2, P2][]; value: number; a0?: number; sw?: number; ang?: number }
+
+const TAU = 2 * Math.PI;
+const normA = (v: number) => { v %= TAU; return v < 0 ? v + TAU : v; };
 
 /** The measured geometry of a dimension in a view (model mm, view axes), or null when its edges are gone. */
 export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo | null {
@@ -111,11 +115,32 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
     if (!e || e.t !== "c" || !e.c || !e.r) return null;
     return { k: kind, pts: [], c: P(e.c), r: e.r, value: kind === "rad" ? e.r : 2 * e.r };
   }
-  if (kind === "ang") {
+  if (kind === "arc") {
+    // The arc runs from one end through its middle to the other, whichever way that is in the view.
+    const e = a.refs[0] && refEdge(a.refs[0], topo);
+    if (!e || e.t !== "c" || !e.c || !e.r) return null;
+    const c = P(e.c), at = (q: V3) => { const w = P(q); return Math.atan2(w[1] - c[1], w[0] - c[0]); };
+    let a0 = at(e.a), sw = normA(at(e.b) - a0);
+    if (sw < 1e-9) sw = TAU;
+    else if (normA(at(e.m) - a0) > sw) { a0 = at(e.b); sw = TAU - sw; }
+    return { k: kind, pts: [], c, r: e.r, a0: normA(a0), sw, value: e.r * sw };
+  }
+  if (kind === "oh" || kind === "ov") {
+    const p0 = a.refs[0] && refPoint(a.refs[0], topo), p1 = a.refs[1] && refPoint(a.refs[1], topo);
+    if (!p0 || !p1) return null;
+    const s = P(p0), q = P(p1);
+    return { k: kind, pts: [s, q], value: Math.abs(kind === "oh" ? q[0] - s[0] : q[1] - s[1]) };
+  }
+  if (kind === "ang" || kind === "chamfer") {
     const lines: [P2, P2][] = [];
     for (const r of a.refs) { const e = refEdge(r, topo); if (!e || e.t !== "l") return null; lines.push([P(e.a), P(e.b)]); }
     if (lines.length !== 2) return null;
-    return { k: kind, pts: [], lines, value: 0 };
+    if (kind === "ang") return { k: kind, pts: [], lines, value: 0 };
+    // The chamfer is the shorter line: its run along the other one, and the angle between them.
+    if (d2(...lines[1]) < d2(...lines[0])) lines.reverse();
+    const [c0, c1] = lines[0], w: P2 = [c1[0] - c0[0], c1[1] - c0[1]], u = unit2([lines[1][1][0] - lines[1][0][0], lines[1][1][1] - lines[1][0][1]]);
+    const run = Math.abs(w[0] * u[0] + w[1] * u[1]), L = len2(w) || 1;
+    return { k: kind, pts: [], lines, value: run, ang: Math.acos(Math.min(1, run / L)) * 180 / Math.PI };
   }
   // Linear: two points, or the two ends of one line; a line and a point or two parallel lines: the square distance.
   const pts: P2[] = [];
@@ -158,10 +183,12 @@ export function angleSector(l1: [P2, P2], l2: [P2, P2], t: P2): { x: P2; a0: num
 
 export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up?: string; lo?: string } {
   const f = (v: number) => fmtNum(v, a.prec, dec);
-  const pre = a.pre ?? (g.k === "rad" ? "R" : g.k === "dia" ? "Ø" : "");
+  // ◠ (U+25E0) stands for ISO 129's arc symbol: DejaVu Sans has no ⌒.
+  const pre = a.pre ?? (g.k === "rad" ? "R" : g.k === "dia" ? "Ø" : g.k === "arc" ? "◠" : "");
   const suf = (g.k === "ang" ? "°" : "") + (a.suf ?? "");
   const tol: Tol | undefined = a.tol;
   if (a.txt) return { main: a.txt };
+  if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${f(g.ang ?? 0)}°${suf}` };
   const v = g.value;
   if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
   let main = pre + f(v);
@@ -269,6 +296,37 @@ export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { 
       out.push(thin(T, end));
       box = writeText([T[0] + sx * 0.5, T[1] + 0.8], 0, sx > 0 ? "l" : "r");
     } else box = writeText([T[0], T[1] + 0.8], 0, "c");
+    return { prims: out, box };
+  }
+  if (g.k === "arc") {
+    // A dimension arc concentric with the edge, radial extension lines, the value above its middle.
+    const C = S(g.c!), R0 = g.r! * pl.s, R = Math.max(d2(T, C), R0 + 2), a0 = g.a0!, a1 = a0 + g.sw!;
+    out.push({ t: "a", o: C, r: R, a0, a1, pen: "thin", layer: "ANNOT" });
+    const tip = (an: number): P2 => [C[0] + R * Math.cos(an), C[1] + R * Math.sin(an)];
+    out.push(arrow(...tip(a0), Math.sin(a0), -Math.cos(a0)));
+    out.push(arrow(...tip(a1), -Math.sin(a1), Math.cos(a1)));
+    for (const an of [a0, a1]) { const e: P2 = [Math.cos(an), Math.sin(an)]; out.push(thin(add2(C, e, R0 + 1), add2(C, e, R + 2))); }
+    const mid = a0 + g.sw! / 2, tp: P2 = [C[0] + (R + 1.5) * Math.cos(mid), C[1] + (R + 1.5) * Math.sin(mid)];
+    const box = writeText([tp[0], tp[1] - (Math.sin(mid) < 0 ? h : 0)], 0, Math.cos(mid) > 0.3 ? "l" : Math.cos(mid) < -0.3 ? "r" : "c");
+    return { prims: out, box };
+  }
+  if (g.k === "chamfer") {
+    // A leader from the chamfer's middle to a shoulder that carries "run × angle".
+    const [A, B] = g.lines![0].map(S), M: P2 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+    const u = unit2([M[0] - T[0], M[1] - T[1]]);
+    out.push(thin(T, M), arrow(M[0], M[1], u[0], u[1]));
+    const sx = T[0] >= M[0] ? 1 : -1;
+    out.push(thin(T, [T[0] + sx * (totalW + 1), T[1]]));
+    return { prims: out, box: writeText([T[0] + sx * 0.5, T[1] + 0.8], 0, sx > 0 ? "l" : "r") };
+  }
+  if (g.k === "oh" || g.k === "ov") {
+    // Ordinate: an extension line from the point out to the text's line, the value written on past its end.
+    const Q = S(g.pts[1]), hor = g.k === "oh";
+    const end: P2 = hor ? [Q[0], T[1]] : [T[0], Q[1]];
+    const L = d2(Q, end), dir = unit2([end[0] - Q[0], end[1] - Q[1]], hor ? [0, 1] : [1, 0]);
+    if (L > 1.5) out.push(thin(add2(Q, dir, 1), end));
+    const box = hor ? writeText([end[0] + h * 0.35, end[1] + dir[1]], 90, dir[1] > 0 ? "l" : "r")
+      : writeText([end[0] + dir[0], end[1] - h * 0.35], 0, dir[0] > 0 ? "l" : "r");
     return { prims: out, box };
   }
   if (g.k === "ang") {
