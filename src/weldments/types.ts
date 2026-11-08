@@ -76,12 +76,14 @@ export interface GussetFeature {
   loc: "mid" | "start" | "end";
 }
 
-/** Fillet weld bead: a triangular bead of leg `size` where faces of set 1 meet faces of set 2 (flat faces). */
+/** Fillet weld bead: a triangular bead of leg `size` where faces of set 1 meet faces of set 2 (flat and cylindrical faces); pieces that meet become one bead. */
 export interface WeldBeadFeature {
   id: string; type: "weldbead"; name: string; suppressed?: boolean;
   faces1: FaceRef[];
   faces2: FaceRef[];
   size: Num;
+  /** false: only the picked faces; otherwise faces that run on smoothly from them join their set (tangent propagation). */
+  tangent?: boolean;
 }
 
 export type WeldFeature = MemberFeature | TrimExtendFeature | EndCapFeature | GussetFeature | WeldBeadFeature;

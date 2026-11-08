@@ -2781,6 +2781,9 @@ export const RU: Record<string, string> = {
   "Pick a closed sketch for the profile.": "Выберите замкнутый эскиз для профиля.",
   "The profile sketch has no closed region.": "В эскизе профиля нет замкнутой области.",
   "Thickness inward": "Толщина внутрь",
+  "Drag the arrow to change the length along face 1; click to type it": "Перетащите стрелку, чтобы изменить длину вдоль грани 1; щёлкните, чтобы ввести значение",
+  "Drag the arrow to change the length along face 2; click to type it": "Перетащите стрелку, чтобы изменить длину вдоль грани 2; щёлкните, чтобы ввести значение",
+  "Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2. With tangent propagation it follows on round corners.": "Щёлкните плоские или цилиндрические грани: шов идёт вдоль прямых и круговых рёбер, где набор 1 встречается с набором 2. С распространением по касательной он продолжается по скруглённым углам.",
   "Drag the arrow to change the thickness; click to type it": "Перетащите стрелку, чтобы изменить толщину; щёлкните, чтобы ввести значение",
   "Click two flat faces that meet at a corner, such as a beam and a post.": "Щёлкните две плоские грани, сходящиеся в углу, например балку и стойку.",
   "Corner treatment": "Обработка углов",
@@ -2860,7 +2863,6 @@ export const RU: Record<string, string> = {
   "Weldments": "Сварные конструкции",
   "Cut list": "Список вырезов",
   "Settings": "Параметры",
-  "Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2.": "Щёлкните плоские или цилиндрические грани: шов идёт вдоль прямых и круглых рёбер, где набор 1 встречается с набором 2.",
   "Weld beads follow straight and round edges between flat and cylindrical faces; other edges were skipped.": "Швы строятся вдоль прямых и круглых рёбер между плоскими и цилиндрическими гранями; остальные рёбра пропущены.",
   "The faces of the two sets do not meet along a straight or round edge.": "Грани двух наборов не встречаются по прямому или круглому ребру.",
   // 1.89.0: sketch snapping to model geometry.
@@ -3032,7 +3034,7 @@ export const RU: Record<string, string> = {
   "Start tangency": "Касательность в начале",
   "Path tangent": "Касательно к траектории",
   "The profile is turned square to the path where the path starts.": "Профиль поворачивается перпендикулярно траектории в её начале.",
-  // 1.109.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
+  // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
   "Hole table": "Таблица отверстий",
   "Tag": "Обозн.",
   "X LOC": "X",

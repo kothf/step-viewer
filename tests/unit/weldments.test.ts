@@ -109,7 +109,7 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
 
   // Fillet bead where the beam's top face meets the post: 4 mm legs along the flat part of the top (40 - 2 × 6 corner radius).
   const beamTop = rg.body!.names.map((n, i) => ({ n, i })).find(({ n, i }) => n.startsWith("m:beam:side:") && Math.abs(centroid(m, rg.body!.faces[i])[2] - 320) < 1e-6)!;
-  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [pf], faces2: [{ name: beamTop.n, hint: centroid(m, rg.body!.faces[beamTop.i]) }], size: { v: 4 } };
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [pf], faces2: [{ name: beamTop.n, hint: centroid(m, rg.body!.faces[beamTop.i]) }], size: { v: 4 }, tangent: false };
   const rw = run(m, doc([k, mem, tr, cap, g, bead]));
   const b = rw.cut.find(c => c.kind === "bead")!;
   near(b.length!, 28, 1e-3);
@@ -132,6 +132,47 @@ test("fillet bead round a tube standing on a plate (FR-FT-121)", async () => {
   near(b.length!, 2 * Math.PI * R, 1e-3);
   // Pappus: the triangle's area times the path of its centroid (R + s/3 from the axis).
   near(r.volume - base.volume, 12.5 * 2 * Math.PI * (R + 5 / 3), 1e-3);
+});
+
+test("bead all round a square tube on a plate: tangent faces join, the pieces fuse into one bead (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const sk = poly("s", [[-100, -100], [100, -100], [100, 100], [-100, 100]], true);
+  const plate: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const k: Sketch3dFeature = { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "k", ent: "post" }], corner: "none" };
+  const base = run(m, doc([sk, plate, k, mem]));
+  // One flat outer side of the tube.
+  const side = base.body!.names.map((n, i) => ({ n, c: centroid(m, base.body!.faces[i]) })).find(({ n, c }) => n.startsWith("m:post:side:") && Math.abs(c[0] - 20) < 1e-6)!;
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: "p:end" }], faces2: [{ name: side.n, hint: side.c }], size: { v: 4 } };
+  const r = run(m, doc([sk, plate, k, mem, bead]));
+  const beads = r.cut.filter(c => c.kind === "bead");
+  assert.equal(beads.length, 1);
+  assert.equal(beads[0].qty, 1);
+  // Flat sides 40 − 2·ro long, four quarter circles of radius ro (ro = 6 for t = 3).
+  near(beads[0].length!, 4 * (40 - 12) + 2 * Math.PI * 6, 1e-3);
+  assert.equal(r.info.length, 3);
+  // Without tangent propagation only the picked side gets a bead.
+  const r1 = run(m, doc([sk, plate, k, mem, { ...bead, tangent: false } as Feature]));
+  near(r1.cut.find(c => c.kind === "bead")!.length!, 28, 1e-3);
+});
+
+test("gusset faces on the two picked faces are named for the leg arrows (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const sk = poly("s", [[-100, -100], [100, -100], [100, 100], [-100, 100]], true);
+  const plate: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const k: Sketch3dFeature = { id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [0, 0, 10], fixed: true }, { id: "B", p: [0, 0, 300] }], segs: [{ id: "post", t: "line", pts: ["A", "B"] }] };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: [{ sketch: "k", ent: "post" }], corner: "none" };
+  const base = run(m, doc([sk, plate, k, mem]));
+  const side = base.body!.names.map((n, i) => ({ n, c: centroid(m, base.body!.faces[i]) })).find(({ n, c }) => n.startsWith("m:post:side:") && Math.abs(c[0] - 20) < 1e-6)!;
+  const g: Feature = { id: "g", type: "gusset", name: "Gusset1", face1: { name: "p:end" }, face2: { name: side.n, hint: side.c }, d1: { v: 50 }, d2: { v: 70 }, thickness: { v: 5 }, shape: "tri", loc: "mid" };
+  const r = run(m, doc([sk, plate, k, mem, g]));
+  const on1 = r.body!.names.map((n, i) => ({ n, i })).filter(({ n }) => n === "g:on1");
+  const on2 = r.body!.names.map((n, i) => ({ n, i })).filter(({ n }) => n === "g:on2");
+  assert.equal(on1.length, 1);
+  assert.equal(on2.length, 1);
+  near(centroid(m, r.body!.faces[on1[0].i])[2], 10);
+  near(centroid(m, r.body!.faces[on2[0].i])[0], 20);
+  near(r.volume - base.volume, 0.5 * 50 * 70 * 5, 1e-6);
 });
 
 test("custom profile from a sketch: holes, arcs, sketch origin on the path (FR-FT-121)", async () => {
