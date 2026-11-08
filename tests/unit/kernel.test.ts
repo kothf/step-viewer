@@ -1419,3 +1419,37 @@ test("feature recognition: holes in an imported body become hole features (FR-FT
   const r2 = run(m, doc([imp, ...feats]));
   close(r2.props!.volume, src.props!.volume, 1e-6);
 });
+
+test("loft guide curves: sections stretch to pass through the guides (FR-FT-082)", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const bbox = (shape: unknown) => {
+    const b = new oc.Bnd_Box_1();
+    oc.BRepBndLib.AddOptimal(shape, b, false, false);
+    const lo = b.CornerMin(), hi = b.CornerMax();
+    return [lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()];
+  };
+  const pl: Feature = { id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 40 } } as Feature;
+  // Two Ø10 circles 40 apart, one guide bowing out to radius 8 half way: a barrel.
+  const a = circle("a", 0, 0, 5, { std: "XY" }), b = circle("b", 0, 0, 5, { plane: "p1" });
+  const g1: Feature = { id: "g1", type: "curve", name: "Curve1", kind: "xyz", pts: [[5, 0, 0], [8, 0, 20], [5, 0, 40]] };
+  const free = run(m, doc([a, pl, b, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["a", "b"] } as Feature]));
+  close(free.props!.volume, Math.PI * 25 * 40, 2e-3);
+  let r = run(m, doc([a, pl, b, g1, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["a", "b"], guides: [{ curve: "g1" }] } as Feature]));
+  let bb = bbox(r.body!.shape);
+  close(bb[3], 8, 2e-2);
+  close(bb[4], 8, 2e-2);
+  assert.ok(r.props!.volume > Math.PI * 25 * 40 * 1.5, `barrel volume ${r.props!.volume}`);
+  // Two guides on the long sides of a 20 × 10 rectangle bow out to ±15: only the width grows.
+  const ra = rect("ra", 0, 0, 20, 10), rb = rect("rb", 0, 0, 20, 10, { plane: "p1" });
+  const gl: Feature = { id: "gl", type: "curve", name: "Curve2", kind: "xyz", pts: [[-10, 0, 0], [-15, 0, 20], [-10, 0, 40]] };
+  const gr: Feature = { id: "gr", type: "curve", name: "Curve3", kind: "xyz", pts: [[10, 0, 0], [15, 0, 20], [10, 0, 40]] };
+  r = run(m, doc([ra, pl, rb, gl, gr, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["ra", "rb"], guides: [{ curve: "gl" }, { curve: "gr" }] } as Feature]));
+  bb = bbox(r.body!.shape);
+  close(bb[0], -15, 2e-2);
+  close(bb[3], 15, 2e-2);
+  close(bb[4], 5, 2e-2);
+  // A guide that misses a profile is refused.
+  const off = m.evaluate(doc([a, pl, b, { ...g1, pts: [[6, 0, 0], [8, 0, 20], [5, 0, 40]] } as Feature, { id: "l", type: "loft", name: "Loft1", op: "boss", profiles: ["a", "b"], guides: [{ curve: "g1" }] } as Feature]));
+  assert.equal(off.statuses.find(s => s.id === "l")?.code, "E-LOFT-GUIDE");
+});

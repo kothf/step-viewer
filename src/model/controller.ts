@@ -4581,7 +4581,15 @@ export class ModelController {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
         }
-        if (f.type === "loft" && k === "lcPath") { upd(() => { const p = pathOf(String(val)); if (p) { f.centerline = p; delete f.ruled; delete f.close; } else delete f.centerline; }, true); return; }
+        if (f.type === "loft" && k === "lcPath") { upd(() => { const p = pathOf(String(val)); if (p) { f.centerline = p; delete f.ruled; delete f.close; delete f.guides; } else delete f.centerline; }, true); return; }
+        if (f.type === "loft" && /^lg\d+$/.test(k)) {
+          upd(() => {
+            const i = +k.slice(2), gs = [...(f.guides ?? [])], p = pathOf(String(val));
+            if (p) gs[i] = p; else gs.splice(i, 1);
+            if (gs.length) { f.guides = gs.filter(Boolean); delete f.ruled; delete f.close; delete f.startNormal; delete f.endNormal; } else delete f.guides;
+          }, true);
+          return;
+        }
         if (f.type === "loft" && /^lp\d+$/.test(k)) {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
@@ -5164,12 +5172,22 @@ export class ModelController {
         return sel("lcPath", t("Centerline"), opt("", t("None"), cur) + curves.map(h => opt(`${h.type === "helix" ? "h" : "c"}:${h.id}`, featureLabel(h.name), cur)).join("") + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join(""))
           + (f.centerline ? `<p class="pm-help muted">${esc(t("The loft follows the centreline between its profiles. Each profile should sit across it, in its order."))}</p>` : "");
       })())
-      + (f.centerline || f.ruled || f.close ? "" : group(t("Start/End Constraints"), (["start", "end"] as const).map(w => {
+      + (f.centerline ? "" : group(t("Guide curves"), (() => {
+        const at = this.mode.kind === "feature" ? this.mode.index : this.doc.features.length;
+        const curves = this.doc.features.slice(0, at).filter(g => g.type === "curve" || g.type === "sketch3d");
+        const gs = f.guides ?? [];
+        const opts = (cur: string, none: string) => opt("", none, cur) + curves.map(h => opt(`c:${h.id}`, featureLabel(h.name), cur)).join("")
+          + sketches.filter(s => !f.profiles.includes(s.id) && !sketchProfileOk(s)).map(s => opt(`s:${s.id}`, featureLabel(s.name), cur)).join("");
+        return gs.map((g, i) => sel(`lg${i}`, `${t("Guide curve")} ${i + 1}`, opts(pathKey(g), t("Remove")))).join("")
+          + sel(`lg${gs.length}`, t("Add guide curve"), opts("", "—"))
+          + `<p class="pm-help muted">${esc(t("Each guide touches every profile. The loft's sections grow and shrink so that they pass through the guides."))}</p>`;
+      })()))
+      + (f.centerline || f.ruled || f.close || f.guides?.length ? "" : group(t("Start/End Constraints"), (["start", "end"] as const).map(w => {
         const on = w === "start" ? !!f.startNormal : !!f.endNormal, len = (w === "start" ? f.startLen : f.endLen) ?? 1;
         return sel(`${w}C`, w === "start" ? t("Start constraint") : t("End constraint"), `<option value="none"${on ? "" : " selected"}>${esc(t("None"))}</option><option value="normal"${on ? " selected" : ""}>${esc(t("Normal to profile"))}</option>`)
           + (on ? `<label class="pm-field"><span>${esc(t("Tangent length"))}</span><input type="text" inputmode="decimal" data-k="${w}Len" value="${esc(trimNum(len, 3))}" spellcheck="false" /></label>` : "");
       }).join("")))
-      + (f.centerline ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
+      + (f.centerline || f.guides?.length ? "" : group(t("Options"), chk("ruled", f.ruled, t("Straight sections (ruled)")) + (f.profiles.length >= 3 ? chk("close", f.close, t("Close loft")) : ""))) };
   }
 
   /** 3D sketch editing state (view-only): tool, sketch plane, the chain's last point, the spline being drawn, selection. */
@@ -5629,7 +5647,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
   if (g.type === "curve") return g.sketch === sketch;
-  if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline);
+  if (g.type === "loft") return g.profiles.includes(sketch) || onPath(g.centerline) || (g.guides ?? []).some(onPath);
   if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf" || g.type === "spattern") return g.sketch === sketch;
   if (g.type === "member") return g.profile === "sketch" && g.psketch === sketch;
   return false;

@@ -52,11 +52,16 @@ export const WELD_ICONS: Record<string, string> = {
 
 /** Sketches and 3D sketches with lines (member paths), before the edited feature. */
 function pathSketches(ctx: WeldCtx): (SketchFeature | Sketch3dFeature)[] {
-  return ctx.before.filter((x): x is SketchFeature | Sketch3dFeature => (x.type === "sketch" && x.ents.some(e => e.t === "line" && !e.cons)) || (x.type === "sketch3d" && x.segs.some(s => s.t === "line")));
+  return ctx.before.filter((x): x is SketchFeature | Sketch3dFeature => (x.type === "sketch" && x.ents.some(e => (e.t === "line" || e.t === "arc") && !e.cons)) || (x.type === "sketch3d" && x.segs.some(s => s.t === "line")));
 }
-/** A path sketch's usable lines (construction lines are left out). */
+/** A path sketch's usable lines and arcs (construction geometry is left out). */
 function pathLines(sk: SketchFeature | Sketch3dFeature): string[] {
-  return sk.type === "sketch" ? sk.ents.filter(e => e.t === "line" && !e.cons).map(e => e.id) : sk.segs.filter(s => s.t === "line").map(s => s.id);
+  return sk.type === "sketch" ? sk.ents.filter(e => (e.t === "line" || e.t === "arc") && !e.cons).map(e => e.id) : sk.segs.filter(s => s.t === "line").map(s => s.id);
+}
+/** "Line 2" or "Arc 3": a path segment as the panel names it (numbered in the sketch's order). */
+function segLabel(sk: SketchFeature | Sketch3dFeature, ent: string): string {
+  const n = pathLines(sk).indexOf(ent) + 1;
+  return sk.type === "sketch" && sk.ents.find(e => e.id === ent)?.t === "arc" ? t("Arc {n}", { n }) : t("Line {n}", { n });
 }
 
 /** The corners between a member's segments: the segments that share an end point, by the sketch's point ids. */
@@ -64,7 +69,7 @@ function memberCorners(sk: SketchFeature | Sketch3dFeature, ents: string[]): str
   const at = new Map<string, string[]>();
   for (const ent of ents) {
     const ends = sk.type === "sketch"
-      ? (() => { const e = sk.ents.find(x => x.id === ent); return e?.t === "line" ? [e.a, e.b] : []; })()
+      ? (() => { const e = sk.ents.find(x => x.id === ent); return e?.t === "line" || e?.t === "arc" ? [e.a, e.b] : []; })()
       : sk.segs.find(x => x.id === ent)?.pts.slice(0, 2) ?? [];
     for (const p of ends) at.set(p, [...(at.get(p) ?? []), ent]);
   }
@@ -140,7 +145,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const lines = sk ? pathLines(sk) : [];
     const on = new Set(f.segs.map(s => s.ent));
     const corners = sk ? memberCorners(sk, f.segs.map(x => x.ent)) : [];
-    const segList = lines.map((ent, i) => `<label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(t("Line {n}", { n: i + 1 }))}</label>`).join("");
+    const segList = lines.map(ent => `<label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(segLabel(sk!, ent))}</label>`).join("");
     return {
       title: t("Structural Member"),
       body: group(t("Selections"), sel("wtype", t("Type"), [...PROFILE_TYPES.map(([v, l]): [string, string] => [v, t(l)]), ["sketch", t("Custom profile (sketch)")]], f.profile)
@@ -158,7 +163,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + chk("mirror", f.mirror, t("Mirror profile")))
         + (corners.length ? group(t("Corners"), corners.map(c => {
           const key = cornerKey(c);
-          const label = c.map(ent => t("Line {n}", { n: lines.indexOf(ent) + 1 })).join(" / ");
+          const label = c.map(ent => segLabel(sk!, ent)).join(" / ");
           const opts: [string, string][] = [["", t("As set above")], ...(c.length === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
           return sel(`wcorner:${key}`, label, opts, f.corners?.[key] ?? "");
         }).join("") + help(t("A corner set here keeps its own treatment when the one above changes."))) : "")
