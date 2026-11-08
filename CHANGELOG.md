@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.164.0] - 2026-11-08
+
+### Added
+
+- **Style spline (FR-SK-019)**: the Line ▾ menu adds Style spline, as in SolidWorks. Click its control points: the curve starts and ends at the first and last ones and is pulled towards the others without passing through them, with the control polygon drawn while you sketch and when it is selected. Drag a control point to reshape it. The kernel gets the same B-spline (cubic, clamped, uniform knots) as one exact edge, so extrudes, cuts and revolves follow it exactly.
+
 ## [1.163.0] - 2026-11-08
 
 ### Added
@@ -1326,7 +1332,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.163.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.164.0...HEAD
+[1.164.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.164.0
 [1.163.0]: https://github.com/kothf/step-viewer/compare/v1.161.0...v1.163.0
 [1.161.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.161.0
 [1.160.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.160.0

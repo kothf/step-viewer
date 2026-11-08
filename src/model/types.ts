@@ -27,9 +27,10 @@ export type SkEnt =
    * Interpolating cubic spline through the points; closed runs back to the first (FR-SK-019).
    * FR-SK-021: `kind` "conic"/"parabola" = pts [start, top vertex (where the end tangents meet), end] with
    * `rho` (parabola 0.5); "eqn" = pts [start, end] and `eq` (y = f(x), or x(t), y(t)), placed so its own
-   * ends land on the two points (`src/sketch/conic.ts` `entBezier`).
+   * ends land on the two points (`src/sketch/conic.ts` `entBezier`). "style" (FR-SK-019 P5) = pts are the control
+   * polygon of a clamped uniform B-spline of degree min(3, n - 1).
    */
-  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean; kind?: "conic" | "parabola" | "eqn"; rho?: number; eq?: { mode: "xy" | "param"; x?: string; y: string; t0: string; t1: string; flip?: boolean } }
+  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean; kind?: "conic" | "parabola" | "eqn" | "style"; rho?: number; eq?: { mode: "xy" | "param"; x?: string; y: string; t0: string; t1: string; flip?: boolean } }
   /**
    * Text (FR-SK-020): `text` from the anchor point `p` (left end of the baseline), capital letters `h` mm
    * tall, turned by `ang` (radians). `gl` keeps the glyph outlines (from the bundled DejaVu fonts) so
