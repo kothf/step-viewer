@@ -7,16 +7,54 @@ type TextEnt = Extract<SkEnt, { t: "text" }>;
 /** The cache key of a text's outline: what the glyphs depend on. */
 export const textKey = (e: Pick<TextEnt, "text" | "font" | "bold" | "italic">) => `${e.font ?? "sans"}|${e.bold ? "b" : ""}${e.italic ? "i" : ""}|${e.text}`;
 
-/** A point of the outline (capital heights, y up) placed on the sketch. */
-function placer(e: TextEnt, p: V2) {
-  const c = Math.cos(e.ang ?? 0), s = Math.sin(e.ang ?? 0), h = e.h;
+/**
+ * A point of the outline (capital heights, y up) placed on the sketch. With `path` (a polyline of the curve
+ * the text follows, FR-SK-020), the baseline runs along it from the point of the curve nearest the anchor
+ * and each point is lifted along the curve's left normal; a closed curve wraps round.
+ */
+function placer(e: TextEnt, p: V2, path?: V2[]) {
+  const h = e.h;
+  const along = path && path.length >= 2 ? pathPlacer(h, p, path) : null;
+  if (along) return along;
+  const c = Math.cos(e.ang ?? 0), s = Math.sin(e.ang ?? 0);
   return (x: number, y: number): V2 => [p[0] + h * (x * c - y * s), p[1] + h * (x * s + y * c)];
 }
 
+function pathPlacer(h: number, p: V2, path: V2[]) {
+  const n = path.length, L = [0];
+  for (let i = 1; i < n; i++) L.push(L[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+  const tot = L[n - 1];
+  if (!(tot > 1e-9)) return null;
+  const closed = Math.hypot(path[0][0] - path[n - 1][0], path[0][1] - path[n - 1][1]) < 1e-9;
+  const unit = (v: V2): V2 => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
+  const segT = (i: number) => unit([path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]]);
+  const avg = (a: V2, b: V2) => unit([a[0] + b[0], a[1] + b[1]]);
+  // Tangents at the vertices (averaged), blended along each piece so glyphs don't kink at the samples.
+  const vt: V2[] = path.map((_q, i) => i === 0 ? (closed ? avg(segT(n - 2), segT(0)) : segT(0)) : i === n - 1 ? (closed ? avg(segT(n - 2), segT(0)) : segT(n - 2)) : avg(segT(i - 1), segT(i)));
+  // Start: the point of the curve nearest the anchor.
+  let best = Infinity, s0 = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    const a = path[i], d: V2 = [path[i + 1][0] - a[0], path[i + 1][1] - a[1]], ll = d[0] * d[0] + d[1] * d[1];
+    const t = ll > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / ll)) : 0;
+    const dist = Math.hypot(a[0] + t * d[0] - p[0], a[1] + t * d[1] - p[1]);
+    if (dist < best) { best = dist; s0 = L[i] + t * (L[i + 1] - L[i]); }
+  }
+  return (x: number, y: number): V2 => {
+    let s = s0 + h * x;
+    if (closed) s = ((s % tot) + tot) % tot;
+    let lo = 0, hi = n - 2;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (L[m] <= s) lo = m; else hi = m - 1; }
+    const i = lo, len = L[i + 1] - L[i] || 1, t = (s - L[i]) / len, tc = Math.max(0, Math.min(1, t));
+    const q: V2 = [path[i][0] + t * (path[i + 1][0] - path[i][0]), path[i][1] + t * (path[i + 1][1] - path[i][1])];
+    const T = unit([vt[i][0] * (1 - tc) + vt[i + 1][0] * tc, vt[i][1] * (1 - tc) + vt[i + 1][1] * tc]);
+    return [q[0] - h * y * T[1], q[1] + h * y * T[0]];
+  };
+}
+
 /** The text's contours as closed loops of lines and single cubic Bézier pieces (`spline` segments of 4 poles). */
-export function textLoops(e: TextEnt, p: V2): Seg[][] {
+export function textLoops(e: TextEnt, p: V2, path?: V2[]): Seg[][] {
   if (!e.gl || e.gl.key !== textKey(e)) return [];
-  const at = placer(e, p);
+  const at = placer(e, p, path);
   const loops: Seg[][] = [];
   for (const c of e.gl.c) {
     const loop: Seg[] = [];
@@ -45,8 +83,8 @@ export function textLoops(e: TextEnt, p: V2): Seg[][] {
 }
 
 /** The outline as polylines on the sketch (for drawing and picking). */
-export function textPolys(e: TextEnt, p: V2): V2[][] {
-  return textLoops(e, p).map(loop => {
+export function textPolys(e: TextEnt, p: V2, path?: V2[]): V2[][] {
+  return textLoops(e, p, path).map(loop => {
     const out: V2[] = [];
     for (const s of loop) {
       if (s.kind === "line") out.push(s.a);
@@ -60,9 +98,13 @@ export function textPolys(e: TextEnt, p: V2): V2[][] {
   });
 }
 
-/** The four corners of the text's box on the sketch (an empty text: a small box at the anchor). */
-export function textBox(e: TextEnt, p: V2): V2[] {
-  const at = placer(e, p);
+/**
+ * The text's box on the sketch as a polygon: the baseline edge from the start, then the top edge back
+ * (four corners for straight text; along a curve each edge is sampled). The middle point is the top end.
+ * An empty text: a small box at the anchor.
+ */
+export function textBox(e: TextEnt, p: V2, path?: V2[]): V2[] {
+  const at = placer(e, p, path);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const c of e.gl?.key === textKey(e) ? e.gl.c : []) for (let i = 0; i < c.length;) {
     const n = i === 0 ? 2 : c[i] === 1 ? 3 : c[i] === 2 ? 5 : 7;
@@ -71,7 +113,10 @@ export function textBox(e: TextEnt, p: V2): V2[] {
     i += n;
   }
   if (!isFinite(x0)) { x0 = 0; y0 = 0; x1 = 0.6; y1 = 1; }
-  return [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
+  const k = path && path.length >= 2 ? 12 : 1, out: V2[] = [];
+  for (let i = 0; i <= k; i++) out.push(at(x0 + ((x1 - x0) * i) / k, y0));
+  for (let i = 0; i <= k; i++) out.push(at(x1 - ((x1 - x0) * i) / k, y1));
+  return out;
 }
 
 const FONT_FILES: Record<string, () => Promise<{ default: string }>> = {

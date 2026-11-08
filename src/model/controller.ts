@@ -47,7 +47,7 @@ import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { bezPts, splineBezier } from "../sketch/spline";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
-import { sketchPath, sketchProfile } from "../sketch/profile";
+import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { SEL_FILTER } from "../tools/Snapper";
 import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
@@ -5498,8 +5498,18 @@ export class ModelController {
       + `<label class="pm-field"><span>${esc(t("Font"))}</span><select data-tx="font">${TEXT_FONTS.map(([k, l]) => `<option value="${k}"${o.font === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
       + `<label class="chk pm-chk"><input type="checkbox" data-tx="bold"${o.bold ? " checked" : ""} />${esc(t("Bold"))}</label><label class="chk pm-chk"><input type="checkbox" data-tx="italic"${o.italic ? " checked" : ""} />${esc(t("Italic"))}</label>`
       + `<label class="pm-field"><span>${esc(t("Height"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-tx="h" value="${trimNum(o.h * f, 4)}" /><span class="muted">${units.current}</span></span></label>`
-      + (sel ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-tx="ang" value="${trimNum((o.ang * 180) / Math.PI, 4)}" /><span class="muted">°</span></span></label>` : "")
+      + (sel && !sel.along ? `<label class="pm-field"><span>${esc(t("Angle"))}</span><span class="pm-in"><input type="text" inputmode="decimal" class="pm-n" data-tx="ang" value="${trimNum((o.ang * 180) / Math.PI, 4)}" /><span class="muted">°</span></span></label>` : "")
+      + (sel ? this.alongField(ed, sel) : "")
       + `<p class="pm-help muted">${esc(sel ? t("The height is that of a capital letter. Drag the text by its start point; dimension or relate that point like any other.") : t("Click in the sketch where the text starts (the left end of its baseline)."))}</p></div>`;
+  }
+
+  /** Text along a curve (FR-SK-020): pick a curve of the sketch for the baseline, and the side the letters stand on. */
+  private alongField(ed: SketchEditor, sel: Extract<SkEnt, { t: "text" }>): string {
+    const KINDS: Partial<Record<SkEnt["t"], string>> = { line: t("Line"), arc: t("Arc"), circle: t("Circle"), spline: t("Spline"), ellipse: t("Ellipse") };
+    const seen = new Map<string, number>();
+    const opts = ed.sk.ents.filter(e => KINDS[e.t]).map(e => { const n = (seen.get(e.t) ?? 0) + 1; seen.set(e.t, n); return `<option value="${e.id}"${sel.along === e.id ? " selected" : ""}>${esc(`${KINDS[e.t]} ${n}`)}</option>`; }).join("");
+    return `<label class="pm-field"><span>${esc(t("Along curve"))}</span><select data-tx="along"><option value="">${esc(t("None"))}</option>${opts}</select></label>`
+      + (sel.along ? `<label class="chk pm-chk"><input type="checkbox" data-tx="flip"${sel.flip ? " checked" : ""} />${esc(t("Flip side"))}</label>` : "");
   }
 
   private bindTextBox(pm: HTMLElement, ed: SketchEditor) {
@@ -6145,7 +6155,7 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
       const line = bezPts(splineBezier(e.pts.map(q => pts.get(q)!), !!e.closed && e.pts.length >= 3), 16);
       for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
     }
-    else if (e.t === "text") for (const line of textPolys(e, pts.get(e.p)!)) for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
+    else if (e.t === "text") for (const line of textPolys(e, pts.get(e.p)!, textPath(sk.ents, e))) for (let i = 0; i + 1 < line.length; i++) seg(line[i], line[i + 1]);
   }
   return out;
 }

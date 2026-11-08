@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "three/examples/jsm/libs/opentype.module.js";
 import { outlineFrom, textBox, textKey, textLoops } from "../../src/sketch/text";
-import { loopPolygon, polyArea, sketchProfile } from "../../src/sketch/profile";
+import { loopPolygon, polyArea, sketchProfile, textPath } from "../../src/sketch/profile";
 import { checkSketch } from "../../src/sketch/check";
 import { solve } from "../../src/sketch/solver";
 import { Modeller } from "../../src/kernel/model";
@@ -51,4 +51,36 @@ test("text in the kernel: an extruded text has the volume of its letters", async
   assert.deepEqual(r.statuses.filter(s => !s.ok), []);
   const v = m.props(r.body!).volume;
   assert.ok(area > 20 && Math.abs(v - 2 * area) < 0.01 * v, `${v} vs ${2 * area}`);
+});
+
+test("text along a curve: letters stand on a circle, flip puts them outside, the kernel extrudes them", async () => {
+  const gl = outlineFrom(font("DejaVuSans.ttf"), { text: "HELLO" });
+  const R = 20, h = 4;
+  const ents: SkEnt[] = [
+    { id: "c0", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c0", r: R, cons: true },
+    { id: "p", t: "point", x: 0, y: R },
+  ];
+  const txt = (o: object): Extract<SkEnt, { t: "text" }> => ({ id: "t", t: "text", p: "p", text: "HELLO", h, gl, along: "k", ...o });
+  const radii = (e: Extract<SkEnt, { t: "text" }>) => {
+    const sk: SketchFeature = { id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...ents, e] };
+    const pts = textLoops(e, [0, R], textPath(sk.ents, e)).flat().flatMap(s => s.kind === "line" ? [s.a, s.b] : s.kind === "spline" ? [s.bz[0], s.bz[3]] : []);
+    return { sk, r: pts.map(q => Math.hypot(q[0], q[1])), top: pts.filter(q => q[1] > 0).length / pts.length };
+  };
+  // Default: ccw round the circle, the letters' up is the left normal, so they hang inside.
+  const inside = radii(txt({}));
+  assert.ok(Math.max(...inside.r) <= R + 0.15 && Math.min(...inside.r) >= R - h * 1.1, `${Math.min(...inside.r)}..${Math.max(...inside.r)}`);
+  // Flipped: clockwise, standing on top of the circle reading left to right.
+  const out = radii(txt({ flip: true }));
+  assert.ok(Math.min(...out.r) >= R - 0.15 && Math.max(...out.r) <= R + h * 1.1, `${Math.min(...out.r)}..${Math.max(...out.r)}`);
+  assert.ok(out.top > 0.9, `on top: ${out.top}`);
+  // Profile: H E L L O = 5 regions, one hole (O); extruded with no error.
+  const prof = sketchProfile(out.sk);
+  assert.equal(prof.error, undefined);
+  assert.equal(prof.faces.length, 5);
+  const m = new Modeller(await occ());
+  const r = m.evaluate(doc([out.sk, { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 1 } }]));
+  assert.deepEqual(r.statuses.filter(s => !s.ok), []);
+  assert.ok(m.props(r.body!).volume > 10);
+  // A missing curve: the text is straight again.
+  assert.equal(textPath(ents, txt({ along: "gone" })), undefined);
 });

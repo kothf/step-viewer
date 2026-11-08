@@ -2857,6 +2857,50 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.142.0: text along a curve (FR-SK-020) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A construction circle R20 and a text whose start point sits on top of it (its outline is made by the panel).
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+      { id: "c0", t: "point", x: 0, y: 0 }, { id: "k", t: "circle", c: "c0", r: 20, cons: true }, { id: "p", t: "point", x: 0, y: 20 }, { id: "t", t: "text", p: "p", text: "MOBIUS", h: 4 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.select(["t"]); window.__sv.modeller.renderPanel(); });
+    await mp.waitForSelector("#mc-pm [data-tx=along]");
+    const opts = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm [data-tx=along] option")].map(o => o.textContent).join("|"));
+    await mp.selectOption("#mc-pm [data-tx=along]", "k");
+    await mp.waitForSelector("#mc-pm [data-tx=flip]", { timeout: 30000 });
+    await mp.click("#mc-pm [data-tx=flip]");
+    await mp.waitForFunction(() => window.__sv.model.editor().sk.ents.find(e => e.id === "t").flip === true && window.__sv.model.editor().sk.ents.find(e => e.id === "t").gl, null, { timeout: 30000 });
+    const ru = await (async () => {
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      await mp.waitForTimeout(300);
+      const r = await mp.evaluate(() => [document.querySelector("#mc-pm [data-tx=along]").closest("label").querySelector("span"), document.querySelector("#mc-pm [data-tx=flip]").closest("label")].map(e => e.textContent.trim()).join("|"));
+      await mp.evaluate(() => document.querySelector("#lang-btn").click());
+      return r;
+    })();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 1 } }); }));
+    await idle();
+    const res = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0, t: window.__sv.model.store.doc.features[0].ents.find(e => e.id === "t") }; });
+    check(opts.startsWith("None|Circle 1") && res.t.along === "k" && res.t.flip === true && res.ok && res.v > 10, `model 1.142: text along a circle, flipped, extruded (${opts}, ${JSON.stringify({ ok: res.ok, v: res.v, along: res.t.along, flip: res.t.flip })})`);
+    check(ru === "Вдоль кривой|Другая сторона", `model 1.142: text along a curve in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

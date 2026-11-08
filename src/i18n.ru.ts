@@ -3089,6 +3089,8 @@ export const RU: Record<string, string> = {
   "Bodies to copy": "Копируемые тела",
   "Merge solids": "Объединить тела",
   "Geometry pattern": "Геометрический массив",
+  "Along curve": "Вдоль кривой",
+  "Flip side": "Другая сторона",
   "Off: each instance is built again where it lands, so end conditions such as up to face hold there.": "Если снят, каждый экземпляр строится заново на своём месте, и граничные условия, например «до грани», выполняются там.",
   "Click all the faces of a boss or a cut: the copies add or remove the same shape.": "Щёлкните все грани бобышки или выреза: копии добавят или удалят такую же форму.",
   "Click a face of each body to copy; the copies become new bodies.": "Щёлкните грань каждого копируемого тела; копии станут новыми телами.",

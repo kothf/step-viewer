@@ -22,7 +22,7 @@ import { ModifyBox } from "../modifyBox";
 import { bezPts, nearestOn, splineBezier } from "./spline";
 import { ellDist, earcDist, ellLocal, ellOf, ellParam, ellPt, ellPts, ellSweep, type Ell } from "./ellipse";
 import { textBox, textKey, textOutline, textPolys } from "./text";
-import { inPolygon } from "./profile";
+import { inPolygon, textPath } from "./profile";
 
 /** Points an entity refers to (its ends, centre, axis points). */
 export function refPts(e: SkEnt): string[] {
@@ -278,9 +278,9 @@ export class SketchEditor {
       else if (e.t === "ellipse") d = e.p0 && e.p1 ? earcDist(this.ell(e), this.pt(e.p0), this.pt(e.p1), p) : ellDist(this.ell(e), p);
       else if (e.t === "text") {
         // Anywhere in the text's box picks it, the outline a little more surely.
-        const at = this.pt(e.p);
-        d = Math.min(...textPolys(e, at).map(l => nearestOn(l, p).d), Infinity);
-        if (d >= tol && inPolygon(p, textBox(e, at))) d = tol * 0.6;
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e);
+        d = Math.min(...textPolys(e, at, path).map(l => nearestOn(l, p).d), Infinity);
+        if (d >= tol && inPolygon(p, textBox(e, at, path))) d = tol * 0.6;
       }
       if (d < tol) out.push({ id: e.id, kind: e.t as Hit["kind"], d: d + tol * 0.25 });
     }
@@ -537,7 +537,7 @@ export class SketchEditor {
   }
 
   /** Changes a text (FR-SK-020): its outline is remade when the text or the font changes, then one undo step. */
-  async setText(id: string, patch: Partial<Pick<Extract<SkEnt, { t: "text" }>, "text" | "h" | "ang" | "font" | "bold" | "italic">>) {
+  async setText(id: string, patch: Partial<Pick<Extract<SkEnt, { t: "text" }>, "text" | "h" | "ang" | "font" | "bold" | "italic" | "along" | "flip">>) {
     const e = this.ent(id);
     if (!e || e.t !== "text") return;
     const next = { ...e, ...patch };
@@ -554,6 +554,8 @@ export class SketchEditor {
     if (!cur.bold) delete cur.bold;
     if (!cur.italic) delete cur.italic;
     if (!cur.ang) delete cur.ang;
+    if (!cur.along) { delete cur.along; delete cur.flip; }
+    if (!cur.flip) delete cur.flip;
     this.commit("Edit text");
     this.render();
   }
@@ -1273,7 +1275,7 @@ export class SketchEditor {
       if (e.t === "point") return [[e.x, e.y]];
       if (e.t === "ellipse") return this.ellLine(e);
       if (e.t === "spline") return this.splineLine(e);
-      if (e.t === "text") return textBox(e, this.pt(e.p));
+      if (e.t === "text") return textBox(e, this.pt(e.p), textPath(this.sk.ents, e));
       const g = curveOf(e, q => this.pt(q));
       if (!g) return [];
       const n = 48;
@@ -1628,7 +1630,7 @@ export class SketchEditor {
         else if (e.t === "circle") out.push(arcPts(mv(this.pt(e.c)), e.r * k, 0, Math.PI * 2, 72));
         else if (e.t === "ellipse") out.push(this.ellLine(e, mv));
         else if (e.t === "spline") out.push(this.splineLine(e, mv));
-        else if (e.t === "text") out.push(...textPolys(e, this.pt(e.p)).map(l => l.map(mv)));
+        else if (e.t === "text") out.push(...textPolys(e, this.pt(e.p), textPath(this.sk.ents, e)).map(l => l.map(mv)));
         else {
           const c = this.pt(e.c), a = this.pt(e.a), b = this.pt(e.b), r = Math.hypot(a[0] - c[0], a[1] - c[1]);
           const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
@@ -2151,10 +2153,10 @@ export class SketchEditor {
       } else if (e.t === "ellipse") poly(this.ellLine(e), c);
       else if (e.t === "spline") poly(this.splineLine(e), c);
       else if (e.t === "text") {
-        const at = this.pt(e.p), ls = textPolys(e, at);
+        const at = this.pt(e.p), path = textPath(this.sk.ents, e), ls = textPolys(e, at, path);
         for (const l of ls) poly(l, c);
         // Text whose outline is still loading: its box, dashed by the colour of construction.
-        if (!ls.length) { const b = textBox(e, at); poly([...b, b[0]], C.cons); }
+        if (!ls.length) { const b = textBox(e, at, path); poly([...b, b[0]], C.cons); }
       }
     }
     // Under-defined analysis (FR-SLV-010): orange arrows show where the selected items can still move.
@@ -2485,7 +2487,7 @@ export class SketchEditor {
     if (e.t === "circle") { const c = this.pt(e.c); return [c[0] + e.r * 0.7071, c[1] + e.r * 0.7071]; }
     if (e.t === "ellipse") return ellPt(this.ell(e), Math.PI / 4);
     if (e.t === "spline") { const l = this.splineLine(e); return l[Math.floor(l.length / 2)]; }
-    if (e.t === "text") return textBox(e, this.pt(e.p))[2];
+    if (e.t === "text") { const b = textBox(e, this.pt(e.p), textPath(this.sk.ents, e)); return b[b.length >> 1]; }
     return this.pt(e.a);
   }
 
