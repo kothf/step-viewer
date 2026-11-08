@@ -2,6 +2,7 @@
 // demand. Projections are cached by direction; asking again for one in flight
 // shares the request.
 import { compile } from "../kernel/client";
+import type { FlatBend } from "../sheetmetal/sheet";
 import type { GeomDiff, Projection, Topo, V3, ViewDir } from "../kernel/drawing";
 import type { DiffSrc } from "./drawing.worker";
 import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
@@ -12,9 +13,9 @@ import { dirKey, type Align, type Stair } from "./views";
 
 /** An assembly's placed component (FR-DRW-030): its edges' face names start with `<id>@`. */
 export interface CompInfo { id: string; part: string; name: string }
-export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[] }
+export interface ModelFacts { box: [V3, V3]; volume: number; topo: Topo; items: ModelItem[]; holes: HoleInfo[]; threads?: ThreadInfo[]; sketches?: SketchInfo[]; comps?: CompInfo[]; /** Flat pattern view: its bend lines. */ bends?: FlatBend[] }
 
-const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps });
+const facts = (r: ModelFacts): ModelFacts => ({ box: r.box, volume: r.volume, topo: r.topo, items: r.items, holes: r.holes, threads: r.threads ?? [], sketches: r.sketches ?? [], comps: r.comps, bends: r.bends });
 
 export class DrawingKernel {
   private worker: Worker | null = null;

@@ -23,7 +23,7 @@ import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameO
 import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { fitLimits, splitFit } from "./iso286";
-import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
+import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -65,7 +65,7 @@ const NOTE_PROP_KEYS: [string, string][] = [["title", "Title"], ["number", "Part
 type Mode =
   | { kind: "none" }
   /** A model view follows the cursor. */
-  | { kind: "model"; orient: Orient; dir: ViewDir; at: [number, number] | null }
+  | { kind: "model"; orient: Orient; dir: ViewDir; at: [number, number] | null; /** Flat pattern view (FR-FT-120): FLAT_CONFIG. */ cfg?: string }
   /** Projected views come off `parent`. */
   | { kind: "projected"; parent: string | null; at: [number, number] | null }
   /** Section view (FR-DRW-012): pick the cutting line on a view (horizontal, vertical or through two points), then place the view. */
@@ -425,7 +425,7 @@ export class DrawingWorkspace {
           </div>
           <div class="drw-pal" id="drw-pane-views" role="tabpanel" aria-labelledby="drw-pt-views">
             <p class="drw-pal-note">${esc(t("Drag a view onto the sheet, or click it and then click the sheet."))}</p>
-            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}</div>
+            <div class="drw-pal-grid">${PALETTE.map(o => `<button class="drw-pt" draggable="true" data-orient="${o}" data-pal="${o}" title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t(ORIENT_NAMES[o]))}</span></button>`).join("")}<button class="drw-pt" draggable="true" data-flatview="1" data-pal="flat" hidden title="${esc(t("Drag this view onto the sheet"))}"><svg viewBox="0 0 64 64" aria-hidden="true"><path d=""/></svg><span>${esc(t("Flat pattern"))}</span></button></div>
           </div>
           <div class="drw-pal" id="drw-pane-annot" role="tabpanel" aria-labelledby="drw-pt-annot" hidden>
             <div class="drw-at-grid">${ANNOT_TOOLS.map(([k, label]) => `<button class="btn small drw-at" ${k === "dim" ? 'data-a="dim"' : `data-an="${k}"`}>${esc(t(label))}</button>`).join("")}</div>
@@ -485,6 +485,7 @@ export class DrawingWorkspace {
     const m = this.mode;
     let s = "";
     if (this.loading) s = t("Loading the model into the drawing kernel…");
+    else if (m.kind === "model" && m.cfg === FLAT_CONFIG) s = t("Click on the sheet to place the flat pattern view. Esc cancels.");
     else if (m.kind === "model") s = t("Click on the sheet to place the {orient} view. Esc cancels.", { orient: t(ORIENT_NAMES[m.orient]).toLowerCase() });
     else if (m.kind === "projected") s = m.parent ? t("Move the cursor around the view and click to place a projected view. Esc or ✓ ends.") : t("Click the view to project from.");
     else if (m.kind === "section" && !m.line && m.how === "aligned") s = t(!m.pts?.length ? "Click the end of the first leg on a view." : m.pts.length === 1 ? "Click the centre: the second leg turns about it into the first leg's plane." : "Click the end of the second leg.");
@@ -621,7 +622,7 @@ export class DrawingWorkspace {
       const par = findView(this.sheet, m.parent);
       return { view: { id: "_pv", name: "", kind: "detail", parent: m.parent, c: m.c, r: m.r, ...(m.outline ? { outline: m.outline } : {}), x: m.at[0], y: m.at[1], letter: nextLetter(this.doc.sheets), style: par?.style, tangent: par?.tangent } };
     }
-    if (m.kind === "model" && m.at) return { view: { id: "_pv", name: "", orient: m.orient, dir: m.dir, x: m.at[0], y: m.at[1], style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv" } };
+    if (m.kind === "model" && m.at) return { view: { id: "_pv", name: "", orient: m.orient, dir: m.dir, x: m.at[0], y: m.at[1], style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv", ...(m.cfg ? { config: m.cfg } : {}) } };
     if (m.kind === "projected" && m.parent && m.at) {
       const v = this.projectedAt(m.parent, m.at);
       return v ? { view: v, parent: m.parent } : null;
@@ -883,7 +884,7 @@ export class DrawingWorkspace {
     this.renderStatus();
   }
 
-  private startModel(orient: Orient) {
+  private startModel(orient: Orient, cfg?: string) {
     if (!this.facts) { toast(t("The drawing's model is still loading.")); return; }
     let dir: ViewDir;
     if (orient === "current") {
@@ -891,8 +892,9 @@ export class DrawingWorkspace {
       if (!c) { toast(t("Open the 3D view of the model first."), true); return; }
       dir = c;
     } else dir = ORIENTS[orient];
-    this.mode = { kind: "model", orient, dir, at: null };
-    void this.kernel.project(dir).then(() => this.renderOverlay(), () => {});
+    this.mode = { kind: "model", orient, dir, at: null, cfg };
+    if (!cfg) void this.kernel.project(dir).then(() => this.renderOverlay(), () => {});
+    else void this.kernel.config(cfg).then(() => this.renderOverlay(), err => { toast(t(String((err as Error).message ?? err)), true); this.cancelMode(); });
     this.renderStatus();
   }
 
@@ -909,6 +911,15 @@ export class DrawingWorkspace {
       if (run !== this.palRun) return;
       this.el.querySelector(`[data-pal="${o}"] path`)?.setAttribute("d", d);
     }
+    // A sheet metal part also offers its flat pattern (FR-FT-120).
+    const tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]'), src = this.doc.source;
+    const sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
+    if (!tile) return;
+    tile.hidden = !sm;
+    if (!sm) return;
+    let d = "";
+    try { d = thumbPath(await this.kernel.request({ view: ORIENTS.top, cfg: FLAT_CONFIG, key: "palette:flat" })); } catch { /* left blank */ }
+    if (run === this.palRun) tile.querySelector("path")?.setAttribute("d", d);
   }
 
   /** Dragging a palette view over the sheet previews it under the cursor; dropping places it. */
@@ -918,11 +929,12 @@ export class DrawingWorkspace {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-pal]"), de = e as DragEvent;
       if (!b || !de.dataTransfer) return;
       if (!this.facts) { e.preventDefault(); toast(t("The drawing's model is still loading.")); return; }
-      dragged = b.dataset.pal as Orient;
-      de.dataTransfer.setData(PALETTE_MIME, dragged);
+      const flat = b.dataset.pal === "flat";
+      dragged = flat ? "top" : b.dataset.pal as Orient;
+      de.dataTransfer.setData(PALETTE_MIME, b.dataset.pal!);
       de.dataTransfer.effectAllowed = "copy";
       this.cancelMode();
-      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null };
+      this.mode = { kind: "model", orient: dragged, dir: ORIENTS[dragged as Exclude<Orient, "current">], at: null, cfg: flat ? FLAT_CONFIG : undefined };
       this.renderStatus();
     });
     this.el.addEventListener("dragend", () => {
@@ -955,7 +967,7 @@ export class DrawingWorkspace {
     const id = uid("v_");
     const n = this.nextViewNumber();
     this.store!.change("Model view", d => {
-      d.sheets[this.sheetIdx].views.push({ id, name: `${t("Drawing View")}${n}`, orient: m.orient, dir: m.orient === "current" ? m.dir : undefined, x: round(p[0]), y: round(p[1]), style: m.orient === "iso" || m.orient === "current" ? "hlr" : "hlv" });
+      d.sheets[this.sheetIdx].views.push({ id, name: `${t("Drawing View")}${n}`, orient: m.orient, dir: m.orient === "current" ? m.dir : undefined, x: round(p[0]), y: round(p[1]), style: m.orient === "iso" || m.orient === "current" || m.cfg === FLAT_CONFIG ? "hlr" : "hlv", ...(m.cfg ? { config: m.cfg } : {}) });
     });
     this.sel = id;
     // As in SolidWorks, projected views come off the new view until Esc.
@@ -2300,6 +2312,7 @@ export class DrawingWorkspace {
       return;
     }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
+    if (b.dataset.flatview) { this.closeMenus(); this.startModel("top", FLAT_CONFIG); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
     if (b.dataset.det) { this.closeMenus(); this.startKind("detail", "h", b.dataset.det === "profile"); return; }
     if (b.dataset.an) {
@@ -2415,9 +2428,12 @@ export class DrawingWorkspace {
   /** A part's configuration for a model view (FR-DRW-010); views made from it follow theirs. */
   private configField(v: DrawingView): string {
     const src = this.doc.source;
-    if (src.kind !== "part" || !src.doc.configs?.length || v.kind || v.parent) return "";
-    const act = src.doc.config ?? src.doc.configs[0].name;
-    return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${src.doc.configs.map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+    const sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
+    if (src.kind !== "part" || (!src.doc.configs?.length && !sm) || v.kind || v.parent) return "";
+    const act = src.doc.config ?? src.doc.configs?.[0]?.name ?? t("Default");
+    const flat = sm ? `<option value="${FLAT_CONFIG}"${v.config === FLAT_CONFIG ? " selected" : ""}>${esc(t("Flat pattern"))}</option>` : "";
+    const bends = v.config === FLAT_CONFIG ? [["bendLines", v.bendLines !== false, t("Bend lines")], ["bendNotes", v.bendNotes !== false, t("Bend notes")]].map(([k, on, l]) => `<label class="drw-chk"><input type="checkbox" data-v="${k}"${on ? " checked" : ""}> ${esc(String(l))}</label>`).join("") : "";
+    return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${(src.doc.configs ?? []).map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}${flat}</select></label>${bends}`;
   }
 
   /** Assembly drawings: a model view of one component alone (a part's detail views on the assembly's drawing); views made from it follow. */
@@ -2542,7 +2558,7 @@ export class DrawingWorkspace {
     if (el.dataset.d) { this.onAnnotInput(el); return; }
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
-    else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; });
+    else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; if (val === FLAT_CONFIG) { v.orient = "top"; delete v.dir; } });
     else if (vk === "only") this.setView("View components", v => { if (val) v.only = [val]; else delete v.only; });
     else if (vk === "orient") {
       const o = val as Orient;
@@ -2561,6 +2577,7 @@ export class DrawingWorkspace {
     } else if (vk === "tangent") this.setView("Tangent edges", v => { v.tangent = val as TangentEdges; });
     else if (vk === "label") this.setView("View label", v => { v.label = (el as HTMLInputElement).checked || undefined; });
     else if (vk === "marks") this.setView("Centre marks", v => { if ((el as HTMLInputElement).checked) delete v.marks; else v.marks = false; });
+    else if (vk === "bendLines" || vk === "bendNotes") this.setView(vk === "bendLines" ? "Bend lines" : "Bend notes", v => { if ((el as HTMLInputElement).checked) delete v[vk]; else v[vk] = false; });
     else if (vk === "threads") this.setView("Cosmetic threads", v => { if ((el as HTMLInputElement).checked) delete v.threads; else v.threads = false; });
     else if (vk === "sketches") this.setView("Show sketches", v => { v.sketches = (el as HTMLInputElement).checked || undefined; });
     else if (vk === "letter") {
