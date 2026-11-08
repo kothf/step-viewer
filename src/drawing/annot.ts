@@ -9,7 +9,7 @@ import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
 import { PEN_W, rotateBox, rotatePrims, type Prim } from "./prims";
 import { balloonPrims, bomCells, compOfKey, type Bom } from "./bom";
 import { datumPrims, gtolPrims, surfPrims, tablePrims } from "./gdt";
-import type { DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
+import type { DimAnnot, DraftStyle, DrawingView, GeoRef, HoleAnnot, HoleTableAnnot, NoteAnnot, Sheet, SurfAnnot, Tol } from "./types";
 import { viewDir } from "./views";
 
 type P2 = [number, number];
@@ -251,8 +251,26 @@ function textBox(x: number, y: number, s: string, h: number, al: "l" | "c" | "r"
   return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
 }
 
-/** Draws one dimension. `pl` places the view's model axes on the sheet. */
+/** Draws one dimension. `pl` places the view's model axes on the sheet; an inspection dimension frames its text. */
 export function dimPrims(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
+  const r = dimPrims0(a, g, pl, dec);
+  if (a.insp) r.prims.push(...obround(r.box));
+  return r;
+}
+
+/** An obround (two straight sides, round ends) around a text box, its round ends on the box's short sides. */
+export function obround(b: [number, number, number, number]): Prim[] {
+  const [x0, y0, x1, y1] = [b[0] - 0.6, b[1] - 0.4, b[2] + 0.6, b[3] + 0.2];
+  const w = x1 - x0, h = y1 - y0, P = (o: P2, r: number, a0: number, a1: number): Prim => ({ t: "a", o, r, a0, a1, pen: "thin", layer: "ANNOT" });
+  if (w >= h) {
+    const r = h / 2, cy = (y0 + y1) / 2;
+    return [thin([x0, y0], [x1, y0]), thin([x0, y1], [x1, y1]), P([x1, cy], r, -Math.PI / 2, Math.PI / 2), P([x0, cy], r, Math.PI / 2, 1.5 * Math.PI)];
+  }
+  const r = w / 2, cx = (x0 + x1) / 2;
+  return [thin([x0, y0], [x0, y1]), thin([x1, y0], [x1, y1]), P([cx, y1], r, 0, Math.PI), P([cx, y0], r, Math.PI, 2 * Math.PI)];
+}
+
+function dimPrims0(a: DimAnnot, g: DimGeo, pl: Placement, dec: string): { prims: Prim[]; box: [number, number, number, number] } {
   const out: Prim[] = [];
   const S = (p: P2) => toSheet(pl, p[0], p[1]);
   const T = S(a.pos);
@@ -410,6 +428,68 @@ export function notePrims(a: NoteAnnot, at: P2, leaderTo: P2 | null): { prims: P
   return { prims: out, box: [at[0] - 0.5, at[1] - (lines.length - 1) * h * 1.5 - 0.3 * h, at[0] + w + 0.5, at[1] + h * 1.1] };
 }
 
+// ---------- hole table (FR-DRW-024) ----------
+
+/** The hole table's columns: English keys, translated when drawn. */
+export const HOLE_COLS = ["Tag", "X LOC", "Y LOC", "Size"];
+
+/** Whether a circle edge is seen end-on along the view normal `n`. */
+export const endOnCircle = (e: MEdge, n: V3) => e.t === "c" && !!e.ax && !!e.c && !!e.r && Math.abs(Math.abs(dot3(e.ax, n)) - 1) < 1e-6;
+
+/** The holes a view shows end-on: full circles, one per centre and radius (a through hole's two rims are one hole). */
+export function holeEdges(topo: Topo | null, P: (p: V3) => P2, n: V3, keep: (c: P2) => boolean = () => true): MEdge[] {
+  const out: MEdge[] = [], seen: [P2, number][] = [];
+  for (const e of topo?.edges ?? []) {
+    if (!endOnCircle(e, n) || (e.sp ?? 2 * Math.PI) < 2 * Math.PI - 1e-3) continue;
+    const c = P(e.c!);
+    if (!keep(c) || seen.some(([q, r]) => d2(q, c) < 1e-4 && Math.abs(r - e.r!) < 1e-6)) continue;
+    seen.push([c, e.r!]); out.push(e);
+  }
+  return out;
+}
+
+/** The rows of a hole table and where its tags go: sizes get letters A, B, … from the smallest, holes in a size are numbered by X then Y. */
+export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { rows: string[][]; tags: { tag: string; c: P2; r: number }[]; o: P2 | null; missing: boolean } {
+  const op = refPoint(a.origin, ctx.topo), o = op ? P(op) : null;
+  let missing = !o;
+  const hs: { c: P2; r: number; size: string }[] = [];
+  for (const ref of a.holes) {
+    const e = refEdge(ref, ctx.topo);
+    if (!e || e.t !== "c" || !e.c || !e.r) { missing = true; continue; }
+    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx)[0] ?? "" });
+  }
+  const o0 = o ?? [0, 0];
+  const sizes = [...new Map(hs.map(h => [h.size, h.r])).entries()].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([s]) => s);
+  hs.sort((x, y) => sizes.indexOf(x.size) - sizes.indexOf(y.size) || x.c[0] - y.c[0] || x.c[1] - y.c[1]);
+  const count = new Map<string, number>(), f = (v: number) => fmtNum(v, a.prec, ctx.dec);
+  const rows: string[][] = [], tags: { tag: string; c: P2; r: number }[] = [];
+  for (const h of hs) {
+    const k = (count.get(h.size) ?? 0) + 1;
+    count.set(h.size, k);
+    const i = sizes.indexOf(h.size), tag = (i < 26 ? String.fromCharCode(65 + i) : `Z${i - 25}`) + k;
+    rows.push([tag, f(h.c[0] - o0[0]), f(h.c[1] - o0[1]), h.size]);
+    tags.push({ tag, c: h.c, r: h.r });
+  }
+  return { rows, tags, o, missing };
+}
+
+/** A hole table: the table at `pos`, a tag beside each hole and X/Y arrows at the origin. */
+function holeTablePrims(a: HoleTableAnnot, P: (p: V3) => P2, pl: Placement, ctx: AnnotCtx): { prims: Prim[]; box: [number, number, number, number]; missing: boolean } {
+  const hr = holeRows(a, P, ctx), h = 2.5;
+  const tp = tablePrims({ id: a.id, t: "table", kind: "general", pos: toSheet(pl, a.pos[0], a.pos[1]), cols: HOLE_COLS, rows: hr.rows }, ctx.label);
+  const out = tp.prims;
+  for (const tg of hr.tags) {
+    const C = toSheet(pl, tg.c[0], tg.c[1]), k = tg.r * pl.s * Math.SQRT1_2 + 0.6;
+    out.push({ t: "t", x: C[0] + k, y: C[1] + k, s: tg.tag, h, al: "l", layer: "ANNOT" });
+  }
+  if (hr.o) {
+    const O = toSheet(pl, hr.o[0], hr.o[1]), L = 10;
+    out.push(thin(O, [O[0] + L, O[1]]), arrow(O[0] + L, O[1], 1, 0), thin(O, [O[0], O[1] + L]), arrow(O[0], O[1] + L, 0, 1));
+    out.push({ t: "t", x: O[0] + L + 1, y: O[1] - h / 2, s: "X", h, al: "l", layer: "ANNOT" }, { t: "t", x: O[0], y: O[1] + L + 1, s: "Y", h, al: "c", layer: "ANNOT" });
+  }
+  return { prims: out, box: tp.box, missing: hr.missing };
+}
+
 /** Everything annotated on one view: its dimensions, callouts and notes, plus the automatic centre marks. */
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
   const out: AnnotOut = { prims: [], hits: [], dangling: [] };
@@ -446,6 +526,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const more = (a.stack ?? []).map(sc => String(ctx.bom?.itemOf(sc) ?? "?"));
       r = balloonPrims(toSheet(pl, a.pos[0], a.pos[1]), e ? toSheet(pl, ...P(e.m)) : null, a.txt || (item ? String(item) : "?"), more);
       if (!e || (!a.txt && !item)) out.dangling.push(a.id);
+    } else if (a.t === "htable") {
+      const ht = holeTablePrims(a, P, pl, ctx);
+      r = ht;
+      if (ht.missing) out.dangling.push(a.id);
     } else if (a.t === "surf") {
       const T = toSheet(pl, a.pos[0], a.pos[1]);
       const f = a.ref ? edgeFoot(a.ref, ctx.topo, P, pl, T) : null;

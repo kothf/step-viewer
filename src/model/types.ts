@@ -522,6 +522,8 @@ export interface SweepFeature {
   twist?: Num;
   /** Guide curve (P5): the profile is scaled and turned so that it keeps touching this curve. */
   guide?: SweepPath;
+  /** Start tangency "path tangent" (P5): the profile is turned square to the path where it starts. */
+  startTangent?: boolean;
 }
 
 /** Loft (FR-FT-082): through two or more closed profiles in order. */
@@ -583,6 +585,19 @@ export interface CombineFeature {
   op: "add" | "subtract" | "common";
   main?: FaceRef;
   tools: FaceRef[];
+}
+/**
+ * Indent (FR-BODY-007, P5): the target body takes the shape of the tool bodies. The tools grown by
+ * `clearance` are cut out; unless `cut`, a wall `thickness` thick around them is added on the side the
+ * tools press into (the target swept that way), like SolidWorks' Indent. The tool bodies stay.
+ */
+export interface IndentFeature {
+  id: string; type: "indent"; name: string; suppressed?: boolean;
+  main?: FaceRef;
+  tools: FaceRef[];
+  thickness: Num;
+  clearance: Num;
+  cut?: boolean;
 }
 /** Split body (FR-BODY-003, AT-P3-3): cut the bodies (all it crosses, or the picked ones) by a plane into separate bodies. */
 export interface SplitBodyFeature {
@@ -758,7 +773,7 @@ export interface IntersectRegion { c: V3; v: number; out: boolean; /** Indexes o
 export type Feature = SheetFeature | SketchFeature | ExtrudeFeature | RevolveFeature | FilletFeature | ChamferFeature | PlaneFeature | AxisFeature | PointFeature | CsysFeature
   | ShellFeature | DraftFeature | MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature | HoleFeature | ThreadFeature
   | HelixFeature | SweepFeature | LoftFeature | RibFeature | SplitFeature | CurveFeature | SweepSurfFeature | Sketch3dFeature
-  | CombineFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
+  | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ImportFeature | ScaleFeature | DeleteFaceFeature | MoveFaceFeature
   | PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature | RevolveSurfFeature | LoftSurfFeature | TrimSurfFeature | FillSurfFeature | ExtendSurfFeature | UntrimSurfFeature | IntersectFeature
   | WeldFeature;
 export type FeatureType = Feature["type"];

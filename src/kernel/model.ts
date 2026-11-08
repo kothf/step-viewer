@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2308,7 +2308,9 @@ export class Modeller {
       } else mk.SetMode_1(helixPath);
       // Sharp corners (3D sketch and composite paths) get mitred, not stretched.
       mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode.BRepBuilderAPI_RightCorner);
-      if (law) mk.SetLaw_1(w, law, false, false); else mk.Add_1(w, false, false);
+      // Path tangent at the start: OCCT turns the profile square to the path (WithCorrection).
+      const fix = !!f.startTangent && !f.circular;
+      if (law) mk.SetLaw_1(w, law, false, fix); else mk.Add_1(w, false, fix);
       mk.Build(new oc.Message_ProgressRange_1());
       if (!mk.IsDone()) throw new FeatureError("E-SWP-FAIL", "The sweep failed. Is the profile too big for the path's bends, or far from the path?");
       if (!mk.MakeSolid()) throw new FeatureError("E-SWP-FAIL", "The sweep did not close into a solid.");
@@ -2723,6 +2725,77 @@ export class Modeller {
     for (const i of ti) out = this.bool(f.op === "add" ? "fuse" : f.op === "subtract" ? "cut" : "common", out, list[i], f.id);
     if (f.op !== "subtract" && this.volume(out.shape) < 1e-9) throw new FeatureError("E-CMB-EMPTY", "The bodies share no material.");
     return this.compoundOf([...list.filter((_, i) => i !== mi && !ti.includes(i)), ...this.bodyList(out)]);
+  }
+
+  /** A solid grown (or shrunk) by `d`, with rounded corners; faces named `<tag>:<k>`. */
+  private grown(b: Named, d: number, tag: string): Named {
+    const oc = this.oc;
+    if (Math.abs(d) < 1e-9) return { shape: b.shape, faces: b.faces, names: b.faces.map((_, k) => `${tag}:${k}`) };
+    const mk = new oc.BRepOffsetAPI_MakeOffsetShape();
+    try { mk.PerformByJoin(b.shape, d, 1e-4, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Arc, false, new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (!mk.IsDone()) throw new FeatureError("E-IND-OFFSET", "The tool body could not be offset: try a smaller clearance or thickness.");
+    let sh = mk.Shape();
+    if (sh.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_SOLID) {
+      const map = new oc.TopTools_IndexedMapOfShape_1();
+      oc.TopExp.MapShapes_1(sh, oc.TopAbs_ShapeEnum.TopAbs_SHELL, map);
+      const shells: any[] = [];
+      for (let k = 1; k <= map.Extent(); k++) shells.push(map.FindKey(k));
+      if (shells.length !== 1) throw new FeatureError("E-IND-OFFSET", "The tool body could not be offset: try a smaller clearance or thickness.");
+      sh = new oc.BRepBuilderAPI_MakeSolid_3(oc.TopoDS.Shell_1(shells[0])).Solid();
+      const fix = new oc.ShapeFix_Solid_1(); fix.Init(sh); fix.Perform(new oc.Message_ProgressRange_1()); sh = fix.Solid();
+    }
+    const faces = this.sub(sh, "FACE");
+    return { shape: sh, faces, names: faces.map((_, k) => `${tag}:${k}`) };
+  }
+
+  /** Indent (FR-BODY-007). */
+  private indent(f: IndentFeature, prev: Named | null): Named {
+    const oc = this.oc;
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
+    const list = this.bodyList(prev);
+    if (!f.main) throw new FeatureError("E-IND-BODIES", "Pick the target body and at least one tool body.");
+    const mi = this.bodyIndex(list, prev, f.main);
+    const ti = this.pickedBodies(list, prev, f.tools).filter(i => i !== mi);
+    if (!ti.length) throw new FeatureError("E-IND-BODIES", "Pick the target body and at least one tool body.");
+    const c = Math.max(0, f.clearance.v), t = f.thickness.v;
+    if (!f.cut && !(t > 1e-6)) throw new FeatureError("E-IND-THICK", "Give a thickness.");
+    const centre = (sh: any): V3 => { const p = new oc.GProp_GProps_1(); oc.BRepGProp.VolumeProperties_1(sh, p, true, false, false); return this.xyz(p.CentreOfMass()); };
+    let target = list[mi];
+    for (const i of ti) {
+      const tool = list[i];
+      const common = this.bool("common", tool, target, f.id);
+      if (this.volume(common.shape) < 1e-9) throw new FeatureError("E-IND-MISS", "A tool body does not touch the target body.");
+      if (!f.cut) {
+        // The tools press in from the side where they stick out: the wall grows away from there.
+        const out = this.bool("cut", tool, target, f.id);
+        let d: V3 = [0, 0, 0];
+        if (this.volume(out.shape) > 1e-9) {
+          const a = centre(out.shape), b = centre(common.shape), v = sub3(b, a), l = Math.hypot(...v);
+          if (l > 1e-9) d = mul(v, 1 / l);
+        }
+        const outer = this.grown(tool, c + t, `${f.id}:w${i}`);
+        let region = target;
+        if (Math.hypot(...d) > 0) for (let k = 1; k <= 4; k++) {
+          const tr = new oc.gp_Trsf_1();
+          tr.SetTranslation_1(this.V(mul(d, (c + t) * k / 4)));
+          const mv = new oc.BRepBuilderAPI_Transform_2(target.shape, tr, true).Shape();
+          const faces = this.sub(mv, "FACE");
+          region = this.bool("fuse", region, { shape: mv, faces, names: faces.map((_, j) => `${f.id}:r:${j}`) }, f.id);
+        }
+        else {
+          const box = new oc.Bnd_Box_1(); oc.BRepBndLib.Add(target.shape, box, false);
+          box.Enlarge(c + t);
+          const lo = this.xyz(box.CornerMin()), hi = this.xyz(box.CornerMax());
+          const bx = new oc.BRepPrimAPI_MakeBox_4(this.P(lo), this.P(hi)).Shape(), faces = this.sub(bx, "FACE");
+          region = { shape: bx, faces, names: faces.map((_, j) => `${f.id}:r:${j}`) };
+        }
+        const wall = this.bool("common", outer, region, f.id);
+        if (this.volume(wall.shape) > 1e-9) target = this.bool("fuse", target, wall, f.id);
+      }
+      target = this.bool("cut", target, this.grown(tool, c, `${f.id}:c${i}`), f.id);
+    }
+    if (this.volume(target.shape) < 1e-9) throw new FeatureError("E-IND-EMPTY", "Nothing is left of the target body.");
+    return this.compoundOf([...list.filter((_, i) => i !== mi), ...this.bodyList(target)]);
   }
 
   /** Split body (FR-BODY-003): the bodies the plane crosses (or the picked ones) become separate pieces. */
@@ -3179,6 +3252,7 @@ export class Modeller {
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
           else if (f.type === "combine") body = this.combine(f, body);
+          else if (f.type === "indent") body = this.indent(f, body);
           else if (f.type === "bsplit") body = this.splitBody(f, body, frames);
           else if (f.type === "delbody") body = this.deleteBodies(f, body);
           else if (f.type === "movebody") body = this.moveBodies(f, body, frames);

@@ -115,16 +115,85 @@ export function boxInView(box: [V3, V3], vd: ViewDir): [number, number, number, 
   return [x0, y0, x1, y1];
 }
 
+/** One leg of a cutting path (parent view axes): `cut` legs run along the first one, the others step square to it. */
+export interface CutLeg { a: [number, number]; b: [number, number]; cut: boolean }
+
+/**
+ * The legs of an offset or half section's path (FR-DRW-012), or null when a leg is neither parallel
+ * nor square to the first (within 0.5°), a cut leg runs back against the first, or the path has under 3 points.
+ */
+export function cutLegs(path: number[]): CutLeg[] | null {
+  if (path.length < 6 || path.length % 2) return null;
+  const L0 = Math.hypot(path[2] - path[0], path[3] - path[1]);
+  if (L0 < 1e-9) return null;
+  const e: [number, number] = [(path[2] - path[0]) / L0, (path[3] - path[1]) / L0];
+  const legs: CutLeg[] = [];
+  for (let i = 0; i + 3 < path.length; i += 2) {
+    const a: [number, number] = [path[i], path[i + 1]], b: [number, number] = [path[i + 2], path[i + 3]];
+    const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+    if (L < 1e-9) continue;
+    const c = (dx * e[0] + dy * e[1]) / L;
+    if (c > 0.99996) legs.push({ a, b, cut: true });
+    else if (Math.abs(c) < 0.0087) legs.push({ a, b, cut: false });
+    else return null;
+  }
+  return legs.length >= 2 && legs[0].cut ? legs : null;
+}
+
+/** Stand-in for "beyond the model" in a staircase cutter; the kernel clamps it to the model's size. */
+export const FAR = 1e9;
+
+/**
+ * The material an offset or half section takes away, as a staircase polygon in (t, o): t along the first leg
+ * from its start, o towards the viewer (`m`, unit, parent axes). Each cut leg removes everything beyond its
+ * offset over its run; the first runs out backwards and the last forwards unless the path ends on a step.
+ * `offs` are the cut legs' offsets (the planes whose cut faces are hatched).
+ */
+export function staircase(legs: CutLeg[], m: [number, number]): { pts: number[]; offs: number[] } {
+  const o0 = legs[0].a, e: [number, number] = [-m[1], m[0]];
+  const d = legs[0].b[0] - o0[0], w = legs[0].b[1] - o0[1];
+  const sg = d * e[0] + w * e[1] >= 0 ? 1 : -1;
+  const T = (p: [number, number]) => sg * ((p[0] - o0[0]) * e[0] + (p[1] - o0[1]) * e[1]);
+  const O = (p: [number, number]) => (p[0] - o0[0]) * m[0] + (p[1] - o0[1]) * m[1];
+  const cuts = legs.filter(l => l.cut);
+  const offs = cuts.map(l => O(l.a));
+  const pts: number[] = [-FAR, FAR, -FAR, offs[0]];
+  cuts.forEach((l, i) => {
+    const end = i === cuts.length - 1 ? (legs[legs.length - 1].cut ? FAR : T(l.b)) : T(l.b);
+    pts.push(end, offs[i]);
+    if (i < cuts.length - 1) pts.push(end, offs[i + 1]);
+  });
+  pts.push(pts[pts.length - 2], FAR);
+  return { pts, offs };
+}
+
+/** A staircase cutter for the kernel: (t, o) points with `FAR` ends, the frame they live in, and the hatched planes. */
+export interface Stair { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }
+
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; key: string } {
+export function viewReq(sheet: Sheet, v: DrawingView, depth = 0): { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; exclude?: string[]; key: string } {
   if (v.kind === "detail" && v.parent && depth < 20) { const p = findView(sheet, v.parent); if (p) return viewReq(sheet, p, depth + 1); }
   const view = viewDir(sheet, v);
   if (v.kind === "section" && v.parent && v.line) {
     const par = findView(sheet, v.parent);
     if (par) {
       const { x, y } = viewAxes(viewDir(sheet, par));
+      const exclude = v.exclude?.length ? [...v.exclude].sort() : undefined;
+      const ex = exclude ? `|ex|${exclude.join(",")}` : "";
+      const legs = v.path ? cutLegs(v.path) : null;
+      if (legs) {
+        const n = viewAxes(view).n, mu = n[0] * x[0] + n[1] * x[1] + n[2] * x[2], mv = n[0] * y[0] + n[1] * y[1] + n[2] * y[2];
+        const ml = Math.hypot(mu, mv) || 1, m: [number, number] = [mu / ml, mv / ml];
+        const { pts, offs } = staircase(legs, m);
+        const o = add(mul(x, legs[0].a[0]), y, legs[0].a[1]);
+        const ev = [legs[0].b[0] - legs[0].a[0], legs[0].b[1] - legs[0].a[1]], el = Math.hypot(ev[0], ev[1]);
+        const e = add(mul(x, ev[0] / el), y, ev[1] / el), m3 = add(mul(x, m[0]), y, m[1]);
+        const d0 = o[0] * n[0] + o[1] * n[1] + o[2] * n[2];
+        const stair: Stair = { o, e, m: m3, pts, planes: offs.map(k => d0 + k) };
+        return { view, p: o, stair, exclude, key: `${dirKey(view)}|st|${o.map(c => c.toFixed(6)).join(",")}|${pts.map(c => c.toFixed(5)).join(",")}${ex}` };
+      }
       const p = add(mul(x, v.line[0]), y, v.line[1]);
-      return { view, p, key: `${dirKey(view)}|${p.map(c => c.toFixed(6)).join(",")}` };
+      return { view, p, exclude, key: `${dirKey(view)}|${p.map(c => c.toFixed(6)).join(",")}${ex}` };
     }
   }
   if (v.broken && v.kind !== "section" && v.broken.poly.length >= 6) {
