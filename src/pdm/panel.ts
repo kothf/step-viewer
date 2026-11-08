@@ -7,6 +7,7 @@ import { unzipLimited, zip } from "../model/zip";
 import { packPart } from "../model/file";
 import type { PartDoc } from "../model/types";
 import { embeddedParts } from "./codec";
+import { geomComparable, geometryCompare, geomRows, mountDiffView } from "./geomCompare";
 import { fsaDir, MOVED_ON, Vault, VaultError, type FileRec, type Msg, type Resolve, type SearchQuery, type TreeNode, type VDir } from "./vault";
 import { defaultWorkflow, PART_NUMBER, ROLES, type CardField, type Role, type Workflow } from "./workflow";
 
@@ -237,7 +238,7 @@ export class VaultPanel {
   private tieOpen(f: FileRec) {
     const v = this.vault!, st = this.state.get(f.id);
     const mine = !!st?.mine;
-    const label = `v${v.latest(f).n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}`;
+    const label = `v${v.latest(f).n}${f.revision ? ` · ${t("Rev {rev}", { rev: f.revision })}` : ""} · ${tn(f.state)}${f.checkout ? ` · ${mine ? t("checked out") : t("locked by {user}", { user: f.checkout.user })}` : ""}${st?.modified ? ` · ${mine ? t("modified") : t("local copy outdated")}` : ""}`;
     this.app.setVault({
       label, readOnly: !mine,
       save: async bytes => { await v.saveWorking(f.id, bytes); await this.refresh(); },
@@ -250,11 +251,28 @@ export class VaultPanel {
   async checkIn(id: string, comment?: string, keep = false) {
     const v = this.vault;
     if (!v) return;
+    let withRefs: string[] = [];
     if (comment === undefined) {
-      const r = await this.form(t("Check in"), `<p>${esc(this.rec(id).path)}</p><label class="v-lbl">${esc(t("Comment"))}<textarea name="comment" rows="3" maxlength="500" autofocus></textarea></label><label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>`, t("Check in"));
+      // FR-PDM-011: referenced files checked out here can go in too; the changed ones are ticked.
+      const refs = await v.checkInWith(id).catch(() => []);
+      const refHtml = refs.length ? `<fieldset class="v-refs"><legend>${esc(t("Check in referenced files too"))}</legend>${refs.map(x => `<label class="chk" translate="no"><input type="checkbox" name="ref:${x.id}"${x.modified ? " checked" : ""} /> ${esc(x.path)}${x.modified ? "" : ` <small class="muted" translate="yes">${esc(t("(unchanged)"))}</small>`}</label>`).join("")}</fieldset>` : "";
+      const r = await this.form(t("Check in"), `<p>${esc(this.rec(id).path)}</p><label class="v-lbl">${esc(t("Comment"))}<textarea name="comment" rows="3" maxlength="500" autofocus></textarea></label><label class="chk"><input type="checkbox" name="keep" /> ${esc(t("Keep checked out"))}</label>${refHtml}`, t("Check in"));
       if (!r) return;
       comment = r.comment as string;
       keep = !!r.keep;
+      withRefs = refs.filter(x => r[`ref:${x.id}`]).map(x => x.id);
+    }
+    // The referenced files first, so the file that uses them is checked in against their new versions.
+    for (const rid of withRefs) {
+      try {
+        if (this.openId === rid) { const p = this.app.part(); const b = p && await p.bytes(); if (b) { await v.saveWorking(rid, b); this.app.markSaved(); } }
+        const n = await v.checkIn(rid, comment!, keep);
+        if (n) toast(t("{name}: version {n}", { name: this.rec(rid).path, n }), "success");
+      } catch (e) {
+        toast(`${this.rec(rid).path}: ${errText(e)}`, true);
+        await this.refresh();
+        return;
+      }
     }
     // Unsaved edits of the open part go into the working copy first.
     if (this.openId === id) { const p = this.app.part(); const b = p && await p.bytes(); if (b) { await v.saveWorking(id, b); this.app.markSaved(); } }
@@ -564,12 +582,26 @@ export class VaultPanel {
         if (ft.changed.length) parts.push(`<h4>${esc(t("Changed parameters"))}</h4>${table([t("Feature"), t("Parameter"), `v${a}`, `v${b}`], ft.changed.slice(0, 200).map(x => [x.feature, x.param, x.from, x.to]))}`);
       }
       if (/\.mcaddrw$/i.test(c.path) && !c.same && !c.a.purged && !c.b.purged) parts.push(await this.drawingOverlay(id, a, b));
+      let geo: import("../kernel/drawing").GeomDiff | null = null;
+      if (geomComparable(c.path) && !c.same && !c.a.purged && !c.b.purged) {
+        try {
+          toast(t("Building the two versions…"));
+          const r = await geometryCompare(c.path, await v.versionBytes(id, a), await v.versionBytes(id, b));
+          geo = r.diff;
+          parts.push(`<h4>${esc(t("Geometry"))}</h4>${table([t("Quantity"), `v${a}`, `v${b}`, t("Difference")], geomRows(r.diff, r.density).map(([q, x, y, d]) => [t(q), x, y, d]))}
+            <p class="v-legend"><span class="v-old">${esc(t("only in v{n}", { n: a }))}</span> <span class="v-new">${esc(t("only in v{n}", { n: b }))}</span></p><div class="v-geo3d" aria-label="${esc(t("Material only in one of the versions"))}"></div>`);
+        } catch (e) {
+          parts.push(`<p class="muted">${esc(t("The two versions could not be built for comparing: {err}", { err: t((e as Error).message) }))}</p>`);
+        }
+      }
       if (c.refs.length) {
         parts.push(`<h4>${esc(t("References"))}</h4>${table([t("File"), `v${a}`, `v${b}`], c.refs.map(x => [x.path, x.from, x.to]))}`);
         const bc = await v.bomCompare(id, a, b);
         if (bc.length) parts.push(`<h4>${esc(t("BOM changes"))}</h4>${table([t("File"), t("What changed"), `v${a}`, `v${b}`], bc.map(x => [x.path, t(x.change), x.from, x.to]))}`);
       }
-      this.dialog(t("Compare v{a} and v{b} of {name}", { a, b, name: c.path }), `<div class="v-scroll">${parts.join("")}</div>`, [[t("Close"), "cancel"]]);
+      const d = this.dialog(t("Compare v{a} and v{b} of {name}", { a, b, name: c.path }), `<div class="v-scroll">${parts.join("")}</div>`, [[t("Close"), "cancel"]]);
+      const host = d.el.querySelector<HTMLElement>(".v-geo3d");
+      if (geo && host) { const free = mountDiffView(host, geo); void d.done.then(free); }
     } catch (e) { toast(errText(e), true); }
   }
 

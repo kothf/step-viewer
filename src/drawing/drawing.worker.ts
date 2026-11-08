@@ -2,7 +2,7 @@
 // Drawing worker (FR-DRW-016): holds the drawing's model as an exact B-rep and
 // projects views with OCCT's hidden-line removal. Parts are rebuilt from their
 // document through the Modeller; STEP / IGES / BREP files are read as they are.
-import { project, readShape, section, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
+import { geometryDiff, project, readShape, section, shapeInfo, topology, type V3, type ViewDir } from "../kernel/drawing";
 import { Assembler } from "../kernel/assembly";
 import { Modeller } from "../kernel/model";
 import type { AsmDoc } from "../asm/types";
@@ -13,7 +13,25 @@ export type DrawingRequest =
   | { id: number; type: "init"; base: string; module: WebAssembly.Module }
   | { id: number; type: "load"; part?: PartDoc; asm?: AsmDoc; file?: { name: string; bytes: Uint8Array } }
   | { id: number; type: "project"; view: ViewDir }
-  | { id: number; type: "section"; view: ViewDir; p: V3 };
+  | { id: number; type: "section"; view: ViewDir; p: V3 }
+  /** Two versions of a part or an assembly compared by booleans (FR-PDM-050); the loaded model stays. */
+  | { id: number; type: "diff"; a: DiffSrc; b: DiffSrc };
+
+export type DiffSrc = { part?: PartDoc; asm?: AsmDoc };
+
+/** The solid of a part, or the shown components of an assembly placed into one compound. */
+function solidOf(src: DiffSrc): any {
+  if (src.part) {
+    const res = new Modeller(oc).evaluate(src.part);
+    if (!res.body) throw new Error("The part has no body yet.");
+    return res.body.shape;
+  }
+  const { placed } = new Assembler(oc).evaluate({ ...src.asm!, components: src.asm!.components.filter(c => !c.hidden) });
+  const b = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+  b.MakeCompound(comp);
+  for (const pc of placed) b.Add(comp, pc.body.shape);
+  return comp;
+}
 
 let oc: any = null;
 let shape: any = null;
@@ -56,6 +74,9 @@ self.onmessage = async (e: MessageEvent<DrawingRequest>) => {
     } else if (r.type === "project") {
       if (!shape) throw new Error("No model loaded");
       post({ id: r.id, ok: true, proj: project(oc, shape, r.view) });
+    } else if (r.type === "diff") {
+      if (!oc) throw new Error("Kernel not started");
+      post({ id: r.id, ok: true, diff: geometryDiff(oc, solidOf(r.a), solidOf(r.b)) });
     } else if (r.type === "section") {
       if (!shape) throw new Error("No model loaded");
       post({ id: r.id, ok: true, proj: section(oc, shape, r.view, r.p) });

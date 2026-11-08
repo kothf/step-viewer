@@ -5276,6 +5276,79 @@ try {
     await ap.keyboard.press("Escape");
     const n = await ap.evaluate(() => window.__sv.drw.doc().sheets[0].views.filter(v => v.orient === "bottom").length);
     check(n === 1, `drawing palette: click a view, then the sheet, places it (${n})`);
+    // Inference line: a new front view placed 1 mm off the first view's centre lines up with it.
+    const front = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; return [v.x, v.y]; });
+    await ap.click('[data-pal="front"]');
+    const at = await ap.evaluate(([x, y]) => window.__sv.drw.sheetPt(x + 1, y - 120), front);
+    await ap.mouse.move(at[0], at[1]);
+    const guide = await ap.evaluate(() => document.querySelectorAll(".drw-ovl .drw-guide").length);
+    await ap.mouse.click(at[0], at[1]);
+    await ap.keyboard.press("Escape");
+    const placed = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.at(-1); return [v.orient, v.x, v.y]; });
+    check(guide >= 1 && placed[0] === "front" && placed[1] === front[0], `drawing: inference line lines a new view up with another view's centre (${guide} guide, ${JSON.stringify([placed, front])})`);
+    // Annotation tab: the tools beside the sheet start the same commands.
+    await ap.click('[data-ptab="annot"]');
+    const tab = await ap.evaluate(() => ({ views: document.querySelector("#drw-pane-views").hidden, annot: document.querySelector("#drw-pane-annot").hidden, n: document.querySelectorAll("#drw-pane-annot button").length }));
+    await ap.click('#drw-pane-annot [data-an="note"]');
+    const mode = await ap.evaluate(() => window.__sv.drw.mode());
+    await ap.keyboard.press("Escape");
+    check(tab.views && !tab.annot && tab.n === 12 && mode === "note", `drawing: annotation tab shows the 12 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    await ctx.close();
+  }
+
+  // 1.80.0: vault geometry compare (FR-PDM-050) and check-in with referenced files (FR-PDM-011).
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const vp = await ctx.newPage();
+    vp.on("pageerror", e => errors.push(e.message));
+    vp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.evaluate(() => { localStorage.setItem("sv:tips", "off"); localStorage.setItem("mc:vaultUser", "Andrey"); });
+    await vp.goto(`${origin}/index.html?debug`);
+    await vp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const plate = depth => ({ schema: 1, kind: "part", id: "plate", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, material: { name: "Steel", density: 7.85 }, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -40, -25), P("p2", 40, -25), P("p3", 40, 25), P("p4", -40, 25),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: depth } }] });
+    const pmf = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const pb = depth => [...zip(Object.entries({ "manifest.json": JSON.stringify(pmf), "document.json": JSON.stringify(plate(depth)) }))];
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_g", name: "Base", units: { length: "mm", decimals: 2 }, parts: { plate: { name: "Plate", file: "Plate.mcadprt", doc: plate(10) } },
+      components: [{ id: "c1", name: "Plate<1>", part: "plate", tf: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], fixed: true }] };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }))];
+    await vp.click("#t-vault");
+    await vp.waitForSelector("#v-name");
+    await vp.fill("#v-name", "Geometry test");
+    await vp.click('#vault-panel [data-a="new-ws"]');
+    await vp.waitForSelector('#vault-panel [data-a="settings"]');
+    // The plate 10 mm thick, then 15 mm: 80 × 50 × 5 mm more material.
+    const ids = await vp.evaluate(async ([a, b, asm]) => {
+      const p = window.__sv.vault, v = p.vault;
+      await p.addFiles([new File([new Uint8Array(asm)], "Base.mcadasm")], true);
+      const files = await v.files(), part = files.find(f => f.path === "Plate.mcadprt"), base = files.find(f => f.path === "Base.mcadasm");
+      await v.checkOut(part.id);
+      await v.saveWorking(part.id, new Uint8Array(b));
+      await v.checkIn(part.id, "thicker");
+      return { part: part.id, base: base.id };
+    }, [pb(10), pb(15), ab]);
+    await vp.evaluate(i => window.__sv.vault.compareDlg(i, 1, 2), ids.part);
+    await vp.waitForSelector("#vault-dlg .v-geo3d canvas", { timeout: 120000 });
+    const geo = await vp.evaluate(() => [...document.querySelectorAll("#vault-dlg table")].at(-1).innerText);
+    check(/Material added \(mm³\)\s+20000/.test(geo) && /Material removed \(mm³\)\s+0\.00/.test(geo) && /Mass \(kg\)\s+0\.3140\s+0\.4710\s+\+0\.1570/.test(geo),
+      `vault: geometry compare of two part versions: added material, mass change and a 3D view (${geo.replace(/\s+/g, " ").slice(0, 300)})`);
+    await vp.keyboard.press("Escape");
+    // Check in the assembly with its changed part: the part is listed, ticked, and goes in first.
+    await vp.evaluate(async ({ part, base }) => { const v = window.__sv.vault.vault; await v.checkOut(part); await v.checkOut(base); }, ids);
+    await vp.evaluate(async ([id, b]) => window.__sv.vault.vault.saveWorking(id, new Uint8Array(b)), [ids.part, pb(20)]);
+    await vp.evaluate(i => { void window.__sv.vault.checkIn(i); }, ids.base);
+    await vp.waitForSelector("#vault-dlg .v-refs input");
+    const box = await vp.evaluate(() => [...document.querySelectorAll("#vault-dlg .v-refs input")].map(x => [x.name, x.checked]));
+    await vp.fill("#vault-dlg textarea", "deeper plate");
+    await vp.click('#vault-dlg button[value="ok"]');
+    await vp.evaluate(async id => { for (let i = 0; i < 200; i++) { if (!(await window.__sv.vault.vault.files()).find(f => f.id === id).checkout) return; await new Promise(r => setTimeout(r, 100)); } }, ids.base);
+    const after = await vp.evaluate(async ({ part }) => { const v = window.__sv.vault.vault, f = (await v.files()).find(x => x.id === part); return [v.latest(f).n, !!f.checkout]; }, ids);
+    check(JSON.stringify(box) === JSON.stringify([[`ref:${ids.part}`, true]]) && after[0] === 3 && !after[1], `vault: check-in offers the changed part it references, ticked, and checks it in too (${JSON.stringify([box, after])})`);
     await ctx.close();
   }
 

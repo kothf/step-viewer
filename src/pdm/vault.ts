@@ -409,6 +409,32 @@ export class Vault {
     return n;
   }
 
+  /**
+   * Referenced files that could be checked in with `id` (FR-PDM-011): the ones it uses, at any depth, that this
+   * user has checked out here, deepest first so each goes in before the files that use it. `modified` marks the
+   * ones whose working copy differs from their latest version.
+   */
+  async checkInWith(id: string): Promise<{ id: string; path: string; modified: boolean }[]> {
+    const all = new Map((await this.files()).map(f => [f.id, f]));
+    const out: { id: string; path: string; modified: boolean; depth: number }[] = [];
+    const seen = new Set([id]);
+    const walk = async (fid: string, depth: number) => {
+      const f = all.get(fid);
+      if (!f || depth > 16) return;
+      for (const r of this.latest(f).refs ?? []) {
+        if (!r.id || seen.has(r.id)) continue;
+        seen.add(r.id);
+        const c = all.get(r.id);
+        if (!c) continue;
+        const st = await this.status(c);
+        if (st.mine) out.push({ id: c.id, path: c.path, modified: st.modified, depth });
+        await walk(c.id, depth + 1);
+      }
+    };
+    await walk(id, 0);
+    return out.sort((a, b) => b.depth - a.depth).map(({ id, path, modified }) => ({ id, path, modified }));
+  }
+
   /** Undo check-out (FR-PDM-012): local changes go, the latest version comes back, the lock is released. */
   async undoCheckOut(id: string) {
     const f = await this.file(id);
