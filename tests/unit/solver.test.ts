@@ -1,7 +1,8 @@
 // Solver acceptance set (FRS 16.3).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs } from "../../src/sketch/solver";
+import { solve, tryAdd, measureDim, ORIGIN, freeDirections, repairs, curveJoint } from "../../src/sketch/solver";
+import { entBezier } from "../../src/sketch/conic";
 import type { SketchFeature, SkEnt, SkRel, SkDim } from "../../src/model/types";
 
 const sk = (ents: SkEnt[], rels: SkRel[] = [], dims: SkDim[] = []): SketchFeature => ({ id: "s", type: "sketch", name: "S", plane: { std: "XY" }, ents, rels, dims });
@@ -211,4 +212,48 @@ test("tangency at a shared end counts once: a fully dimensioned slot has 0 DOF (
   const r = solve(s);
   assert.equal(r.status, "ok");
   assert.equal(r.dof, 0);
+});
+
+test("spline tangent and equal curvature at a shared end (FR-SK-050, FR-SK-051)", () => {
+  type Sp = SkEnt & { t: "spline" };
+  const xy = (s: SketchFeature) => (id: string) => P(s, id) as [number, number];
+  const endOf = (s: SketchFeature, id: string) => {
+    const e = s.ents.find(x => x.id === id) as Sp;
+    const bz = entBezier(e, xy(s));
+    const [b0, b1, b2] = bz;
+    const d1 = [b1[0] - b0[0], b1[1] - b0[1]], d2 = [b2[0] - 2 * b1[0] + b0[0], b2[1] - 2 * b1[1] + b0[1]];
+    const l = Math.hypot(d1[0], d1[1]);
+    return { t: [d1[0] / l, d1[1] / l], k: (2 / 3) * (d1[0] * d2[1] - d1[1] * d2[0]) / l ** 3 };
+  };
+  // A line into an interpolating spline: tangency moves the free spline point.
+  const s1 = sk(
+    [pt("a", -10, 0), pt("b", 0, 0), pt("q", 5, 3), pt("c", 10, 0), ln("l", "a", "b"), { id: "s", t: "spline", pts: ["b", "q", "c"] }],
+    [rel("fix", "l"), rel("fix", "c")],
+  );
+  const dof0 = solve(s1).dof;
+  const r1 = tryAdd(s1, { rel: rel("tangent", "l", "s") });
+  assert.ok(r1.ok);
+  assert.equal(r1.result.dof, dof0 - 1);
+  const e1 = endOf(r1.sketch, "s");
+  near(Math.abs(e1.t[1]), 0, 1e-6);
+  assert.ok(e1.t[0] > 0, "the spline carries on from the line");
+  // An arc into a style spline: equal curvature = tangent and the same turn (1/r) at the joint.
+  const s2 = sk(
+    [pt("o", 0, 0), pt("a", 10, 0), pt("b", 0, 10), { id: "k", t: "arc", c: "o", a: "a", b: "b" },
+      pt("p1", -4, 11), pt("p2", -8, 9), pt("p3", -11, 5), pt("p4", -12, 0), { id: "s", t: "spline", kind: "style", pts: ["b", "p1", "p2", "p3", "p4"] }],
+    [rel("fix", "k"), rel("fix", "p4")],
+  );
+  const dof2 = solve(s2).dof;
+  const r2 = tryAdd(s2, { rel: rel("curvature", "k", "s") });
+  assert.ok(r2.ok);
+  assert.equal(r2.result.dof, dof2 - 2);
+  const e2 = endOf(r2.sketch, "s");
+  near(e2.t[0], -1, 1e-6);
+  near(e2.k, 0.1, 1e-6);
+  // Ends held together by a coincident relation count as a joint; curves apart have none.
+  const s3 = sk([pt("a", 0, 0), pt("b", 5, 0), pt("c", 5, 0), pt("d", 9, 2), pt("e", 12, 0), ln("l", "a", "b"), { id: "s", t: "spline", pts: ["c", "d", "e"] }],
+    [rel("coincident", "b", "c")]);
+  assert.deepEqual(curveJoint(s3, "l", "s"), ["b", "c"]);
+  s3.rels = [];
+  assert.equal(curveJoint(s3, "l", "s"), null);
 });

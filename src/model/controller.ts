@@ -108,7 +108,7 @@ export interface ModelHost {
 type Mode =
   | { kind: "none" }
   /** Picking a sketch plane: for a new sketch, or for an existing one (`edit`: Edit sketch plane, FR-SK-007). */
-  | { kind: "plane"; edit?: { id: string; plane: PlaneRef } }
+  | { kind: "plane"; edit?: { id: string; plane: PlaneRef; xAxis?: SketchFeature["xAxis"]; pickX?: boolean } }
   | { kind: "sketch"; id: string; editor: SketchEditor; entry: string; isNew: boolean }
   | { kind: "feature"; draft: Feature; index: number; isNew: boolean; focus?: Focus; instant?: boolean }
   | { kind: "props"; draft: PartDoc }
@@ -567,7 +567,10 @@ export class ModelController {
       // Edit sketch plane: rolled back to the sketch, which shows on the plane picked so far.
       const i = d.features.findIndex(f => f.id === m.edit!.id);
       const sk = d.features[i];
-      if (sk?.type === "sketch") { sk.plane = m.edit.plane; sk.hidden = false; d.rollback = i + 1; }
+      if (sk?.type === "sketch") {
+        sk.plane = m.edit.plane; sk.hidden = false; d.rollback = i + 1;
+        if (m.edit.xAxis) sk.xAxis = m.edit.xAxis; else delete sk.xAxis;
+      }
     } else if (m.kind === "feature") {
       const f = structuredClone(m.draft);
       if (m.isNew) d.features.splice(m.index, 0, f); else d.features[m.index] = f;
@@ -1009,9 +1012,14 @@ export class ModelController {
       return;
     }
     if (m.kind === "plane" && m.edit) {
-      const { id, plane } = m.edit;
+      const { id, plane, xAxis } = m.edit;
       this.mode = { kind: "none" };
-      this.store!.change("Edit sketch plane", d => { const f = d.features.find(x => x.id === id); if (f?.type === "sketch") f.plane = plane; });
+      this.store!.change("Edit sketch plane", d => {
+        const f = d.features.find(x => x.id === id);
+        if (f?.type !== "sketch") return;
+        f.plane = plane;
+        if (xAxis) f.xAxis = xAxis; else delete f.xAxis;
+      });
       this.clearDecor();
       this.renderAll();
       void this.rebuild();
@@ -1807,6 +1815,8 @@ export class ModelController {
   }
 
   private pickPlane(e: PointerEvent) {
+    const m = this.mode;
+    if (m.kind === "plane" && m.edit?.pickX) { this.pickSketchX(e, m.edit); return; }
     const r = this.pickRef(e);
     if (r) this.planePicked(r);
   }
@@ -1823,13 +1833,26 @@ export class ModelController {
     void this.rebuild();
   }
 
+  /** Sketch orientation (FR-SK-002 P2): a straight model edge clicked while choosing the X axis. */
+  private pickSketchX(e: PointerEvent, ed: NonNullable<Extract<Mode, { kind: "plane" }>["edit"]>) {
+    const hit = this.host.edgeAt(e.clientX, e.clientY);
+    if (!hit?.edge || hit.edge.type !== "line") { toast(t("Click a straight edge for the sketch X axis."), true); return; }
+    const ref = this.refOfEdge(hit.edge);
+    if (!ref) return;
+    ed.xAxis = { edge: ref, ...(ed.xAxis?.flip ? { flip: true } : {}) };
+    ed.pickX = false;
+    this.renderPanel();
+    this.renderBar();
+    void this.rebuild();
+  }
+
   /** Edit sketch plane (FR-SK-007): pick another plane or flat face; the sketch keeps its geometry in its own coordinates. */
   editSketchPlane(id: string) {
     const sk = this.store?.feature(id);
     if (!sk || sk.type !== "sketch") return;
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     this.exitMode(false);
-    this.mode = { kind: "plane", edit: { id, plane: structuredClone(sk.plane) } };
+    this.mode = { kind: "plane", edit: { id, plane: structuredClone(sk.plane), ...(sk.xAxis ? { xAxis: structuredClone(sk.xAxis) } : {}) } };
     this.selected = id;
     this.renderAll();
     void this.rebuild();
@@ -3645,7 +3668,7 @@ export class ModelController {
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
     this.syncSketchSection();
     if (m.kind !== "sketch") {
-      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
+      $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
         : m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? t("Click edges, or a face for all its edges; click again to remove.")
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
@@ -4563,12 +4586,19 @@ export class ModelController {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
       pm.innerHTML = (ed ? head(t("Sketch plane"), t("Pick another plane or flat face for {name}. The sketch keeps its shape; relations to model edges that no longer resolve become dangling.", { name: featureLabel(sk?.name ?? "") }))
         + `<p class="pm-help"><b>${esc(t("Plane"))}:</b> <span data-a="cur" translate="no">${esc(this.refLabel(ed.plane))}</span></p>`
+        + `<div class="pm-field"><span>${esc(t("X axis"))}</span><button class="pm-box${ed.pickX ? " focus" : ""}" data-a="xpick" title="${esc(t("Click, then click a straight edge: the sketch X axis runs along it"))}">${esc(ed.xAxis ? t("Edge") : t("Plane direction"))}</button></div>`
+        + (ed.xAxis ? `<label class="chk pm-chk"><input type="checkbox" data-a="xflip"${ed.xAxis.flip ? " checked" : ""} />${esc(t("Reverse X axis"))}</label><button class="btn small" data-a="xclear">${esc(t("Use the plane direction"))}</button>` : "")
         : head(t("Sketch"), t("Pick a plane or a flat face for the sketch.")))
         + `<div class="pm-planes">${(["XY", "XZ", "YZ"] as const).map(s => `<button class="btn small" data-std="${s}">${esc(t(STD_NAMES[s]))}</button>`).join("")}</div>`
         + (ed ? `<div class="pm-actions"><button class="btn primary small" data-a="ok">✓ ${esc(t("OK"))}</button><button class="btn small" data-a="cancel">✕ ${esc(t("Cancel"))}</button></div>` : "");
       pm.querySelectorAll<HTMLElement>("[data-std]").forEach(b => b.addEventListener("click", () => this.planePicked({ std: b.dataset.std as "XY" })));
       pm.querySelector("[data-a=ok]")?.addEventListener("click", () => this.ok());
       pm.querySelector("[data-a=cancel]")?.addEventListener("click", () => void this.cancel());
+      if (ed) {
+        pm.querySelector("[data-a=xpick]")?.addEventListener("click", () => { ed.pickX = !ed.pickX; this.renderPanel(); this.renderBar(); });
+        pm.querySelector<HTMLInputElement>("[data-a=xflip]")?.addEventListener("change", ev => { if (ed.xAxis) { if ((ev.target as HTMLInputElement).checked) ed.xAxis.flip = true; else delete ed.xAxis.flip; } this.renderPanel(); void this.rebuild(); });
+        pm.querySelector("[data-a=xclear]")?.addEventListener("click", () => { delete ed.xAxis; ed.pickX = false; this.renderPanel(); void this.rebuild(); });
+      }
       return;
     }
     if (m.kind === "sketch") { this.renderSketchPanel(pm, m.editor); return; }
