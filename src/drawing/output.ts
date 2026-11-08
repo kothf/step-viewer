@@ -98,7 +98,7 @@ const LTYPES: Record<string, { desc: string; pat: number[] }> = {
 };
 const LAYERS: Record<string, { color: number; lt: string }> = {
   VISIBLE: { color: 7, lt: "CONTINUOUS" }, TANGENT: { color: 8, lt: "CONTINUOUS" }, HIDDEN: { color: 5, lt: "HIDDEN" },
-  CENTER: { color: 1, lt: "CENTER" }, HATCH: { color: 8, lt: "CONTINUOUS" }, ANNOT: { color: 4, lt: "CONTINUOUS" }, FORMAT: { color: 7, lt: "CONTINUOUS" }, TEXT: { color: 7, lt: "CONTINUOUS" }, SKETCH: { color: 3, lt: "CONTINUOUS" },
+  CENTER: { color: 1, lt: "CENTER" }, HATCH: { color: 8, lt: "CONTINUOUS" }, ANNOT: { color: 4, lt: "CONTINUOUS" }, FORMAT: { color: 7, lt: "CONTINUOUS" }, TEXT: { color: 7, lt: "CONTINUOUS" }, SKETCH: { color: 3, lt: "CONTINUOUS" }, THREAD: { color: 2, lt: "CONTINUOUS" },
 };
 
 /** DXF R12 in millimetres, one layer per line type. */

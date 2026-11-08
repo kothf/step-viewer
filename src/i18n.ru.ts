@@ -2629,7 +2629,16 @@ export const RU: Record<string, string> = {
   "Filled": "Залитые",
   "Dot": "Точка",
   "Oblique stroke": "Засечка",
-  // 1.87.0: intersect (FR-BODY-007) and untrim surface (FR-FT-100).
+  // 1.87.0: view properties (FR-DRW-017).
+  "Cosmetic threads": "Условные резьбы",
+  "Sketches": "Эскизы",
+  "Show sketches": "Показать эскизы",
+  "Alignment": "Выравнивание",
+  "Moves on its own.": "Перемещается самостоятельно.",
+  "Lined up with {name}.": "Выровнен по виду {name}.",
+  "Default alignment": "Выравнивание по умолчанию",
+  "Break alignment": "Разорвать выравнивание",
+  // 1.88.0: intersect (FR-BODY-007) and untrim surface (FR-FT-100).
   "Intersect": "Пересечь",
   "Intersect: solids and surfaces cut each other into regions; keep the ones you want": "Пересечь: тела и поверхности разрезают друг друга на области; оставьте нужные",
   "Regions": "Области",

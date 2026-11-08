@@ -5539,7 +5539,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.87: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
+  // --- 1.88: Intersect bodies into regions (FR-BODY-007) and Untrim Surface (FR-FT-100) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5582,7 +5582,7 @@ try {
     const i3 = await state();
     check(i0.title === "Intersect" && rows.n === 3 && JSON.stringify([...rows.v].sort((a, b) => a - b)) === "[1000,3000,5000]" && i0.v === 9000 && i0.bodies === 1
       && i1.v === 8000 && i1.bodies === 2 && i2.v === 9000 && i2.bodies === 1 && i3.v === 8000 && !i3.bad,
-      `model 1.87: Intersect lists the regions and keeps the ticked ones (FR-BODY-007) (${JSON.stringify({ i0, rows, i1, i2, i3 })})`);
+      `model 1.88: Intersect lists the regions and keeps the ticked ones (FR-BODY-007) (${JSON.stringify({ i0, rows, i1, i2, i3 })})`);
     // Untrim Surface: a 40 mm square surface with a Ø10 hole gets its hole filled.
     await mp.evaluate(() => window.__sv.model.store.change("Holed surface", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
@@ -5606,14 +5606,14 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(Math.abs(a0 - (1600 - Math.PI * 25)) < 0.2 && u.title === "Untrim Surface" && mode === "holes" && !u.bad && a1 === 1600,
-      `model 1.87: Untrim Surface fills the hole of a planar surface (FR-FT-100) (${JSON.stringify({ a0, u, a1, mode })})`);
+      `model 1.88: Untrim Surface fills the hole of a planar surface (FR-FT-100) (${JSON.stringify({ a0, u, a1, mode })})`);
     // In Russian: the Intersect panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "intersect").id));
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm button, #mc-pm .pm-help, #mc-pm label, #mc-pm .pm-count")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.87: Intersect panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Пересечь" && !/[A-Za-z]{3}/.test(ru.text.replace(/mm³|mm|Enter|Esc/g, "")), `model 1.88: Intersect panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
@@ -5731,6 +5731,21 @@ try {
     await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
     const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
     check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
+    // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
+    const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
+    await clickAt(pv0.x, pv0.y);
+    const boxes = await ap.evaluate(() => ({ th: !!document.querySelector('.drw-props [data-v="threads"]:checked'), sk: !!document.querySelector('.drw-props [data-v="sketches"]') }));
+    await ap.check('.drw-props [data-v="sketches"]');
+    await ap.click('.drw-props [data-a="unalign"]');
+    const q0 = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [pv0.x, pv0.y]);
+    await ap.mouse.move(q0[0], q0[1]); await ap.mouse.down();
+    await ap.mouse.move(q0[0] + 40, q0[1] + 30, { steps: 5 }); await ap.mouse.up();
+    const pv1 = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { free: v.free, sketches: v.sketches, x: v.x, y: v.y }; }, pv0.id);
+    await ap.click('.drw-props [data-a="align"]');
+    const pv2 = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); return { free: v.free ?? null, x: v.x, y: v.y }; }, pv0.id);
+    const inLine = pv0.side[0] ? Math.abs(pv2.y - pv0.py) < 1e-6 : Math.abs(pv2.x - pv0.px) < 1e-6;
+    check(boxes.th && boxes.sk && pv1.free && pv1.sketches && Math.abs(pv1.x - pv0.x) > 3 && Math.abs(pv1.y - pv0.y) > 3 && pv2.free === null && inLine,
+      `drawing: break alignment frees a projected view; default alignment puts it back in line (${JSON.stringify([pv0, pv1, pv2, boxes])})`);
     await ctx.close();
   }
 

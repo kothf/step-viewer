@@ -5,7 +5,7 @@
 /** Line types (ISO 128): thick visible, thin, hidden (dashed), centre (long dash dot). */
 export type Pen = "thick" | "thin" | "hidden" | "center" | "frame";
 /** DXF layers / SVG classes. */
-export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT";
+export type Layer = "VISIBLE" | "TANGENT" | "HIDDEN" | "CENTER" | "FORMAT" | "TEXT" | "SKETCH" | "HATCH" | "ANNOT" | "THREAD";
 
 export type Prim =
   | { t: "l"; p: [number, number, number, number]; pen: Pen; layer: Layer }
