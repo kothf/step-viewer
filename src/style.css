@@ -809,6 +809,12 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .v-scroll { max-height: 50vh; overflow: auto; }
 .v-table { border-collapse: collapse; width: 100%; font-size: var(--fs-caption); }
 .v-table th, .v-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.v-overlay { border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin: 4px 0 10px; }
+.v-overlay svg { display: block; width: 100%; height: auto; }
+.v-legend { display: flex; gap: 12px; font-size: var(--fs-caption); }
+.v-legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; }
+.v-old::before { background: #d32f2f; }
+.v-new::before { background: #1b8a3a; }
 .v-table .v-acts { padding: 2px 0; white-space: nowrap; display: flex; gap: 4px; }
 .v-log { max-height: 30vh; overflow: auto; padding-left: 18px; font-size: var(--fs-caption); }
 .v-lbl { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }

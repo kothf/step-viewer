@@ -8,7 +8,7 @@
 // `log/` (append-only, so concurrent writers never overwrite each other, FR-PDM-071).
 
 import { defaultCards, defaultWorkflow, formatNumber, PART_NUMBER, preLabel, revLabel, revIndex, ROLES, type CardField, type Numbering, type RevScheme, type Role, type Workflow, type WfTransition } from "./workflow";
-import { docRefs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
+import { docJson, docRefs, embedDocs, featureDiff, readProps, relPath, resolveRel, rewriteRefs, writeProps } from "./codec";
 
 /** The little a vault needs from a directory. Names are single path segments. */
 export interface VDir {
@@ -422,6 +422,37 @@ export class Vault {
     if (!v) throw new VaultError("Version {n} does not exist.", { n });
     if (v.purged) throw new VaultError("This version was purged: only its history entry is kept.");
     return this.object(v.sha);
+  }
+
+  /**
+   * An assembly version opened with its components resolved (FR-PDM-022): "built" is the file as checked in;
+   * "latest" and "released" put the latest (or latest released) version of each referenced part file in place of
+   * the embedded copy, sub-assemblies resolved the same way. `changed` lists the files whose copy was replaced.
+   */
+  async resolvedBytes(id: string, version: number | undefined, mode: Resolve, depth = 0): Promise<{ bytes: Uint8Array; changed: string[] }> {
+    const f = await this.file(id);
+    const v = version ? f.versions.find(x => x.n === version) : this.latest(f);
+    if (!v) throw new VaultError("Version {n} does not exist.", { n: version ?? 0 });
+    const bytes = await this.versionBytes(id, v.n);
+    if (mode === "built" || depth > 8 || !/\.mcadasm$/i.test(f.path)) return { bytes, changed: [] };
+    const all = new Map((await this.files(true)).map(x => [x.id, x]));
+    const parts = new Map<string, unknown>(), subs = new Map<string, unknown>(), changed: string[] = [];
+    for (const r of v.refs ?? []) {
+      const c = all.get(r.id);
+      if (!c) continue;
+      const pv = this.pick(c, r, mode);
+      if (pv.purged) continue;
+      if (/\.mcadprt$/i.test(c.path)) {
+        const d = await docJson(await this.object(pv.sha));
+        if (d) { parts.set(r.path, d); if (pv.n !== r.version) changed.push(c.path); }
+      } else if (/\.mcadasm$/i.test(c.path)) {
+        const sub = await this.resolvedBytes(c.id, pv.n, mode, depth + 1);
+        const d = await docJson(sub.bytes);
+        if (d) { subs.set(r.path, d); if (pv.n !== r.version || sub.changed.length) changed.push(c.path, ...sub.changed); }
+      }
+    }
+    const out = await embedDocs(bytes, parts, subs);
+    return { bytes: out ?? bytes, changed: out ? [...new Set(changed)] : [] };
   }
 
   /** Get latest (FR-PDM-015): the working copy becomes the latest version (refused over local changes unless forced). */

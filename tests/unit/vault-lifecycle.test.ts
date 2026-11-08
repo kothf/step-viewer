@@ -183,3 +183,36 @@ test("vault: roles in a shared vault (FR-PDM-037)", async () => {
   await o.transition([f.id], "Reject", "no");
   assert.equal((await v.file(f.id)).state, "Work in progress");
 });
+
+test("vault: an assembly's embedded parts are its references; open as checked in / latest; rename follows (FR-PDM-003/020/022)", async () => {
+  const { embeddedParts, docJson } = await import("../../src/pdm/codec");
+  const v = await Vault.create(memDir("E"), "E", "Andrey", "pc1");
+  const part = (desc: string) => ({ kind: "part", props: { description: desc }, features: [] });
+  // An assembly as the app saves it: no references list, parts embedded with the file they came from.
+  const asmDoc = { kind: "assembly", parts: { pin: { name: "Pin", file: "Pin.mcadprt", doc: part("v1") }, plate: { name: "Plate", file: "Plate.step", doc: part("") } },
+    components: [{ id: "c1", part: "pin" }, { id: "c2", part: "pin" }, { id: "c3", part: "plate" }, { id: "c4", part: "pin", suppressed: true }] };
+  const asmBytes = await zip([{ name: "manifest.json", data: JSON.stringify({ format: "mobiuscad", schema: 1, kind: "assembly" }) }, { name: "document.json", data: JSON.stringify(asmDoc) }]);
+  assert.deepEqual(await docRefs("a/Top.mcadasm", asmBytes), [{ path: "Pin.mcadprt", qty: 2 }, { path: "Plate.step", qty: 1 }]);
+  assert.deepEqual((await embeddedParts(asmBytes)).map(p => p.file), ["Pin.mcadprt"]);
+  const pin = await v.add("a/Pin.mcadprt", await doc("part", [], { description: "v1" }));
+  const top = await v.add("a/Top.mcadasm", asmBytes);
+  assert.deepEqual(v.latest(top).refs!.map(r => [r.id, r.qty]), [[pin.id, 2], ["", 1]]);
+  // The pin moves on; "latest" puts it in place of the embedded copy, "built" keeps the copy.
+  await v.checkOut(pin.id);
+  await v.saveWorking(pin.id, await doc("part", [], { description: "v2" }));
+  await v.checkIn(pin.id, "longer");
+  const built = await v.resolvedBytes(top.id, undefined, "built");
+  const latest = await v.resolvedBytes(top.id, undefined, "latest");
+  const desc = async (b: Uint8Array) => ((await docJson(b)) as { parts: { pin: { doc: { props: { description: string } } } } }).parts.pin.doc.props.description;
+  assert.equal(await desc(built.bytes), "v1");
+  assert.equal(await desc(latest.bytes), "v2");
+  assert.deepEqual(latest.changed, ["a/Pin.mcadprt"]);
+  // Nothing released yet: latest released falls back to the latest.
+  assert.equal(await desc((await v.resolvedBytes(top.id, undefined, "released")).bytes), "v2");
+  // Renaming the pin rewrites the file name inside the assembly.
+  await v.rename(pin.id, "a/Dowel.mcadprt");
+  const t2 = (await v.files()).find(f => f.id === top.id)!;
+  assert.deepEqual(v.latest(t2).refs!.map(r => r.path), ["Dowel.mcadprt", "Plate.step"]);
+  const j = await docJson(await v.versionBytes(top.id, v.latest(t2).n)) as { parts: { pin: { file: string } } };
+  assert.equal(j.parts.pin.file, "Dowel.mcadprt");
+});

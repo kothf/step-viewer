@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.74.0] - 2026-11-08
+
+### Added
+
+- **Drawing compare** in the vault (FR-PDM-051): comparing two versions of a drawing draws both and overlays them sheet by sheet. Lines only in the older version are red, lines only in the newer one green, and each sheet says how much changed.
+- **Assemblies in the vault** (FR-PDM-003/020/022): adding an assembly offers to add the parts it embeds as files of their own. Its parts then count as its references, so Contains, Where used, BOM compare and rename/move work for it. Opening it asks how components resolve: **as checked in**, **latest** or **latest released**. The latter two put those versions of the part files, and of sub-assemblies, in place of the copies saved in the assembly.
+
 ## [1.73.0] - 2026-11-08
 
 ### Added
@@ -710,7 +717,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.73.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.74.0...HEAD
+[1.74.0]: https://github.com/kothf/step-viewer/compare/v1.73.0...v1.74.0
 [1.73.0]: https://github.com/kothf/step-viewer/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/kothf/step-viewer/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/kothf/step-viewer/compare/v1.70.0...v1.71.0

@@ -2366,4 +2366,18 @@ export const RU: Record<string, string> = {
   "Stack another item": "Добавить позицию в стопку",
   "Stacked balloons": "Стопка позиций",
   "Stacked balloon": "Стопка позиций",
+  // PDM 1.74.0: drawing compare, assemblies resolved as checked in / latest / released, parts added with an assembly.
+  "Drawing the two versions…": "Строятся обе версии чертежа…",
+  "Drawing overlay": "Наложение чертежей",
+  "only in v{n}": "только в v{n}",
+  "{r} removed, {a} added": "удалено {r}, добавлено {a}",
+  "no visible change": "видимых изменений нет",
+  "The drawings could not be drawn for comparing: {err}": "Не удалось построить чертежи для сравнения: {err}",
+  "Add to vault": "Добавить в хранилище",
+  "The assembly uses parts that are not in the vault. Add them as files too, so it can be opened with the latest versions?": "Сборка использует детали, которых нет в хранилище. Добавить их отдельными файлами, чтобы сборку можно было открывать с последними версиями?",
+  "Added from an assembly": "Добавлено из сборки",
+  "Open assembly": "Открыть сборку",
+  "Latest and Latest released put those versions of the part files in place of the copies saved in the assembly.": "«Последние» и «Последние выпущенные» подставляют эти версии файлов деталей вместо копий, сохранённых в сборке.",
+  "Opened with newer versions of: {files}": "Открыто с новыми версиями: {files}",
+  "The parts are already the versions the assembly was checked in with.": "Детали уже в тех версиях, с которыми сборка была зарегистрирована.",
 };
