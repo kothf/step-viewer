@@ -8469,6 +8469,27 @@ try {
     const bc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, segs: l.sheet?.panels[0].outer.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(bc0.title === "Break Corner" && bc0.edges?.length === 1 && /:p0:l1\|.*:p0:l2$/.test(bc0.edges[0]) && !bc1.bad && bc1.segs === 5 && Math.abs(bcv0 - bc1.v - 50 * T) < 1e-3,
       `sheet metal: Break Corner chamfers the picked thickness edge's corner, in the flat outline too (${JSON.stringify({ bc0, bc1, bcv0 })})`);
+    // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
+    await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      for (const [id, e] of [["fa", "l1"], ["fb", "l2"]]) d.features.push({ id, type: "smflange", name: id === "fa" ? "Edge-Flange7" : "Edge-Flange8", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:${e}`] }], length: { v: 20 }, angle: { v: Math.PI / 2 }, position: "outside" });
+    }));
+    await settle();
+    await smMenu("Closed Corner");
+    const [cx, cy] = await scr([100, -T / 2, 12]);
+    await mp.mouse.click(cx, cy);
+    await settle();
+    const cc0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, faces: window.__sv.model.mode().draft?.faces.map(f => f.name) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const cc1 = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.sheet?.panels ?? [];
+      const at = (pid, ent) => { const p = P.find(x => x.id === pid), sg = p?.outer.find(x => x.ent === ent); if (!sg) return null; const q = sg.a, M = p.M; return [0, 1, 2].map(k => M.o[k] + M.x[k] * q[0] + M.y[k] * q[1]); };
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), fx: at("fa:p0", "s1")?.[0], gy: at("fb:p0", "s0")?.[1] };
+    });
+    check(cc0.title === "Closed Corner" && JSON.stringify(cc0.faces) === '["fa:p0:s1"]' && !cc1.bad && Math.abs(cc1.fx - (100 + T)) < 1e-6 && Math.abs(cc1.gy - 0.1) < 1e-6,
+      `sheet metal: Closed Corner runs the clicked flange end over the other flange, which runs to the gap (${JSON.stringify({ cc0, cc1 })})`);
     await ctx.close();
   }
 

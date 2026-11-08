@@ -1,7 +1,7 @@
 // Sheet metal features (FRS 9.12, FR-FT-120). The first sheet metal feature of a part, the base
 // flange, holds the part's sheet metal parameters (thickness, default bend radius, bend allowance);
 // later sheet metal features use them unless they override the radius.
-import type { EdgeRef, Num } from "../model/types";
+import type { EdgeRef, FaceRef, Num } from "../model/types";
 
 /** How bend allowance is worked out: K-factor, a bend allowance or a bend deduction per bend. */
 export type BendCalc = "k" | "ba" | "bd";
@@ -80,6 +80,17 @@ export interface SmCornerFeature {
   size: Num;
 }
 
+/** Closed corner: flange end faces run on (or back) to meet the neighbouring flange. */
+export interface SmClosedFeature {
+  id: string; type: "smclosed"; name: string; suppressed?: boolean;
+  /** End faces of flanges to extend. */
+  faces: FaceRef[];
+  /** Overlap: the face runs over the other flange's end; underlap: it stops at the other flange's inside face. */
+  kind: "overlap" | "underlap";
+  /** Underlap: the gap left before the other flange. */
+  gap?: Num;
+}
+
 /** Flat pattern: the folded sheet unfolded onto the plane of its first face. */
 export interface SmFlatFeature {
   id: string; type: "smflat"; name: string; suppressed?: boolean;
@@ -123,8 +134,8 @@ export interface SmTabFeature {
   sketch: string;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smflat"]);
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */
