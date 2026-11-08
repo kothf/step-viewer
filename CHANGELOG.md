@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.122.0] - 2026-11-08
+
+### Added
+
+- **Check-Heal feature (FR-FT-131)** in Sweep ▾: checks every body and heals it in the feature tree. Faces whose edges are closer than the tolerance are sewn, faulty faces are fixed with ShapeFix and closed shells become solids; Merge faces that lie on one surface joins faces split by earlier features. The panel reports free edges, validity and solid bodies before and after, and faces keep their names, so later features stay attached.
+
 ## [1.119.0] - 2026-11-08
 
 ### Added
@@ -1089,7 +1095,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.119.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.122.0...HEAD
+[1.122.0]: https://github.com/kothf/step-viewer/compare/v1.119.0...v1.122.0
 [1.119.0]: https://github.com/kothf/step-viewer/compare/v1.118.0...v1.119.0
 [1.118.0]: https://github.com/kothf/step-viewer/compare/v1.116.0...v1.118.0
 [1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0

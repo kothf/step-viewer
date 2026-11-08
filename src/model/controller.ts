@@ -23,7 +23,7 @@ import { parseXyz } from "./curves";
 import { segPoints, solve3d } from "../sketch/sketch3d";
 import type { SketchPatternFeature, FeatureFolder, ThreadFeature, Sketch3dFeature, Sk3Rel, CurveFeature, SweepSurfFeature, SweepPath,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, RecognizedHole, ImportFeature, HealFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, UntrimSurfFeature, IntersectFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -638,7 +638,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -705,6 +705,9 @@ export class ModelController {
       const th: ThreadFeature = { id, type: "thread", name: nextName(d, "thread"), diameter: { v: 6 }, length: { v: 10 }, upToEnd: true };
       if (threadEdge) this.setThreadEdge(th, threadEdge);
       draft = th;
+    } else if (type === "heal") {
+      if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
+      draft = { id, type: "heal", name: nextName(d, "heal"), tol: { v: 0.01 } } satisfies HealFeature;
     } else if (type === "combine" || type === "indent" || type === "intersect" || type === "bsplit" || type === "delbody" || type === "movebody" || type === "scale") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       const nm = nextName(d, type);
@@ -3529,7 +3532,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": showCutList(this.last?.cutList, this.doc); break;
       case "import": this.importBodyFile(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -4294,6 +4297,13 @@ export class ModelController {
         + group(t("Check and heal"), chk("heal", f.heal, t("Check and heal (sew gaps into solids)")) + (f.heal ? numField("tol", t("Tolerance"), f.tol ?? { v: 0.1 }, "length") : "")
           + (st?.code === "warning" && st.warning ? `<p class="pm-help" role="status" data-heal>${esc(statusText(st))}</p>` : "")
           + `<p class="pm-help muted">${esc(t("Healing sews faces whose edges are closer than the tolerance and closes the result into solids."))}</p>`);
+    }
+    if (f.type === "heal") {
+      const st = this.last?.statuses.find(x => x.id === f.id);
+      title = t("Check-Heal");
+      body = group(t("Check and heal"), numField("tol", t("Tolerance"), f.tol, "length") + chk("unify", f.unify, t("Merge faces that lie on one surface"))
+          + (st?.code === "warning" && st.warning ? `<p class="pm-help" role="status" data-heal>${esc(statusText(st))}</p>` : "")
+          + `<p class="pm-help muted">${esc(t("Every body is checked: faces whose edges are closer than the tolerance are sewn, faulty faces fixed and closed shells made solid. The report compares before and after."))}</p>`);
     }
     if (f.type === "plane") {
       title = t("Plane");
@@ -5588,6 +5598,7 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["rib", t("Rib"), t("Rib: a thin wall from an open sketch line to the body")],
   ["split", t("Split Line"), t("Split line: project a sketch onto faces to split them")],
   ["import", t("Insert body"), t("Insert body: a part, STEP, IGES or BREP file into this part, with check and heal")],
+  ["heal", t("Check-Heal"), t("Check and heal: sew gaps, fix faces and close shells into solids, with a before and after report")],
   ["combine", t("Combine"), t("Combine bodies: add, subtract or keep the common part")],
   ["indent", t("Indent"), t("Indent: a body takes the shape of tool bodies pressed into it, with a wall or as a cut")],
   ["intersect", t("Intersect"), t("Intersect: solids and surfaces cut each other into regions; keep the ones you want")],
@@ -5650,6 +5661,7 @@ const ICON_SVG: Record<string, string> = {
   scale: S('<path d="M2 14V8h6v6z"/><path d="M8 8l6-6M10 2h4v4"/>'),
   delbody: S('<path d="M3 5h10v9H3z"/><path d="M5 7l6 6M11 7l-6 6"/>'),
   moveface: S('<path d="M2 8h9v6H2z"/><path d="M6 8V3M4 5l2-2 2 2"/><path d="M2 8l3-3h9l-3 3M14 5v6l-3 3"/>'),
+  heal: S('<path d="M3 13l7-7 3 3-7 7H3z"/><path d="M9 3l4 4M12 2l2 2"/>'),
   recognize: S('<path d="M2 5h12v8H2z"/><circle cx="8" cy="9" r="2.2"/><path d="M5 2l-2 2M11 2l2 2"/>'),
   delface: S('<path d="M2 6h9v8H2z"/><path d="M2 6l3-3h9l-3 3M14 3v8l-3 3"/><path d="M12 1l3 3M15 1l-3 3"/>'),
   split: S('<path d="M2 4h12v9H2z"/><path d="M8 1v14" stroke-dasharray="2 1.5"/>'),

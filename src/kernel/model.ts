@@ -11,7 +11,7 @@
 // Works on a raw emscripten instance (`oc: any`), like occ.ts.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { V2 } from "../model/types";
-import type { RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
+import type { HealFeature, RecognizedHole, SketchPatternFeature, CopySource, UntrimSurfFeature, IntersectFeature, IntersectRegion, Sketch3dFeature, CurveFeature, SweepSurfFeature, SweepPath, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, RevolveSurfFeature, LoftSurfFeature, TrimSurfFeature, FillSurfFeature, ExtendSurfFeature, ScaleFeature, ImportFeature, FilletFeature, ChamferFeature, CombineFeature, IndentFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, SplitFeature, RibFeature, HelixFeature, LoftFeature, SweepFeature, AxisFeature, BodyProps, CsysFeature, CircularPatternFeature, EdgeRef, HoleFeature, FaceRef, Feature, FeatureStatus, Frame, LinearPatternFeature, LineRef, MirrorFeature, PartDoc, PlaneFeature, PlaneRef, PointFeature, ShellFeature, DraftFeature, Num, SketchFeature, ThreadFeature, V3, VertexRef, ExtrudeFeature } from "../model/types";
 import { featureRefs } from "../model/doc";
 import { loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type ProfileFace, type Seg } from "../sketch/profile";
 import { splineBezierN } from "../sketch/spline";
@@ -2711,38 +2711,83 @@ export class Modeller {
     const ok = oc.BRepTools.Read_2(shape, path, new oc.BRep_Builder(), new oc.Message_ProgressRange_1());
     oc.FS.unlink(path);
     if (!ok || shape.IsNull()) throw new FeatureError("E-IMP-READ", "The imported body could not be read.");
-    if (f.heal) {
-      const tol = f.tol?.v ?? 0.1;
-      if (!(tol > 0)) throw new FeatureError("E-FT-ZERO", "The tolerance must be more than 0.");
-      const before = this.freeEdges(shape, 1e-6);
-      const valid0 = new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2();
-      const sew = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
-      sew.Add(shape);
-      sew.Perform(new oc.Message_ProgressRange_1());
-      let healed = sew.SewedShape();
-      const fix = new oc.ShapeFix_Shape_2(healed);
-      fix.Perform(new oc.Message_ProgressRange_1());
-      healed = fix.Shape();
-      // Closed shells outside solids become solids.
-      const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
-      bb.MakeCompound(comp);
-      for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) bb.Add(comp, ex.Current());
-      for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SOLID); ex.More(); ex.Next()) {
-        const sh = oc.TopoDS.Shell_1(ex.Current());
-        if (oc.BRep_Tool.IsClosed_1(sh)) {
-          let solid = new oc.ShapeFix_Solid_1().SolidFromShell(sh);
-          if (this.volume(solid) < 0) solid = solid.Reversed();
-          bb.Add(comp, solid);
-        } else bb.Add(comp, sh);
-      }
-      shape = comp;
-      const after = this.freeEdges(shape, 1e-6);
-      const valid1 = new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2();
-      this.warning = `Check and heal: ${before} free edges before, ${after} after; ${valid0 ? "valid" : "not valid"} before, ${valid1 ? "valid" : "not valid"} after; ${this.solids(shape)} solid bodies.`;
-    }
+    if (f.heal) shape = this.healShape(shape, f.tol?.v ?? 0.1, false).shape;
     const faces = this.sub(shape, "FACE");
     const mine: Named = { shape, faces, names: faces.map((_, i) => `${f.id}:f${i}`) };
     return prev ? this.compoundOf([prev, mine]) : mine;
+  }
+
+  /**
+   * Check and heal (FR-FT-131): sew faces closer than `tol`, run ShapeFix_Shape, turn closed shells
+   * outside solids into solids and optionally merge faces lying on one surface. The report (free
+   * edges, validity and solid count before and after) goes in the warning, which `statusText` translates.
+   */
+  private healShape(shape: any, tol: number, unify: boolean): { shape: any } {
+    const oc = this.oc;
+    if (!(tol > 0)) throw new FeatureError("E-FT-ZERO", "The tolerance must be more than 0.");
+    const before = this.freeEdges(shape, 1e-6);
+    const valid0 = new oc.BRepCheck_Analyzer(shape, true, false).IsValid_2();
+    const sew = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
+    sew.Add(shape);
+    sew.Perform(new oc.Message_ProgressRange_1());
+    let healed = sew.SewedShape();
+    const fix = new oc.ShapeFix_Shape_2(healed);
+    fix.SetPrecision(Math.min(tol, 1e-4));
+    fix.SetMaxTolerance(tol);
+    fix.Perform(new oc.Message_ProgressRange_1());
+    healed = fix.Shape();
+    // Closed shells outside solids become solids.
+    const bb = new oc.BRep_Builder(), comp = new oc.TopoDS_Compound();
+    bb.MakeCompound(comp);
+    for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) bb.Add(comp, ex.Current());
+    for (const ex = new oc.TopExp_Explorer_2(healed, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SOLID); ex.More(); ex.Next()) {
+      const sh = oc.TopoDS.Shell_1(ex.Current());
+      if (oc.BRep_Tool.IsClosed_1(sh)) {
+        let solid = new oc.ShapeFix_Solid_1().SolidFromShell(sh);
+        if (this.volume(solid) < 0) solid = solid.Reversed();
+        bb.Add(comp, solid);
+      } else bb.Add(comp, sh);
+    }
+    let out: any = comp;
+    if (unify) {
+      const un = new oc.ShapeUpgrade_UnifySameDomain_2(out, true, true, false);
+      try { un.Build(); out = un.Shape(); } catch { /* keep the faces as they are */ }
+    }
+    const after = this.freeEdges(out, 1e-6);
+    const valid1 = new oc.BRepCheck_Analyzer(out, true, false).IsValid_2();
+    this.warning = `Check and heal: ${before} free edges before, ${after} after; ${valid0 ? "valid" : "not valid"} before, ${valid1 ? "valid" : "not valid"} after; ${this.solids(out)} solid bodies.`;
+    return { shape: out };
+  }
+
+  /**
+   * Check and heal as a feature (FR-FT-131): the whole body healed, faces keeping their names where
+   * they are the same or (rebuilt by the healing) have the same centroid; merged faces take the name
+   * of the largest face they cover.
+   */
+  private heal(f: HealFeature, prev: Named | null): Named {
+    if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body to check.");
+    const { shape } = this.healShape(prev.shape, f.tol.v, !!f.unify);
+    const oc = this.oc;
+    const area = (x: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(x, g, false, false); return g.Mass(); };
+    const old = prev.faces.map((x, i) => ({ x, name: prev.names[i], c: this.centroid(x), a: area(x) }));
+    const faces = this.sub(shape, "FACE");
+    let k = 0;
+    const names = faces.map(x => {
+      const same = old.find(o => o.x.IsSame(x));
+      if (same) return same.name;
+      const c = this.centroid(x), tol = 1e-3 * (1 + this.size(x));
+      let best: typeof old[number] | null = null;
+      for (const o of old) if (d3(o.c, c) < tol && (!best || d3(o.c, c) < d3(best.c, c))) best = o;
+      if (best) return best.name;
+      // A merged face: the largest old face whose centroid lies on it.
+      const on = (p: V3) => {
+        const d = new oc.BRepExtrema_DistShapeShape_2(new oc.BRepBuilderAPI_MakeVertex(this.P(p)).Vertex(), x, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+        return d.IsDone() && d.Value() < tol;
+      };
+      const inside = old.filter(o => on(o.c)).sort((a, b) => b.a - a.a);
+      return inside[0]?.name ?? `${f.id}:new:${k++}`;
+    });
+    return { shape, faces, names };
   }
 
   /** Edges on one face only (gaps and open boundaries), counted by a sewing pass that joins nothing new. */
@@ -3441,6 +3486,7 @@ export class Modeller {
           else if (isWeld(f)) body = evalWeld(this as unknown as WeldHost, f, doc, body, frames);
           else if (f.type === "split") body = this.splitLine(f, doc, body, frames);
           else if (f.type === "import") body = this.importBody(f, body);
+          else if (f.type === "heal") body = this.heal(f, body);
           else if (f.type === "combine") body = this.combine(f, body);
           else if (f.type === "indent") body = this.indent(f, body);
           else if (f.type === "bsplit") body = this.splitBody(f, body, frames);
