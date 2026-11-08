@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Break Corner for sheet metal (FR-FT-120)**: a new Break Corner command on the Sheet Metal tab chamfers or rounds outside corners of the sheet through its thickness, like SolidWorks' Break-Corner/Corner-Trim. Click the short edges across the thickness at the corners, pick Chamfer (distance) or Fillet (radius), and the corner is cut in the face's outline, so the flat pattern and its DXF show it too. A flange can then go on the new chamfer edge.
 
+## [1.202.0] - 2026-11-08
+
+### Added
+
+- Revision clouds on drawing sheets (Annotation → **Revision cloud**): click the corners of the changed area, then the first corner again or Enter. The cloud takes the last revision letter from the revision table (shown in a triangle), its arc size and letter can be changed in the panel, and it is picked on its outline only, so views inside it stay draggable. It goes into every export like the rest of the sheet.
+
 ## [1.200.0] - 2026-11-08
 
 ### Added
@@ -1484,7 +1490,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.203.0...HEAD
-[1.203.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.203.0
+[1.203.0]: https://github.com/kothf/step-viewer/compare/v1.202.0...v1.203.0
+[1.202.0]: https://github.com/kothf/step-viewer/compare/v1.200.0...v1.202.0
 [1.200.0]: https://github.com/kothf/step-viewer/compare/v1.199.0...v1.200.0
 [1.199.0]: https://github.com/kothf/step-viewer/compare/v1.197.0...v1.199.0
 [1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
