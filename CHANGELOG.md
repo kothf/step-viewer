@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.86.0] - 2026-11-08
+
+### Added
+
+- **Drafting style for drawings** (FR-DRW-025): with nothing selected, the sheet panel's new Drafting style group sets, for the whole drawing:
+  - the annotation text height (2.5, 3.5 or 5 mm), with arrows sized to match;
+  - the arrowheads (filled, open, dot or oblique stroke);
+  - the ISO 128 line group (0.25, 0.35, 0.5 or 0.7 mm visible lines, thin lines half as wide).
+
+  The style is saved in the drawing and used in every export.
+
 ## [1.85.0] - 2026-11-08
 
 ### Added
@@ -850,7 +861,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.85.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.86.0...HEAD
+[1.86.0]: https://github.com/kothf/step-viewer/compare/v1.85.0...v1.86.0
 [1.85.0]: https://github.com/kothf/step-viewer/compare/v1.84.0...v1.85.0
 [1.84.0]: https://github.com/kothf/step-viewer/compare/v1.83.0...v1.84.0
 [1.83.0]: https://github.com/kothf/step-viewer/compare/v1.82.0...v1.83.0

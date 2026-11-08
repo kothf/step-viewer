@@ -1,6 +1,7 @@
 // Headless drawing rendering and version compare (FR-PDM-051): a .mcaddrw is opened in its own
 // drawing kernel, every sheet composed to primitives as the workspace draws it, and two versions
 // overlaid with what is only in the older one red and what is only in the newer one green.
+import { useStyle } from "./annot";
 import { t } from "../i18n";
 import { sheetBom, type Bom } from "./bom";
 import { DrawingKernel } from "./client";
@@ -40,6 +41,7 @@ export async function renderDrawing(bytes: Uint8Array, base = new URL("occt/", d
     const mass = kg != null ? `${kg < 10 ? kg.toFixed(3) : kg.toFixed(2)} kg` : "";
     const label = (s: string, p?: Record<string, string>) => t(s, p);
     const boms = new Map<string, Bom>();
+    useStyle(doc.style);
     return doc.sheets.map(sh => {
       const [W, H] = sheetSize(sh);
       const ctx = { topo: facts.topo, holes: facts.holes, items: facts.items, box: facts.box, dec: ".", label, bom: src.kind === "asm" ? sheetBom(sh, src.doc, src.flat, boms) : null };

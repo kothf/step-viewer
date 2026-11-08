@@ -5645,6 +5645,14 @@ try {
     await clickAt(fv.x + (40 - fv.uc) * fv.s, fv.y + 15 * fv.s);
     const cr = await ap.evaluate(id => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.id === id); const pl = window.__sv.drw.placement(id); return { crop: v.crop, breaks: v.breaks ?? null, w: pl.box[2] - pl.box[0], h: pl.box[3] - pl.box[1], ru: !!document.querySelector('.drw-props [data-a="uncrop"]') }; }, fv.id);
     check(cr.crop && !cr.breaks && Math.abs(cr.w - 40) < 1 && Math.abs(cr.h - 20) < 0.6 && cr.ru, `drawing: crop view keeps only the rectangle (${JSON.stringify(cr)})`);
+    // Drafting style (FR-DRW-025): with nothing selected, the sheet panel sets 5 mm text, oblique strokes and the 0.7 line group.
+    await ap.keyboard.press("Escape");
+    await clickAt(30, 260);
+    await ap.selectOption('.drw-props [data-st="text"]', "5");
+    await ap.selectOption('.drw-props [data-st="arrow"]', "tick");
+    await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
+    const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
+    check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
     await ctx.close();
   }
 

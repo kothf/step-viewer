@@ -154,10 +154,15 @@ export interface DrawingDoc {
   sheets: Sheet[];
   props: DrawingProps;
   /** The model shown: a part document, or a STEP/IGES/BREP file kept in the drawing file. */
+  /** Drafting style for every sheet (FR-DRW-025); absent fields take the ISO defaults. */
+  style?: DraftStyle;
   source: { kind: "part"; doc: PartDoc; name: string } | { kind: "file"; name: string }
     /** An assembly (FR-DRW-030): its document, and `flat` = with pattern instances and sub-assemblies' parts placed (what the kernel builds). */
     | { kind: "asm"; doc: AsmDoc; flat: AsmDoc; name: string };
 }
+
+/** Annotation text height (mm), arrowhead (filled, open, dot or oblique tick) and ISO 128 line group (thick line width, mm). */
+export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | "dot" | "tick"; lines?: 0.25 | 0.35 | 0.5 | 0.7 }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }
