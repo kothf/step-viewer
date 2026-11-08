@@ -20,6 +20,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Hole: counterbore, countersink and counterdrill sizes still at their automatic values follow a typed diameter (a Ø3.2 countersink kept the M6 head). Clicking a curved face says "Pick a flat face or a plane: this one is curved."
 - Sketcher: a typed line chain ending on the sketch origin joins it; typed sizes place dimensions clear of the geometry; sketch fillets work on construction corners and virtual sharps; tangency at a shared end counts once, so a fully dimensioned slot shows 0 DOF.
 - The arrow keys turn the view while a command button has focus (they did nothing after clicking Mate or Insert).
+## [1.160.0] - 2026-11-08
+
+### Added
+
+- **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like SolidWorks' cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
+
 ## [1.158.0] - 2026-11-08
 
 ### Added
@@ -1314,7 +1320,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.161.0...HEAD
-[1.161.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.161.0
+[1.161.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.161.0
+[1.160.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.160.0
 [1.158.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.158.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0

@@ -262,6 +262,7 @@ export const RU: Record<string, string> = {
   "Faces / edges": "Граней / рёбер",
   "Triangles": "Треугольников",
   "Note": "Примечание",
+  "Notes": "Примечания",
   "open shell: volume approximate": "незамкнутая оболочка: объём приблизительный",
   "Revision": "Ревизия",
   "Part number": "Обозначение",

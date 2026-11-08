@@ -7,6 +7,7 @@ import { cutList, type WeldHost } from "../../src/weldments/kernel";
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, Sketch3dFeature } from "../../src/model/types";
 import type { MemberFeature } from "../../src/weldments/types";
+import { cutKey } from "../../src/weldments/types";
 import { occ } from "./occ";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
@@ -314,4 +315,11 @@ test("Trim/Extend end miter between two members (FR-FT-121)", async () => {
   const b2 = run(m, doc([a, b, ma, mb, { ...tr, kind: "butt2" } as Feature]));
   assert.deepEqual(b2.cut.map(c => [c.qty, Math.round(c.length!)]).sort(), [[1, 380], [1, 420]]);
   near(b1.volume, b2.volume, 1e-6 * b1.volume);
+});
+
+test("cut list item keys stay put when the volume changes (FR-FT-121)", () => {
+  const a = cutKey({ kind: "member", desc: "SHS 40x40x3", qty: 2, length: 420.00001, angle1: 0, angle2: 45, volume: 1, bodies: [] });
+  const b = cutKey({ kind: "member", desc: "SHS 40x40x3", qty: 3, length: 420, angle1: 0, angle2: 45, volume: 2, bodies: ["x"] });
+  assert.equal(a, b);
+  assert.notEqual(a, cutKey({ kind: "member", desc: "SHS 40x40x3", qty: 2, length: 380, angle1: 0, angle2: 45, volume: 1, bodies: [] }));
 });

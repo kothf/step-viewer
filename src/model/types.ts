@@ -873,6 +873,8 @@ export interface PartDoc {
   material?: { name: string; density: number };
   /** Mass property override (FR-MAT-004), e.g. for a purchased part: mass in kg, centre of mass in mm; each absent one is calculated. */
   massOverride?: { mass?: number; com?: V3 };
+  /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
+  cutProps?: Record<string, { desc?: string; part?: string; note?: string }>;
   color?: V3;
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */

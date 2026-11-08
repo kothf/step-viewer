@@ -1072,3 +1072,6 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 #app.drawing.has-doc-tabs .drw { bottom: 30px; }
 .pm-hpts .pm-in input { width: 64px; }
 .pm-hpts li > span:first-child { flex: 0 0 auto; min-width: 14px; }
+
+/* Weldment cut list: editable item properties. */
+#wld-cut .wld-cp { width: 100%; min-width: 7em; font: inherit; padding: 2px 4px; }
