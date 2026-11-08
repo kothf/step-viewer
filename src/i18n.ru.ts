@@ -3123,7 +3123,7 @@ export const RU: Record<string, string> = {
   "Each guide curve must touch every profile.": "Каждая направляющая кривая должна касаться всех профилей.",
   "Each guide curve must run from the first profile to the last.": "Каждая направляющая кривая должна идти от первого профиля до последнего.",
   "A guide curve meets the middle of the loft: the section would shrink to nothing.": "Направляющая кривая проходит через середину лофта: сечение сжалось бы в точку.",
-  // 1.125.0: check and heal feature (FR-FT-131).
+  // 1.126.0: check and heal feature (FR-FT-131).
   "Check-Heal": "Проверка-исправление",
   "Check and heal: sew gaps, fix faces and close shells into solids, with a before and after report": "Проверить и исправить: сшить зазоры, исправить грани и замкнуть оболочки в тела, с отчётом до и после",
   "Merge faces that lie on one surface": "Объединить грани, лежащие на одной поверхности",

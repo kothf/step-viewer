@@ -6029,7 +6029,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.125: Check-Heal feature (FR-FT-131) ---
+  // --- 1.126: Check-Heal feature (FR-FT-131) ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -6062,7 +6062,7 @@ try {
     await settle();
     const done = await state();
     check(s0.v === 1000 && h.v === 1000 && /^Check and heal: 0 free edges before, 0 after; valid before, valid after; 1 solid bodies\.$/.test(h.report) && u.faces === 6 && s0.faces > 6 && u.v === 1000 && done.faces === 6 && done.types.endsWith("heal") && !done.bad,
-      `model 1.125: Check-Heal reports the body and merges its split faces (FR-FT-131) (${JSON.stringify({ s0, h, u, done })})`);
+      `model 1.126: Check-Heal reports the body and merges its split faces (FR-FT-131) (${JSON.stringify({ s0, h, u, done })})`);
     await ctx.close();
   }
 
