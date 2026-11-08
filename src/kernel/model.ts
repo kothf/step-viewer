@@ -3531,7 +3531,7 @@ export class Modeller {
       const fr = frames[sk.id];
       if (!fr) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
       const used = new Set<string>();
-      for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
+      for (const e of sk.ents) if (e.t !== "point") for (const k of ["a", "b", "c", "p0", "p1", "p"] as const) { const v = (e as Record<string, unknown>)[k]; if (typeof v === "string") used.add(v); }
       for (const e of sk.ents) if (e.t === "spline") for (const q of e.pts) used.add(q);
       const pts = sk.ents.filter(e => e.t === "point" && !used.has(e.id) && e.id !== f.refPt) as { id: string; x: number; y: number }[];
       const ref = f.refPt ? sk.ents.find(e => e.id === f.refPt && e.t === "point") as { x: number; y: number } | undefined : undefined;

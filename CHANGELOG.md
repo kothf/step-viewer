@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Cuts in the sheet metal flat pattern (FR-FT-120)**: holes and cuts that ordinary features (extrude cuts, holes) make in the flat faces of a sheet metal part now show in the flat pattern. The material each feature took out of a face is moved onto the pattern with that face, so a hole in a flange lands where the flange lies when unfolded. The flat pattern DXF then takes its outline from the pattern itself, holes included (circles and arcs stay exact). Exported while folded, the DXF has the sheet outline only and says to flatten first. Cuts across a bend aren't unrolled yet.
+## [1.137.0] - 2026-11-08
+
+### Added
+
+- **Sketch text (FR-SK-020)**: the Text tool (sketch Point ▾ menu) places text from the bundled DejaVu fonts (sans, serif, monospace, bold and italic) at a capital-letter height. Its letters are closed regions, so Extrude embosses them and Cut engraves them. Select a text to change its words, font, height or angle; drag, dimension or relate its start point like any other point.
+
 ## [1.135.0] - 2026-11-08
 
 ### Added
@@ -1188,7 +1194,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.138.0...HEAD
-[1.138.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.138.0
+[1.138.0]: https://github.com/kothf/step-viewer/compare/v1.137.0...v1.138.0
+[1.137.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.137.0
 [1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0

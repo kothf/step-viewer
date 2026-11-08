@@ -18,7 +18,7 @@ export const SKETCH_USES: [SketchUse, string][] = [
 export interface CheckIssue { code: string; message: string; params?: Record<string, string | number>; ents: string[] }
 export interface CheckResult { ok: boolean; issues: CheckIssue[]; summary: { message: string; params?: Record<string, string | number> } }
 
-const CURVES = new Set(["line", "arc", "circle", "ellipse", "spline"]);
+const CURVES = new Set(["line", "arc", "circle", "ellipse", "spline", "text"]);
 
 export function checkSketch(sk: SketchFeature, use: SketchUse): CheckResult {
   const m = new Map(sk.ents.map(e => [e.id, e] as const));

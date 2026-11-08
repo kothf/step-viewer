@@ -7,6 +7,7 @@
 import type { SketchFeature, SkEnt, V2 } from "../model/types";
 import { ellOf, ellParam, ellPts, ellSweep, type Ell } from "./ellipse";
 import { bezPts, splineBezier } from "./spline";
+import { textLoops } from "./text";
 
 export type Seg =
   | { ent: string; kind: "line"; a: V2; b: V2 }
@@ -142,6 +143,8 @@ export function sketchProfile(sk: SketchFeature, skip: Set<string> = new Set()):
     }
     loops.push(loop);
   }
+  // Text (FR-SK-020): each glyph contour is a closed loop of its own; letter holes nest like any other.
+  for (const e of sk.ents) if (e.t === "text" && !e.cons && !skip.has(e.id)) loops.push(...textLoops(e, pt(m, e.p)));
   // Crossing lines (a figure eight, overlapping rectangles) are not supported yet.
   const lines = loops.flatMap(l => l.filter(s => s.kind === "line")) as Extract<Seg, { kind: "line" }>[];
   for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
@@ -222,7 +225,7 @@ export function sketchCurves(sk: SketchFeature): Seg[] {
     else if (e.t === "ellipse") {
       const el = ellOf(pt(m, e.c), pt(m, e.a), pt(m, e.b));
       out.push(e.p0 && e.p1 ? { ent: e.id, kind: "earc", el, a: pt(m, e.p0), b: pt(m, e.p1), ccw: true } : { ent: e.id, kind: "ellipse", el });
-    }
+    } else if (e.t === "text") out.push(...textLoops(e, pt(m, e.p)).flat());
   }
   return out;
 }
