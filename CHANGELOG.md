@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.232.0] - 2026-11-08
+## [1.234.0] - 2026-11-08
 
 ### Added
 
 - **Pierce relation (FR-SK-051)**: select one sketch point and the relations list offers Pierce, as in SolidWorks. Click a model edge that crosses the sketch plane and the point moves to where the edge pierces the plane, then stays there: when the model changes, the point follows the edge. Straight edges count as infinite lines and arcs as whole circles; when an edge crosses the plane more than once, the point takes the crossing nearest to it. If the edge later disappears or no longer reaches the plane, the relation is marked dangling and can be re-attached to another edge. The relation glyph is ⊕.
+
+## [1.232.0] - 2026-11-08
+
+### Changed
+
+- **Assemblies build on all CPU cores (FR-ARC-016).** WebAssembly runs one thread per instance, so the geometry kernel used to build an assembly's parts one after another on a single core. Opening an assembly now also starts up to 3 helper kernel workers (2 on a 4- or 8-thread CPU; more made builds slower, since every kernel instance competes for the CPU while it starts) that build the distinct parts at the same time, biggest first, while the assembly's own worker takes its share. A helper sends the exact body back as BREP with its named faces, plus its analysed mesh, so measurements, mates, interference and STEP export work as before. Only parts the assembly does not hold yet go to the helpers; editing one part still rebuilds just that part. On a 4-core machine the 23-part Leuenberger valve stage builds its parts in 4.7 s instead of 10.3 s; on a 4-core/8-thread i7 the 34-part engine builds in about 18 s instead of 32 s (one part, the nameplate with its embossed text, takes 15 s of that by itself). Helpers stop after 30 s idle to give their memory back. `?workers=N` sets the number of helpers and `?workers=0` turns it off.
 
 ## [1.231.0] - 2026-11-08
 
@@ -1550,7 +1556,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.232.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.234.0...HEAD
+[1.234.0]: https://github.com/kothf/step-viewer/compare/v1.232.0...v1.234.0
 [1.232.0]: https://github.com/kothf/step-viewer/compare/v1.231.0...v1.232.0
 [1.231.0]: https://github.com/kothf/step-viewer/compare/v1.229.0...v1.231.0
 [1.229.0]: https://github.com/kothf/step-viewer/compare/v1.226.0...v1.229.0

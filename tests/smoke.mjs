@@ -3120,7 +3120,7 @@ try {
     await ctx.close();
   }
 
-  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.232.0 pierce (FR-SK-051) ---
+  // --- Part modelling 1.215.0: sketch orientation, X axis along a model edge (FR-SK-002); 1.234.0 pierce (FR-SK-051) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -3175,7 +3175,7 @@ try {
       return { w: w.join(","), edge: r?.ext?.faces?.slice().sort().join("+") ?? null };
     });
     check(!!pierceBtn && /pierces/.test(pStatus) && pierced.w === "20,0,20" && pierced.edge === "x:end+x:side:l2",
-      `model 1.232: Pierce puts the point where the picked edge crosses the sketch plane (${!!pierceBtn}, ${pierced.w}, ${pierced.edge}, ${pStatus})`);
+      `model 1.234: Pierce puts the point where the picked edge crosses the sketch plane (${!!pierceBtn}, ${pierced.w}, ${pierced.edge}, ${pStatus})`);
     await ctx.close();
   }
 
@@ -8995,6 +8995,49 @@ try {
   }
 
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
+
+  // --- Parallel assembly builds (FR-ARC-016): distinct parts are built by helper kernel workers, same result as one worker ---
+  if (inShard(4)) {
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const plate = (id, w, h, d, holes) => ({ schema: 1, kind: "part", id, name: id, units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -w / 2, -h / 2), P("p2", w / 2, -h / 2), P("p3", w / 2, h / 2), P("p4", -w / 2, h / 2),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: d } },
+      ...(holes ? [{ id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 0, 0), { id: "c1", t: "circle", c: "c0", r: holes }] },
+        { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }] : [])] });
+    const T = (x, y, z) => [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z];
+    const parts = {}, components = [];
+    for (let k = 0; k < 5; k++) {
+      parts[`p${k}`] = { name: `Part${k}`, file: `Part${k}.mcadprt`, doc: plate(`part${k}`, 40 + 10 * k, 30, 5 + k, k % 2 ? 4 + k : 0) };
+      components.push({ id: `c${k}`, name: `Part${k}<1>`, part: `p${k}`, tf: T(0, 0, 20 * k), fixed: k === 0 });
+    }
+    components.push({ id: "c9", name: "Part3<2>", part: "p3", tf: [0, -1, 0, 100, 1, 0, 0, 0, 0, 0, 1, 0] });
+    const asmDoc = { schema: 1, kind: "assembly", id: "a_par", name: "Parallel", units: { length: "mm", decimals: 2 }, parts, components };
+    const amf = { format: "mobiuscad", schema: 1, kind: "assembly", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    const ab = [...zip(Object.entries({ "manifest.json": JSON.stringify(amf), "document.json": JSON.stringify(asmDoc) }))];
+    const build = async workers => {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      const dp = await ctx.newPage();
+      dp.on("pageerror", e => errors.push(e.message));
+      dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+      await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+      await dp.goto(`${origin}/index.html?debug&nokernel&workers=${workers}`);
+      await dp.waitForFunction(() => window.__sv);
+      await dp.evaluate(b => window.__sv.asm.openFile({ name: "Parallel.mcadasm", data: new Uint8Array(b).buffer }), ab);
+      await dp.waitForFunction(() => window.__sv.viewer.parts.length === 6 && !window.__sv.asm.building, null, { timeout: 120000 });
+      const r = await dp.evaluate(() => ({
+        par: window.__sv.asm.kernel.lastParallel,
+        props: window.__sv.asm.props,
+        parts: window.__sv.viewer.parts.map(p => [p.data.name, p.data.faces.length, p.data.faces.filter(f => f.type === "cylinder").length, Math.round(p.data.volume * 1000), p.data.faces.map(f => Math.round(f.area * 100)).join(",")]),
+      }));
+      await ctx.close();
+      return r;
+    };
+    const one = await build(0), many = await build(2);
+    check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
+    check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
+    check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
 } catch (err) {
   console.error(err);
   failures++;

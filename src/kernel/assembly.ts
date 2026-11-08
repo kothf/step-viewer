@@ -32,6 +32,31 @@ export class Assembler {
     return s;
   }
 
+  /** Evaluates a part source now (parallel builds: the worker takes its share before the assembly call). */
+  prime(key: string, doc: AsmDoc, quality: number): { src: object; body: Named | null; mesh: () => ModelMesh } {
+    const s = this.source(key, doc);
+    return {
+      src: s, body: s.body,
+      mesh: () => {
+        if (!s.mesh || s.quality !== quality) { s.mesh = s.modeller.mesh(s.body!, doc.parts[key].name, [0.72, 0.74, 0.78], quality); s.quality = quality; }
+        return s.mesh;
+      },
+    };
+  }
+
+  /**
+   * Takes a part source another kernel worker evaluated (FR-ARC-016, parallel builds): the body
+   * comes as BREP text with its face order, so no feature is evaluated here. Returns the source.
+   */
+  adopt(key: string, doc: AsmDoc, pre: { brep?: string; order?: number[]; names?: string[]; error?: string }): object {
+    const json = JSON.stringify(doc.parts[key].doc);
+    const s: Source = { json, modeller: this.sources.get(key)?.modeller ?? new Modeller(this.oc), body: null };
+    if (pre.brep && pre.order && pre.names) s.body = s.modeller.fromTransport(pre.brep, pre.order, pre.names);
+    else s.error = pre.error ?? "The part has no body.";
+    this.sources.set(key, s);
+    return s;
+  }
+
   /** A part's evaluated body in its own coordinates (null when it has none). */
   sourceBody(key: string, doc: AsmDoc): Named | null { return this.source(key, doc).body; }
 
@@ -221,7 +246,7 @@ export class Assembler {
 }
 
 /** A part's mesh moved by a component's transform (positions and normals). */
-export function transformMesh(m: ModelMesh, t: Tf, name: string): ModelMesh {
+function transformMesh(m: ModelMesh, t: Tf, name: string): ModelMesh {
   const P = m.attributes.position.array, N = m.attributes.normal.array;
   const pos = new Array<number>(P.length), nrm = new Array<number>(N.length);
   for (let i = 0; i < P.length; i += 3) {

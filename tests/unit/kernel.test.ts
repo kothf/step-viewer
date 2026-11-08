@@ -1658,6 +1658,27 @@ test("pattern instances re-evaluated: up to a sloped face at every place (FR-FT-
   close(v0 - vary.props!.volume, a * (h(10) + h(30) + h(50)), 1e-3);
 });
 
+test("FR-ARC-016: a body sent between kernel workers (BREP + face order) keeps every named face", async () => {
+  const oc = await occ();
+  const m = new Modeller(oc);
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const s2 = circle("s2", 10, 5, 5, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } };
+  const body = run(m, doc([s1, ex, s2, cut])).body!;
+  const t = m.toTransport(body)!;
+  assert.ok(t && t.order.length === body.faces.length);
+  const back = new Modeller(oc).fromTransport(t.brep, t.order, body.names);
+  assert.deepEqual(back.names, body.names);
+  const facts = (f: any) => {
+    const p = new oc.GProp_GProps_1();
+    oc.BRepGProp.SurfaceProperties_1(f, p, false, false);
+    const c = p.CentreOfMass();
+    return [p.Mass(), c.X(), c.Y(), c.Z(), f.Orientation_1().value];
+  };
+  body.faces.forEach((f, i) => facts(f).forEach((v, k) => close(facts(back.faces[i])[k] as number, v as number)));
+});
+
 test("sketch orientation: X axis along a straight edge (FR-SK-002)", async () => {
   const m = new Modeller(await occ());
   const s1 = rect("s1", 0, 0, 100, 60);
