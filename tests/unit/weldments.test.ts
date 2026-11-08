@@ -134,5 +134,56 @@ test("fillet bead round a tube standing on a plate (FR-FT-121)", async () => {
   near(r.volume - base.volume, 12.5 * 2 * Math.PI * (R + 5 / 3), 1e-3);
 });
 
+test("custom profile from a sketch: holes, arcs, sketch origin on the path (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  // 40 × 20 rectangle with its corner on the sketch origin and a Ø10 hole in the middle.
+  const pr = poly("pr", [[0, 0], [40, 0], [40, 20], [0, 20]], true);
+  pr.name = "Bracket profile";
+  pr.ents.push({ id: "hc", t: "point", x: 20, y: 10 }, { id: "h", t: "circle", c: "hc", r: 5 });
+  const path = poly("o", [[0, 0], [500, 0]], false);
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "sketch", size: "", psketch: "pr", segs: lines(path), corner: "none" };
+  const r = run(m, doc([pr, path, mem]));
+  near(r.volume, (800 - 25 * Math.PI) * 500, 1e-4);
+  // Along X on the XY plane: profile x runs along world Y, profile y along Z; the sketch origin sits on the path.
+  const c = m.props(r.body!).com;
+  near(c[0], 250); near(c[1], 20); near(c[2], 10);
+  assert.deepEqual(r.cut.map(x => [x.desc, x.length]), [["Bracket profile", 500]]);
+  // On its box centre instead.
+  const rc = run(m, doc([pr, path, { ...mem, anchor: "c" }]));
+  const cc = m.props(rc.body!).com;
+  near(cc[1] + 1, 1); near(cc[2] + 1, 1);
+  // A D-shape: a line and a half circle stay exact.
+  const d: SketchFeature = { id: "d", type: "sketch", name: "D", plane: { std: "XY" }, rels: [], dims: [], ents: [
+    { id: "p0", t: "point", x: 40, y: 0 }, { id: "p1", t: "point", x: 0, y: 0 }, { id: "pc", t: "point", x: 20, y: 0 },
+    { id: "l", t: "line", a: "p1", b: "p0" }, { id: "a", t: "arc", c: "pc", a: "p0", b: "p1" },
+  ] };
+  const rd = run(m, doc([d, path, { ...mem, psketch: "d" }]));
+  near(rd.volume, (Math.PI * 400) / 2 * 500, 1e-6);
+  // No closed region: the member reports it.
+  const bad = m.evaluate(doc([path, { ...mem, psketch: "o" }]));
+  assert.equal(bad.statuses.find(x => x.id === "m")?.ok, false);
+});
+
+test("three members meeting at a corner: one runs through, the others stop at its faces (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const k: Sketch3dFeature = {
+    id: "k", type: "sketch3d", name: "3DSketch1", rels: [], dims: [],
+    pts: [{ id: "A", p: [0, 0, 0], fixed: true }, { id: "X", p: [300, 0, 0] }, { id: "Y", p: [0, 300, 0] }, { id: "Z", p: [0, 0, 300] }],
+    segs: [{ id: "x", t: "line", pts: ["A", "X"] }, { id: "y", t: "line", pts: ["A", "Y"] }, { id: "z", t: "line", pts: ["A", "Z"] }],
+  };
+  const mem: MemberFeature = { id: "m", type: "member", name: "Structural Member1", profile: "shs", size: "40x40x3", segs: ["x", "y", "z"].map(ent => ({ sketch: "k", ent })), corner: "butt1" };
+  const A = profileArea(profileShape("shs", "40x40x3")!);
+  const r = run(m, doc([k, mem]));
+  assert.equal(r.info.length, 3);
+  assert.deepEqual(r.cut.map(c => [c.length, c.qty]), [[320, 1], [280, 2]]);
+  near(r.volume, A * 880, 2e-4);
+  // Mitre falls back to the same rule; butt 2: the last one runs through.
+  assert.deepEqual(run(m, doc([k, { ...mem, corner: "miter" }])).cut.map(c => [c.length, c.qty]), [[320, 1], [280, 2]]);
+  const r2 = run(m, doc([k, { ...mem, corner: "butt2" }]));
+  const zLen = r2.cut.find(c => c.qty === 1)!.length;
+  assert.equal(zLen, 320);
+  assert.equal(r2.body!.names.filter(n => n.startsWith("m:z:")).length > 0, true);
+});
+
 function centroid(m: Modeller, face: unknown) { return (m as unknown as { centroid(f: unknown): [number, number, number] }).centroid(face); }
 function centroidX(m: Modeller, face: unknown) { return centroid(m, face)[0]; }

@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.97.0] - 2026-11-08
+## [1.98.0] - 2026-11-08
 
 ### Added
 
@@ -25,6 +25,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - **Copy faces or bodies.** Linear pattern, Circular pattern and Mirror can copy faces instead of features. Click all the faces of a boss or a cut, and each copy adds or removes the same shape. They can also copy bodies, and each copy becomes a new body. Mirror's **Merge solids** joins each mirrored body to its original.
   - **Sketch driven pattern** (pattern ▾): a copy at each free point of a sketch, moved from the seed's centroid or a picked reference point.
   - **Table driven pattern** (pattern ▾): copies moved by X, Y offsets typed one row per copy, along the part's axes or a coordinate system.
+
+## [1.97.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121):
+  - **Custom profile (sketch)** in Structural Member: the largest closed region of a 2D sketch (holes included; lines, arcs and circles kept exact) is the cross-section, with the sketch origin on the path or any of the nine box points. The cut list names it after the sketch.
+  - Corners where three or more members meet: the first member runs through (End butt 2: the last) and the others stop square at its faces, so the cut list shows real lengths.
+  - **End Cap**: a thickness arrow to drag in the view (also from the tree, like extrude depth) and a **Thickness inward** option.
 
 ## [1.96.0] - 2026-11-08
 
@@ -956,7 +965,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.97.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.98.0...HEAD
+[1.98.0]: https://github.com/kothf/step-viewer/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/kothf/step-viewer/compare/v1.96.0...v1.97.0
 [1.96.0]: https://github.com/kothf/step-viewer/compare/v1.94.0...v1.96.0
 [1.94.0]: https://github.com/kothf/step-viewer/compare/v1.92.0...v1.94.0

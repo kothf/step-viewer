@@ -2746,7 +2746,14 @@ export const RU: Record<string, string> = {
   "Click any face of the body the members stop at.": "Щёлкните любую грань тела, у которого заканчиваются элементы.",
   "Click faces of the members to trim or extend.": "Щёлкните грани элементов, которые нужно обрезать или удлинить.",
   "Click flat faces: the bead runs along the straight edges where set 1 meets set 2.": "Щёлкните плоские грани: шов идёт вдоль прямых рёбер, где набор 1 встречается с набором 2.",
-  "Click the flat end faces of members.": "Щёлкните плоские торцевые грани элементов.",
+  "Click the flat end faces of members. Drag the arrow to change the thickness.": "Щёлкните плоские торцевые грани элементов. Перетащите стрелку, чтобы изменить толщину.",
+  "Custom profile (sketch)": "Свой профиль (эскиз)",
+  "A closed sketch drawn at the origin: its largest region is the profile, the sketch origin sits on the path.": "Замкнутый эскиз, нарисованный у начала координат: его наибольшая область — профиль, начало эскиза лежит на траектории.",
+  "Sketch origin": "Начало эскиза",
+  "Pick a closed sketch for the profile.": "Выберите замкнутый эскиз для профиля.",
+  "The profile sketch has no closed region.": "В эскизе профиля нет замкнутой области.",
+  "Thickness inward": "Толщина внутрь",
+  "Drag the arrow to change the thickness; click to type it": "Перетащите стрелку, чтобы изменить толщину; щёлкните, чтобы ввести значение",
   "Click two flat faces that meet at a corner, such as a beam and a post.": "Щёлкните две плоские грани, сходящиеся в углу, например балку и стойку.",
   "Corner treatment": "Обработка углов",
   "Corner type": "Тип угла",
@@ -2900,7 +2907,7 @@ export const RU: Record<string, string> = {
   "The faces could not be copied: pick all the faces of one boss or cut.": "Не удалось скопировать грани: выберите все грани одной бобышки или выреза.",
   "The coordinate system is missing or has an error.": "Система координат отсутствует или содержит ошибку.",
   "The sketch has no free points away from the seed.": "В эскизе нет свободных точек вне исходного элемента.",
-  // 1.97.0: up to body, hole types and end conditions (FR-FT-012, FR-FT-050).
+  // 1.98.0: up to body, hole types and end conditions (FR-FT-012, FR-FT-050).
   "Up to body": "До тела",
   "Body of {name}": "Тело элемента {name}",
   "Click any face of the body the extrusion stops at.": "Щёлкните любую грань тела, у которого заканчивается вытягивание.",
@@ -2920,7 +2927,7 @@ export const RU: Record<string, string> = {
   "There is no material under the hole's face.": "Под гранью отверстия нет материала.",
   "The counterdrill must be wider than the hole and less deep, at an angle between 6° and 174°.": "Ступень должна быть шире отверстия и мельче его, с углом от 6° до 174°.",
   "The slot length must be more than 0.": "Длина паза должна быть больше 0.",
-  // 1.97.0: vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060).
+  // 1.98.0: vertex and offset face chamfers, multi-thickness shell (FR-FT-041, FR-FT-060).
   "Offset face": "Смещение грани",
   "Distance 3": "Расстояние 3",
   "Face {n}": "Грань {n}",
@@ -2940,7 +2947,7 @@ export const RU: Record<string, string> = {
   "A face to remove cannot have its own thickness.": "У удаляемой грани не может быть своей толщины.",
   "A multi-thickness face has no wall of its own.": "У грани с разной толщиной нет своей стенки.",
   "Multi-thickness faces must be flat.": "Грани с разной толщиной должны быть плоскими.",
-  // 1.97.0: parting line draft, rib draft, loft start/end constraints (FR-FT-061, FR-FT-062, FR-FT-082).
+  // 1.98.0: parting line draft, rib draft, loft start/end constraints (FR-FT-061, FR-FT-062, FR-FT-082).
   "Type of draft": "Тип уклона",
   "Parting line": "Линия разъёма",
   "Direction of pull": "Направление извлечения",

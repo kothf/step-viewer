@@ -10,8 +10,10 @@
 // section properties (outer 2t up to 6 mm wall, 2.5t up to 10 mm, inner = outer - t).
 import type { V2 } from "../model/types";
 
-export type Loop = { pts: V2[]; r: number[] } | { circle: number; c: V2 };
-export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number }
+/** A rounded polygon, a circle, or (custom profiles from a sketch) lines and arcs as they are. */
+export type Loop = { pts: V2[]; r: number[] } | { circle: number; c: V2 } | { segs: LoopSeg[] };
+/** `origin`: where the sketch origin of a custom profile lies (the default pierce point). */
+export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number; origin?: V2 }
 
 export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "upn" | "ipe" | "hea" | "flat" | "bar";
 
@@ -91,7 +93,7 @@ const rect = (w: number, h: number, r: number): Loop => ({ pts: [[-w / 2, -h / 2
 /** Moves a loop so the box (x0..x1, y0..y1) is centred on the origin. */
 function centre(shape: { outer: Loop; holes: Loop[] }, x0: number, x1: number, y0: number, y1: number): ProfileShape {
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  const mv = (l: Loop): Loop => ("circle" in l ? { circle: l.circle, c: [l.c[0] - cx, l.c[1] - cy] } : { pts: l.pts.map(p => [p[0] - cx, p[1] - cy] as V2), r: l.r });
+  const mv = (l: Loop): Loop => ("circle" in l ? { circle: l.circle, c: [l.c[0] - cx, l.c[1] - cy] } : "pts" in l ? { pts: l.pts.map(p => [p[0] - cx, p[1] - cy] as V2), r: l.r } : l);
   return { outer: mv(shape.outer), holes: shape.holes.map(mv), w: x1 - x0, h: y1 - y0 };
 }
 
@@ -139,6 +141,7 @@ export type LoopSeg = { kind: "line"; a: V2; b: V2 } | { kind: "arc"; a: V2; m: 
 
 /** A rounded polygon as lines and arcs (a circle gives one closed arc split in two). */
 export function loopSegs(l: Loop): LoopSeg[] {
+  if ("segs" in l) return l.segs;
   if ("circle" in l) {
     const [cx, cy] = l.c, r = l.circle;
     return [

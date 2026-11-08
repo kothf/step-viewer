@@ -5716,7 +5716,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.97: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
+  // --- 1.98: parting line draft clicked on the edge, loft normal to its profiles (FR-FT-061, FR-FT-082) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5764,8 +5764,8 @@ try {
     const d1 = await state();
     const wedge = 100 * 0.5 * 10 * 10 * Math.tan(5 * Math.PI / 180);
     check(dd.kind === "parting" && dd.edges?.length === 1 && /ea:side/.test(dd.edges[0]) && /eb:side/.test(dd.edges[0]) && dd.other && Math.abs(Math.abs(120000 - d1.v) - wedge) < 1 && !d1.bad,
-      `model 1.97: parting line draft from a clicked edge, 5° (FR-FT-061) (${JSON.stringify({ dd, d1, wedge })})`);
-    check(/Линия разъёма/.test(ru) && /Направление извлечения/.test(ru) && /Другая грань/.test(ru) && !/Parting line|Direction of pull/.test(ru), `model 1.97: draft panel in Russian (${ru.slice(0, 300)})`);
+      `model 1.98: parting line draft from a clicked edge, 5° (FR-FT-061) (${JSON.stringify({ dd, d1, wedge })})`);
+    check(/Линия разъёма/.test(ru) && /Направление извлечения/.test(ru) && /Другая грань/.test(ru) && !/Parting line|Direction of pull/.test(ru), `model 1.98: draft panel in Russian (${ru.slice(0, 300)})`);
     // Loft between two 20 mm squares (the top one 15 mm over), normal to both profiles from the panel.
     await mp.evaluate(() => window.__sv.model.store.change("Squares", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
@@ -5788,11 +5788,11 @@ try {
     await mp.click("#mc-ok");
     await settle();
     const l1 = await state();
-    check(ld.s && ld.e && ld.len && Math.abs(l1.v - before - 12000) < 15 && !l1.bad, `model 1.97: loft normal to its start and end profiles (FR-FT-082) (${JSON.stringify({ ld, l1, before })})`);
+    check(ld.s && ld.e && ld.len && Math.abs(l1.v - before - 12000) < 15 && !l1.bad, `model 1.98: loft normal to its start and end profiles (FR-FT-082) (${JSON.stringify({ ld, l1, before })})`);
     await ctx.close();
   }
 
-  // --- 1.97: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
+  // --- 1.98: vertex chamfer clicked on a corner, multi-thickness shell (FR-FT-041, FR-FT-060) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5838,8 +5838,8 @@ try {
     await settle();
     const v1 = await state();
     check(vd.mode === "vertex" && vd.n === 1 && vd.d3 && Math.abs(v1.v - (120000 - 125 / 6)) < 0.1 && !v1.bad,
-      `model 1.97: vertex chamfer on a clicked corner, 5 mm each way (FR-FT-041) (${JSON.stringify({ vd, v1 })})`);
-    check(/Расстояние 3/.test(ru) && /Вершина/.test(ru) && !/Distance 3|Click near a corner/.test(ru), `model 1.97: vertex chamfer panel in Russian (${ru.slice(0, 300)})`);
+      `model 1.98: vertex chamfer on a clicked corner, 5 mm each way (FR-FT-041) (${JSON.stringify({ vd, v1 })})`);
+    check(/Расстояние 3/.test(ru) && /Вершина/.test(ru) && !/Distance 3|Click near a corner/.test(ru), `model 1.98: vertex chamfer panel in Russian (${ru.slice(0, 300)})`);
     // Shell 2 mm open at the top (on the plain block); the +X wall gets 5 mm typed in the multi-thickness list.
     await mp.evaluate(() => window.__sv.model.store.change("Drop chamfer", d => { d.features.pop(); }));
     await settle();
@@ -5858,7 +5858,7 @@ try {
     await settle();
     const v2 = await state();
     check(sd.focus === "mthick" && sd.multi?.[0]?.t === 5 && Math.abs(v2.v - (120000 - 93 * 56 * 18)) < 1 && !v2.bad,
-      `model 1.97: multi-thickness shell, one wall 5 mm (FR-FT-060) (${JSON.stringify({ sd, v2, want: 120000 - 93 * 56 * 18 })})`);
+      `model 1.98: multi-thickness shell, one wall 5 mm (FR-FT-060) (${JSON.stringify({ sd, v2, want: 120000 - 93 * 56 * 18 })})`);
     await ctx.close();
   }
 
@@ -6340,6 +6340,45 @@ try {
     await settle();
     const cap = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
     check(cap.bodies === 7 && !cap.bad && JSON.stringify(cap.plate) === "[40,40,5]", `weldments: End Cap on a member's open end (${JSON.stringify(cap)})`);
+    // The end cap's thickness arrow: dragging it outwards thickens the plate.
+    const capId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    // Look at the cap from close by, so the arrow is on screen.
+    await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrow; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(-1, -1, 0.8).multiplyScalar(250)); v.camera.lookAt(a.base); v.controls.update(); });
+    await mp.waitForTimeout(300);
+    const ends = await mp.evaluate(() => {
+      const a = window.__sv.modeller.arrow, v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      if (!a) return null;
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (ends) {
+      await mp.mouse.move(ends.from[0], ends.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(ends.from[0] + ((ends.to[0] - ends.from[0]) * i) / 6, ends.from[1] + ((ends.to[1] - ends.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const thick = await mp.evaluate(() => window.__sv.model.mode().draft?.thickness?.v);
+    await mp.click("#mc-ok");
+    await settle();
+    const plate2 = await mp.evaluate(() => (window.__sv.model.last().cutList ?? []).find(c => c.kind === "plate")?.plate);
+    check(ends && /^5 mm$/.test(ends.label ?? "") && thick > 10 && thick < 20 && plate2?.[2] === thick, `weldments: dragging the end cap arrow sets its thickness (${JSON.stringify({ ends, thick, plate2 })})`);
+    // A custom profile from a closed sketch, and three members meeting at a corner.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Custom", d => {
+        d.features.push({ id: "pr", type: "sketch", name: "Profile", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1", 0, 0), P("q2", 30, 0), P("q3", 30, 10), P("q4", 0, 10), L("r1", "q1", "q2"), L("r2", "q2", "q3"), L("r3", "q3", "q4"), L("r4", "q4", "q1")] },
+          { id: "k3", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "A", p: [1000, 0, 0], fixed: true }, { id: "X", p: [1300, 0, 0] }, { id: "Y", p: [1000, 300, 0] }, { id: "Z", p: [1000, 0, 300] }], segs: [{ id: "x", t: "line", pts: ["A", "X"] }, { id: "y", t: "line", pts: ["A", "Y"] }, { id: "z", t: "line", pts: ["A", "Z"] }] },
+          { id: "m3", type: "member", name: "Structural Member3", profile: "sketch", size: "", psketch: "pr", segs: [{ sketch: "s2", ent: "k1" }], corner: "none" },
+          { id: "m4", type: "member", name: "Structural Member4", profile: "shs", size: "40x40x3", segs: ["x", "y", "z"].map(ent => ({ sketch: "k3", ent })), corner: "butt1" });
+      });
+    });
+    await settle();
+    const cu = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]), corner: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (c.length === 320 || c.length === 280) && c.angle1 === 0).map(c => [c.qty, c.length]) }; });
+    check(!cu.bad && JSON.stringify(cu.prof) === "[[1,300]]" && JSON.stringify(cu.corner) === "[[2,320],[2,280]]", `weldments: custom sketch profile and a three-member corner (${JSON.stringify(cu)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
