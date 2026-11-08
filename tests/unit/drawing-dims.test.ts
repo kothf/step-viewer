@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { dimGeo, dimPrims, dimText } from "../../src/drawing/annot";
+import { dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -68,4 +68,31 @@ test("ordinate: distance from the base along one axis; the text stands at the en
   const pvv = dimPrims(ov, dimGeo(ov, P, topo)!, pl, ".").prims;
   assert.ok(pvv.some(p => p.t === "t" && p.s === "12" && !p.rot));
   assert.equal(dimGeo(dim("ov", [base, { e: "gone", h: [0, 0, 0], p: "e" }]), P, topo), null);
+});
+
+test("inspection dimension: the text is framed by an obround", () => {
+  const a = dim("arc", [ref("q1")]), g = dimGeo(a, P, topo)!;
+  const plain = dimPrims(a, g, pl, ".").prims, insp = dimPrims({ ...a, insp: true }, g, pl, ".").prims;
+  assert.equal(insp.length - plain.length, 4, "two sides and two round ends");
+  assert.equal(insp.slice(-4).filter(p => p.t === "a").length, 2);
+});
+
+test("hole table: end-on holes once each, tagged by size from the smallest, X/Y from the origin", () => {
+  const hole = (k: string, c: V3, r: number, z = 0): MEdge => ({ k, t: "c", a: [c[0] + r, c[1], z], b: [c[0] + r, c[1], z], m: [c[0] - r, c[1], z], c: [c[0], c[1], z], ax: [0, 0, 1], r, sp: 2 * Math.PI });
+  const ht: Topo = { edges: [hole("h1", [30, 20, 0], 5), hole("h1b", [30, 20, 0], 5, -10), hole("h2", [10, 20, 0], 5), hole("h3", [50, 10, 0], 3),
+    { ...hole("side", [0, 0, 0], 4), ax: [1, 0, 0] }, { ...hole("half", [70, 0, 0], 4), sp: Math.PI }, line("e", [0, 0, 0], [80, 0, 0])], cyls: [] };
+  const holes = holeEdges(ht, P, [0, 0, 1]);
+  assert.deepEqual(holes.map(e => e.k).sort(), ["h1", "h2", "h3"], "the far rim, a side-on circle and an arc are left out");
+  const ctx: AnnotCtx = { topo: ht, holes: [], items: [], box: null, dec: ",", label: s => s };
+  const a = { id: "t", t: "htable" as const, view: "v", origin: { pt: [0, 0, 0] as V3 }, holes: holes.map(e => ({ e: e.k, h: e.m, p: "e" as const })), pos: [0, -40] as [number, number], prec: 1 };
+  const hr = holeRows(a, P, ctx);
+  assert.deepEqual(hr.rows, [["A1", "50,0", "10,0", "Ø6"], ["B1", "10,0", "20,0", "Ø10"], ["B2", "30,0", "20,0", "Ø10"]]);
+  assert.equal(hr.missing, false);
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const out = viewAnnots(sh, view, pl, ctx);
+  const tx = out.prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Tag", "X LOC", "Y LOC", "Size", "A1", "B2", "X", "Y"].every(s => tx.filter(x => x === s).length >= 1), tx.join(" "));
+  assert.equal(tx.filter(x => x === "B2").length, 2, "in the table and beside the hole");
+  const gone = viewAnnots({ ...sh, annots: [{ ...a, holes: [...a.holes, { e: "gone", h: [0, 0, 0] as V3, p: "e" as const }] }] } as unknown as Sheet, view, pl, ctx);
+  assert.deepEqual(gone.dangling, ["t"]);
 });

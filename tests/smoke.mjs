@@ -3177,6 +3177,23 @@ try {
     const auxBox = aux && await dp.evaluate(i => window.__sv.drw.placement(i).box.map(v => Math.round(v * 1000) / 1000), aux.id);
     check(edgeHi === 1 && aux && aux.letter === "C" && aux.look === 1 && Math.abs(aux.x - front.x) < 0.02 && aux.y > front.y && auxBox && Math.round(auxBox[2] - auxBox[0]) === 100 && Math.round(auxBox[3] - auxBox[1]) === 60,
       `drawing: auxiliary view C square to a picked edge, lined up with its parent (${JSON.stringify(aux && { x: aux.x, y: aux.y, look: aux.look })}, box ${auxBox})`);
+    // 1.114.0 offset section (FR-DRW-012): a path on the top view at y = 10 left of x = 0, a step down to y = 0, then through the hole.
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="off"]');
+    for (const [u, w] of [[-45, 10], [0, 10], [0, 0], [45, 0]]) { [x, y] = await at(top.id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); }
+    const pathPreview = await dp.evaluate(() => document.querySelectorAll("#drw polyline.drw-cut").length);
+    await dp.mouse.click(x, y);
+    [x, y] = await scr(top.x, top.y - 75);
+    await dp.mouse.move(x + 5, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 10, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    vs = await views();
+    const off = vs.find(v => v.kind === "section" && v.path);
+    const offProj = off && await dp.evaluate(i => window.__sv.drw.proj(i), off.id);
+    const offArea = (offProj?.cut ?? []).reduce((t, l) => t + Math.abs(area(l)), 0);
+    prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
+    check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
+      `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
     // DXF has the hatch on its own layer; Russian labels; a saved drawing keeps the views.
     await dp.click('#drw [data-a="export"]');
     const [dl] = await Promise.all([dp.waitForEvent("download"), dp.click('#drw [data-x="dxf"]')]);
@@ -3288,6 +3305,13 @@ try {
     const ords = an.filter(a => a.k === "oh").length, chain = an.filter(a => !a.src && a.k === "h" && a.view === top.id).length;
     check(ords === 3 && chain === 2 && tx.includes("0") && tx.includes("40") && tx.filter(s => s === "60").length >= 3,
       `drawing: ordinate dimensions 0 / 60 / 100 from the base corner and a chain 60 + 40 along the top edge (${ords} ordinates, ${chain} chain; ${tx.join(" ")})`);
+    // Hole table (FR-DRW-024): origin at the corner, the Ø16 hole tagged A1 at X 60 / Y 30, the table placed below the view.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="htable"]');
+    await clicks(top.id, [[-50, -30], [-50, -60]]);
+    tx = await texts();
+    const htab = (await annots()).find(a => a.t === "htable");
+    check(!!htab && htab.holes.length === 1 && ["Tag", "X LOC", "Size", "Ø16 THRU"].every(s => tx.includes(s)) && tx.filter(s => s === "A1").length === 2 && tx.includes("30"),
+      `drawing: hole table lists the hole from the origin and tags it on the view (${tx.filter(s => /^(Tag|A1|Ø16|30|60)/.test(s)).join(" ")})`);
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-dims.png` });
     // Exports carry the annotations; Russian uses the decimal comma.
     const svgT = await dp.evaluate(() => window.__sv.drw.svg());
@@ -3509,6 +3533,25 @@ try {
     await ready();
     const left = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "PHANTOM").length);
     check(phc2 && left === 0, `drawing: an alternate position can be turned and removed (${JSON.stringify([phc2?.o, left])})`);
+    // 1.114.0 (FR-DRW-012): a section through both pins cuts them; Don't cut Pin<1> draws it whole.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="section"]'); await dp.click('#drw [data-cut="h"]');
+    [x, y] = await at(top, -45, 0);
+    await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y);
+    [x, y] = await at(top, 0, -95);
+    await dp.mouse.move(x + 3, y); await dp.mouse.move(x, y);
+    await dp.waitForFunction(() => document.querySelectorAll("#drw .drw-preview line").length > 4, null, { timeout: 30000 });
+    await dp.mouse.click(x, y);
+    await ready();
+    const asec = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.find(v => v.kind === "section")?.id);
+    const carea = async () => { const pr = await dp.evaluate(i => window.__sv.drw.proj(i), asec); return (pr?.cut ?? []).reduce((t, l) => { let a = 0; for (let i = 0; i < l.length; i += 2) { const j = (i + 2) % l.length; a += l[i] * l[j + 1] - l[j] * l[i + 1]; } return t + Math.abs(a / 2); }, 0); };
+    const a0 = await carea();
+    await dp.check('#drw .drw-props [data-ex="c2"]');
+    await ready();
+    const a1 = await carea();
+    const exc = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].views.find(v => v.id === i)?.exclude ?? null, asec);
+    check(asec && Math.abs(a0 - (100 * 20 + 2 * 8 * 15)) < 0.5 && Math.abs(a1 - (100 * 20 + 8 * 15)) < 0.5 && JSON.stringify(exc) === '["c2"]',
+      `drawing: an assembly section cuts both pins, and Don't cut leaves Pin<1> whole (${a0.toFixed(1)} → ${a1.toFixed(1)} mm²; ${JSON.stringify(exc)})`);
     await dp.keyboard.press("Escape");
     if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-asm.png` });
     // Associative: suppress Pin<2> in the assembly; the BOM says 1 pin and the balloons stay.
@@ -5863,7 +5906,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.113: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
+  // --- 1.116: Recognize Holes turns the holes of a body into Hole features (FR-FT-102) ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const mp = await ctx.newPage();
@@ -5894,7 +5937,7 @@ try {
     await settle();
     const r1 = await state();
     check(Math.abs(r1.v - r0.v) < 0.05 && !r1.bad && r1.types === "sketch,extrude,hole,hole,delface,hole,hole" && r1.holes === "blind:1:8 blind:1:8 through:2:10 through:2:10",
-      `model 1.113: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
+      `model 1.116: Recognize Holes fills the holes and makes them again as Hole features (FR-FT-102) (${JSON.stringify({ r0, r1 })})`);
     await ctx.close();
   }
 
@@ -6404,7 +6447,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 15 && mode === "note", `drawing: annotation tab shows the 15 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 16 && mode === "note", `drawing: annotation tab shows the 16 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };

@@ -3034,11 +3034,32 @@ export const RU: Record<string, string> = {
   "Start tangency": "Касательность в начале",
   "Path tangent": "Касательно к траектории",
   "The profile is turned square to the path where the path starts.": "Профиль поворачивается перпендикулярно траектории в её начале.",
-  // 1.113.0: feature recognition (FR-FT-102).
+  // 1.116.0: feature recognition (FR-FT-102).
   "Recognize Holes": "Распознать отверстия",
   "Recognize holes: round holes in the body become Hole features you can edit": "Распознать отверстия: круглые отверстия тела становятся редактируемыми элементами «Отверстие»",
   "Recognize holes": "Распознать отверстия",
   "Feature recognition failed: {msg}": "Не удалось распознать элементы: {msg}",
   "No holes were found to recognise.": "Отверстий для распознавания не найдено.",
   "{n} hole recognised|{n} holes recognised": "Распознано {n} отверстие|Распознано {n} отверстия|Распознано {n} отверстий",
+  // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
+  "Hole table": "Таблица отверстий",
+  "Tag": "Обозн.",
+  "X LOC": "X",
+  "Y LOC": "Y",
+  "{n} holes, measured from the origin along the view's axes.": "Отверстий: {n}, координаты от начала по осям вида.",
+  "Update holes": "Обновить отверстия",
+  "Take the holes the view shows now, after the model changed": "Взять отверстия, которые вид показывает сейчас, после изменения модели",
+  "Inspection dimension": "Контрольный размер",
+  "Click where the hole table goes.": "Щёлкните, где разместить таблицу отверстий.",
+  "Click the origin of the hole table on a view: a corner or a circle centre.": "Щёлкните начало координат таблицы отверстий на виде: угол или центр окружности.",
+  "This view shows no holes end-on.": "На этом виде нет отверстий, видимых с торца.",
+  // 1.114.0: offset and half sections, components left uncut (FR-DRW-012).
+  "Offset section": "Ступенчатый разрез",
+  "Half section": "Половинный разрез",
+  "Click the centre: the cut stops there.": "Щёлкните центр: разрез заканчивается там.",
+  "Click where the step ends, square to the cut.": "Щёлкните конец уступа, перпендикулярно разрезу.",
+  "Click the end of the first cut.": "Щёлкните конец первого секущего участка.",
+  "Click the next corner: legs run along or square to the first. Enter or a second click on the last point finishes.": "Щёлкните следующий угол: участки идут вдоль первого или перпендикулярно ему. Enter или повторный щелчок по последней точке завершают линию.",
+  "Every leg of the cutting path must run along or square to the first.": "Каждый участок линии сечения должен идти вдоль первого или перпендикулярно ему.",
+  "Don't cut": "Не разрезать",
 };
