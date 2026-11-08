@@ -24,5 +24,6 @@ await build({
   define: { __APP_VERSION__: '"test"' },
   logLevel: "warning",
 });
-const r = spawnSync(process.execPath, ["--test", "--test-reporter=spec", ...files.map(f => join(out, f.replace(/\.ts$/, ".mjs")))], { stdio: "inherit" });
+const pat = process.env.UNIT_PATTERN ? [`--test-name-pattern=${process.env.UNIT_PATTERN}`] : [];
+const r = spawnSync(process.execPath, ["--test", "--test-reporter=spec", ...pat, ...files.map(f => join(out, f.replace(/\.ts$/, ".mjs")))], { stdio: "inherit" });
 process.exit(r.status ?? 1);

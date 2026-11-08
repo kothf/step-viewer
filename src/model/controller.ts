@@ -20,7 +20,7 @@ import { snapshotList, snapshotRead, snapshotSave, SNAPSHOT_KEEP } from "./snaps
 import { ModelKernel, type Rebuild } from "./kernelClient";
 import type { FeatureFolder, ThreadFeature,
   AxisFeature, ChamferFeature, CsysFeature, CircularPatternFeature, EdgeRef, ExtrudeFeature, Feature, FeatureStatus, FilletFeature, ScaleFeature, Frame, LinearPatternFeature, LineRef,
-  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
+  GlobalVar, HelixFeature, LoftFeature, RibFeature, SplitFeature, FaceRef, ImportFeature, CombineFeature, SplitBodyFeature, DeleteBodyFeature, MoveBodyFeature, DeleteFaceFeature, MoveFaceFeature, PlaneSurfFeature, ExtrudeSurfFeature, OffsetSurfFeature, KnitFeature, ThickenFeature, ReplaceFaceFeature, SweepFeature, HoleFeature, MirrorFeature, Num, PartDoc, PlaneFeature, PlaneRef, PointFeature, RevolveFeature, ShellFeature, DraftFeature, SketchFeature, V3, VertexRef,
 } from "./types";
 import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
@@ -128,8 +128,8 @@ function applyHoleSize(f: HoleFeature) {
 
 const DEFAULT_COLOR: V3 = [0.72, 0.75, 0.8];
 const STD_NAMES: Record<"XY" | "XZ" | "YZ", string> = { XY: "Top (XY)", XZ: "Front (XZ)", YZ: "Right (YZ)" };
-const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
-const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace"];
+const ICONS: Record<string, string> = { helix: "∿", sweep: "⤳", loft: "⏢", rib: "⊿", split: "⊘", import: "⇩", combine: "⊕", bsplit: "◨", delbody: "⊖", movebody: "⇲", moveface: "⇧", delface: "⌫", planesurf: "▢", extsurf: "⊓", offsurf: "⫽", knit: "⧉", thicken: "▤", replaceface: "⇄", scale: "⤢", thread: "≋", hole: "◎", sketch: "✎", extrude: "▰", cut: "▱", revolve: "↻", fillet: "◜", chamfer: "◺", plane: "▭", axis: "⟋", point: "✳", csys: "⊹", shell: "◫", draft: "◿", mirror: "⧎", lpattern: "⋯", cpattern: "✲", part: "◆", material: "▦" };
+const BASES = ["Revolve cut", "Sketch", "Extrude", "Cut", "Revolve", "Fillet", "Chamfer", "Plane", "Axis", "Point", "Coordinate system", "Shell", "Draft", "Mirror", "LPattern", "CirPattern", "Hole", "Thread", "Cut-Sweep", "Cut-Loft", "Helix", "Sweep", "Loft", "Rib", "Split Line", "Combine", "Split", "Body-Delete/Keep", "Body-Move/Copy", "Imported", "Scale", "DeleteFace", "MoveFace", "Surface-Plane", "Surface-Extrude", "Surface-Offset", "Surface-Knit", "Thicken", "ReplaceFace"];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -587,7 +587,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface") {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | SurfTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -601,7 +601,7 @@ export class ModelController {
     const refEdge = type === "axis" || type === "point" ? this.pickedEdge() : null;
     const refFace = type === "axis" || type === "point" ? this.pickedFace() : null;
     const csysEdge = type === "csys" ? this.pickedEdge() : null;
-    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" ? this.pickedFace() : null;
+    const shellFace = type === "shell" || type === "hole" || type === "draft" || type === "delface" || type === "moveface" || type === "offsurf" || type === "knit" || type === "thicken" || type === "replaceface" ? this.pickedFace() : null;
     const seedSel = this.selected && SEED_TYPES.has(this.store.feature(this.selected)?.type ?? "") ? this.selected : null;
     this.exitMode(false);
     const d = this.doc;
@@ -677,6 +677,10 @@ export class ModelController {
       const p3 = this.p3Draft(type, id, sketches, used);
       if (!p3) return;
       draft = p3;
+    } else if (SURF_TYPES.has(type)) {
+      const sf = this.surfDraft(type as SurfTool, id, sketches, used, shellFace);
+      if (!sf) return;
+      draft = sf;
     } else if (type === "draft") {
       if (!this.last?.data) { toast(t("There is no body yet."), true); return; }
       // SolidWorks order: the neutral plane first (a picked flat face), then the faces to draft.
@@ -705,7 +709,7 @@ export class ModelController {
       if (pre) (draft as FilletFeature).edges = [pre];
     }
     const index = end;
-    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" ? "faces" : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
+    const focus: Focus | undefined = type === "plane" ? "base" : type === "shell" || type === "delface" || type === "moveface" || type === "offsurf" ? "faces" : type === "draft" ? ((draft as DraftFeature).plane ? "faces" : "nplane") : type === "hole" ? ((draft as HoleFeature).plane ? "pts" : "hplane")
       : type === "mirror" ? ((draft as MirrorFeature).features.length ? "mplane" : "seeds")
       : type === "lpattern" || type === "cpattern" ? ((draft as CopyFeature).features.length ? "dir" : "seeds")
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
@@ -831,6 +835,11 @@ export class ModelController {
     if ((f.type === "delbody" || f.type === "movebody") && !f.bodies.length) { toast(t("Pick the bodies."), true); return; }
     if ((f.type === "delface" || f.type === "moveface") && !f.faces.length) { toast(t("Pick the faces."), true); return; }
     if (f.type === "split" && !f.sketch) { toast(t("Pick the sketch to project."), true); return; }
+    if ((f.type === "planesurf" || f.type === "extsurf") && !f.sketch) { toast(t("Pick a sketch."), true); return; }
+    if (f.type === "offsurf" && !f.faces.length) { toast(t("Pick the faces."), true); return; }
+    if (f.type === "knit" && f.surfaces.length < (f.solid ? 1 : 2)) { toast(t("Pick two or more surface bodies."), true); return; }
+    if (f.type === "thicken" && !f.surface) { toast(t("Pick the surface to thicken."), true); return; }
+    if (f.type === "replaceface" && (!f.faces.length || !f.surface)) { toast(t(f.faces.length ? "Pick the replacement surface." : "Click the faces to replace."), true); return; }
     if (f.type === "rib" && !f.sketch) { toast(t("Pick an open sketch: the line the rib is built on."), true); return; }
     if (f.type === "loft" && f.profiles.length < 2) { toast(t("Pick two or more profile sketches."), true); return; }
     if (f.type === "point" && !(f.mode === "face" ? f.face : f.edge)) { toast(t(f.mode === "face" ? "Pick a face." : "Pick an edge."), true); return; }
@@ -1312,7 +1321,8 @@ export class ModelController {
       } else if (m.kind === "feature" && (m.draft.type === "axis" || m.draft.type === "point")) this.pickRefGeometry(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "csys") this.pickCsys(e, m.draft);
       else if (m.kind === "feature" && isBodyOp(m.draft)) this.pickBody(e);
-      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || isCopy(m.draft))) this.pickCopy(e);
+      else if (m.kind === "feature" && (m.draft.type === "shell" || m.draft.type === "draft" || m.draft.type === "split" || m.draft.type === "delface" || m.draft.type === "moveface" || m.draft.type === "offsurf" || isCopy(m.draft))) this.pickCopy(e);
+      else if (m.kind === "feature" && (m.draft.type === "knit" || m.draft.type === "thicken" || m.draft.type === "replaceface")) this.pickSurface(e);
       else if (m.kind === "feature" && m.draft.type === "hole") this.pickHole(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "thread") {
         const hit = this.host.edgeAt(e.clientX, e.clientY);
@@ -1589,7 +1599,16 @@ export class ModelController {
       this.draftChanged();
       return;
     }
-    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface") {
+    if (f.type === "moveface" && f.mode === "rotate" && m.focus === "axis") {
+      const hit = this.host.edgeAt(e.clientX, e.clientY);
+      const er = hit?.edge?.type === "line" ? this.refOfEdge(hit.edge) : null;
+      if (!er || er.faces.some(own)) { toast(t("Pick a straight edge.")); return; }
+      f.axis = { edge: er };
+      m.focus = "faces";
+      this.draftChanged();
+      return;
+    }
+    if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf") {
       const hit = this.host.faceAt(e.clientX, e.clientY);
       const fr = hit ? this.faceRef(hit.faceId) : null;
       if (!fr || own(fr.name)) { toast(t("Pick a face.")); return; }
@@ -1631,6 +1650,108 @@ export class ModelController {
     const sf = owner ? this.store?.feature(owner) : undefined;
     if (!sf || sf.id === f.id || !SEED_TYPES.has(sf.type)) { toast(t("Pick a face made by an extrude, a cut, a revolve, a mirror or a pattern.")); return; }
     this.toggleSeed(f, sf.id);
+  }
+
+  /** Whether a face of the view belongs to a surface body (they come after the solids' faces). */
+  private isSheetFace(faceId: number): boolean {
+    const r = this.last;
+    return !!r && faceId >= r.faceNames.length - (r.sheetFaces ?? 0);
+  }
+
+  /** Knit and Thicken (FRS 9.11): a surface body is picked by clicking any face of it. */
+  private pickSurface(e: PointerEvent) {
+    const m = this.mode;
+    if (m.kind !== "feature" || (m.draft.type !== "knit" && m.draft.type !== "thicken" && m.draft.type !== "replaceface")) return;
+    const f = m.draft;
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    if (f.type === "replaceface") {
+      // Replace face: a surface face picks the replacement, a solid face toggles the faces to replace.
+      const fr = hit ? this.faceRef(hit.faceId) : null;
+      if (!fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return; }
+      if (this.isSheetFace(hit!.faceId)) f.surface = fr;
+      else {
+        const i = f.faces.findIndex(x => x.name === fr.name);
+        if (i >= 0) f.faces.splice(i, 1); else f.faces.push(fr);
+      }
+      this.draftChanged();
+      return;
+    }
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    // The live result shows the thickened or knitted solid: its faces keep the surfaces' names.
+    const known = (n: string) => (f.type === "thicken" ? f.surface?.name === n : f.surfaces.some(x => x.name === n));
+    if (!fr || fr.name.startsWith(`${f.id}:`) || (!this.isSheetFace(hit!.faceId) && !known(fr.name))) { toast(t("Pick a surface body.")); return; }
+    if (f.type === "thicken") f.surface = fr;
+    else {
+      const i = f.surfaces.findIndex(x => x.name === fr.name);
+      if (i >= 0) f.surfaces.splice(i, 1); else f.surfaces.push(fr);
+    }
+    this.draftChanged();
+  }
+
+  /** New surface feature (FRS 9.11) with sensible picks: the selected or last unused sketch, the picked face. */
+  private surfDraft(type: SurfTool, id: string, sketches: SketchFeature[], used: Set<string>, face: number | null): Feature | null {
+    const d = this.doc;
+    const nm = nextName(d, type);
+    const sel = this.selected ? sketches.find(s => s.id === this.selected) : undefined;
+    const curves = (s: SketchFeature) => s.ents.some(e => !e.cons && e.t !== "point");
+    if (type === "planesurf" || type === "extsurf") {
+      const ok = type === "planesurf" ? sketchProfileOk : curves;
+      const sk = (sel && ok(sel) ? sel : undefined) ?? sketches.filter(s => !used.has(s.id) && !this.doc.features.some(g => absorbs(g, s.id)) && ok(s)).at(-1) ?? sketches.filter(ok).at(-1);
+      if (!sk) { toast(t(type === "planesurf" ? "Draw a closed sketch first." : "Draw a sketch first."), true); return null; }
+      return type === "planesurf" ? { id, type, name: nm, sketch: sk.id } satisfies PlaneSurfFeature
+        : { id, type, name: nm, sketch: sk.id, depth: { v: 10 } } satisfies ExtrudeSurfFeature;
+    }
+    if (!this.last?.data) { toast(t("There is no body yet."), true); return null; }
+    const fr = face != null ? this.faceRef(face) : null;
+    if (type === "offsurf") return { id, type, name: nm, faces: fr ? [fr] : [], distance: { v: 5 } } satisfies OffsetSurfFeature;
+    const onSheet = fr && face != null && this.isSheetFace(face) ? fr : null;
+    if (!(this.last.sheetFaces ?? 0)) { toast(t("There are no surface bodies yet."), true); return null; }
+    if (type === "knit") return { id, type, name: nm, surfaces: onSheet ? [onSheet] : [], tol: { v: 0.01 } } satisfies KnitFeature;
+    if (type === "replaceface") return { id, type, name: nm, faces: fr && !onSheet ? [fr] : [], surface: onSheet ?? undefined } satisfies ReplaceFaceFeature;
+    return { id, type, name: nm, surface: onSheet ?? undefined, thickness: { v: 2 }, side: "one" } satisfies ThickenFeature;
+  }
+
+  /** PropertyManager groups for the surface features (FRS 9.11). */
+  private surfPanel(f: PlaneSurfFeature | ExtrudeSurfFeature | OffsetSurfFeature | KnitFeature | ThickenFeature | ReplaceFaceFeature, sketches: SketchFeature[], group: (legend: string, inner: string) => string,
+    numField: (key: string, label: string, n: Num, q: "length" | "angle") => string, chk: (k: string, on: boolean | undefined, label: string) => string): { title: string; body: string } {
+    const opt = (v: string, l: string, cur: string) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`;
+    const sel = (k: string, label: string, inner: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${k}">${inner}</select></label>`;
+    const skOpts = (list: SketchFeature[], cur: string) => list.map(s => `<option value="${esc(s.id)}"${s.id === cur ? " selected" : ""} translate="no">${esc(featureLabel(s.name))}</option>`).join("");
+    const help = (s: string) => `<p class="pm-help muted">${esc(s)}</p>`;
+    if (f.type === "planesurf") {
+      const list = sketches.filter(s => sketchProfileOk(s) || s.id === f.sketch);
+      return { title: t("Planar Surface"), body: group(t("Bounding entities"), sel("sketch", t("Sketch"), skOpts(list, f.sketch))) + help(t("A closed sketch becomes a flat surface body: no volume, ready to knit or thicken.")) };
+    }
+    if (f.type === "extsurf") {
+      const list = sketches.filter(s => s.ents.some(e => !e.cons && e.t !== "point") || s.id === f.sketch);
+      return { title: t("Surface-Extrude"), body: group(t("Direction 1"), sel("sketch", t("Sketch"), skOpts(list, f.sketch)) + numField("depth", t("Depth"), f.depth, "length")
+          + chk("mid", f.mid, t("Mid plane")) + chk("flip", f.flip, t("Reverse direction")))
+        + help(t("Every curve of the sketch, open or closed, is swept along the sketch normal into a surface.")) };
+    }
+    if (f.type === "offsurf") {
+      return { title: t("Offset Surface"), body: group(t("Offset parameters"), numField("distance", t("Distance"), f.distance, "length") + chk("flip", f.flip, t("Reverse direction")))
+        + group(t("Faces to offset"), `<p class="pm-count">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</p>`
+          + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
+          + help(t("Click faces of solids or surfaces; a distance of 0 copies them."))) };
+    }
+    if (f.type === "knit") {
+      return { title: t("Knit Surface"), body: group(t("Selections"), `<p class="pm-count">${esc(t("{n} surface|{n} surfaces", { n: f.surfaces.length }))}</p>`
+          + (f.surfaces.length ? `<button class="btn small" data-k="clearSurfaces">${esc(t("Clear selections"))}</button>` : "")
+          + chk("solid", f.solid, t("Create solid")))
+        + group(t("Gap control"), numField("tol", t("Knit tolerance"), f.tol, "length"))
+        + help(t("Click the surface bodies to sew together along their shared edges. With Create solid, surfaces that close a volume become a solid body.")) };
+    }
+    if (f.type === "replaceface") {
+      return { title: t("Replace Face"), body: group(t("Replace face parameters"), `<div class="pm-field"><span>${esc(t("Target faces"))}</span><button class="pm-box" translate="no">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</button></div>`
+          + `<div class="pm-field"><span>${esc(t("Replacement surface"))}</span><button class="pm-box" translate="no">${esc(f.surface ? t("Surface picked") : t("None"))}</button></div>`
+          + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : ""))
+        + help(t("Click flat faces of the solid to replace, then a surface body: the faces around them grow or shrink to meet it. The surface must cover the faces' whole outline.")) };
+    }
+    return { title: t("Thicken"), body: group(t("Thicken parameters"), `<div class="pm-field"><span>${esc(t("Surface"))}</span><button class="pm-box focus" translate="no">${esc(f.surface ? t("Surface picked") : t("None"))}</button></div>`
+        + sel("side", t("Direction"), opt("one", t("Side 1"), f.side) + opt("other", t("Side 2"), f.side) + opt("both", t("Both sides"), f.side))
+        + numField("thickness", t("Thickness"), f.thickness, "length")
+        + (this.last?.props ? chk("merge", f.merge !== false, t("Merge result")) : ""))
+      + help(t("Click a surface body: it grows into a solid of this thickness.")) };
   }
 
   /** Multibody features (FRS 9.10): a body is picked by clicking any face of it. */
@@ -2621,6 +2742,13 @@ export class ModelController {
           return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="sweep" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
         })()
         + (() => {
+          // Surface flyout (FRS 9.11): Extruded ▾ Planar, Offset, Knit, Thicken.
+          const open = m.kind === "feature" ? m.draft.type : null;
+          const all = SURF_TOOLS();
+          const cur = all.find(r => r[0] === open) ?? all.find(r => r[0] === this.flyLast.get("surf")) ?? all[0];
+          return `<span class="mc-fly">${btn(cur[0], cur[1], cur[2], open === cur[0])}<button class="mc-caret" data-fly="surf" aria-haspopup="menu" title="${esc(t("More tools like this"))}" aria-label="${esc(t("More tools like this"))}: ${esc(cur[1])}">▾</button></span>`;
+        })()
+        + (() => {
           // Pattern flyout: Linear ▾ Circular, Mirror.
           const pats: [string, string, string][] = [["lpattern", t("Linear pattern"), t("Linear pattern: copies of features along one or two directions")], ["cpattern", t("Circular pattern"), t("Circular pattern: copies of features about an axis")], ["mirror", t("Mirror"), t("Mirror features, or the whole body, about a plane")]];
           const open = m.kind === "feature" ? m.draft.type : null;
@@ -2656,6 +2784,12 @@ export class ModelController {
         const r = b.getBoundingClientRect();
         this.showMenu(P3_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("sweep", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
           () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="sweep"]')?.focus());
+        return;
+      }
+      if (b.dataset.fly === "surf" && mm.kind !== "sketch") {
+        const r = b.getBoundingClientRect();
+        this.showMenu(SURF_TOOLS().map(([id, l]) => [l, () => { this.flyLast.set("surf", id); this.command(id); }, ICON_SVG[id]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
+          () => $("#mc-tools").querySelector<HTMLElement>('[data-fly="surf"]')?.focus());
         return;
       }
       if (b.dataset.fly === "save") {
@@ -2861,7 +2995,7 @@ export class ModelController {
         break;
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
-      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": this.startFeature(c); break;
+      case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": this.startFeature(c); break;
       case "import": this.importBodyFile(); break;
       case "undo": this.undo(); break;
       case "redo": this.redo(); break;
@@ -3489,10 +3623,19 @@ export class ModelController {
     }
     if (f.type === "delface" || f.type === "moveface") {
       title = f.type === "delface" ? t("Delete Face") : t("Move Face");
-      body = (f.type === "moveface" ? group(t("Parameters"), numField("distance", t("Distance"), f.distance, "length") + chk("flip", f.flip, t("Reverse direction"))) : "")
+      const mvMode = f.type === "moveface" ? f.mode ?? "offset" : "offset";
+      const mvSel = f.type === "moveface" ? `<label class="pm-field"><span>${esc(t("Type"))}</span><select data-k="mvmode">${([["offset", t("Offset")], ["translate", t("Translate")], ["rotate", t("Rotate")]] as const).map(([v, l]) => `<option value="${v}"${mvMode === v ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : "";
+      const mvParams = f.type !== "moveface" ? ""
+        : mvMode === "translate" ? numField("dx", t("Delta X"), f.dx ?? { v: 0 }, "length") + numField("dy", t("Delta Y"), f.dy ?? { v: 0 }, "length") + numField("dz", t("Delta Z"), f.dz ?? { v: 0 }, "length")
+        : mvMode === "rotate" ? `<div class="pm-field"><span>${esc(t("Axis"))}</span><button class="pm-box${m.focus === "axis" ? " focus" : ""}" data-focus="axis" translate="no">${esc(f.axis ? this.lineLabel(f.axis) : t("None"))}</button></div>` + numField("angle", t("Angle"), f.angle ?? { v: Math.PI / 18 }, "angle") + chk("flip", f.flip, t("Reverse direction"))
+        : numField("distance", t("Distance"), f.distance, "length") + chk("flip", f.flip, t("Reverse direction"));
+      body = (f.type === "moveface" ? group(t("Parameters"), mvSel + mvParams) : "")
         + group(f.type === "delface" ? t("Faces to delete") : t("Faces to move"), `<p class="pm-count">${esc(t("{n} face|{n} faces", { n: f.faces.length }))}</p>`
           + (f.faces.length ? `<button class="btn small" data-k="clearFaces">${esc(t("Clear faces"))}</button>` : "")
-          + `<p class="pm-help muted">${esc(f.type === "delface" ? t("Click the faces to remove; the faces around them grow to close the gap.") : t("Click flat faces to move them along their normals; out adds material, reversed removes it."))}</p>`);
+          + `<p class="pm-help muted">${esc(f.type === "delface" ? t("Click the faces to remove; the faces around them grow to close the gap.")
+            : mvMode === "rotate" ? (m.focus === "axis" ? t("Click the edge to turn about: an edge of the face, or a reference axis in the tree.") : t("Click flat faces to turn them about the axis; the faces around them follow."))
+            : mvMode === "translate" ? t("Click flat faces to move them; only the part of the move along each face's normal changes it.")
+            : t("Click flat faces to move them along their normals; out adds material, reversed removes it."))}</p>`);
     }
     if (f.type === "shell" || isCopy(f)) {
       const box = (focus: Focus, label: string, value: string) => `<div class="pm-field"><span>${esc(label)}</span><button class="pm-box${m.focus === focus ? " focus" : ""}" data-focus="${focus}" translate="no">${esc(value)}</button></div>`;
@@ -3527,6 +3670,7 @@ export class ModelController {
     }
     if (f.type === "helix" || f.type === "sweep" || f.type === "loft" || f.type === "rib" || f.type === "split") ({ title, body } = this.p3Panel(f, sketches, group, numField, chk));
     if (isBodyOp(f)) ({ title, body } = this.bodyPanel(f, m.focus, group, numField, chk));
+    if (f.type === "planesurf" || f.type === "extsurf" || f.type === "offsurf" || f.type === "knit" || f.type === "thicken" || f.type === "replaceface") ({ title, body } = this.surfPanel(f, sketches, group, numField, chk));
     if (f.type === "import") {
       const st = this.last?.statuses.find(x => x.id === f.id);
       title = t("Imported body");
@@ -3705,6 +3849,14 @@ export class ModelController {
           upd(() => { const i = +k.slice(2); if (val) f.profiles[i] = String(val); else f.profiles.splice(i, 1); f.profiles = f.profiles.filter(Boolean); }, true);
           return;
         }
+        if (k === "mvmode" && f.type === "moveface") {
+          upd(() => {
+            if (val === "offset") delete f.mode; else f.mode = val as "translate" | "rotate";
+            if (val === "translate") { f.dx ??= { v: 0 }; f.dy ??= { v: 0 }; f.dz ??= { v: f.distance.v } }
+            if (val === "rotate") { f.angle ??= { v: Math.PI / 18 }; m.focus = f.axis ? "faces" : "axis"; } else m.focus = "faces";
+          }, true);
+          return;
+        }
         if (k === "merge") { upd(() => { if (val) delete (f as ExtrudeFeature).merge; else (f as ExtrudeFeature).merge = false; }); return; }
         if (k === "dir2") { upd(() => { (f as ExtrudeFeature).depth2 = val ? { v: (f as ExtrudeFeature).depth.v } : undefined; if (!val) delete (f as ExtrudeFeature).depth2; }, true); return; }
         if (k === "sketch" && f.type === "revolve") {
@@ -3796,7 +3948,8 @@ export class ModelController {
     }
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
-    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface") { f.faces = []; this.draftChanged(); }
+    pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
+    pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
       if (isBodyOp(f)) { if (f.type === "combine") f.tools = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelectorAll<HTMLInputElement>("input[data-int]").forEach(inp => {
       const apply = () => {
@@ -4318,7 +4471,7 @@ function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "extrude" || g.type === "revolve" || g.type === "helix") return g.sketch === sketch;
   if (g.type === "sweep") return g.profile === sketch || (!!g.path && "sketch" in g.path && g.path.sketch === sketch);
   if (g.type === "loft") return g.profiles.includes(sketch);
-  if (g.type === "rib" || g.type === "split") return g.sketch === sketch;
+  if (g.type === "rib" || g.type === "split" || g.type === "planesurf" || g.type === "extsurf") return g.sketch === sketch;
   return false;
 }
 
@@ -4346,7 +4499,25 @@ const P3_TOOLS = (): [string, string, string][] => [
   ["delface", t("Delete Face"), t("Delete face: remove faces and heal the gap, on any body")],
 ];
 
+/** The surface flyout's commands (FRS 9.11). */
+type SurfTool = "planesurf" | "extsurf" | "offsurf" | "knit" | "thicken" | "replaceface";
+const SURF_TYPES: ReadonlySet<string> = new Set(["planesurf", "extsurf", "offsurf", "knit", "thicken", "replaceface"]);
+const SURF_TOOLS = (): [SurfTool, string, string][] => [
+  ["extsurf", t("Extruded Surface"), t("Extruded surface: sketch curves swept into open surfaces")],
+  ["planesurf", t("Planar Surface"), t("Planar surface: a flat surface inside a closed sketch")],
+  ["offsurf", t("Offset Surface"), t("Offset surface: copies of faces at a distance")],
+  ["knit", t("Knit Surface"), t("Knit surfaces into one, or into a solid when they close a volume")],
+  ["thicken", t("Thicken"), t("Thicken a surface into a solid")],
+  ["replaceface", t("Replace Face"), t("Replace faces of a solid with a surface")],
+];
+
 const ICON_SVG: Record<string, string> = {
+  extsurf: S('<path d="M2 12c2-3 4-3 6 0s4 3 6 0"/><path d="M2 7c2-3 4-3 6 0s4 3 6 0"/><path d="M2 7v5M14 7v5"/>'),
+  planesurf: S('<path d="M2 11l4-7h8l-4 7z" fill="currentColor" fill-opacity=".2"/>'),
+  offsurf: S('<path d="M2 13c3-4 9-4 12 0"/><path d="M2 8c3-4 9-4 12 0" stroke-dasharray="2 1.5"/><path d="M8 10V6"/>'),
+  knit: S('<path d="M2 4h5v8H2zM9 4h5v8H9z"/><path d="M7 6h2M7 8h2M7 10h2"/>'),
+  replaceface: S('<path d="M2 14V7h10v7z"/><path d="M1 6c4-3 9-3 14 0" stroke-dasharray="2 1.5"/><path d="M7 9V5"/>'),
+  thicken: S('<path d="M2 9c3-3 9-3 12 0v3c-3-3-9-3-12 0z" fill="currentColor" fill-opacity=".2"/>'),
   sweep: S('<path d="M3 13c0-6 4-10 10-10"/><circle cx="3" cy="13" r="1.8"/><circle cx="13" cy="3" r="1.8"/>'),
   sweepcut: S('<path d="M2 6h12v8H2z"/><path d="M4 12c2-4 5-5 8-5" stroke-dasharray="2 1.5"/>'),
   loft: S('<path d="M3 13h6v-2H3zM9 4h4v3H9z"/><path d="M3 11l6-7M9 11l4-4"/>'),

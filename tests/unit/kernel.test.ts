@@ -894,3 +894,88 @@ test("direct editing: move face out and in, delete face heals (FR-FT-101)", asyn
   r = run(m, doc([s1, ex, s2, cut, del]));
   close(r.props!.volume, 120000, 1e-6);
 });
+
+test("surfaces: planar, extruded, offset, knit and thicken (FR-FT-100)", async () => {
+  const m = new Modeller(await occ());
+  // A 40×20 planar surface thickened 3 mm up: a 2400 mm³ plate; the surface is used up.
+  const s1 = rect("s1", 0, 0, 40, 20);
+  const ps: Feature = { id: "f1", type: "planesurf", name: "Surface-Plane1", sketch: "s1" };
+  let r = run(m, doc([s1, ps]));
+  assert.equal(r.body, null);
+  assert.deepEqual(r.sheets!.names, ["f1:face:0"]);
+  const th: Feature = { id: "f2", type: "thicken", name: "Thicken1", surface: { name: "f1:face:0" }, thickness: { v: 3 }, side: "one" };
+  r = run(m, doc([s1, ps, th]));
+  close(r.props!.volume, 2400, 1e-4);
+  assert.equal(r.sheets, null);
+  assert.ok(r.body!.names.includes("f1:face:0"), r.body!.names.join());
+  // Both sides: centred on the surface.
+  r = run(m, doc([s1, ps, { ...th, side: "both" } as Feature]));
+  close(r.props!.volume, 2400, 1e-4);
+  close(r.props!.com[2], 0, 1e-6);
+  // The rectangle extruded as a surface: an open tube of four sheets, sewn into one surface body.
+  const es: Feature = { id: "f3", type: "extsurf", name: "Surface-Extrude1", sketch: "s1", depth: { v: 10 } };
+  r = run(m, doc([s1, es]));
+  assert.equal(r.sheets!.faces.length, 4);
+  assert.ok(r.sheets!.names.includes("f3:side:s1l2"), r.sheets!.names.join());
+  // Caps: a planar surface at the bottom, an offset copy 10 mm up; knitting the three closes a 40×20×10 box.
+  const off: Feature = { id: "f4", type: "offsurf", name: "Surface-Offset1", faces: [{ name: "f1:face:0" }], distance: { v: 10 } };
+  r = run(m, doc([s1, es, ps, off]));
+  assert.equal(r.sheets!.faces.length, 6, r.sheets!.names.join());
+  assert.ok(r.sheets!.names.includes("f4:off:f1:face:0"), r.sheets!.names.join());
+  const kn: Feature = { id: "f5", type: "knit", name: "Surface-Knit1", surfaces: [{ name: "f3:side:s1l1" }, { name: "f1:face:0" }, { name: "f4:off:f1:face:0" }], tol: { v: 0.01 }, solid: true };
+  r = run(m, doc([s1, es, ps, off, kn]));
+  close(r.props!.volume, 8000, 1e-6);
+  assert.equal(r.sheets, null);
+  assert.equal(r.props!.bodies, 1);
+  // Without "solid", the knit is one closed surface body and no solid.
+  r = run(m, doc([s1, es, ps, off, { ...kn, solid: false } as Feature]));
+  assert.equal(r.body, null);
+  assert.equal(r.sheets!.faces.length, 6);
+  // Offset faces of a solid: a copy of its top 5 mm above.
+  const ex: Feature = { id: "f6", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } };
+  const off2: Feature = { id: "f7", type: "offsurf", name: "Surface-Offset2", faces: [{ name: "f6:end" }], distance: { v: 5 } };
+  r = run(m, doc([s1, ex, off2]));
+  close(r.props!.volume, 8000, 1e-6);
+  assert.deepEqual(r.sheets!.names, ["f7:off:f6:end"]);
+});
+
+test("move face: translate and rotate (FR-FT-101)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Translate the top by (7, 0, 5): only the 5 mm along its normal counts.
+  const tr: Feature = { id: "f2", type: "moveface", name: "MoveFace1", faces: [{ name: "f1:end" }], distance: { v: 0 }, mode: "translate", dx: { v: 7 }, dy: { v: 0 }, dz: { v: -5 } };
+  let r = run(m, doc([s1, ex, tr]));
+  close(r.props!.volume, 100 * 60 * 15);
+  assert.ok(r.body!.names.includes("f1:end"));
+  // Rotate the top 10° about its edge on the y = -30 side: a wedge of 100 · 60² · tan10° / 2 added.
+  const rot: Feature = { id: "f3", type: "moveface", name: "MoveFace2", faces: [{ name: "f1:end" }], distance: { v: 0 }, mode: "rotate", axis: { edge: { faces: ["f1:end", "f1:side:s1l1"] } }, angle: { v: Math.PI / 18 } };
+  r = run(m, doc([s1, ex, rot]));
+  close(r.props!.volume, 120000 + 100 * 3600 * Math.tan(Math.PI / 18) / 2, 1e-5);
+  r = run(m, doc([s1, ex, { ...rot, flip: true } as Feature]));
+  close(r.props!.volume, 120000 - 100 * 3600 * Math.tan(Math.PI / 18) / 2, 1e-5);
+  assert.ok(r.body!.names.includes("f1:end"));
+});
+
+test("replace face with a surface (FR-FT-101)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const pl = (z: number): Feature => ({ id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: z } } as Feature);
+  const s2 = rect("s2", 0, 0, 300, 300, { plane: "p1" });
+  const ps: Feature = { id: "f2", type: "planesurf", name: "Surface-Plane1", sketch: "s2" };
+  const rf: Feature = { id: "f3", type: "replaceface", name: "ReplaceFace1", faces: [{ name: "f1:end" }], surface: { name: "f2:face:0" } };
+  // A flat surface 5 mm above the top: the body grows to it; 5 mm below: it shrinks.
+  let r = run(m, doc([s1, ex, pl(25), s2, ps, rf]));
+  close(r.props!.volume, 100 * 60 * 25, 1e-6);
+  assert.equal(r.body!.faces.length, 6, r.body!.names.join());
+  assert.ok(r.body!.names.includes("f1:end"));
+  r = run(m, doc([s1, ex, pl(15), s2, ps, rf]));
+  close(r.props!.volume, 100 * 60 * 15, 1e-6);
+  // A sloping surface (z = 20 + x/10, an extruded line on the front plane): same volume, a tilted top.
+  const s3: SketchFeature = { id: "s3", type: "sketch", name: "s3", plane: { std: "XZ" }, rels: [], dims: [], ents: [{ id: "a", t: "point", x: -100, y: 10 }, { id: "b", t: "point", x: 100, y: 30 }, { id: "l", t: "line", a: "a", b: "b" }] };
+  const es: Feature = { id: "f4", type: "extsurf", name: "Surface-Extrude1", sketch: "s3", depth: { v: 200 }, mid: true };
+  r = run(m, doc([s1, ex, s3, es, { ...rf, surface: { name: "f4:side:l" } } as Feature]));
+  close(r.props!.volume, 120000, 1e-6);
+  assert.equal(r.body!.faces.length, 6, r.body!.names.join());
+});

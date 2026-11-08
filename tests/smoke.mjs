@@ -4518,6 +4518,146 @@ try {
     await ctx.close();
   }
 
+  // --- Move Face translate and rotate (FR-FT-101) ---
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 }); };
+    await mp.evaluate(() => window.__sv.model.store.change("Part", d => {
+      const id = "s1", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -50, -30), P(2, 50, -30), P(3, 50, 30), P(4, -50, 30), { id: "s1l1", t: "line", a: "s1p1", b: "s1p2" }, { id: "s1l2", t: "line", a: "s1p2", b: "s1p3" }, { id: "s1l3", t: "line", a: "s1p3", b: "s1p4" }, { id: "s1l4", t: "line", a: "s1p4", b: "s1p1" }] },
+        { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } });
+    }));
+    await settle();
+    const open = async () => { await mp.click('#mc-tools [data-fly="sweep"]'); await mp.locator("#mc-menu button", { hasText: /^Move Face$/ }).click(); await settle(); await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.faces = [{ name: "f1:end" }]; m.panel(); void m.rebuild(); }); await settle(); };
+    const vol = () => mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    // Translate (7, 0, 5): only the 5 mm along the top's normal counts.
+    await open();
+    await mp.selectOption('#mc-pm select[data-k="mvmode"]', "translate");
+    await settle();
+    await mp.fill('#mc-pm input[data-num="dx"]', "7");
+    await mp.press('#mc-pm input[data-num="dx"]', "Tab");
+    await mp.fill('#mc-pm input[data-num="dz"]', "5");
+    await mp.press('#mc-pm input[data-num="dz"]', "Tab");
+    await settle();
+    const tr = await vol();
+    await mp.click("#mc-cancel");
+    await settle();
+    // Rotate the top 10° about its long edge on the y = -30 side: a wedge of 100 · 60² · tan 10° / 2 added.
+    await open();
+    await mp.selectOption('#mc-pm select[data-k="mvmode"]', "rotate");
+    await settle();
+    const focus = await mp.evaluate(() => window.__sv.model.mode().focus);
+    await mp.evaluate(() => { const m = window.__sv.model; m.mode().draft.axis = { edge: { faces: ["f1:end", "f1:side:s1l1"] } }; m.panel(); void m.rebuild(); });
+    await settle();
+    const rot = await vol();
+    await mp.click("#mc-ok");
+    await settle();
+    const fin = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1));
+    const wedge = 100 * 3600 * Math.tan(Math.PI / 18) / 2;
+    check(Math.abs(tr.v - 100 * 60 * 25) < 1 && !tr.bad && focus === "axis" && Math.abs(rot.v - (120000 + wedge)) < 1 && !rot.bad && fin.mode === "rotate" && fin.type === "moveface",
+      `model: Move Face translate (normal part only) and rotate about an edge (FR-FT-101) (${JSON.stringify({ tr, focus, rot, mode: fin.mode })})`);
+    // Replace Face (Surface ▾): the top replaced by a flat surface 5 mm above it.
+    await mp.evaluate(() => window.__sv.model.store.change("Surface", d => {
+      d.features.pop();
+      const id = "s2", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id: "p1", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 25 } },
+        { id, type: "sketch", name: "Sketch2", plane: { plane: "p1" }, rels: [], dims: [], ents: [P(1, -150, -150), P(2, 150, -150), P(3, 150, 150), P(4, -150, 150), { id: "s2l1", t: "line", a: "s2p1", b: "s2p2" }, { id: "s2l2", t: "line", a: "s2p2", b: "s2p3" }, { id: "s2l3", t: "line", a: "s2p3", b: "s2p4" }, { id: "s2l4", t: "line", a: "s2p4", b: "s2p1" }] },
+        { id: "f9", type: "planesurf", name: "Surface-Plane1", sketch: "s2" });
+    }));
+    await settle();
+    await mp.click('#mc-tools [data-fly="surf"]');
+    await mp.locator("#mc-menu button", { hasText: /^Replace Face$/ }).click();
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model, f = m.mode().draft; f.faces = [{ name: "f1:end" }]; f.surface = { name: "f9:face:0" }; m.panel(); void m.rebuild(); });
+    await settle();
+    const rp = await mp.evaluate(() => ({ v: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent }));
+    await mp.click("#mc-ok");
+    await settle();
+    check(rp.title === "Replace Face" && Math.abs(rp.v - 100 * 60 * 25) < 1 && !rp.bad, `model: Replace Face grows the body to a surface (FR-FT-101) (${JSON.stringify(rp)})`);
+    await ctx.close();
+  }
+
+  // --- surfaces (FRS 9.11, FR-FT-100): extruded, planar, offset, knit into a solid, thicken ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store && !window.__sv.model.store.doc.features.length);
+    const settle = async () => { await mp.waitForTimeout(150); await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 }); };
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => {
+      const id = "s1", P = (k, x, y) => ({ id: `${id}p${k}`, t: "point", x, y });
+      d.features.push({ id, type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P(1, -20, -10), P(2, 20, -10), P(3, 20, 10), P(4, -20, 10), { id: "l1", t: "line", a: "s1p1", b: "s1p2" }, { id: "l2", t: "line", a: "s1p2", b: "s1p3" }, { id: "l3", t: "line", a: "s1p3", b: "s1p4" }, { id: "l4", t: "line", a: "s1p4", b: "s1p1" }] });
+    }));
+    await settle();
+    const surf = async name => { await mp.click('#mc-tools [data-fly="surf"]'); await mp.locator("#mc-menu button", { hasText: new RegExp(`^${name}$`) }).click(); await settle(); };
+    const state = () => mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, sheets: l.sheetFaces ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), title: document.querySelector("#mc-pm h3")?.textContent ?? null }; });
+    // Extruded surface: the rectangle's four sides, 10 mm tall, no volume.
+    await surf("Extruded Surface");
+    const ex = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const ex2 = await state();
+    // Planar surface on the same sketch (the bottom), then its offset copy 10 mm up (the top).
+    await surf("Planar Surface");
+    const pl = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    await surf("Offset Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, ps = m.store.doc.features.find(f => f.type === "planesurf"); m.mode().draft.faces = [{ name: `${ps.id}:face:0` }]; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.fill('#mc-pm input[data-num="distance"]', "10");
+    await mp.press('#mc-pm input[data-num="distance"]', "Tab");
+    await settle();
+    const of = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    // Knit the three surface bodies with Create solid: a closed 40×20×10 box.
+    await surf("Knit Surface");
+    await mp.evaluate(() => { const m = window.__sv.model, l = m.last(), n = l.faceNames; m.mode().draft.surfaces = [...new Set(n.map(x => x.split(":")[0]))].map(id => ({ name: n.find(x => x.startsWith(`${id}:`)) })); m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.check('#mc-pm input[data-k="solid"]');
+    await settle();
+    const kn = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    // Thicken a new planar surface 3 mm downwards (side 2), merged into the box: +2400 mm³.
+    await surf("Planar Surface");
+    await mp.click("#mc-ok");
+    await settle();
+    await surf("Thicken");
+    await mp.evaluate(() => { const m = window.__sv.model, ps = m.store.doc.features.filter(f => f.type === "planesurf").at(-1); m.mode().draft.surface = { name: `${ps.id}:face:0` }; m.panel(); void m.rebuild(); });
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="side"]', "other");
+    await mp.fill('#mc-pm input[data-num="thickness"]', "3");
+    await mp.press('#mc-pm input[data-num="thickness"]', "Tab");
+    await settle();
+    const th = await state();
+    await mp.click("#mc-ok");
+    await settle();
+    const fin = await mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
+    check(ex.title === "Surface-Extrude" && ex.sheets === 4 && !ex.v && !ex.bad && ex2.sheets === 4 && pl.title === "Planar Surface" && pl.sheets === 5
+      && of.title === "Offset Surface" && of.sheets === 6 && !of.bad && kn.title === "Knit Surface" && Math.abs(kn.v - 8000) < 1 && kn.sheets === 0 && !kn.bad
+      && th.title === "Thicken" && Math.abs(th.v - 10400) < 1 && th.sheets === 0 && !th.bad
+      && /Surface-Extrude1,Surface-Plane1,Surface-Offset1,Surface-Knit1,Surface-Plane2,Thicken1$/.test(fin),
+      `model: surfaces: extruded, planar, offset, knit into a solid, thicken (FR-FT-100) (${JSON.stringify({ ex, ex2, pl, of, kn, th, fin })})`);
+    await ctx.close();
+  }
+
   // --- 1.55: helix, sweep and loft (FRS 9.9, AT-P3-1/2) from the Sweep ▾ commands, with their panels ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

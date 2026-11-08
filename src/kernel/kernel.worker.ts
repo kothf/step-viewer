@@ -96,7 +96,9 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       const state = r.doc.bodies ?? {};
       const vis = info.filter(b => !state[b.key]?.hidden);
       const split = info.length > 1 || vis.length < info.length || info.some(b => state[b.key]?.color);
-      const shown = !res.body ? null : !split || !info.length ? res.body : vis.length ? modeller.shownBodies(vis.map(b => b.part)) : null;
+      const solidShown = !res.body ? null : !split || !info.length ? res.body : vis.length ? modeller.shownBodies(vis.map(b => b.part)) : null;
+      // Surface bodies (FRS 9.11) come after the solids in the view, so solid face indices stay put.
+      const shown = res.sheets ? (solidShown ? modeller.shownBodies([solidShown, res.sheets]) : res.sheets) : solidShown;
       if (shown) {
         const mesh = modeller.mesh(shown, r.doc.name, r.color, r.quality);
         if (split) {
@@ -127,7 +129,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         // A cut shows the material it removes (the body before it minus the body after it).
         const cut = (pf?.type === "extrude" || pf?.type === "revolve") && pf.op === "cut";
         const before = cut && pr.body && status?.ok && status.code !== "suppressed" ? modeller.evaluate({ ...r.doc, rollback: r.previewAt }).body : null;
-        const shown = cut ? (before && pr.body ? modeller.removed(before, pr.body) : null) : pr.body;
+        const shown = cut ? (before && pr.body ? modeller.removed(before, pr.body) : null) : pr.sheets ? (pr.body ? modeller.shownBodies([pr.body, pr.sheets]) : pr.sheets) : pr.body;
         if (shown && fid && status?.ok) {
           const m = modeller.mesh(shown, "preview", r.color, r.quality);
           const P = m.attributes.position.array, I = m.index.array;
@@ -139,7 +141,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
         }
         preview = { position, status };
       }
-      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
+      post({ id: r.id, ok: true, statuses: res.statuses, frames: res.frames, sketches: res.sketches, curves: res.curves, data, faceNames: shown?.names ?? [], sheetFaces: res.sheets?.faces.length ?? 0, bodies, props, preview, heap: heap(), ms: { eval: t1 - t0, mesh: performance.now() - t1 } });
     } else if (r.type === "asm") {
       assembler ??= new Assembler(kernel.module);
       const t0 = performance.now();
