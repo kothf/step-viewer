@@ -23,7 +23,7 @@ import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameO
 import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { fitLimits, splitFit } from "./iso286";
-import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq, viewScale } from "./views";
+import { ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoOnly, altReq, alignAxis, alignedLegs, cutLegs, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, switchProjection, viewDir, viewReq, viewScale } from "./views";
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
@@ -785,6 +785,14 @@ export class DrawingWorkspace {
     if (ax === "y") dy = 0;
     if (ax === "x") dx = 0;
     if (Array.isArray(ax)) { const k = dx * ax[0] + dy * ax[1]; dx = k * ax[0]; dy = k * ax[1]; }
+    // A projected view stays on its side of the parent: across it, it would still be the same view (its side
+    // and the projection type say which), now in the wrong place for first or third angle.
+    const par = v.parent && !v.kind && v.side ? o.get(v.parent) : undefined;
+    if (par && v.side) {
+      const p0 = o.get(id)!, gap = 5;
+      if (v.side[0]) { const rel = (p0[0] + dx - par[0]) * v.side[0]; if (rel < gap) dx += (gap - rel) * v.side[0]; }
+      if (v.side[1]) { const rel = (p0[1] + dy - par[1]) * v.side[1]; if (rel < gap) dy += (gap - rel) * v.side[1]; }
+    }
     const visit = (vid: string) => {
       const p = o.get(vid)!;
       out.set(vid, [p[0] + dx, p[1] + dy]);
@@ -992,8 +1000,8 @@ export class DrawingWorkspace {
 
   /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
   private factsOf(view: string, sh = this.sheet): ModelFacts | null {
-    const v = findView(sh, view), c = v && viewConfig(sh, v);
-    return (c && this.kernel.configs.get(c)) || this.facts;
+    const v = findView(sh, view), c = v && viewConfig(sh, v), f = (c && this.kernel.configs.get(c)) || this.facts, only = v && viewOnly(sh, v);
+    return f && only ? { ...f, topo: topoOnly(f.topo, only) } : f;
   }
 
   private annot(id: string): Annot | undefined { return (this.sheet.annots ?? []).find(a => a.id === id); }
@@ -2209,7 +2217,7 @@ export class DrawingWorkspace {
           <label class="drw-f">${esc(t("Name"))}<input data-v="name" value="${esc(v.name)}" translate="no"></label>
           ${v.kind ? this.kindProps(v) : v.parent ? `<p class="drw-note">${esc(t("Projected from {name}", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>` : `
           <label class="drw-f">${esc(t("Orientation"))}<select data-v="orient">${(Object.keys(ORIENT_NAMES) as Orient[]).map(o => `<option value="${o}"${o === (v.orient ?? "front") ? " selected" : ""}>${esc(t(ORIENT_NAMES[o]))}</option>`).join("")}</select></label>`}
-          ${this.configField(v)}
+          ${this.configField(v)}${this.onlyField(v)}
         </fieldset>
         <fieldset class="pm-group"><legend>${esc(t("Scale"))}</legend>
           <label class="drw-f">${esc(t("Scale"))}<select data-v="scale"><option value="">${esc(v.parent ? t("Parent's scale") : t("Sheet scale ({s})", { s: scaleText(sh.scale) }))}</option>${SCALES.map(s => `<option value="${scaleText(s)}"${own === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${own && !SCALES.some(s => scaleText(s) === own) ? `<option value="${own}" selected>${own}</option>` : ""}<option value="custom">${esc(t("Custom…"))}</option></select></label>
@@ -2404,6 +2412,14 @@ export class DrawingWorkspace {
     return `<label class="drw-f">${esc(t("Configuration"))}<select data-v="cfg"><option value="">${esc(t("Active ({name})", { name: act }))}</option>${src.doc.configs.map(c => `<option value="${esc(c.name)}"${v.config === c.name ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
   }
 
+  /** Assembly drawings: a model view of one component alone (a part's detail views on the assembly's drawing); views made from it follow. */
+  private onlyField(v: DrawingView): string {
+    const comps = this.sectionComps();
+    if (!comps.length || v.kind || v.parent) return "";
+    const cur = v.only?.[0] ?? "";
+    return `<label class="drw-f">${esc(t("Components"))}<select data-v="only"><option value="">${esc(t("All components"))}</option>${comps.map(c => `<option value="${esc(c.id)}"${cur === c.id ? " selected" : ""} translate="no">${esc(c.name)}</option>`).join("")}</select></label>`;
+  }
+
   private kindProps(v: DrawingView): string {
     const par = v.parent ? findView(this.sheet, v.parent)?.name ?? "?" : "?";
     let s = `<p class="drw-note">${esc(t(v.kind === "section" ? "Section of {name}" : v.kind === "detail" ? "Detail of {name}" : "Auxiliary view of {name}", { name: par }))}</p>
@@ -2519,6 +2535,7 @@ export class DrawingWorkspace {
     const vk = el.dataset.v, sk = el.dataset.s;
     if (vk === "name") this.setView("Rename view", v => { v.name = val.trim() || v.name; });
     else if (vk === "cfg") this.setView("View configuration", v => { if (val) v.config = val; else delete v.config; });
+    else if (vk === "only") this.setView("View components", v => { if (val) v.only = [val]; else delete v.only; });
     else if (vk === "orient") {
       const o = val as Orient;
       const c = o === "current" ? this.host.currentView() : null;
@@ -2577,7 +2594,7 @@ export class DrawingWorkspace {
       });
     }
     else if (sk === "size") { this.setSheet("Sheet size", sh => { sh.size = val as SheetSize; }); this.fit(); }
-    else if (sk === "projection") this.setSheet("Projection type", sh => { sh.projection = val as Sheet["projection"]; });
+    else if (sk === "projection") this.setSheet("Projection type", sh => switchProjection(sh, val as Sheet["projection"]));
     else if (sk === "format") {
       if (val.startsWith("user:")) {
         const id = val.slice(5), f = this.sheet.tb?.id === id ? this.sheet.tb : loadFormats().find(x => x.id === id);

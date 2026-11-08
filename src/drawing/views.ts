@@ -34,6 +34,31 @@ export function projectedDir(parent: ViewDir, side: [number, number], proj: Proj
 }
 
 /**
+ * Changes a sheet between first and third angle (FR-DRW-011) keeping every projected view the same view:
+ * its side flips and it moves across its parent (a Top view goes from under the front view to above it),
+ * as SolidWorks does. Views placed off a view that moved follow it.
+ */
+export function switchProjection(sheet: Sheet, proj: Projection) {
+  if (sheet.projection === proj) return;
+  sheet.projection = proj;
+  const old = new Map(sheet.views.map(v => [v.id, [v.x, v.y] as [number, number]]));
+  const done = new Set<string>();
+  const place = (v: DrawingView, depth = 0) => {
+    if (done.has(v.id) || depth > 20) return;
+    done.add(v.id);
+    const par = v.parent ? findView(sheet, v.parent) : undefined;
+    if (!par) return;
+    place(par, depth + 1);
+    const [ox, oy] = old.get(v.id)!, [px, py] = old.get(par.id)!;
+    if (!v.kind && v.side) {
+      v.side = [-v.side[0] || 0, -v.side[1] || 0];
+      v.x = par.x - (ox - px); v.y = par.y - (oy - py);
+    } else { v.x = par.x + (ox - px); v.y = par.y + (oy - py); }
+  };
+  for (const v of sheet.views) place(v);
+}
+
+/**
  * The view seen from the side `q` (a unit 2D direction on the sheet, in the parent's axes), with the
  * viewer on that side: a third-angle projection along any direction. Section and auxiliary views use it.
  */
@@ -190,7 +215,7 @@ export function alignedLegs(path: number[]): { c: [number, number]; d1: [number,
 }
 
 /** What the worker computes for a view: a projection along `view`, cut at `p` for a section; `key` caches it. Detail views reuse their parent's. */
-export type ViewReq = { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; key: string };
+export type ViewReq = { view: ViewDir; p?: V3; poly?: number[]; stair?: Stair; align?: Align; exclude?: string[]; shade?: boolean; cfg?: string; only?: string[]; key: string };
 
 /** The part configuration a view shows (FR-DRW-010): its own, else its parent's up to the model view; absent = the active one. */
 export function viewConfig(sheet: Sheet, v: DrawingView, depth = 0): string | undefined {
@@ -199,9 +224,26 @@ export function viewConfig(sheet: Sheet, v: DrawingView, depth = 0): string | un
   return p ? viewConfig(sheet, p, depth + 1) : undefined;
 }
 
+/** The components an assembly view shows alone: its own list, else its parent's up to the model view; absent = all. */
+/** The topology a component-only view draws on: edges and cylinders of its components (face names `<comp>@<face>`). */
+export function topoOnly<T extends { edges: { k: string }[]; cyls: { f?: string }[] }>(topo: T, only?: string[]): T {
+  if (!only?.length) return topo;
+  const mine = (k?: string) => { const i = k ? k.indexOf("@") : -1, c = i > 0 ? k!.slice(0, i) : null; return !!c && only.some(x => c === x || c.startsWith(x + "/")); };
+  return { ...topo, edges: topo.edges.filter(e => mine(e.k)), cyls: topo.cyls.filter(c => mine(c.f)) };
+}
+
+export function viewOnly(sheet: Sheet, v: DrawingView, depth = 0): string[] | undefined {
+  if (v.only?.length) return v.only;
+  const p = v.parent && depth < 20 ? findView(sheet, v.parent) : undefined;
+  return p ? viewOnly(sheet, p, depth + 1) : undefined;
+}
+
 export function viewReq(sheet: Sheet, v: DrawingView): ViewReq {
-  const r = rawReq(sheet, v), cfg = viewConfig(sheet, v);
-  return cfg ? { ...r, cfg, key: `${r.key}|cfg|${cfg}` } : r;
+  let r = rawReq(sheet, v);
+  const cfg = viewConfig(sheet, v), only = viewOnly(sheet, v);
+  if (cfg) r = { ...r, cfg, key: `${r.key}|cfg|${cfg}` };
+  if (only) { const o = [...only].sort(); r = { ...r, only: o, key: `${r.key}|on|${o.join(",")}` }; }
+  return r;
 }
 
 function rawReq(sheet: Sheet, v: DrawingView, depth = 0): ViewReq {
