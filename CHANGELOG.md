@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.249.0] - 2026-11-08
+
+### Added
+
+- Motion studies: a Proximity result is drawn in the view as a dashed line between the two components' nearest points, moving with the playhead (FR-FT-122).
+
 ## [1.247.0] - 2026-11-08
 
 ### Added
@@ -1605,7 +1611,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.247.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.249.0...HEAD
+[1.249.0]: https://github.com/kothf/step-viewer/compare/v1.247.0...v1.249.0
 [1.247.0]: https://github.com/kothf/step-viewer/compare/v1.245.0...v1.247.0
 [1.245.0]: https://github.com/kothf/step-viewer/compare/v1.241.0...v1.245.0
 [1.241.0]: https://github.com/kothf/step-viewer/compare/v1.240.0...v1.241.0
