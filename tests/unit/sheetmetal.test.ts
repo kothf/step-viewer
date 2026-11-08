@@ -196,3 +196,36 @@ test("sheet metal: tab beside a face joins the flat pattern (FR-FT-120)", async 
   assert.equal(over?.ok, false);
   assert.equal(over?.code, "E-SM-TABOVER");
 });
+
+test("sheet metal: holes cut in flat faces show in the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const circ = (id: string, plane: "XY" | "XZ", x: number, y: number, r: number): SketchFeature => ({
+    id, type: "sketch", name: id, plane: { std: plane }, rels: [], dims: [], ents: [{ id: `${id}c`, t: "point", x, y }, { id: `${id}o`, t: "circle", c: `${id}c`, r }],
+  });
+  // One hole in the plate, one in the flange (the flange stands on y = 0, 30 high; flat, it lies below y = 4 - ba).
+  const h1 = circ("h1", "XY", 20, 20, 5), h2 = circ("h2", "XZ", 70, 18, 4);
+  const cut = (id: string, sk: string): Feature => ({ id, type: "extrude", name: id, sketch: sk, op: "cut", end: "through2", depth: { v: 0 } });
+  const feats = [s, base(), fl, h1, cut("c1", "h1"), h2, cut("c2", "h2")];
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2);
+  const flatLen = 50 - 4 + ba + 26;
+  const holes = Math.PI * (25 + 16) * 2;
+  const folded = run(doc(feats));
+  close(folded.props.volume, 100 * flatLen * 2 - holes, 1e-5);
+  const r = run(doc([...feats, flat]));
+  close(r.props.volume, 100 * flatLen * 2 - holes, 1e-5);
+  close(r.size[1], flatLen, 1e-6);
+  // The flange hole lands on the flange part of the pattern: 18 up the flange is 14 flat past the bend.
+  const edges = r.sheet!.flatEdges!;
+  const circles = edges.filter(e => e.kind === "circle") as { c: [number, number]; r: number }[];
+  assert.equal(circles.length, 2, JSON.stringify(edges.map(e => e.kind)));
+  const c1 = circles.find(c => Math.abs(c.r - 5) < 1e-6)!, c2 = circles.find(c => Math.abs(c.r - 4) < 1e-6)!;
+  close(c1.c[0], 20, 1e-6); close(c1.c[1], 20, 1e-6);
+  close(c2.c[0], 70, 1e-6); close(c2.c[1], 4 - ba - (18 - 4), 1e-6);
+  const dr = flatDrawing(r.sheet!);
+  assert.equal(dr.entities.filter(e => e.kind === "circle").length, 2);
+  // Without cuts the flat pattern keeps its exact sketch outline.
+  assert.equal(run(doc([s, base(), fl, flat])).sheet!.flatEdges, undefined);
+});

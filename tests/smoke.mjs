@@ -2712,6 +2712,104 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.137.0: sketch text (FR-SK-020), embossed by Extrude ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    const toPage = q => mp.evaluate(q => { const v = window.__sv.viewer, f = window.__sv.model.editor().frame; const w = [0, 1, 2].map(i => f.o[i] + f.x[i] * q[0] + f.y[i] * q[1]); const s = new (v.camera.position.constructor)(...w).project(v.camera), r = v.renderer.domElement.getBoundingClientRect(); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; }, q);
+    const click = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down(); await mp.mouse.up(); await mp.waitForTimeout(80); };
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    // The Point flyout holds Text; the panel takes the text and height before the click.
+    await mp.click('#mc-tools [data-fly="point"]');
+    const ptFly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(2)");
+    await mp.waitForSelector("#mc-pm [data-tx=text]");
+    await mp.evaluate(() => { const set = (k, v) => { const el = document.querySelector(`#mc-pm [data-tx=${k}]`); el.value = v; el.dispatchEvent(new Event("change")); }; set("text", "MC"); set("h", "10"); });
+    await click([5, 5]);
+    await mp.waitForFunction(() => window.__sv.model.editor().sk.ents.some(e => e.t === "text" && e.gl), null, { timeout: 30000 });
+    const tx = await mp.evaluate(() => { const ed = window.__sv.model.editor(), e = ed.sk.ents.find(x => x.t === "text"), p = ed.sk.ents.find(x => x.id === e.p); return { text: e.text, h: e.h, at: [p.x, p.y].map(v => Math.round(v * 10) / 10), dof: ed.info.dof }; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    await mp.evaluate(() => window.__sv.model.store.change("Extrude", d => { d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 2 } }); }));
+    await idle();
+    const emb = await mp.evaluate(() => { const r = window.__sv.model.last(); return { v: r.props?.volume ?? 0, ok: r.statuses.every(s => s.ok), solids: r.props?.bodies }; });
+    // The text panel in Russian, with the text selected.
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.select([ed.sk.ents.find(x => x.t === "text").id]); window.__sv.modeller.renderPanel(); });
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm .pm-text h4, #mc-pm .pm-text label, #mc-pm .pm-text .pm-help")].map(e => e.textContent.trim()).join("|"));
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ptFly === "Point|Text" && tx.text === "MC" && tx.h === 10 && Math.abs(tx.at[0] - 5) < 1.5 && Math.abs(tx.at[1] - 5) < 1.5 && tx.dof === 2 && emb.ok && emb.v > 2 * 25 && emb.v < 2 * 160, `model 1.137: Text tool from the Point flyout, embossed 2 mm (${ptFly}, ${JSON.stringify(tx)}, ${JSON.stringify(emb)})`);
+    check(/Шрифт/.test(ru) && /Жирный/.test(ru) && /Высота/.test(ru) && /заглавной/.test(ru) && !/Font|Bold|capital/.test(ru), `model 1.137: the text panel in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- Part modelling 1.139.0: section at the sketch plane (FR-SK-006), configuration table CSV (FR-CFG-003) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 40 block 20 high, then a sketch on the XZ plane through its middle.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [{ id: "d1", name: "D1", t: "distance", e: ["p1", "p2"], val: { v: 40 } }], ents: [
+        { id: "p1", t: "point", x: -20, y: -20 }, { id: "p2", t: "point", x: 20, y: -20 }, { id: "p3", t: "point", x: 20, y: 20 }, { id: "p4", t: "point", x: -20, y: 20 },
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [] });
+    }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s2"));
+    await mp.waitForTimeout(1000);
+    await mp.click('#mc-tools [data-c="sksec"]');
+    await mp.waitForTimeout(300);
+    const on = await mp.evaluate(() => { const sp = window.__sv.section.planes.find(p => p.label === "Sketch"); return sp ? { n: sp.axis.toArray().map(v => Math.round(v * 1000) / 1000), off: Math.round(sp.offset * 1000) / 1000, pressed: document.querySelector('#mc-tools [data-c="sksec"]').getAttribute("aria-pressed"), clip: window.__sv.viewer.renderer.clippingPlanes?.length ?? 0 } : null; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const off = await mp.evaluate(() => window.__sv.section.planes.filter(p => p.label === "Sketch").length);
+    check(on && Math.abs(Math.abs(on.n[1]) - 1) < 1e-6 && Math.abs(on.off) < 0.1 && on.pressed === "true" && off === 0, `model 1.139: Section at the sketch plane while sketching, gone on exit (${JSON.stringify(on)}, ${off})`);
+    // Configuration table: export lists both configurations; importing a CSV edits one and adds another.
+    await mp.evaluate(() => window.__sv.modeller.editConfigs());
+    await mp.click("#mc-pm [data-a=add]");
+    await idle();
+    const dl = mp.waitForEvent("download");
+    await mp.click("#mc-pm [data-a=cfgcsv]");
+    const csv = await (await dl).createReadStream().then(r => new Promise(res => { let t = ""; r.on("data", c => (t += c)); r.on("end", () => res(t)); }));
+    await mp.evaluate(() => window.__sv.modeller.importConfigTable("Configuration,depth@Extrude1,D1@Sketch1\nConfig2,35,30\nTall,60,\n"));
+    await idle();
+    const cfg = await mp.evaluate(() => { const d = window.__sv.model.store.doc; return { names: d.configs.map(c => c.name), act: d.config, depth: d.features[1].depth.v, d1: d.features[0].dims[0].val.v, ok: window.__sv.model.last().statuses.every(s => s.ok) }; });
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm fieldset:last-of-type legend, #mc-pm [data-a=cfgcsv], #mc-pm [data-a=cfgin]")].map(e => e.textContent.trim()).join("|"));
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(/^Configuration,\$STATE@Sketch1,/.test(csv) && /\nDefault,/.test(csv) && /\nConfig2,/.test(csv) && /D1@Sketch1/.test(csv) && cfg.names.join() === "Default,Config2,Tall" && cfg.act === "Config2" && cfg.depth === 35 && cfg.d1 === 30 && cfg.ok, `model 1.139: configuration table export and import (${csv.split("\n")[0]}, ${JSON.stringify(cfg)})`);
+    check(ru === "Таблица конфигураций|Экспорт таблицы|Импорт таблицы…", `model 1.139: configuration table in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -7438,6 +7536,22 @@ try {
     const tb1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
     check(tb0.title === "Tab" && tb0.type === "smtab" && tb0.sketch === "s3" && !tb1.bad && Math.abs(tb1.v - tv0 - 30 * 15 * T) < 1e-3,
       `sheet metal: Base Flange/Tab on a part with a base flange adds a tab beside a face (${JSON.stringify({ tb0, tb1, tv0 })})`);
+    // A hole cut through the plate by an ordinary extrude shows in the flat pattern and its DXF.
+    await smMenu("Flatten");
+    const hv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Flatten");
+    await mp.evaluate(() => window.__sv.model.store.change("Hole", d => {
+      const at = d.features.findIndex(f => f.type === "smflat");
+      d.features.splice(at, 0, { id: "s4", type: "sketch", name: "Sketch4", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "hc", t: "point", x: 30, y: 25 }, { id: "ho", t: "circle", c: "hc", r: 4 }] },
+        { id: "c4", type: "extrude", name: "Cut-Extrude1", sketch: "s4", op: "cut", end: "through2", depth: { v: 0 } });
+    }));
+    await settle();
+    await smMenu("Flatten");
+    const hv = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, circles: (window.__sv.model.last().sheet?.flatEdges ?? []).filter(e => e.kind === "circle").map(e => e.r), bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    const [hdl] = await Promise.all([mp.waitForEvent("download"), smMenu("Flat pattern DXF")]);
+    const hdxf = (await import("node:fs")).readFileSync(await hdl.path(), "utf8");
+    check(!hv.bad && hv.circles.length === 1 && Math.abs(hv.circles[0] - 4) < 1e-6 && Math.abs(hv0 - hv.v - Math.PI * 16 * T) < 1e-3 && (hdxf.match(/\nCIRCLE\n/g) ?? []).length === 1,
+      `sheet metal: a hole cut after the sheet metal features shows in the flat pattern and its DXF (${JSON.stringify({ hv0, hv, circles: (hdxf.match(/\nCIRCLE\n/g) ?? []).length })})`);
     await ctx.close();
   }
 

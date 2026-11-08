@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DocStore, newPart, moved, orderProblem } from "../../src/model/doc";
-import { activate, addConfig, removeConfig, renameConfig } from "../../src/model/configs";
+import { activate, addConfig, applyConfigTable, configTable, parseCsv, removeConfig, renameConfig } from "../../src/model/configs";
 import { refreshExprs } from "../../src/model/params";
 import type { Feature, PartDoc } from "../../src/model/types";
 
@@ -72,4 +72,44 @@ test("reorder: a fillet can move above a cut it does not use; a feature can't mo
   // Sketch2 sits on Extrude1's end face: it can't go first.
   const e = moved(d.features, ["s2", "c1"], 0);
   assert.equal(orderProblem(e)?.parent.id, "e1");
+});
+
+test("configuration table: export, then a CSV edits values and adds a configuration (FR-CFG-003)", () => {
+  const s = new DocStore(part());
+  s.normalize = d => { refreshExprs(d); };
+  s.change("Add", d => addConfig(d, "Short"));
+  s.change("Short", d => { d.vars![0].expr = "40"; d.features.find(f => f.id === "f1")!.suppressed = true; });
+  const csv = configTable(s.doc);
+  const rows = parseCsv(csv);
+  const col = (h: string) => rows[0].indexOf(h);
+  assert.equal(rows[0][0], "Configuration");
+  assert.deepEqual(rows.slice(1).map(r => r[0]), ["Default", "Short"]);
+  assert.equal(rows[1][col("$VAR@L")], "100");
+  assert.equal(rows[2][col("$VAR@L")], "40");
+  assert.equal(rows[2][col("$STATE@Fillet1")], "S");
+  assert.equal(rows[1][col("depth@Extrude1")], "L");
+  assert.equal(rows[1][col("count@LPattern1")], "3");
+  // Semicolons, quotes, a new configuration and a column that doesn't exist.
+  const text = 'Configuration;$VAR@L;$STATE@Fillet1;count@LPattern1;radius@Fillet1;nope@X\nShort;55;U;4;"2.5";1\nLong;250;;6;;\n';
+  let res: ReturnType<typeof applyConfigTable> | null = null;
+  s.change("Table", d => { res = applyConfigTable(d, text); });
+  assert.deepEqual(res!.added, ["Long"]);
+  assert.deepEqual(res!.changed, ["Short"]);
+  assert.deepEqual(res!.unknown, ["nope@X"]);
+  const depth = () => (s.doc.features[1] as Extract<Feature, { type: "extrude" }>).depth.v;
+  const f1 = () => s.doc.features.find(f => f.id === "f1") as Extract<Feature, { type: "fillet" }>;
+  // Short is active: its row applies at once.
+  assert.equal(depth(), 55);
+  assert.equal(f1().suppressed, undefined);
+  assert.equal(f1().radius.v, 2.5);
+  assert.equal((s.doc.features.find(f => f.id === "p1") as Extract<Feature, { type: "lpattern" }>).count, 4);
+  s.change("Long", d => activate(d, "Long"));
+  assert.equal(depth(), 250);
+  assert.equal((s.doc.features.find(f => f.id === "p1") as Extract<Feature, { type: "lpattern" }>).count, 6);
+  // Long started from Short's values, so the fillet radius came along.
+  assert.equal(f1().radius.v, 2.5);
+  // One undo step.
+  s.undo(); s.undo();
+  assert.equal(s.doc.configs!.length, 2);
+  assert.throws(() => applyConfigTable(structuredClone(s.doc), "Configuration\n"));
 });

@@ -24,7 +24,20 @@ export type SkEnt =
    */
   | { id: string; t: "ellipse"; c: string; a: string; b: string; p0?: string; p1?: string; cons?: boolean }
   /** Interpolating cubic spline through the points; closed runs back to the first (FR-SK-019). */
-  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean };
+  | { id: string; t: "spline"; pts: string[]; closed?: boolean; cons?: boolean }
+  /**
+   * Text (FR-SK-020): `text` from the anchor point `p` (left end of the baseline), capital letters `h` mm
+   * tall, turned by `ang` (radians). `gl` keeps the glyph outlines (from the bundled DejaVu fonts) so
+   * profiles and the kernel need no font; the editor refreshes it when the text or the font changes.
+   */
+  | { id: string; t: "text"; p: string; text: string; h: number; ang?: number; font?: TextFont; bold?: boolean; italic?: boolean; gl?: TextOutline; cons?: boolean };
+
+export type TextFont = "sans" | "serif" | "mono";
+/**
+ * Glyph outlines for `key` (text + font), in capital heights from the anchor, y up. Each contour is a
+ * start point then commands: 1 x y = line, 2 x1 y1 x y = quadratic, 3 x1 y1 x2 y2 x y = cubic.
+ */
+export interface TextOutline { key: string; c: number[][] }
 
 export type RelKind =
   | "coincident" | "horizontal" | "vertical" | "parallel" | "perpendicular" | "collinear"

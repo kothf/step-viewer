@@ -830,6 +830,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .cfg-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 .cfg-row { display: flex; align-items: center; gap: 4px; }
 .cfg-row input { flex: 1; min-width: 0; font-size: 12px; }
+.cfg-tbl { display: flex; flex-wrap: wrap; gap: 6px; }
 .cfg-row.on input { font-weight: 600; }
 .cfg-act { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-size: 14px; padding: 2px 4px; }
 

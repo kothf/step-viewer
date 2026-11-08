@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.136.0] - 2026-11-08
+## [1.140.0] - 2026-11-08
 
 ### Fixed
 
@@ -17,6 +17,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Modify box** (FR-UI-114): placing or double-clicking a sketch dimension opens a small box next to it with the dimension name, the value (expressions allowed), spin arrows, ✓, ✕ and ⟲ Rebuild, as in SolidWorks. The sketch follows the value as you type; Enter or ✓ keeps it, Esc or ✕ puts the old value back. ↑/↓ and the mouse wheel step the value (Shift ×10, Alt ×0.1).
 - **Feature dimensions on the model** (FR-UI-115): double-click a face to show the dimensions of the feature that made it (its sketch dimensions and extrude depth) on the model. Click one to change it in the Modify box: ⟲ rebuilds with the typed value, ✓ keeps it as one undo step, ✕ goes back. Esc or a click elsewhere hides them.
 - **Resizable panels** (FR-UI-002): drag the inner edge of the left and right panels, the drawing side panel or the top of the motion study timeline to resize them; the sizes are remembered, a double-click on the edge restores the default, and the edge also works from the keyboard (arrow keys). Dialogs resize from their corner and open at the size you left them.
+
+## [1.139.0] - 2026-11-08
+
+### Added
+
+- **Section at the sketch plane (FR-SK-006)**: the sketch bar's Section button cuts the model at the sketch plane while you sketch, hiding the material in front of it. It stays on for later sketches until turned off, and the cut goes away when you leave the sketch.
+- **Configuration table (FR-CFG-003)**: the Configurations panel exports every configuration as a CSV table, one row per configuration and one column per value: dimensions and feature values (mm, degrees or expressions), pattern counts, suppression (S/U), variables and material. Importing a table (comma or semicolon separated) updates the configurations it names and adds new ones, as one undo step.
+
+## [1.138.0] - 2026-11-08
+
+### Added
+
+- **Cuts in the sheet metal flat pattern (FR-FT-120)**: holes and cuts that ordinary features (extrude cuts, holes) make in the flat faces of a sheet metal part now show in the flat pattern. The material each feature took out of a face is moved onto the pattern with that face, so a hole in a flange lands where the flange lies when unfolded. The flat pattern DXF then takes its outline from the pattern itself, holes included (circles and arcs stay exact). Exported while folded, the DXF has the sheet outline only and says to flatten first. Cuts across a bend aren't unrolled yet.
+
+## [1.137.0] - 2026-11-08
+
+### Added
+
+- **Sketch text (FR-SK-020)**: the Text tool (sketch Point ▾ menu) places text from the bundled DejaVu fonts (sans, serif, monospace, bold and italic) at a capital-letter height. Its letters are closed regions, so Extrude embosses them and Cut engraves them. Select a text to change its words, font, height or angle; drag, dimension or relate its start point like any other point.
 
 ## [1.135.0] - 2026-11-08
 
@@ -1195,8 +1214,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.136.0...HEAD
-[1.136.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.136.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.140.0...HEAD
+[1.140.0]: https://github.com/kothf/step-viewer/compare/v1.139.0...v1.140.0
+[1.139.0]: https://github.com/kothf/step-viewer/compare/v1.138.0...v1.139.0
+[1.138.0]: https://github.com/kothf/step-viewer/compare/v1.137.0...v1.138.0
+[1.137.0]: https://github.com/kothf/step-viewer/compare/v1.135.0...v1.137.0
 [1.135.0]: https://github.com/kothf/step-viewer/compare/v1.134.0...v1.135.0
 [1.134.0]: https://github.com/kothf/step-viewer/compare/v1.133.0...v1.134.0
 [1.133.0]: https://github.com/kothf/step-viewer/compare/v1.131.0...v1.133.0

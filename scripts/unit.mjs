@@ -23,6 +23,18 @@ await build({
   external: ["opencascade.js"],
   define: { __APP_VERSION__: '"test"' },
   logLevel: "warning",
+  // Vite's `?url` imports become the file's absolute path, so modules that fetch assets still bundle.
+  plugins: [{
+    name: "url",
+    setup(b) {
+      b.onResolve({ filter: /\?url$/ }, a => ({ path: a.path.slice(0, -4), namespace: "url", pluginData: a.resolveDir }));
+      b.onLoad({ filter: /.*/, namespace: "url" }, async a => {
+        const { createRequire } = await import("node:module");
+        const file = createRequire(join(a.pluginData ?? root, "x.js")).resolve(a.path);
+        return { contents: `export default ${JSON.stringify(file)};`, loader: "js" };
+      });
+    },
+  }],
 });
 const pat = process.env.UNIT_PATTERN ? [`--test-name-pattern=${process.env.UNIT_PATTERN}`] : [];
 const r = spawnSync(process.execPath, ["--test", "--test-reporter=spec", ...pat, ...files.map(f => join(out, f.replace(/\.ts$/, ".mjs")))], { stdio: "inherit" });

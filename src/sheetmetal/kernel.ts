@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { apply, applyDir, baseFlange, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -30,7 +30,10 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
   }
   if (!sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
-  if (f.type === "smflat") return { body: flatBody(api, sm, f.id), sm };
+  if (f.type === "smflat") {
+    const flat = flatBody(api, sm, f.id, body);
+    return { body: flat.body, sm: flat.edges ? { ...sm, flatEdges: flat.edges } : sm };
+  }
   let res: { state: SheetState; ops: SheetOp[] };
   if (f.type === "smtab") {
     const sk = doc.features.find(x => x.id === f.sketch);
@@ -155,8 +158,10 @@ function cutTool(api: SheetApi, M: Mat, loop: V2[], T: number, fid: string): Nam
   return { shape, faces, names: faces.map((_f, i) => `${fid}:${i}`) };
 }
 
-/** The flat pattern as a solid on the plane of the first face. */
-export function flatBody(api: SheetApi, st: SheetState, fid: string): Named {
+/** The flat pattern as a solid on the plane of the first face. Material that later features took out
+ * of a flat panel (holes, cuts) is moved onto the pattern with the panel and cut from it too; then
+ * `edges` is the pattern's top outline for the DXF. Cuts through a bend aren't unrolled. */
+export function flatBody(api: SheetApi, st: SheetState, fid: string, folded: Named | null = null): { body: Named; edges?: FlatEdge[] } {
   const { outer, holes } = flatLoops(st);
   if (!outer.length) throw new SheetError("E-SM-FLAT", "The flat pattern could not be made.");
   const parts: Named[] = outer.map(o => {
@@ -167,5 +172,78 @@ export function flatBody(api: SheetApi, st: SheetState, fid: string): Named {
   });
   let out = parts[0];
   for (const p of parts.slice(1)) out = api.bool("fuse", out, p, fid);
+  const removed = folded ? removedPieces(api, st, folded, fid) : [];
+  if (!removed.length) return { body: out };
+  for (const r of removed) out = api.bool("cut", out, r, fid);
+  return { body: out, edges: topEdges(api, out, st.root, st.T) };
+}
+
+function volumeOf(api: SheetApi, shape: any): number {
+  const p = new api.oc.GProp_GProps_1();
+  api.oc.BRepGProp.VolumeProperties_1(shape, p, true, false, false);
+  return p.Mass();
+}
+
+/** What later features took out of each flat panel, moved from the folded panel onto the flat pattern. */
+function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string): Named[] {
+  const panels = st.panels.map(p => ({ p, solid: panelSolid(api, p, st.T) }));
+  const sheet = panels.reduce((a, x) => a + volumeOf(api, x.solid.shape), 0) + st.bends.reduce((a, b) => a + volumeOf(api, bendSolid(api, b, st.T).shape), 0);
+  const body = volumeOf(api, folded.shape);
+  // Nothing taken out: the folded body is exactly the panels and bends.
+  if (Math.abs(body - sheet) <= sheet * 1e-7) return [];
+  const out: Named[] = [];
+  for (const { p, solid } of panels) {
+    const v = volumeOf(api, solid.shape);
+    const gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
+    out.push(moved(api, gone, flatTrsf(api, p.M, st.root)));
+  }
+  return out;
+}
+
+/** The rigid move from a panel's folded place onto the flat pattern: root ∘ M⁻¹. */
+function flatTrsf(api: SheetApi, M: Mat, R: Mat): any {
+  const A = [0, 1, 2].map(r => [0, 1, 2].map(c => R.x[r] * M.x[c] + R.y[r] * M.y[c] + R.z[r] * M.z[c]));
+  const t = [0, 1, 2].map(r => R.o[r] - (A[r][0] * M.o[0] + A[r][1] * M.o[1] + A[r][2] * M.o[2]));
+  const tr = new api.oc.gp_Trsf_1();
+  tr.SetValues(A[0][0], A[0][1], A[0][2], t[0], A[1][0], A[1][1], A[1][2], t[1], A[2][0], A[2][1], A[2][2], t[2]);
+  return tr;
+}
+
+function moved(api: SheetApi, n: Named, tr: any): Named {
+  const mk = new api.oc.BRepBuilderAPI_Transform_2(n.shape, tr, true);
+  const shape = mk.Shape();
+  const faces = api.sub(shape, "FACE");
+  return { shape, faces, names: faces.map((_f, i) => n.names[i] ?? `cut:${i}`) };
+}
+
+/** The flat pattern's outline on its top face, in flat coordinates: lines, circles and arcs exact, other curves as polylines. */
+function topEdges(api: SheetApi, flat: Named, R: Mat, T: number): FlatEdge[] {
+  const oc = api.oc;
+  const to2 = (p: any): V2 => { const d = sub3([p.X(), p.Y(), p.Z()], R.o); return [dot(d, R.x), dot(d, R.y)]; };
+  const out: FlatEdge[] = [];
+  for (const fc of api.sub(flat.shape, "FACE")) {
+    if (Math.abs(dot(sub3(api.centroid(fc), R.o), R.z) - T) > T * 1e-3) continue;
+    for (const ed of api.sub(fc, "EDGE")) {
+      const c = new oc.BRepAdaptor_Curve_2(ed);
+      const u0 = c.FirstParameter(), u1 = c.LastParameter();
+      const ty = c.GetType();
+      const a = to2(c.Value(u0)), b = to2(c.Value(u1)), m = to2(c.Value((u0 + u1) / 2));
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) out.push({ kind: "line", a, b });
+      else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+        const ci = c.Circle(), r = ci.Radius(), cc = to2(ci.Location());
+        if (Math.abs(u1 - u0) > 2 * Math.PI - 1e-6) out.push({ kind: "circle", c: cc, r });
+        else {
+          const ccw = (m[0] - a[0]) * (b[1] - m[1]) - (m[1] - a[1]) * (b[0] - m[0]) > 0;
+          const [p, q] = ccw ? [a, b] : [b, a];
+          out.push({ kind: "arc", c: cc, r, a0: Math.atan2(p[1] - cc[1], p[0] - cc[0]), a1: Math.atan2(q[1] - cc[1], q[0] - cc[0]) });
+        }
+      } else {
+        const pts: V2[] = [];
+        for (let i = 0; i <= 32; i++) pts.push(to2(c.Value(u0 + (u1 - u0) * i / 32)));
+        out.push({ kind: "poly", pts });
+      }
+    }
+  }
   return out;
 }
