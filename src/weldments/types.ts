@@ -35,6 +35,19 @@ export interface MemberFeature {
   angle?: Num;
   /** Mirror the profile left to right. */
   mirror?: boolean;
+  /**
+   * Groups 2, 3, …: segments (by sketch entity id) with their own profile position, rotation and mirror.
+   * Segments in no group are group 1 and use the feature's `anchor`/`angle`/`mirror`.
+   */
+  groups?: MemberGroup[];
+}
+
+/** A group of a Structural Member's segments placed with its own profile settings. */
+export interface MemberGroup {
+  ents: string[];
+  anchor?: Anchor;
+  angle?: Num;
+  mirror?: boolean;
 }
 
 /**

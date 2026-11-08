@@ -53,7 +53,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet } from "../sheetmetal/types";
@@ -1847,6 +1847,10 @@ export class ModelController {
     return {
       doc: this.doc, before: this.doc.features.slice(0, index), selected: this.selected, last: this.last,
       faceAt: (x, y) => this.host.faceAt(x, y), faceRef: id => this.faceRef(id), faceType: id => this.host.viewer.parts[0]?.data.faces[id]?.type,
+      toScreen: p => {
+        const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect(), q = new THREE.Vector3(...p).project(v.camera);
+        return q.z > 1 ? null : [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height];
+      },
       changed: () => this.draftChanged(),
     };
   }
@@ -3337,11 +3341,14 @@ export class ModelController {
     const names = this.last?.faceNames;
     if (!part || !names) return;
     const pre = `${id}:`;
+    // A body or a cut list item selected in the tree lights up its bodies' faces.
+    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
+    const inBody = keys ? bodyFaces(this.last?.bodies ?? [], keys) : null;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
     const out: number[] = [];
     part.data.faces.forEach((fc, i) => {
-      if (!names[i]?.startsWith(pre)) return;
+      if (inBody ? !inBody(i) : !names[i]?.startsWith(pre)) return;
       for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let k = 0; k < 3; k++) {
         const vi = idx ? idx.getX(tri * 3 + k) : tri * 3 + k;
         out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
@@ -3564,7 +3571,8 @@ export class ModelController {
       const tool = m.editor.tool;
       const tools: [SkTool, string, string][] = [
         ["select", t("Select"), t("Select and drag (Esc)")], ["line", t("Line"), t("Line (L)")], ["rect", t("Rectangle"), t("Corner rectangle (R)")],
-        ["crect", t("Centre rect"), t("Centre rectangle")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
+        ["crect", t("Centre rect"), t("Centre rectangle")],
+        ["rect3", t("3-pt rectangle"), t("3-point corner rectangle: two corners, then the width")], ["crect3", t("3-pt centre rect"), t("3-point centre rectangle: centre, middle of a side, then a corner")], ["pgram", t("Parallelogram"), t("Parallelogram: three corners")], ["circle", t("Circle"), t("Circle (C)")], ["circle3", t("3-pt circle"), t("Circle through three points")],
         ["arc", t("Arc"), t("Centre-point arc (A)")], ["arc3", t("3-pt arc"), t("Arc through start, end and a point on it")],
         ["polygon", t("Polygon"), t("Polygon: centre, then a corner")], ["slot", t("Slot"), t("Straight slot: two centres, then the width (W)")],
         ["cslot", t("Centre slot"), t("Centerpoint straight slot: the centre, one end, then the width")], ["aslot", t("Arc slot"), t("Centerpoint arc slot: the arc's centre, start, end, then the width")],
@@ -3577,7 +3585,7 @@ export class ModelController {
         ["hord", t("Horizontal ordinate"), t("Horizontal ordinate dimensions: X distances from one base")], ["vord", t("Vertical ordinate"), t("Vertical ordinate dimensions: Y distances from one base")],
       ];
       // Related tools share one button with a flyout (SolidWorks-style): the button shows the last one used.
-      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline"], ["rect", "crect", "polygon"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
+      const groups: SkTool[][] = [["select"], ["dim", "hord", "vord"], ["line", "spline"], ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], ["circle", "circle3", "ellipse", "earc"], ["arc", "arc3"], ["slot", "cslot", "aslot", "aslot3"], ["point", "text"], ["trim", "extend", "split"], ["fillet", "chamfer"], ["offset", "convert", "intersect"]];
       const info = new Map(tools.map(x => [x[0], x]));
       html = `<div class="mc-g" role="group" aria-label="${esc(t("Sketch"))}">${groups.map(g => {
         const cur = g.includes(tool) ? tool : (this.flyLast.get(g[0]) as SkTool | undefined) ?? g[0];
@@ -3630,8 +3638,8 @@ export class ModelController {
         return;
       }
       if (mm.kind !== "sketch") return;
-      const g = ({ line: ["line", "spline"], rect: ["rect", "crect", "polygon"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
-      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
+      const g = ({ line: ["line", "spline"], rect: ["rect", "crect", "rect3", "crect3", "pgram", "polygon"], circle: ["circle", "circle3", "ellipse", "earc"], arc: ["arc", "arc3"], slot: ["slot", "cslot", "aslot", "aslot3"], trim: ["trim", "extend", "split"], fillet: ["fillet", "chamfer"], offset: ["offset", "convert", "intersect"], dim: ["dim", "hord", "vord"], point: ["point", "text"] } as Record<string, SkTool[]>)[key];
+      const label: Record<string, string> = { point: t("Point"), text: t("Text"), line: t("Line"), spline: t("Spline"), rect: t("Corner rectangle"), crect: t("Centre rectangle"), rect3: t("3-point corner rectangle"), crect3: t("3-point centre rectangle"), pgram: t("Parallelogram"), polygon: t("Polygon"), circle: t("Circle"), circle3: t("3-point circle"), arc: t("Centre-point arc"), arc3: t("3-point arc"), slot: t("Straight slot"), cslot: t("Centerpoint straight slot"), aslot: t("Centerpoint arc slot"), aslot3: t("3-point arc slot"), ellipse: t("Ellipse"), earc: t("Partial ellipse"), trim: t("Trim"), extend: t("Extend"), split: t("Split"), fillet: t("Sketch fillet"), chamfer: t("Sketch chamfer"), offset: t("Offset entities"), convert: t("Convert entities"), intersect: t("Intersection curve"), dim: t("Smart dimension"), hord: t("Horizontal ordinate"), vord: t("Vertical ordinate") };
       const r = b.getBoundingClientRect();
       this.showMenu(g.map(id => [label[id], () => { this.flyLast.set(g[0], id); mm.editor.setTool(id); this.renderBar(); this.renderPanel(); }, ICON_SVG[`sk:${id}`]] as [string, () => void, string]), r.left - 40, r.bottom + 4,
         () => $("#mc-tools").querySelector<HTMLElement>(`[data-fly="${b.dataset.fly}"]`)?.focus());
@@ -4042,6 +4050,7 @@ export class ModelController {
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
+    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -4157,6 +4166,7 @@ export class ModelController {
           if ((e.target as HTMLElement).matches("input")) return;
           this.selected = id;
           this.renderTree();
+          this.drawDecor();
           return;
         }
         if ((e.target as HTMLElement).matches("input")) return;
@@ -4215,7 +4225,8 @@ export class ModelController {
         if ((e.target as HTMLElement).matches("input")) return;
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
-        if (id === "folder:bodies") return;
+        if (id === "folder:bodies" || id === "folder:cutlist") return;
+        if (id.startsWith("cut:")) { showCutList(this.last?.cutList, this.doc); return; }
         if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
@@ -4301,7 +4312,8 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id.startsWith("folder:") && id !== "folder:bodies") {
+    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => showCutList(this.last?.cutList, this.doc)]);
+    if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
@@ -4786,7 +4798,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || (key === "angle" && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
@@ -6169,6 +6181,14 @@ function sketchSegments(sk: SketchFeature, f: Frame): number[] {
 
 const S = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** Whether a feature uses a sketch up (SolidWorks hides it once used). */
+/** Whether view face i belongs to one of the bodies `keys` (the worker lists shown faces body by body). */
+function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (i: number) => boolean {
+  const ranges: [number, number][] = [];
+  let at = 0;
+  for (const b of bodies) { const n = b.faces ?? 0; if (keys.includes(b.key)) ranges.push([at, at + n]); at += n; }
+  return i => ranges.some(([a, z]) => i >= a && i < z);
+}
+
 function absorbs(g: Feature, sketch: string): boolean {
   if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab") return g.sketch === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
@@ -6342,6 +6362,9 @@ const ICON_SVG: Record<string, string> = {
   "sk:ellipse": S('<ellipse cx="8" cy="8" rx="6" ry="3.5" transform="rotate(-25 8 8)"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/>'),
   "sk:earc": S('<path d="M2.6 10.5A6 3.5 -25 0 1 13.4 5.5"/><circle cx="8" cy="8" r="0.9" fill="currentColor"/><path d="M8 8 13.4 5.5" stroke-dasharray="1.2 1.4"/>'),
   "sk:slot": S('<path d="M5 4.5h6a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7z"/><path d="M5 8h6" stroke-dasharray="1.5 1.5"/>'),
+  "sk:rect3": S('<path d="M3 9.5 9.5 3l3.5 3.5L6.5 13z"/><circle cx="3" cy="9.5" r="1.1" fill="currentColor"/><circle cx="9.5" cy="3" r="1.1" fill="currentColor"/><circle cx="13" cy="6.5" r="1.1" fill="currentColor"/>'),
+  "sk:crect3": S('<path d="M3 9.5 9.5 3l3.5 3.5L6.5 13z"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/><circle cx="11.25" cy="4.75" r="1.1" fill="currentColor"/>'),
+  "sk:pgram": S('<path d="M5 4h9l-3 8H2z"/>'),
   "sk:cslot": S('<path d="M5 4.5h6a3.5 3.5 0 0 1 0 7H5a3.5 3.5 0 0 1 0-7z"/><path d="M5 8h6" stroke-dasharray="1.5 1.5"/><circle cx="8" cy="8" r="1.1" fill="currentColor"/>'),
   "sk:aslot": S('<path d="M2.5 12.5a5.5 5.5 0 0 1 11 0M5.5 12.5a2.5 2.5 0 0 1 5 0M2.5 12.5a1.5 1.5 0 0 0 3 0M10.5 12.5a1.5 1.5 0 0 0 3 0"/><circle cx="8" cy="12.5" r="1" fill="currentColor"/>'),
   "sk:aslot3": S('<path d="M2.5 12.5a5.5 5.5 0 0 1 11 0M5.5 12.5a2.5 2.5 0 0 1 5 0M2.5 12.5a1.5 1.5 0 0 0 3 0M10.5 12.5a1.5 1.5 0 0 0 3 0"/><circle cx="4" cy="12.5" r="1" fill="currentColor"/><circle cx="12" cy="12.5" r="1" fill="currentColor"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/>'),

@@ -5,18 +5,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.149.0] - 2026-11-08
+## [1.155.0] - 2026-11-08
 
 ### Added
 
 - **Toolbox** (FR-ASM-028): the assembly's Fasteners command is now Toolbox, with standard parts grouped as screws, nuts, washers, pins, keys and bearings. New: countersunk socket screws (ISO 10642), set screws (ISO 4026), thin, nylon insert and flange nuts (ISO 4035, 7040, 4161), small and large washers (ISO 7092, 7093), dowel and spring pins (ISO 2338, 8752), square-ended parallel keys (DIN 6885 B) and deep groove ball bearings (625 to 6306). Every size is a configuration, as before. With Size from the hole on, clicking a hole picks the size that fits it: the largest screw, nut or washer that passes, the pin of that diameter, or the bearing whose outside diameter matches the bore. Countersunk and set screws, pins and bearings go in flush with the face around the hole; the seat is also found past a countersink.
 - **McMaster-Carr parts** (FR-ASM-028): the McMaster-Carr button opens their catalogue in a new tab. Download a part's 3-D STEP file there and drop it on the open assembly (dropping parts or STEP/IGES/BREP files on an assembly now inserts them as components). The part number and description come from the file name, and the BOM gets a Vendor column with a link to the product page (also in the CSV). The component menu gets Buy at McMaster-Carr. Nothing is fetched from McMaster-Carr's site, as their terms don't allow it.
 
+## [1.152.0] - 2026-11-08
+
+### Added
+
+- **3-point rectangles and parallelogram (FR-SK-013)**: the Rectangle ▾ menu adds 3-point corner rectangle (two corners set the first side at any angle, the third click the width), 3-point centre rectangle (centre, middle of a side, then a corner) and Parallelogram (three corners, the fourth follows), all with a live preview and the relations that keep their shape.
+
+## [1.151.0] - 2026-11-08
+
+### Added
+
+- **Cut list folder (FR-FT-121).** A weldment part's Features tree has a Cut list folder under Solid Bodies, as in SolidWorks: one row per cut list item (profile, length and quantity, plates and welds too). Clicking an item highlights its bodies in the view; a double click or the context menu opens the Cut List dialog. Selecting a body in Solid Bodies now highlights it as well.
+
+## [1.150.0] - 2026-11-08
+
+### Added
+
+- Motion studies: select several keys at once, as in SolidWorks. Ctrl+click or Shift+click adds a key to the selection, dragging on an empty part of the tracks draws a box that selects the keys it touches, and Ctrl+A selects every key (Esc clears). Selected keys move together (drag one of them, or Alt+←/→), take an interpolation from the key menu or the panel, delete together, and copy together: keys copied from one track paste onto any track of the same kind at the playhead, keys from several tracks paste back onto their own tracks, keeping their spacing (FR-FT-122).
+
+## [1.147.0] - 2026-11-08
+
+### Added
+
+- **Structural member groups (FR-FT-121).** Each segment in the Structural Member panel has a group list. Segments moved to a new group get their own profile position, rotation angle and mirror, so a frame's rails and posts can face different ways within one feature. Group 1 keeps the settings above.
+- **Pick member path segments in the view (FR-FT-121).** While a Structural Member is open, clicking a line or arc of the path sketch (or a face of the member's preview) ticks or unticks that segment, as in SolidWorks; a segment of another sketch starts the selection over with that sketch.
+
 ## [1.146.0] - 2026-11-08
 
 ### Added
 
 - **Section hatching by material and component** (FR-DRW-012): a section's cut faces are hatched by the material of the part they belong to (ANSI32 steel, ANSI33 brass, bronze and copper, ANSI38 aluminium, ANSI34 plastics and rubber, ANSI37 lead and zinc, ANSI31 anything else), and in an assembly (or a multibody part) neighbouring components are hatched at another angle and spacing so they tell apart. Hatch pattern in the view panel of a section or broken-out section picks one pattern for the whole view instead.
+
 ## [1.144.0] - 2026-11-08
 
 ### Added
@@ -1254,8 +1280,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.149.0...HEAD
-[1.149.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.149.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.155.0...HEAD
+[1.155.0]: https://github.com/kothf/step-viewer/compare/v1.152.0...v1.155.0
+[1.152.0]: https://github.com/kothf/step-viewer/compare/v1.151.0...v1.152.0
+[1.151.0]: https://github.com/kothf/step-viewer/compare/v1.150.0...v1.151.0
+[1.150.0]: https://github.com/kothf/step-viewer/compare/v1.147.0...v1.150.0
+[1.147.0]: https://github.com/kothf/step-viewer/compare/v1.146.0...v1.147.0
 [1.146.0]: https://github.com/kothf/step-viewer/compare/v1.144.0...v1.146.0
 [1.144.0]: https://github.com/kothf/step-viewer/compare/v1.143.0...v1.144.0
 [1.143.0]: https://github.com/kothf/step-viewer/compare/v1.142.0...v1.143.0

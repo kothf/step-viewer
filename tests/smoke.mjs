@@ -2981,6 +2981,17 @@ try {
       await mp.evaluate(() => document.querySelector("#lang-btn").click());
       return r;
     })();
+    // 1.152.0: 3-point rectangle and parallelogram from the Rectangle menu (FR-SK-013).
+    await mp.click('#mc-tools [data-fly="rect"]');
+    const rfly = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
+    await mp.click("#mc-menu button:nth-child(3)");
+    const nl0 = await mp.evaluate(() => window.__sv.model.editor().sk.ents.filter(e => e.t === "line").length);
+    await click([5, -5]); await click([25, -12]); await click([20, -18]);
+    await mp.evaluate(() => window.__sv.model.editor().setTool("pgram"));
+    await click([40, -5]); await click([60, -5]); await click([66, -16]);
+    const quads = await mp.evaluate(n0 => { const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id); const ls = sk.ents.filter(e => e.t === "line").slice(n0); const last = ls.slice(-4); const d = last.map(l => [P(l.a).x, P(l.a).y]); return { n: ls.length, perp: sk.rels.filter(r => r.t === "perpendicular").length, par: sk.rels.filter(r => r.t === "parallel").length, fourth: d[3].map(v => Math.round(v * 100) / 100), ok: ed.info.status }; }, nl0);
+    check(rfly === "Corner rectangle|Centre rectangle|3-point corner rectangle|3-point centre rectangle|Parallelogram|Polygon" && quads.n === 8 && quads.perp === 1 && quads.par >= 4 && quads.fourth.join(",") === "46,-16" && quads.ok === "ok",
+      `model 1.152: 3-point rectangle and parallelogram (${rfly}, ${JSON.stringify(quads)})`);
     check(ru === "Добавить размеры", `model 1.144: Add dimensions in Russian (${ru})`);
     await ctx.close();
   }
@@ -5091,7 +5102,7 @@ try {
     await ctx.close();
   }
 
-  // --- 1.149: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
+  // --- 1.155: toolbox (FR-ASM-028): size from the hole, flush parts; McMaster-Carr STEP drop-in ---
   if (inShard(2)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const tp = await ctx.newPage();
@@ -5163,7 +5174,7 @@ try {
       && mc.pn === "91290A115" && mc.desc === "Black-Oxide Alloy Steel Socket Head Screw" && mc.vendor === "McMaster-Carr"
       && mc.href === "https://www.mcmaster.com/91290A115/" && mc.target === "_blank" && mc.row.includes("91290A115")
       && mc.csv.endsWith("Vendor,Vendor URL") && mc.csvRow?.endsWith("McMaster-Carr,https://www.mcmaster.com/91290A115/"),
-      `asm 1.149: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
+      `asm 1.155: toolbox parts take their size from the hole and seat flush; a McMaster-Carr STEP keeps its part number and buy link (FR-ASM-028) (${JSON.stringify({ panel, tb, mc })})`);
     await ctx.close();
   }
 
@@ -5385,9 +5396,49 @@ try {
       const keyLeft = document.querySelector("#motion .mo-key").getBoundingClientRect().left;
       document.querySelector('#motion [data-mo="zfit"]').click();
       const zoomed = { z: m.zoom, ratio, scrolled, fit: tl().offsetWidth / tlw().clientWidth, keyLeft: Number.isFinite(keyLeft) };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end, menu, zoomed };
+      // Several keys: Ctrl+click adds the first key to the pasted one, Alt+→ moves both a frame (the last key stays);
+      // Ctrl+A selects all three, the key menu sets Ease in on all of them, Ctrl+C copies three, Esc clears.
+      const fps = m.study.fps, ptrack = () => m.study.tracks.find(k => k.kind === "pose"), nSel = () => document.querySelectorAll("#motion .mo-key.sel").length;
+      const fields = document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length;
+      document.querySelector(`#motion .mo-lane[data-lane="${ptrack().id}"] .mo-key`).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+      const two = nSel(), note = document.querySelector("#motion .mo-multi")?.textContent ?? "";
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true }));
+      const moved = ptrack().keys.map(k => Math.round(k.t * fps));
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+      const all = nSel() === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
+      document.querySelector("#motion .mo-key.sel").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+      document.querySelectorAll('#mo-menu [role="menuitemradio"]')[2].click();
+      const interps = ptrack().keys.map(k => k.interp ?? "");
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true }));
+      const copied = m.clip?.items.length === m.study.tracks.reduce((n, k) => n + (k.keys?.length ?? 0), 0);
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      const multi = { two, note, moved, want: [1, Math.round(1.5 * fps) + 1, 2 * fps], all, interps, copied, cleared: nSel(), lane: ptrack().id };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields, mid, end, menu, zoomed, multi };
     }).catch(e => ({ err: String(e) }));
+    // A box dragged over the empty top of the placement track selects its three keys; Delete removes them all.
+    let boxed = { err: "no track" };
+    if (pose.multi) {
+      const laneEl = mp.locator(`#motion .mo-lane[data-lane="${pose.multi.lane}"]`);
+      await laneEl.scrollIntoViewIfNeeded();
+      const lane = await laneEl.boundingBox();
+      await mp.mouse.move(lane.x + 1, lane.y + 1);
+      await mp.mouse.down();
+      await mp.mouse.move(lane.x + lane.width / 2, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.move(lane.x + lane.width - 1, lane.y + lane.height - 1, { steps: 4 });
+      await mp.mouse.up();
+      boxed = await mp.evaluate(() => {
+        const n = document.querySelectorAll("#motion .mo-key.sel").length, boxGone = !document.querySelector(".mo-box");
+        document.querySelector("#motion .mo-key.sel")?.focus();
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+        return { n, boxGone, left: window.__sv.motion.study.tracks.find(k => k.kind === "pose").keys.length };
+      });
+    }
     await mp.click('#motion [data-mo="close"]');
+    const mu = pose.multi;
+    check(mu?.two === 2 && mu.note === "2 keys selected" && JSON.stringify(mu.moved) === JSON.stringify(mu.want) && mu.all === true
+      && mu.interps.every(v => v === "easein") && mu.copied === true && mu.cleared === 0 && boxed.n === 3 && boxed.boxGone && boxed.left === 0,
+      `motion study: several keys selected (Ctrl+click, Ctrl+A, a box) move, take an interpolation, copy and delete together (FR-FT-122) (${JSON.stringify({ mu, boxed })})`);
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
     check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
@@ -7574,7 +7625,13 @@ try {
     await mp.click('#mc-pm input[data-wseg="l4"]');
     await settle();
     const p1 = await mp.evaluate(() => ({ bodies: window.__sv.model.last().bodies?.length, size: window.__sv.model.mode().draft.size }));
-    await mp.click('#mc-pm input[data-wseg="l4"]');
+    // Clicking the line in the view ticks it again (SolidWorks picks path segments in the graphics area).
+    const l4At = await mp.evaluate(() => { const v = window.__sv.viewer; v.controls.target.set(300, 200, 0); v.camera.up.set(0, 1, 0); v.camera.position.set(300, 200, 1600); v.camera.lookAt(300, 200, 0); v.controls.update(); v.fit(false); v.camera.updateMatrixWorld(); const r = v.renderer.domElement.getBoundingClientRect(), q = new v.camera.position.constructor(0, 200, 0).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; });
+    await mp.mouse.click(l4At[0] + 2, l4At[1] + 1);
+    await settle();
+    const p1b = await mp.evaluate(() => ({ segs: window.__sv.model.mode().draft.segs.map(s => s.ent).join(","), box: document.querySelector('#mc-pm input[data-wseg="l4"]')?.checked }));
+    check(p1b.segs === "l1,l2,l3,l4" && p1b.box === true, `weldments: clicking a path line in the view ticks it (${JSON.stringify({ l4At, p1b })})`);
+    if (p1b.segs !== "l1,l2,l3,l4") { await mp.click('#mc-pm input[data-wseg="l4"]'); }
     await settle();
     await mp.click("#mc-ok");
     await settle();
@@ -7588,6 +7645,14 @@ try {
     const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
+    await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
+    await mp.waitForTimeout(100);
+    const ct = await mp.evaluate(() => {
+      const hl = window.__sv.modeller.decor.children.filter(o => o.isMesh && o.material?.opacity === 0.45);
+      return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
+    });
+    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["SHS 50x50x4 × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();
@@ -7699,6 +7764,20 @@ try {
     await settle();
     const bend = await mp.evaluate(() => { const l = window.__sv.model.last(), id = window.__sv.model.store.doc.features.at(-1).id; return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), arc: (l.cutList ?? []).some(c => c.length === 157.1), faces: (l.faceNames ?? []).filter(n => n.startsWith(id + ":j2:")).length }; });
     check(JSON.stringify(bl.segs) === '["j1","j2","j3"]' && JSON.stringify(bl.labels) === '["Line 1","Arc 2","Line 3"]' && bend.faces > 0 && !bend.bad && bend.arc, `weldments: a member along a line, an arc and a line (${JSON.stringify({ bl, bend })})`);
+    // Groups: the last line of that member in a new group, turned 90° on its own.
+    const bendId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wgroup:j3"]', "new");
+    await settle();
+    const gl = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm legend")].map(e => e.textContent).filter(x => /^Group/.test(x)));
+    await mp.fill('#mc-pm input[data-num="groups.0.angle"]', "90");
+    await mp.press('#mc-pm input[data-num="groups.0.angle"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
+    check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
