@@ -9,7 +9,7 @@ import { units, UNITS } from "../tools/units";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { cornerKey, cutKey } from "./types";
+import { capDir, cornerKey, cutKey } from "./types";
 import { segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -208,9 +208,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
       body: group(t("Parameters"), box("wfaces", t("Faces"), faces(f.faces.length))
         + (f.faces.length ? `<button class="btn small" data-k="wclear" data-wlist="faces">${esc(t("Clear faces"))}</button>` : "")
         + numField("thickness", t("Thickness"), f.thickness, "length")
-        + chk("inward", f.inward, t("Thickness inward"))
+        + sel("wCapDir", t("Thickness direction"), [["out", t("Outward")], ["in", t("Inward")], ["internal", t("Internal")]], capDir(f))
         + help(t("Click the flat end faces of members. Drag the arrow to change the thickness.")))
-        + group(t("Offset"), chk("wInset", f.inset.v > 0, t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", t("Inset"), f.inset, "length") : ""))
+        + group(t("Offset"), chk("wInset", f.inset.v > 0, capDir(f) === "internal" ? t("Clearance to the tube") : t("Inset from the edges")) + (f.inset.v > 0 ? numField("inset", capDir(f) === "internal" ? t("Clearance") : t("Inset"), f.inset, "length") : ""))
         + group(t("Corner treatment"), chk("wChamfer", !!f.chamfer, t("Treat the corners"))
           + (f.chamfer ? sel("wCapCorner", t("Type"), [["chamfer", t("Chamfer")], ["fillet", t("Fillet")]], f.fillet ? "fillet" : "chamfer")
             + numField("chamfer", f.fillet ? t("Radius") : t("Distance"), f.chamfer, "length") : "")),
@@ -293,6 +293,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
   if (f.type === "endcap") {
     if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 3 }; else { delete f.chamfer; delete f.fillet; } };
+    if (k === "wCapDir") return () => { delete f.inward; if (val === "out") delete f.dir; else f.dir = val as "in" | "internal"; };
     if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
