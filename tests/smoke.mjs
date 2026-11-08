@@ -8174,6 +8174,29 @@ try {
     const f1 = await mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"), names: window.__sv.model.store.doc.features.map(f => f.name).join(",") }));
     check(f0.title === "Edge Flange" && f0.edges.length === 1 && /b?.*:p0:top/.test(f0.edges[0]) && f0.bends === 1 && f0.v > b1.v && !f1.bad && Math.abs(f1.v - want) / want < 1e-6 && /Base-Flange1,Edge-Flange1$/.test(f1.names),
       `sheet metal: Edge Flange on an edge clicked in the view, live preview, length typed (${JSON.stringify({ f0, f1, want })})`);
+    // The flange's length arrow (SolidWorks handle): at the flange tip, dragging it 10 mm further lengthens the flange live.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smflange").id));
+    await settle();
+    const fa = await mp.evaluate(() => {
+      const as = window.__sv.modeller.arrows ?? [], v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect();
+      const scr = p => { const q = p.clone().project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const a = as[0];
+      if (!a) return { n: 0 };
+      const grip = a.obj.position.clone().addScaledVector(a.dir, a.scale * 0.8);
+      return { n: as.length, key: a.key, dir: a.dir.toArray().map(x => Math.round(x * 1000) / 1000), tipZ: a.obj.position.z, from: scr(grip), to: scr(grip.clone().addScaledVector(a.dir, 10)), label: document.querySelector("#mc-layer .mc-handle")?.textContent };
+    });
+    if (fa.from) {
+      await mp.mouse.move(fa.from[0], fa.from[1]);
+      await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(fa.from[0] + ((fa.to[0] - fa.from[0]) * i) / 6, fa.from[1] + ((fa.to[1] - fa.from[1]) * i) / 6); await mp.waitForTimeout(40); }
+      await mp.mouse.up();
+      await settle();
+    }
+    const fd = await mp.evaluate(() => ({ len: window.__sv.model.mode().draft?.length?.v, v: window.__sv.model.last().props?.volume ?? 0 }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await settle();
+    check(fa.n === 1 && fa.key === "length" && fa.dir[2] === 1 && Math.abs(fa.tipZ - 25) < 1 && fa.label === "25 mm" && fd.len > 31 && fd.len < 39 && Math.abs(fd.v - (f1.v + T * 100 * (fd.len - 25))) < 1e-2,
+      `sheet metal: the Edge Flange length arrow sits on the flange tip and dragging it lengthens the flange (${JSON.stringify({ fa, fd })})`);
     // Flatten: a flat plate of the developed length, then the DXF with the outline and the bend line.
     await smMenu("Flatten");
     const ba = (Math.PI / 2) * (R + 0.42 * T);
