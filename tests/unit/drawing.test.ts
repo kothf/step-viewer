@@ -758,3 +758,22 @@ test("centreline: halfway between two parallel edges over both, centre mark on a
   assert.deepEqual(mk[0].map(v => Math.round(v * 1000) / 1000), [100 - 12, 100, 100 + 12, 100]);
   assert.equal(clineSegs({ id: "m", t: "cline", view: "v", k: "mark", refs: [ref("A", [20, 0, 0])] }, P, topo, pl), null, "a line is not round");
 });
+
+test("weld symbol: reference line away from the arrow, identification line only for a one-sided other-side weld", async () => {
+  const { weldPrims } = await import("../../src/drawing/weld");
+  const base = { id: "w", t: "weld" as const, pos: [100, 100] as [number, number] };
+  const dashed = (ps: any[]) => ps.filter(p => p.t === "l" && p.pen === "hidden").length;
+  const r = weldPrims({ ...base, arrow: { sym: "fillet", size: "a4", len: "100" } }, [100, 100], [80, 80]);
+  assert.equal(dashed(r.prims), 0);
+  assert.ok(r.box[0] >= 100 - 1e-9 && r.box[2] > 110, "runs right when the joint is to the left");
+  assert.ok(r.prims.some(p => p.t === "t" && p.s === "a4") && r.prims.some(p => p.t === "t" && p.s === "100"));
+  const tri = r.prims.find(p => p.t === "p" && p.closed) as any;
+  assert.ok(tri && Math.max(...tri.p.filter((_: number, i: number) => i % 2)) <= 100 + 1e-9, "arrow-side symbol below the line");
+  const l = weldPrims({ ...base, other: { sym: "v" } }, [100, 100], [130, 80]);
+  assert.equal(dashed(l.prims), 1);
+  assert.ok(l.box[2] <= 100 + 1e-9, "runs left when the joint is to the right");
+  const sym = weldPrims({ ...base, arrow: { sym: "fillet", size: "a3" }, other: { sym: "fillet", size: "a3" }, around: true, field: true, tail: "111" }, [100, 100], null);
+  assert.equal(dashed(sym.prims), 0, "symmetric welds need no identification line");
+  assert.equal(sym.prims.filter(p => p.t === "p" && p.closed && !(p as any).fill).length, 2);
+  assert.ok(sym.prims.some(p => p.t === "a" && p.r === 1.5) && sym.prims.some(p => p.t === "p" && (p as any).fill) && sym.prims.some(p => p.t === "t" && p.s === "111"));
+});

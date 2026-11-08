@@ -7558,7 +7558,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 19 && mode === "note", `drawing: annotation tab shows the 19 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 20 && mode === "note", `drawing: annotation tab shows the 20 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8782,6 +8782,50 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: weld symbol ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwweld", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    const clickSheet = async (x, y) => { const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); };
+    const fr = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), S = (u, w) => [p.x + (u - p.uc) * p.s, p.y + (w - p.vc) * p.s]; return [...S(p.box[0], p.box[1]), ...S(p.box[2], p.box[3])]; });
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="weld"]');
+    const ex = fr[0] + (fr[2] - fr[0]) * 0.3;
+    await clickSheet(ex, fr[3]);
+    await clickSheet(ex + 15, fr[3] + 15);
+    await dp.waitForTimeout(150);
+    const prims = () => dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "ANNOT"));
+    const w1 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
+    const p1 = await prims();
+    const tri = p1.filter(p => p.t === "p" && p.closed && !p.fill).length, a4 = p1.some(p => p.t === "t" && p.s === "a4");
+    const panel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="wosym"]'));
+    check(w1 && w1.leader && w1.arrow?.sym === "fillet" && tri >= 1 && a4 && panel, `drawing: weld symbol with an arrow to the clicked joint, fillet a4 on the arrow side (${JSON.stringify({ w1, tri, a4, panel })})`);
+    await dp.selectOption('#drw .drw-props [data-d="wosym"]', "v");
+    await dp.waitForTimeout(150);
+    await dp.check('#drw .drw-props [data-d="waround"]');
+    await dp.waitForTimeout(150);
+    const p2 = await prims(), w2 = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "weld"); return a && JSON.parse(JSON.stringify(a)); });
+    const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
+    const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
+    check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
     await ctx.close();
   }
 
