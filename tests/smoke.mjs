@@ -3194,7 +3194,7 @@ try {
     prims = await dp.evaluate(() => window.__sv.drw.prims().map(p => ({ t: p.t, layer: p.layer, s: p.s, pen: p.pen })));
     check(pathPreview === 1 && off && off.path.length === 8 && off.letter === "D" && Math.abs(offArea - (50 * 20 + (50 - 16) * 20)) < 0.5 && prims.filter(p => p.t === "t" && p.layer === "ANNOT" && p.s === "D").length === 2,
       `drawing: offset section D through two planes, both hatched (area ${offArea.toFixed(2)} mm² = 50×20 + 34×20; path ${JSON.stringify(off?.path)})`);
-    // 1.117.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
+    // 1.122.0 shaded with edges (FR-DRW-010): select the top view and pick the style; grey triangles under the visible edges.
     [x, y] = await at(top.id, -45, -25);
     await dp.mouse.click(x, y);
     await dp.click('#drw .drw-props [data-style="shadedEdges"]');
@@ -4963,11 +4963,30 @@ try {
       const mid = { z: g().position.z, dx: g().position.x - (x0 - (q * x0 - q * y0)), dy: g().position.y - (y0 - (q * x0 + q * y0)), rz: 2 * Math.atan2(g().quaternion.z, g().quaternion.w) };
       m.seek(2);
       const end = { z: g().position.z };
-      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end };
+      // Key point menu: right-click the end key, pick Snap (jump): the pin stays put until the key, then jumps.
+      // Ctrl+C / Ctrl+V copy the key to the playhead (1.5 s).
+      const kb = document.querySelector("#motion .mo-key.sel");
+      kb.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+      const items = [...document.querySelectorAll('#mo-menu [role="menuitemradio"]')].map(b => b.textContent);
+      document.querySelectorAll('#mo-menu [role="menuitemradio"]')[1].click();
+      const menuGone = !document.querySelector("#mo-menu");
+      m.seek(1);
+      const snapMid = g().position.z;
+      m.seek(1.5);
+      document.querySelector("#motion .mo-key.sel").focus();
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true }));
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
+      const pasted = m.study.tracks.find(k => k.kind === "pose").keys.map(k => [k.t, k.d[2], k.interp ?? ""]);
+      const snapKey = document.querySelectorAll("#motion .mo-key.i-snap").length;
+      const menu = { items, menuGone, snapMid, pasted, z15: g().position.z, snapKey };
+      return { opts: [opts.includes(`pose:${id}`), opts.includes(`pose:${c[1].id}`)], fields: document.querySelectorAll('#motion [data-p^="r"], #motion [data-p^="d"]').length, mid, end, menu };
     }).catch(e => ({ err: String(e) }));
     await mp.click('#motion [data-mo="close"]');
     check(pose.opts?.[0] === true && pose.opts[1] === false && pose.fields >= 6 && Math.abs(pose.mid.z - 10) < 0.01 && Math.abs(pose.mid.dx) < 0.01 && Math.abs(pose.mid.dy) < 0.01
       && Math.abs(Math.abs(pose.mid.rz) - Math.PI / 4) < 0.01 && Math.abs(pose.end.z - 20) < 0.01, `motion study: placement keys move and turn an unmated component (FR-FT-122) (${JSON.stringify(pose)})`);
+    check(pose.menu?.items.length === 5 && pose.menu.items[1] === "Snap (jump)" && pose.menu.menuGone && Math.abs(pose.menu.snapMid) < 0.01
+      && JSON.stringify(pose.menu.pasted) === '[[0,0,""],[1.5,20,"snap"],[2,20,"snap"]]' && Math.abs(pose.menu.z15 - 20) < 0.01 && pose.menu.snapKey === 2,
+      `motion study: key point menu sets Snap interpolation; Ctrl+C / Ctrl+V copy a key to the playhead (FR-FT-122) (${JSON.stringify(pose.menu)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && Math.abs(exploded.x - 50) < 0.01

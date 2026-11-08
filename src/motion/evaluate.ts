@@ -11,7 +11,14 @@ export const VALUE_MATES: ReadonlySet<MateType> = new Set(["distance", "angle"])
 /** Mates whose axis a motor turns or slides the second component about. */
 export const AXIS_MATES: ReadonlySet<MateType> = new Set(["concentric", "hinge", "screw"]);
 
-const ease = (u: number, k: Interp | undefined) => (k === "ease" ? (u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2) : u);
+/** The eased fraction of a segment ending at a key with interpolation `k`. */
+export function ease(u: number, k: Interp | undefined): number {
+  if (k === "snap") return u >= 1 ? 1 : 0;
+  if (k === "easein") return u * u;
+  if (k === "easeout") return 1 - (1 - u) * (1 - u);
+  if (k === "ease") return u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+  return u;
+}
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
 /** Where `t` falls among sorted keys: the index of the key that ends its segment and the eased fraction. */
