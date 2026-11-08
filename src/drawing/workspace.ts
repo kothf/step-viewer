@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { dimGeo, dimPrims, dimText, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
+import { dimGeo, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import { t, onLangChange, lang } from "../i18n";
 import { toast, confirmModal } from "../ui";
@@ -13,10 +13,11 @@ import { DrawingKernel, type ModelFacts } from "./client";
 import { composeSheet, fromSheet, hatchOf, nextLetter, placement, toSheet, viewBody, viewPrims, viewRect, type Placement } from "./compose";
 import { DrawingStore, newSheet, uid } from "./doc";
 import { DRAWING_EXT, packDrawing, unpackDrawing } from "./file";
-import { sheetDxf, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
+import { sheetDxf, sheetPng, sheetSvg, sheetsPdf, svgBody, FONT } from "./output";
 import type { Prim } from "./prims";
-import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, TB_H, type Fields } from "./sheet";
-import type { Annot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, Orient, Sheet, SheetSize, TangentEdges, Tol } from "./types";
+import { EDITABLE, FIELD_LABEL, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, type Fields } from "./sheet";
+import type { Annot, DimAnnot, DisplayStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { ORIENTS, ORIENT_NAMES, SCALES, alignAxis, findView, fitScale, lookDir, parseScale, projectedDir, scaleText, sideOf, viewDir, viewReq } from "./views";
 import "./drawing.css";
 
@@ -66,7 +67,15 @@ type AnnotMode =
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
-  | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null };
+  | { kind: "note"; view: string | null; leader: GeoRef | null; at: Pt | null }
+  /** Geometric tolerance (FR-DRW-023): optionally click an edge for the leader, then place the frame. */
+  | { kind: "gtol"; view: string | null; leader: GeoRef | null; circle?: boolean; at: Pt | null }
+  /** Datum feature: click an edge, then place the letter. */
+  | { kind: "datum"; view: string | null; ref: GeoRef | null; at: Pt | null }
+  /** Surface finish: click an edge, then place the symbol (on the edge, or away from it with a leader). */
+  | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null };
+const ANNOT_KINDS = new Set(["dim", "hole", "note", "gtol", "datum", "surf"]);
+const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -110,6 +119,7 @@ export class DrawingWorkspace {
   private placements = new Map<string, Placement>();
   /** Text boxes of the drawn annotations (sheet mm), for picking. */
   private annotHits: { id: string; box: [number, number, number, number]; view?: string }[] = [];
+  private dangling = new Set<string>();
   /** The selected annotation (views and annotations select one at a time). */
   private selA: string | null = null;
   private adrag: { id: string; start: Pt; orig: Pt; s: number; moved: boolean } | null = null;
@@ -266,11 +276,16 @@ export class DrawingWorkspace {
           <button class="btn small" data-a="aux" title="${esc(t("Auxiliary view: click a straight edge, then place the view square to it"))}">${ICON.aux}<span>${esc(t("Auxiliary"))}</span></button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="dim" title="${esc(t("Smart dimension (D): click an edge, a circle or two points, then place the dimension"))}">${ICON.dim}<span>${esc(t("Dimension"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts and notes"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
+          <div class="drw-dd"><button class="btn small" data-a="annot" aria-haspopup="menu" aria-expanded="false" title="${esc(t("Model items, hole callouts, notes, geometric tolerances, datums, surface finish and tables"))}">${ICON.annot}<span>${esc(t("Annotate"))}</span> ▾</button>
             <div class="drw-menu" role="menu" hidden>
               <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
               <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
               <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
+              <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
+              <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
+              <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
+              <button role="menuitem" data-an="rev">${esc(t("Revision table"))}</button>
+              <button role="menuitem" data-an="table">${esc(t("General table"))}</button>
             </div></div>
           <span class="drw-sep"></span>
           <button class="icon" data-a="undo" aria-label="${esc(t("Undo (Ctrl+Z)"))}" title="${esc(t("Undo (Ctrl+Z)"))}">${ICON.undo}</button>
@@ -278,11 +293,12 @@ export class DrawingWorkspace {
           <button class="icon" data-a="fit" aria-label="${esc(t("Fit the sheet (F)"))}" title="${esc(t("Fit the sheet (F)"))}">${ICON.fit}</button>
           <span class="drw-sep"></span>
           <button class="btn small" data-a="save" title="${esc(t("Save the drawing (Ctrl+S)"))}">${ICON.save}<span>${esc(t("Save"))}</span></button>
-          <div class="drw-dd"><button class="btn small" data-a="export" aria-haspopup="menu" aria-expanded="false" title="${esc(t("PDF, SVG, DXF or print"))}">${ICON.exp}<span>${esc(t("Export"))}</span> ▾</button>
+          <div class="drw-dd"><button class="btn small" data-a="export" aria-haspopup="menu" aria-expanded="false" title="${esc(t("PDF, SVG, DXF, PNG or print"))}">${ICON.exp}<span>${esc(t("Export"))}</span> ▾</button>
             <div class="drw-menu right" role="menu" hidden>
               <button role="menuitem" data-x="pdf">${esc(t("PDF (all sheets)"))}</button>
               <button role="menuitem" data-x="svg">${esc(t("SVG (this sheet)"))}</button>
               <button role="menuitem" data-x="dxf">${esc(t("DXF (this sheet)"))}</button>
+              <button role="menuitem" data-x="png">${esc(t("PNG 300 dpi (this sheet)"))}</button>
               <button role="menuitem" data-x="print">${esc(t("Print… (Ctrl+P)"))}</button>
             </div></div>
         </div>
@@ -347,6 +363,9 @@ export class DrawingWorkspace {
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
+    else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
+    else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
+    else if (m.kind === "surf") s = m.ref ? t("Click on the edge to put the symbol there, or away from it for a leader.") : t("Click the edge of the surface, or an empty place on the sheet.");
     else if (m.kind === "aux") s = m.line ? t("Move the cursor to the side of the edge and click to place the auxiliary view. Esc cancels.") : t("Click a straight edge of a view.");
     else if (this.stale) s = t("The model changed: the views are out of date. Updating…");
     else s = t("Drag a view to move it. Double-click the title block to fill it in.");
@@ -381,6 +400,7 @@ export class DrawingWorkspace {
     const sh = this.sheet, [W, H] = sheetSize(sh);
     this.placements.clear();
     this.annotHits = [];
+    this.dangling.clear();
     let html = `<rect class="drw-paper" x="0" y="0" width="${W}" height="${H}"/><g class="drw-fmt">${svgBody(formatPrims(sh, this.fields(), s => t(s)), H)}</g>`;
     for (const v of sh.views) {
       const proj = this.projFor(sh, v);
@@ -391,10 +411,11 @@ export class DrawingWorkspace {
       const an = viewAnnots(sh, v, pl, this.ctx());
       body += `<g class="drw-annots">${svgBody(an.prims, H)}</g>`;
       for (const h of an.hits) this.annotHits.push({ ...h, view: v.id });
+      for (const id of an.dangling) this.dangling.add(id);
       if (!proj) body += `<rect class="drw-pending" x="${r[0]}" y="${H - r[3]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
       html += `<g class="drw-view" data-v="${v.id}">${body}</g>`;
     }
-    const notes = sheetNotes(sh);
+    const notes = sheetNotes(sh, (s, p) => t(s, p), this.ctx().dec);
     html += `<g class="drw-notes">${svgBody(notes.prims, H)}</g>`;
     this.annotHits.push(...notes.hits);
     html += `<g class="drw-ovl"></g>`;
@@ -418,6 +439,8 @@ export class DrawingWorkspace {
     };
     if (this.hover && this.hover !== this.sel) frame(this.hover, "drw-hov");
     if (this.sel) frame(this.sel, "drw-sel");
+    // Annotations whose edge is gone (FR-DRW-026), in the warning colour; on screen only.
+    for (const h of this.annotHits) if (this.dangling.has(h.id)) s += `<rect class="drw-dangle" x="${h.box[0] - 0.6}" y="${H - h.box[3] - 0.6}" width="${h.box[2] - h.box[0] + 1.2}" height="${h.box[3] - h.box[1] + 1.2}"><title>${esc(t("Its model edge is gone: pick it again or delete it."))}</title></rect>`;
     if (this.selA) for (const h of this.annotHits) if (h.id === this.selA) s += `<rect class="drw-sel" x="${h.box[0] - 1}" y="${H - h.box[3] - 1}" width="${h.box[2] - h.box[0] + 2}" height="${h.box[3] - h.box[1] + 2}"/>`;
     const pv = this.previewView();
     if (pv) {
@@ -523,7 +546,7 @@ export class DrawingWorkspace {
     const m = this.mode;
     if (m.kind === "model") { this.placeModel(m, p); return; }
     if (m.kind === "section" || m.kind === "detail" || m.kind === "aux") { this.kindClick(m, p); return; }
-    if (m.kind === "dim" || m.kind === "hole" || m.kind === "note") { this.annotClick(m, p); return; }
+    if (isAnnotMode(m)) { this.annotClick(m, p); return; }
     if (m.kind === "projected") {
       if (!m.parent) { const id = this.viewAt(p); if (id) { m.parent = id; this.sel = id; m.at = p; this.renderStatus(); this.renderOverlay(); } return; }
       const v = this.projectedAt(m.parent, p);
@@ -749,21 +772,23 @@ export class DrawingWorkspace {
     const H = sheetSize(sh)[1];
     let prims: Prim[] = [];
     if (moved.view) { const v = findView(sh, moved.view), pl = this.placements.get(moved.view); if (v && pl) prims = viewAnnots({ ...sh, annots: [moved] }, v, pl, { ...this.ctx(), topo: this.ctx().topo && { ...this.ctx().topo!, cyls: [] } }).prims.filter(x => x.layer !== "CENTER"); }
-    else prims = sheetNotes({ ...sh, annots: [moved] }).prims;
+    else prims = sheetNotes({ ...sh, annots: [moved] }, (s, p) => t(s, p), this.ctx().dec).prims;
     const host = moved.view ? this.svg.querySelector(`.drw-view[data-v="${moved.view}"] .drw-annots`) : this.svg.querySelector(".drw-notes");
     if (!host) return;
     // Draw everything but the dragged one from the stored sheet, then the dragged one where it is now.
     let rest: Prim[];
     if (moved.view) { const v = findView(sh, moved.view)!, pl = this.placements.get(moved.view)!; rest = viewAnnots({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, v, pl, this.ctx()).prims; }
-    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }).prims;
+    else rest = sheetNotes({ ...this.sheet, annots: (this.sheet.annots ?? []).filter(x => x.id !== d.id) }, (s, p) => t(s, p), this.ctx().dec).prims;
     host.innerHTML = svgBody(rest, H) + `<g class="drw-adrag">${svgBody(prims, H)}</g>`;
   }
 
-  private startAnnot(kind: "dim" | "hole" | "note") {
-    if (kind !== "note" && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
-    if (kind !== "note" && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
+  private startAnnot(kind: AnnotMode["kind"]) {
+    const free = kind === "note" || kind === "gtol" || kind === "surf";
+    if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
+    if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
     if (kind === "dim") this.mode = { kind, view: null, picks: [], at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
+    else if (kind === "datum" || kind === "surf") this.mode = { kind, view: null, ref: null, at: null };
     else this.mode = { kind, view: null, leader: null, at: null };
     this.sel = null; this.selA = null;
     this.renderStatus(); this.renderProps(); this.renderOverlay();
@@ -864,6 +889,35 @@ export class DrawingWorkspace {
         this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: edgeRef(m.e, "e"), pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
         this.mode = { kind: "none" };
       }
+    } else if (m.kind === "gtol") {
+      if (!m.leader && vid && this.facts) {
+        const pick = this.pickAt(vid, p);
+        if (pick) { m.view = vid; m.circle = pick.kind === "circle"; m.leader = pick.kind === "circle" ? { ...pick.ref, p: "e" } : pick.kind === "line" ? { ...pick.ref, p: "e" } : pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+      }
+      const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
+      const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
+      const row: GRow = m.circle ? { sym: "pos", tol: "0.1", dia: true, datums: ["A", "B"] } : { sym: m.leader ? "perp" : "flat", tol: "0.05", datums: m.leader ? ["A"] : [] };
+      if (!m.leader) row.sym = "flat";
+      this.addAnnot({ id: uid("a_"), t: "gtol", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], rows: [row], ...(m.leader ? { leader: m.leader } : {}) }, "Geometric tolerance");
+      this.mode = { kind: "none" };
+    } else if (m.kind === "datum" || m.kind === "surf") {
+      if (!m.ref) {
+        const pick = vid && this.facts ? this.pickAt(vid, p) : null;
+        if (pick && pick.kind !== "pt") { m.view = vid; m.ref = pick.ref; this.renderStatus(); this.renderOverlay(); return; }
+        if (m.kind === "datum") { toast(t("Click an edge of a view.")); return; }
+        // A surface symbol on its own: on the view under the cursor, or on the sheet.
+        const pl = vid ? this.placements.get(vid) : undefined, pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
+        this.addAnnot({ id: uid("a_"), t: "surf", ...(vid ? { view: vid } : {}), pos: [round(pos[0]), round(pos[1])], proc: "removal", text: "Ra 3.2" }, "Surface finish");
+        this.mode = { kind: "none" };
+      } else {
+        const pl = this.placements.get(m.view!)!;
+        let q = p;
+        if (m.kind === "surf") { const f = this.footAt(m.view!, m.ref, p); if (f && Math.hypot(f.at[0] - p[0], f.at[1] - p[1]) < this.snapTol() * 1.5) q = f.at; }
+        const pos = fromSheet(pl, q[0], q[1]), at: Pt = [round(pos[0]), round(pos[1])];
+        if (m.kind === "datum") this.addAnnot({ id: uid("a_"), t: "datum", view: m.view!, ref: m.ref, pos: at, letter: this.nextDatum() }, "Datum feature");
+        else this.addAnnot({ id: uid("a_"), t: "surf", view: m.view!, ref: m.ref, pos: at, proc: "removal", text: "Ra 3.2" }, "Surface finish");
+        this.mode = { kind: "none" };
+      }
     } else {
       if (!m.leader && vid) {
         const pick = this.pickAt(vid, p);
@@ -885,10 +939,34 @@ export class DrawingWorkspace {
     if (a.t !== "dim") { this.selA = a.id; this.renderProps(); }
   }
 
+  /** The next datum letter not used on any sheet (I, O, Q skipped). */
+  private nextDatum(): string {
+    const used = new Set(this.doc.sheets.flatMap(s => (s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))));
+    for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
+    return "A";
+  }
+
+  private footAt(viewId: string, ref: GeoRef, p: Pt) {
+    const v = findView(this.sheet, viewId), pl = this.placements.get(viewId);
+    if (!v || !pl) return null;
+    return edgeFoot(ref, this.facts?.topo ?? null, projector(viewDir(this.sheet, v)).P, pl, p);
+  }
+
+  /** A revision table at the frame's top-right corner, or a general table at its top-left (FR-DRW-024). */
+  private insertTable(kind: "rev" | "general") {
+    const f = frameOf(this.sheet);
+    if (kind === "rev" && (this.sheet.annots ?? []).some(a => a.t === "table" && a.kind === "rev")) { toast(t("The sheet has a revision table already.")); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const a: TableAnnot = kind === "rev"
+      ? { id: uid("a_"), t: "table", kind, anchor: "tr", pos: [f[2], f[3]], title: "REVISIONS", cols: ["Rev.", "Description", "Date", "Approved"], rows: [["A", t("First issue"), today, ""]] }
+      : { id: uid("a_"), t: "table", kind, pos: [f[0] + 10, f[3] - 10], cols: ["Column 1", "Column 2", "Column 3"], rows: [["", "", ""], ["", "", ""]] };
+    this.addAnnot(a, kind === "rev" ? "Revision table" : "General table");
+  }
+
   /** What an annotation command shows before it is placed: the hovered entity, the picks and the preview. */
   private annotPreview(H: number): string {
     const m = this.mode;
-    if (m.kind !== "dim" && m.kind !== "hole" && m.kind !== "note") return "";
+    if (!isAnnotMode(m)) return "";
     const at = m.at;
     const vid = m.view ?? (at ? this.viewAt(at) : null);
     const pl = vid ? this.placements.get(vid) : undefined, v = vid ? findView(this.sheet, vid) : undefined;
@@ -915,6 +993,13 @@ export class DrawingWorkspace {
         const pos = fromSheet(pl, at[0], at[1]);
         const sh = { ...this.sheet, annots: [{ id: "_ph", t: "hole" as const, view: vid, ref: edgeRef(m.e, "e"), pos }] };
         s += `<g class="drw-preview">${svgBody(viewAnnots(sh, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: this.facts?.topo.cyls ?? [] } }).prims.filter(x => x.layer !== "CENTER"), H, "currentColor")}</g>`;
+      }
+    } else if (m.kind === "datum" || m.kind === "surf") {
+      if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && hov.kind !== "pt") s += show(hov, "drw-edge"); }
+      else {
+        const pos = fromSheet(pl, at[0], at[1]);
+        const pa: Annot = m.kind === "datum" ? { id: "_pa", t: "datum", view: vid, ref: m.ref, pos, letter: this.nextDatum() } : { id: "_pa", t: "surf", view: vid, ref: m.ref, pos: (() => { const f = this.footAt(vid, m.ref!, at); return f && Math.hypot(f.at[0] - at[0], f.at[1] - at[1]) < this.snapTol() * 1.5 ? fromSheet(pl, ...f.at) : pos; })(), proc: "removal", text: "Ra 3.2" };
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.facts?.topo.edges ?? [], cyls: [] } }).prims.filter(x => x.layer !== "CENTER"), H, "currentColor")}</g>`;
       }
     } else if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
     return s;
@@ -982,6 +1067,40 @@ export class DrawingWorkspace {
         <p class="drw-note">${esc(t("Empty: the text comes from the hole."))}</p>
       </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    const del = `<div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    if (a.t === "gtol") {
+      const rows = a.rows.map((r, i) => `<fieldset class="pm-group drw-grow"><legend>${esc(t("Row {n}", { n: i + 1 }))}</legend>
+        <label class="drw-f">${esc(t("Characteristic"))}<select data-d="g:${i}:sym">${GSYMS.map(g => `<option value="${g}"${r.sym === g ? " selected" : ""}>${esc(t(GSYM_NAMES[g]))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Tolerance"))}<input data-d="g:${i}:tol" inputmode="decimal" value="${esc(r.tol)}" translate="no"></label>
+        <label class="drw-chk"><input type="checkbox" data-d="g:${i}:dia"${r.dia ? " checked" : ""}> ${esc(t("Diameter zone (Ø)"))}</label>
+        <label class="drw-f">${esc(t("Material condition"))}<select data-d="g:${i}:mod"><option value="">${esc(t("None"))}</option><option value="M"${r.mod === "M" ? " selected" : ""}>${esc(t("Maximum (M)"))}</option><option value="L"${r.mod === "L" ? " selected" : ""}>${esc(t("Least (L)"))}</option></select></label>
+        <div class="drw-datums">${[0, 1, 2].map(k => `<label class="drw-f">${esc(t(["Primary datum", "Secondary datum", "Tertiary datum"][k]))}<input data-d="g:${i}:d${k}" value="${esc(r.datums[k] ?? "")}" maxlength="6" translate="no"></label>`).join("")}</div>
+        ${a.rows.length > 1 ? `<div class="row"><button class="btn small" data-grow="-${i}">${esc(t("Remove row"))}</button></div>` : ""}
+      </fieldset>`).join("");
+      return `<fieldset class="pm-group"><legend>${esc(t("Geometric tolerance"))}</legend>${a.leader ? `<p class="drw-note">${esc(t("With a leader to the model."))}</p>` : ""}</fieldset>${rows}
+        <div class="row"><button class="btn small" data-grow="+">${esc(t("Add row"))}</button></div>${del}`;
+    }
+    if (a.t === "datum") {
+      return `<fieldset class="pm-group"><legend>${esc(t("Datum feature"))}</legend>
+        <label class="drw-f">${esc(t("Letter"))}<input data-d="dl" value="${esc(a.letter)}" maxlength="2" translate="no"></label>
+      </fieldset>${del}`;
+    }
+    if (a.t === "surf") {
+      return `<fieldset class="pm-group"><legend>${esc(t("Surface finish"))}</legend>
+        <label class="drw-f">${esc(t("Process"))}<select data-d="sp">${([["any", "Any process"], ["removal", "Material removed"], ["none", "No material removed"]] as const).map(([k, l]) => `<option value="${k}"${a.proc === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Roughness"))}<input data-d="st" value="${esc(a.text)}" translate="no" placeholder="Ra 3.2"></label>
+        <label class="drw-f">${esc(t("Production method"))}<input data-d="sm" value="${esc(a.method ?? "")}" translate="no"></label>
+      </fieldset>${del}`;
+    }
+    if (a.t === "table") {
+      const head = a.cols.map((c, j) => `<th><input data-d="th:${j}" value="${esc(cellLabel(c, t))}" aria-label="${esc(t("Column {n}", { n: j + 1 }))}" translate="no"></th>`).join("");
+      const body = a.rows.map((r, i) => `<tr>${a.cols.map((_c, j) => `<td><input data-d="tc:${i}:${j}" value="${esc(r[j] ?? "")}" aria-label="${esc(t("Row {r}, column {c}", { r: i + 1, c: j + 1 }))}" translate="no"></td>`).join("")}</tr>`).join("");
+      return `<fieldset class="pm-group"><legend>${esc(t(a.kind === "rev" ? "Revision table" : "General table"))}</legend>
+        <label class="drw-f">${esc(t("Title"))}<input data-d="tt" value="${esc(a.title ? cellLabel(a.title, t) : "")}" translate="no"></label>
+        <div class="drw-tbl"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+        <div class="row"><button class="btn small" data-trow="+">${esc(t(a.kind === "rev" ? "Add revision" : "Add row"))}</button>${a.rows.length > 1 ? `<button class="btn small" data-trow="-">${esc(t("Remove last row"))}</button>` : ""}${a.kind === "general" ? `<button class="btn small" data-tcol="+">${esc(t("Add column"))}</button>${a.cols.length > 1 ? `<button class="btn small" data-tcol="-">${esc(t("Remove last column"))}</button>` : ""}` : ""}</div>
+      </fieldset>${del}`;
+    }
     return `<fieldset class="pm-group"><legend>${esc(t("Note"))}</legend>
       <label class="drw-f">${esc(t("Text"))}<textarea data-d="ntxt" rows="4" translate="no">${esc(a.text)}</textarea></label>
       <label class="drw-f">${esc(t("Text height (mm)"))}<select data-d="nh">${[2.5, 3.5, 5, 7].map(h => `<option value="${h}"${(a.h ?? 3.5) === h ? " selected" : ""}>${h}</option>`).join("")}</select></label>
@@ -991,7 +1110,7 @@ export class DrawingWorkspace {
   private onAnnotInput(el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement) {
     const k = el.dataset.d!, val = el.value;
     const num = (s: string) => { const v = parseFloat(s.replace(",", ".")); return isFinite(v) ? v : undefined; };
-    this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Dimension property", a => {
+    this.setAnnot(k === "ntxt" || k === "htxt" ? "Text" : "Annotation property", a => {
       if (a.t === "dim") {
         if (k === "k") a.k = val as DimAnnot["k"];
         else if (k === "prec") { if (val === "") delete a.prec; else a.prec = +val; }
@@ -1000,6 +1119,22 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fit") a.tol.fit = val.trim();
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
+      else if (a.t === "gtol" && k.startsWith("g:")) {
+        const [, si, f] = k.split(":"), r = a.rows[+si];
+        if (!r) return;
+        if (f === "sym") r.sym = val as GSym;
+        else if (f === "tol") r.tol = val.trim().replace(",", ".") || "0";
+        else if (f === "dia") { if ((el as HTMLInputElement).checked) r.dia = true; else delete r.dia; }
+        else if (f === "mod") { if (val === "M" || val === "L") r.mod = val; else delete r.mod; }
+        else if (f[0] === "d") { const d = [0, 1, 2].map(j => r.datums[j] ?? ""); d[+f[1]] = val.trim().toUpperCase(); while (d.length && !d[d.length - 1]) d.pop(); r.datums = d; }
+      } else if (a.t === "datum" && k === "dl" && val.trim()) a.letter = val.trim().toUpperCase();
+      else if (a.t === "surf") { if (k === "sp") a.proc = val as typeof a.proc; else if (k === "st") a.text = val.trim(); else if (k === "sm") { if (val.trim()) a.method = val.trim(); else delete a.method; } }
+      else if (a.t === "table") {
+        // Headers and the title keep their English key while unchanged, so they follow the language.
+        if (k === "tt") { if (!val.trim()) delete a.title; else if (!(a.title && cellLabel(a.title, t) === val)) a.title = val; }
+        else if (k.startsWith("th:")) { const j = +k.slice(3); if (cellLabel(a.cols[j], t) !== val) a.cols[j] = val; }
+        else if (k.startsWith("tc:")) { const [, i, j] = k.split(":").map(Number); if (a.rows[i]) a.rows[i][j] = val; }
+      }
     });
   }
 
@@ -1194,7 +1329,7 @@ export class DrawingWorkspace {
     const sh = this.sheet, [lo, hi] = this.facts.box;
     const dx = hi[0] - lo[0], dy = hi[1] - lo[1], dz = hi[2] - lo[2];
     const f = frameOf(sh), gap = 25;
-    const ax0 = f[0] + 10, ax1 = f[2] - 10, ay0 = f[1] + TB_H + 10, ay1 = f[3] - 10;
+    const ax0 = f[0] + 10, ax1 = f[2] - 10, ay0 = f[1] + tbSize(sh)[1] + 10, ay1 = f[3] - 10;
     const s = fresh || !sh.views.length ? fitScale(dx + dy, dz + dy, (ax1 - ax0 - gap) * 0.85, (ay1 - ay0 - gap) * 0.85) : sh.scale;
     const k = s[0] / s[1];
     const Wg = k * (dx + dy) + gap, Hg = k * (dz + dy) + gap;
@@ -1288,7 +1423,7 @@ export class DrawingWorkspace {
         </div>
         <label class="drw-f">${esc(t("Scale"))}<select data-s="scale">${SCALES.map(s => `<option value="${scaleText(s)}"${scaleText(sh.scale) === scaleText(s) ? " selected" : ""}>${scaleText(s)}</option>`).join("")}${SCALES.some(s => scaleText(s) === scaleText(sh.scale)) ? "" : `<option selected value="${scaleText(sh.scale)}">${scaleText(sh.scale)}</option>`}<option value="custom">${esc(t("Custom…"))}</option></select></label>
         <label class="drw-f">${esc(t("Projection"))}<select data-s="projection"><option value="first"${sh.projection === "first" ? " selected" : ""}>${esc(t("First angle (ISO)"))}</option><option value="third"${sh.projection === "third" ? " selected" : ""}>${esc(t("Third angle (ANSI)"))}</option></select></label>
-        <label class="drw-f">${esc(t("Sheet format"))}<select data-s="format"><option value="iso"${sh.format === "iso" ? " selected" : ""}>ISO 7200</option><option value="ansi"${sh.format === "ansi" ? " selected" : ""}>ANSI Y14.1</option></select></label>
+        <label class="drw-f">${esc(t("Sheet format"))}<select data-s="format"><option value="iso"${sh.format === "iso" ? " selected" : ""}>ISO 7200</option><option value="ansi"${sh.format === "ansi" ? " selected" : ""}>ANSI Y14.1</option><option value="gost"${sh.format === "gost" ? " selected" : ""}>GOST 2.104</option></select></label>
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
         ${EDITABLE.map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}" translate="no"></label>`).join("")}
@@ -1309,7 +1444,30 @@ export class DrawingWorkspace {
     if (b.dataset.sel !== undefined) { this.cancelMode(); this.selA = null; this.sel = b.dataset.sel || null; this.renderTree(); this.renderProps(); this.renderOverlay(); return; }
     if (b.dataset.orient) { this.closeMenus(); this.startModel(b.dataset.orient as Orient); return; }
     if (b.dataset.cut) { this.closeMenus(); this.startKind("section", b.dataset.cut as "h"); return; }
-    if (b.dataset.an) { this.closeMenus(); if (b.dataset.an === "items") this.insertItems(); else this.startAnnot(b.dataset.an as "hole"); return; }
+    if (b.dataset.an) {
+      this.closeMenus();
+      const an = b.dataset.an;
+      if (an === "items") this.insertItems(); else if (an === "rev") this.insertTable("rev"); else if (an === "table") this.insertTable("general"); else this.startAnnot(an as AnnotMode["kind"]);
+      return;
+    }
+    if (b.dataset.grow) {
+      const g = b.dataset.grow;
+      this.setAnnot(g === "+" ? "Add row" : "Remove row", a => { if (a.t !== "gtol") return; if (g === "+") a.rows.push({ sym: "flat", tol: "0.05", datums: [] }); else a.rows.splice(-+g, 1); });
+      return;
+    }
+    if (b.dataset.trow || b.dataset.tcol) {
+      const add = (b.dataset.trow ?? b.dataset.tcol) === "+", col = !!b.dataset.tcol;
+      this.setAnnot(col ? "Table column" : "Table row", a => {
+        if (a.t !== "table") return;
+        if (col) { if (add) { a.cols.push(`Column ${a.cols.length + 1}`); a.rows.forEach(r => r.push("")); } else if (a.cols.length > 1) { a.cols.pop(); a.rows.forEach(r => r.splice(a.cols.length)); } }
+        else if (add) {
+          // The next revision letter and today's date.
+          const last = a.rows[a.rows.length - 1]?.[0] ?? "", next = a.kind === "rev" && /^[A-Z]$/.test(last) ? String.fromCharCode(last.charCodeAt(0) + 1) : "";
+          a.rows.push(a.cols.map((_c, j) => (a.kind === "rev" ? (j === 0 ? next : j === 2 ? new Date().toISOString().slice(0, 10) : "") : "")));
+        } else if (a.rows.length > 1) a.rows.pop();
+      });
+      return;
+    }
     if (b.dataset.tolt !== undefined) { this.setTol(b.dataset.tolt as Tol["t"] | ""); return; }
     if (b.dataset.x) { this.closeMenus(); void this.exportAs(b.dataset.x as "pdf"); return; }
     if (b.dataset.sheet) { this.cancelMode(); this.sheetIdx = +b.dataset.sheet; this.sel = null; this.renderAll(); this.fit(); return; }
@@ -1497,7 +1655,7 @@ export class DrawingWorkspace {
     return composeSheet(sh, this.fields(sh), this.kernel.cache, this.facts?.box ?? null, (s, p) => t(s, p), this.ctx());
   }
 
-  async exportAs(kind: "pdf" | "svg" | "dxf" | "print") {
+  async exportAs(kind: "pdf" | "svg" | "dxf" | "png" | "print") {
     if (!this.store) return;
     const sheets = kind === "pdf" || kind === "print" ? this.doc.sheets : [this.sheet];
     try {
@@ -1509,7 +1667,12 @@ export class DrawingWorkspace {
     try {
       if (kind === "svg") this.host.download(new Blob([sheetSvg(out[0].prims, out[0].W, out[0].H)], { type: "image/svg+xml" }), `${base}-${this.sheet.name}.svg`);
       else if (kind === "dxf") this.host.download(new Blob([sheetDxf(out[0].prims, out[0].W, out[0].H)], { type: "application/dxf" }), `${base}-${this.sheet.name}.dxf`);
-      else if (kind === "pdf") {
+      else if (kind === "png") {
+        const font = await (await fetch(fontUrl)).arrayBuffer();
+        const r = await sheetPng(out[0].prims, out[0].W, out[0].H, font, 300);
+        this.host.download(r.blob, `${base}-${this.sheet.name}.png`);
+        if (r.dpi < 300) toast(t("The sheet is large: PNG saved at {dpi} dpi.", { dpi: r.dpi }));
+      } else if (kind === "pdf") {
         const font = await (await fetch(fontUrl)).arrayBuffer();
         this.host.download(await sheetsPdf(out, font, this.fields().title), `${base}.pdf`);
       } else { printSheets(out, base); return; }

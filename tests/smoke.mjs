@@ -3294,6 +3294,108 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: GD&T, datums, surface finish, tables, GOST, PNG, dangling warning (FR-DRW-023/024/026/031) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const part = { schema: 1, kind: "part", id: "d_drwgdt", name: "Plate", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [P("c0", 10, 0), { id: "c1", t: "circle", c: "c0", r: 8 }] },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-08T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Plate.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    const ready = () => dp.waitForFunction(() => window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 90000 });
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3, null, { timeout: 90000 });
+    await ready();
+    const [front, top] = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.map(v => ({ id: v.id })));
+    const at = (id, u, w) => dp.evaluate(([i, a, b]) => { const p = window.__sv.drw.placement(i); return window.__sv.drw.sheetPt(p.x + (a - p.uc) * p.s, p.y + (b - p.vc) * p.s); }, [id, u, w]);
+    const texts = async () => (await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s)));
+    const annots = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).map(a => JSON.parse(JSON.stringify(a))));
+    const tool = async an => { await dp.click('#drw [data-a="annot"]'); await dp.click(`#drw [data-an="${an}"]`); };
+    const click = async (id, u, w) => { const [x, y] = await at(id, u, w); await dp.mouse.move(x + 2, y); await dp.mouse.move(x, y); await dp.mouse.click(x, y); };
+    // Geometric tolerance with a leader to the front view's top edge: a perpendicularity frame to datum A.
+    await tool("gtol");
+    await click(front.id, -30, 20);
+    const [gx, gy] = await at(front.id, -40, 45);
+    await dp.mouse.move(gx, gy); await dp.mouse.click(gx, gy);
+    // Datum A on the bottom edge, the letter below; a datum on the hole's circle in the top view.
+    await tool("datum");
+    await click(front.id, -20, 0);
+    await click(front.id, -20, -15);
+    await tool("datum");
+    await click(top.id, 18, 0);
+    await click(top.id, 35, 20);
+    // Surface finish right on the top edge.
+    await tool("surf");
+    await click(front.id, 35, 20);
+    await click(front.id, 35, 20);
+    let an = await annots(), tx = await texts();
+    const g = an.find(a => a.t === "gtol"), ds = an.filter(a => a.t === "datum").map(a => a.letter).join(""), sf = an.find(a => a.t === "surf");
+    check(g?.leader && g.view === front.id && g.rows[0].sym === "perp" && ds === "AB" && sf?.ref && tx.includes("0.05") && tx.includes("A") && tx.includes("B") && tx.includes("Ra 3.2"),
+      `drawing: tolerance frame with a leader, datums A and B, surface finish on an edge (${JSON.stringify({ g: g?.rows, ds, sf: !!sf?.ref })}; ${tx.join(" ")})`);
+    // The frame's properties: a Ø zone, (M) and a second row.
+    await dp.mouse.move(gx + 8, gy + 4); await dp.mouse.click(gx + 8, gy + 4);
+    const gsel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-grow="+"]'));
+    if (gsel) {
+      await dp.selectOption('#drw [data-d="g:0:sym"]', "pos");
+      await dp.check('#drw [data-d="g:0:dia"]');
+      await dp.selectOption('#drw [data-d="g:0:mod"]', "M");
+      await dp.click('#drw [data-grow="+"]');
+    }
+    an = await annots(); tx = await texts();
+    const g2 = an.find(a => a.t === "gtol");
+    check(gsel && g2.rows.length === 2 && g2.rows[0].sym === "pos" && g2.rows[0].dia && tx.includes("Ø0.05") && tx.includes("M"), `drawing: tolerance frame edited: position, Ø, (M), second row (${JSON.stringify(g2?.rows)})`);
+    // Revision table at the frame's top-right corner, then a second revision B.
+    await tool("rev");
+    await dp.waitForTimeout(100);
+    if (await dp.$('#drw [data-trow="+"]')) await dp.click('#drw [data-trow="+"]');
+    an = await annots(); tx = await texts();
+    const rt = an.find(a => a.t === "table");
+    check(rt?.kind === "rev" && rt.rows.length === 2 && rt.rows[1][0] === "B" && tx.includes("REVISIONS") && tx.includes("Description"), `drawing: revision table with revisions A and B (${JSON.stringify(rt?.rows)})`);
+    // Russian: the table's headers and title follow the language.
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    await dp.waitForTimeout(200);
+    const ru = await texts();
+    await dp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(ru.includes("ИЗМЕНЕНИЯ") && ru.includes("Описание"), `drawing: table headers in Russian (${ru.filter(s => /[А-Я]/.test(s)).slice(0, 6).join(" ")})`);
+    // GOST 2.104 title block.
+    await dp.keyboard.press("Escape");
+    const [ex, ey] = await dp.evaluate(() => window.__sv.drw.sheetPt(5, 150));
+    await dp.mouse.click(ex, ey);
+    const hasFmt = !!(await dp.$('#drw [data-s="format"]'));
+    if (hasFmt) await dp.selectOption('#drw [data-s="format"]', "gost");
+    const fmt = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "FORMAT").map(p => p.s));
+    check(hasFmt && fmt.includes("Developed") && fmt.includes("N. control") && fmt.includes("Lit."), `drawing: GOST 2.104 title block (${fmt.slice(0, 8).join(" | ")})`);
+    // PNG at 300 dpi: A3 is 4961 × 3508 px with a pHYs chunk of 11811 px/m.
+    const [png] = await Promise.all([dp.waitForEvent("download", { timeout: 60000 }), (async () => { await dp.click('#drw [data-a="export"]'); await dp.click('#drw [data-x="png"]'); })()]);
+    const pb = await readFile(await png.path());
+    const pw = pb.readUInt32BE(16), ph = pb.readUInt32BE(20), phys = pb.indexOf("pHYs"), ppm = phys > 0 ? pb.readUInt32BE(phys + 4) : 0;
+    check(pb.subarray(1, 4).toString() === "PNG" && pw === 4961 && ph === 3508 && ppm === 11811 && pb.length > 50000, `drawing: PNG export at 300 dpi (${pw}×${ph}, ${ppm} px/m, ${pb.length} bytes)`);
+    // FR-DRW-026: suppress the hole; the datum on its circle turns into a warning, the rest stays.
+    await dp.click('#drw [data-a="back"]');
+    await dp.evaluate(() => window.__sv.modeller.store.change("Suppress", d => { d.features[3].suppressed = true; }));
+    await dp.waitForFunction(() => document.querySelector("#mc-busy").hidden, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForTimeout(400);
+    await ready();
+    const dangle = await dp.evaluate(() => document.querySelectorAll("#drw .drw-dangle").length);
+    tx = await texts();
+    check(dangle === 1 && tx.filter(s => s === "B").length === 2 && tx.includes("Ra 3.2"), `drawing: the datum on the removed hole shows as a warning, the others stay (${dangle} warnings; ${tx.join(" ")})`);
+    if (process.env.SMOKE_SHOTS) await dp.screenshot({ path: `${process.env.SMOKE_SHOTS}/drawing-gdt.png` });
+    await ctx.close();
+  }
+
   // --- PDM vault thread (FRS 12.5 P4): lifecycle and revisions, data card, search, rename, recycle bin ---
   if (inShard(3)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

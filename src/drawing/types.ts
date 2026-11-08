@@ -79,7 +79,20 @@ export interface NoteAnnot { id: string; t: "note"; view?: string; pos: [number,
 /** A hole callout (FR-DRW-022) on a round edge, from the hole feature when there is one. */
 export interface HoleAnnot { id: string; t: "hole"; view: string; ref: GeoRef; pos: [number, number]; txt?: string }
 
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot;
+/** Geometric characteristics (ISO 1101 / ASME Y14.5). */
+export type GSym = "straight" | "flat" | "circ" | "cyl" | "pline" | "psurf" | "par" | "perp" | "ang" | "pos" | "conc" | "sym" | "runout" | "trunout";
+/** One row of a feature control frame: symbol, tolerance (Ø for a cylindrical zone, M/L material condition), datums. */
+export interface GRow { sym: GSym; tol: string; dia?: boolean; mod?: "M" | "L"; datums: string[] }
+/** Geometric tolerance (FR-DRW-023): a feature control frame with a leader to the model (or free). */
+export interface GtolAnnot { id: string; t: "gtol"; view?: string; pos: [number, number]; rows: GRow[]; leader?: GeoRef }
+/** Datum feature symbol: a filled triangle on an edge and a framed letter. */
+export interface DatumAnnot { id: string; t: "datum"; view: string; ref: GeoRef; pos: [number, number]; letter: string }
+/** Surface finish (ISO 1302 / 21920): the tick on an edge, any process, material removed or not removed, with the roughness above. */
+export interface SurfAnnot { id: string; t: "surf"; view?: string; ref?: GeoRef; pos: [number, number]; proc: "any" | "removal" | "none"; text: string; method?: string }
+/** A table on the sheet (FR-DRW-024): revision table or a general one; `pos` is its top-left corner (sheet mm), or its top-right one with `anchor: "tr"` (revision tables, so they grow to the left). */
+export interface TableAnnot { id: string; t: "table"; view?: undefined; kind: "rev" | "general"; pos: [number, number]; cols: string[]; rows: string[][]; title?: string; anchor?: "tr" }
+
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot;
 
 export interface Sheet {
   id: string;
@@ -91,8 +104,8 @@ export interface Sheet {
   portrait?: boolean;
   scale: [number, number];
   projection: Projection;
-  /** Sheet format: ISO 7200 or ANSI Y14.1 title block (GOST later). */
-  format: "iso" | "ansi";
+  /** Sheet format: ISO 7200, ANSI Y14.1 or GOST 2.104 (form 1) title block. */
+  format: "iso" | "ansi" | "gost";
   views: DrawingView[];
   /** Dimensions, notes and hole callouts (FR-DRW-020..023). */
   annots?: Annot[];

@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.69.0] - 2026-11-08
+
+### Added
+
+- **Geometric tolerances** (FR-DRW-023, Annotate ▾): feature control frames to ISO 1101 / ASME Y14.5 with all 14 characteristics, drawn from lines and arcs so they look the same in every export. Click an edge first for a leader, or place the frame on its own. Select it to pick the characteristic, a Ø tolerance zone, the maximum or least material condition, up to three datums, and to add more rows.
+- **Datum features**: click an edge (or a hole's circle), then place the framed letter; the filled triangle sits on the edge and the letters run A, B, C… across the drawing.
+- **Surface finish** (ISO 1302): click on an edge to put the symbol on it, away from it for a leader, or on empty space for a free symbol; any process, material removed or not removed, with the roughness and the production method.
+- **Revision table and general tables** (FR-DRW-024): the revision table goes in the frame's top-right corner and grows to the left; Add revision fills in the next letter and today's date. General tables take any number of rows and columns. Cells are edited in the panel; headers that you leave alone follow the interface language.
+- **GOST 2.104** title block (form 1, 185 × 55) and frame, beside ISO and ANSI.
+- **PNG export** of the sheet at 300 dpi, with the resolution recorded in the file.
+- Annotations whose model edge disappears after a part change are framed in orange on screen (FR-DRW-026); a datum keeps its letter, a hole callout shows "?".
+
 ## [1.68.0] - 2026-11-08
 
 ### Added
@@ -656,7 +668,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.68.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.69.0...HEAD
+[1.69.0]: https://github.com/kothf/step-viewer/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/kothf/step-viewer/compare/v1.67.0...v1.68.0
 [1.67.0]: https://github.com/kothf/step-viewer/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/kothf/step-viewer/compare/v1.65.0...v1.66.0
