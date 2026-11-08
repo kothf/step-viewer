@@ -23,6 +23,11 @@ const DEG = Math.PI / 180;
 
 /** The selected key (by index into the track's sorted keys) or motor bar. */
 type Sel = { track: string; key?: number } | null;
+type AnyKey = Key | CamKey | PoseKey;
+
+/** Key interpolations, as SolidWorks' key point menu lists them. */
+const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
+const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
 
 export class MotionManager {
   open = false;
@@ -32,6 +37,8 @@ export class MotionManager {
   playing = false;
   speed = 1;
   sel: Sel = null;
+  /** The copied key (Ctrl+C or the key menu) and the kind of track it came from. */
+  private clip: { kind: Track["kind"]; unit: string; key: AnyKey } | null = null;
   /** Solved component transforms per frame, from frame 0 up. */
   private frames: Record<string, Tf>[] = [];
   /** Frames where the mates could not all be solved. */
@@ -463,9 +470,9 @@ export class MotionManager {
       let inner = "";
       if (k.kind === "motor") inner = `<button class="mo-bar${this.sel?.track === k.id ? " sel" : ""}" data-bar="${esc(k.id)}" style="left:${this.x(k.start)};width:calc(${this.x(Math.max(0, k.end - k.start))})" title="${esc(t("Motor"))}" aria-label="${esc(t("Motor"))} ${esc(fmt(k.start))}–${esc(fmt(k.end))} ${esc(t("s"))}"></button>`;
       else {
-        const keys = sortKeys(k.keys as { t: number }[]);
+        const keys = sortKeys(k.keys as AnyKey[]);
         if (keys.length > 1) inner += `<span class="mo-span" style="left:${this.x(keys[0].t)};width:calc(${this.x(keys[keys.length - 1].t - keys[0].t)})"></span>`;
-        inner += keys.map((key, i) => `<button class="mo-key${this.sel?.track === k.id && this.sel.key === i ? " sel" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
+        inner += keys.map((key, i) => `<button class="mo-key${key.interp ? ` i-${key.interp}` : ""}${this.sel?.track === k.id && this.sel.key === i ? " sel" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
       }
       return `<div class="mo-lane${k.off ? " off" : ""}" data-lane="${esc(k.id)}">${inner}</div>`;
     }).join("");
@@ -504,7 +511,7 @@ export class MotionManager {
     const sel = this.sel, tr = sel && this.study.tracks.find(k => k.id === sel.track);
     if (!sel || !tr) return `<span class="muted">${esc(t("Select a key or a motor to edit it; double-click a track to add a key."))}</span>`;
     const field = (label: string, key: string, v: string, unitTxt = "") => `<label class="mo-f"><span>${esc(label)}</span><input type="text" inputmode="decimal" class="mo-n" data-p="${key}" value="${esc(v)}" />${unitTxt ? `<span class="muted">${esc(unitTxt)}</span>` : ""}</label>`;
-    const interpSel = (v: Interp | undefined) => `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="interp"><option value="linear"${v !== "ease" ? " selected" : ""}>${esc(t("Linear"))}</option><option value="ease"${v === "ease" ? " selected" : ""}>${esc(t("Ease in/out"))}</option></select></label>`;
+    const interpSel = (v: Interp | undefined) => `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="interp">${INTERPS.map(([k, l]) => `<option value="${k}"${(v ?? "linear") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`;
     if (tr.kind === "motor") {
       const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate);
       const canRot = !mate || mate.type !== "distance", canLin = !mate || (mate.type !== "angle" && mate.type !== "hinge");
@@ -636,6 +643,20 @@ export class MotionManager {
       this.sel = { track: id, key: idx };
       this.render();
     }));
+    on("[data-key]", "contextmenu", (e, el) => {
+      e.preventDefault();
+      const [id, i] = el.dataset.key!.split(":");
+      this.sel = { track: id, key: Number(i) };
+      this.render();
+      const me = e as MouseEvent;
+      this.keyMenu(me.clientX, me.clientY);
+    });
+    on(".mo-lane", "contextmenu", (e, el) => {
+      if ((e.target as HTMLElement) !== el) return;
+      e.preventDefault();
+      const me = e as MouseEvent, at = this.snap(tAt(me as PointerEvent, el)), id = el.dataset.lane!;
+      this.laneMenu(id, at, me.clientX, me.clientY);
+    });
     on("[data-bar]", "click", (_e, el) => { this.sel = { track: el.dataset.bar! }; this.render(); });
     pane.querySelectorAll<HTMLElement>("[data-bar]").forEach(el => drag(el, dt => this.edit(st => {
       const tr = st.tracks.find(x => x.id === el.dataset.bar) as MotorTrack | undefined;
@@ -679,7 +700,7 @@ export class MotionManager {
       const keys = sortKeys(tr.keys as (Key | CamKey | PoseKey)[]), k = keys[sel.key ?? -1];
       if (!k) return;
       if (p === "t") k.t = this.snap(v);
-      else if (p === "interp") { if (raw === "ease") k.interp = "ease"; else delete k.interp; }
+      else if (p === "interp") { const i = interpOf(raw); if (i) k.interp = i; else delete k.interp; }
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
       else if (/^[dr][xyz]$/.test(p) && tr.kind === "pose") { const pk = k as unknown as PoseKey; (p[0] === "d" ? pk.d : pk.r)["xyz".indexOf(p[1])] = v; }
@@ -716,11 +737,131 @@ export class MotionManager {
     (this.pane.querySelector(`[data-key="${CSS.escape(`${sel.track}:${sel.key}`)}"]`) as HTMLElement | null)?.focus();
   }
 
+  /** The selected key and its track, if a key (not a motor or a whole track) is selected. */
+  private selKey(): { tr: Track; key: AnyKey } | null {
+    const sel = this.sel, tr = sel && this.study.tracks.find(k => k.id === sel.track);
+    if (!sel || sel.key == null || !tr || tr.kind === "motor") return null;
+    const key = sortKeys(tr.keys as AnyKey[])[sel.key];
+    return key ? { tr, key } : null;
+  }
+
+  /** What a key's value means on a track: keys paste only onto tracks of the same kind and unit. */
+  private unitOf(tr: Track): string {
+    if (tr.kind !== "mate") return tr.kind;
+    return (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate)?.type === "angle" ? "mate:angle" : "mate:distance";
+  }
+
+  /** Copies the selected key (Ctrl+C). */
+  copyKey() {
+    const s = this.selKey();
+    if (!s) return;
+    this.clip = { kind: s.tr.kind, unit: this.unitOf(s.tr), key: structuredClone(s.key) };
+    toast(t("Key copied"));
+  }
+
+  /** Can the copied key go on this track? */
+  private canPaste(trackId: string): boolean {
+    const tr = this.study.tracks.find(k => k.id === trackId);
+    return !!(this.clip && tr && tr.kind !== "motor" && this.unitOf(tr) === this.clip.unit);
+  }
+
+  /** Pastes the copied key onto a track at `at` (Ctrl+V: the selected track at the playhead), replacing a key there. */
+  pasteKey(trackId: string, at: number) {
+    if (!this.clip) return;
+    if (!this.canPaste(trackId)) { toast(t("The copied key is for another kind of track."), "warn"); return; }
+    const tq = this.snap(at), key = { ...structuredClone(this.clip.key), t: tq };
+    let idx = 0;
+    this.edit(st => {
+      const tr = st.tracks.find(x => x.id === trackId) as { keys: AnyKey[] } | undefined;
+      if (!tr) return;
+      tr.keys = sortKeys([...tr.keys.filter(x => Math.abs(x.t - tq) > 1e-9), key]);
+      idx = tr.keys.indexOf(key);
+    });
+    this.sel = { track: trackId, key: idx };
+    this.time = tq;
+    this.render();
+    this.showAt(tq);
+  }
+
+  /** Sets the selected key's interpolation (how the motion runs into it). */
+  setInterp(i: Interp) {
+    const sel = this.sel;
+    if (!this.selKey() || !sel) return;
+    this.edit(st => {
+      const tr = st.tracks.find(x => x.id === sel.track) as { keys: AnyKey[] } | undefined;
+      const k = tr && sortKeys(tr.keys)[sel.key!];
+      if (!k) return;
+      if (i === "linear") delete k.interp; else k.interp = i;
+    });
+    this.render();
+  }
+
+  /** The key point menu (right-click a key, the menu key or Shift+F10): interpolation, copy, paste, delete. */
+  private keyMenu(x: number, y: number) {
+    const s = this.selKey(), sel = this.sel;
+    if (!s || !sel) return;
+    const cur = s.key.interp ?? "linear";
+    this.menu([
+      ...INTERPS.map(([v, l]) => ({ label: t(l), checked: cur === v, run: () => this.setInterp(v) })),
+      null,
+      { label: t("Copy"), keys: "Ctrl+C", run: () => this.copyKey() },
+      { label: t("Paste at the playhead"), keys: "Ctrl+V", run: () => this.pasteKey(sel.track, this.time), off: !this.canPaste(sel.track) },
+      null,
+      { label: t("Delete"), keys: "Del", run: () => this.deleteSel() },
+    ], x, y);
+  }
+
+  /** A right-click on an empty part of a track: add a key or paste the copied one there. */
+  private laneMenu(trackId: string, at: number, x: number, y: number) {
+    const tr = this.study.tracks.find(k => k.id === trackId);
+    if (!tr || tr.kind === "motor") return;
+    this.menu([
+      { label: t("Add key here"), run: () => this.addKey(trackId, at) },
+      { label: t("Paste here"), run: () => this.pasteKey(trackId, at), off: !this.canPaste(trackId) },
+    ], x, y);
+  }
+
+  private menu(items: ({ label: string; run: () => void; checked?: boolean; keys?: string; off?: boolean } | null)[], x: number, y: number) {
+    document.getElementById("mo-menu")?.remove();
+    const m = document.createElement("div");
+    m.id = "mo-menu";
+    m.className = "mc-menu";
+    m.setAttribute("role", "menu");
+    m.setAttribute("aria-label", t("Key point"));
+    const real = items.filter((it): it is NonNullable<typeof it> => !!it);
+    m.innerHTML = items.map(it => !it ? `<hr role="separator" />`
+      : `<button role="${it.checked == null ? "menuitem" : "menuitemradio"}"${it.checked == null ? "" : ` aria-checked="${it.checked}"`} data-i="${real.indexOf(it)}"${it.off ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${it.checked ? "●" : ""}</span>${esc(it.label)}${it.keys ? `<span class="mo-mk" translate="no">${esc(it.keys)}</span>` : ""}</button>`).join("");
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+    m.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+    const btns = [...m.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
+    const back = () => (this.pane.querySelector<HTMLElement>(this.sel?.key != null ? `[data-key="${CSS.escape(`${this.sel.track}:${this.sel.key}`)}"]` : "[data-mo=play]") ?? this.pane).focus();
+    const close = (refocus: boolean) => { m.remove(); document.removeEventListener("pointerdown", outside, true); if (refocus) back(); };
+    const outside = (ev: Event) => { if (!m.contains(ev.target as Node)) close(false); };
+    m.querySelectorAll<HTMLButtonElement>("button").forEach(b => b.addEventListener("click", () => { close(false); real[Number(b.dataset.i)].run(); back(); }));
+    m.addEventListener("keydown", ev => {
+      const i = btns.indexOf(document.activeElement as HTMLButtonElement);
+      if (ev.key === "Escape" || ev.key === "Tab") { ev.preventDefault(); ev.stopPropagation(); close(true); }
+      else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); btns[(i + (ev.key === "ArrowDown" ? 1 : btns.length - 1)) % btns.length]?.focus(); }
+      else if (ev.key === "Home" || ev.key === "End") { ev.preventDefault(); btns[ev.key === "Home" ? 0 : btns.length - 1]?.focus(); }
+    });
+    setTimeout(() => document.addEventListener("pointerdown", outside, true), 0);
+    (btns.find(b => b.getAttribute("aria-checked") === "true") ?? btns[0])?.focus();
+  }
+
   private key(e: KeyboardEvent) {
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.key === " ") { e.preventDefault(); this.play(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && this.sel) { e.preventDefault(); this.deleteSel(); }
+    else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c" && this.sel?.key != null) { e.preventDefault(); this.copyKey(); }
+    else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v" && this.sel) { e.preventDefault(); this.pasteKey(this.sel.track, this.time); }
+    else if ((e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) && this.sel?.key != null) {
+      e.preventDefault();
+      const b = this.pane.querySelector<HTMLElement>(`[data-key="${CSS.escape(`${this.sel.track}:${this.sel.key}`)}"]`)?.getBoundingClientRect();
+      this.keyMenu(b ? b.right : 0, b ? b.bottom : 0);
+    }
     else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && e.altKey && this.sel?.key != null) { e.preventDefault(); this.moveKey((e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 10 : 1) / this.study.fps); }
     else if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); this.seek(this.snap(this.time + (e.key === "ArrowRight" ? 1 : -1) / this.study.fps)); }
     else if (e.key === "Home") { e.preventDefault(); this.seek(0); }

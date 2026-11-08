@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.107.0] - 2026-11-08
+
+### Added
+
+- Motion studies: the key point menu (right-click a key, the menu key or Shift+F10) sets how the motion runs into the key, as in SolidWorks: Linear, Snap (jump: the value holds, then jumps at the key), Ease in, Ease out or Ease in/out. Keys show it by their shape (FR-FT-122).
+- Copy and paste keys: Ctrl+C copies the selected key, Ctrl+V pastes it onto the selected track at the playhead; right-clicking an empty part of a track offers Add key here and Paste here. Keys paste onto tracks of the same kind (a distance key onto distance mates, an angle key onto angle mates).
+
 ## [1.106.0] - 2026-11-08
 
 ### Added
@@ -1002,7 +1009,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.106.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.107.0...HEAD
+[1.107.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.107.0
 [1.106.0]: https://github.com/kothf/step-viewer/compare/v1.104.0...v1.106.0
 [1.104.0]: https://github.com/kothf/step-viewer/compare/v1.101.0...v1.104.0
 [1.101.0]: https://github.com/kothf/step-viewer/compare/v1.100.0...v1.101.0
