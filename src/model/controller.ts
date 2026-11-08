@@ -186,6 +186,28 @@ function statusText(s: FeatureStatus) {
 /** A part kept in a document tab while another document is shown. */
 export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"] }
 
+/**
+ * Hole positions in the panel (FR-FT-052): on a face square to a world axis they show as the world coordinates
+ * of the other two axes (a face square to Y shows X and Z), so a typed value means what the drawing says
+ * whatever way the face's own sketch axes point; on any other face, the face's sketch X/Y.
+ */
+function holeAxes(fr: Frame | undefined): { names: string[]; show: (p: [number, number]) => [number, number]; store: (q: [number, number]) => [number, number] } {
+  const plain = { names: ["X", "Y"], show: (p: [number, number]) => [p[0], p[1]] as [number, number], store: (q: [number, number]) => [q[0], q[1]] as [number, number] };
+  if (!fr) return plain;
+  const k = [0, 1, 2].find(a => Math.abs(Math.abs(fr.n[a]) - 1) < 1e-9);
+  if (k === undefined) return plain;
+  const [a, b] = [0, 1, 2].filter(x => x !== k);
+  // World (a, b) = o + x·fx + y·fy restricted to the two axes; fx, fy lie in that plane.
+  const m = [[fr.x[a], fr.y[a]], [fr.x[b], fr.y[b]]], det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  if (Math.abs(det) < 1e-12) return plain;
+  const q = (x: number) => Math.abs(x) < 1e-9 ? 0 : Math.round(x * 1e9) / 1e9;
+  return {
+    names: ["XYZ"[a], "XYZ"[b]],
+    show: p => [q(fr.o[a] + fr.x[a] * p[0] + fr.y[a] * p[1]), q(fr.o[b] + fr.x[b] * p[0] + fr.y[b] * p[1])],
+    store: w => { const u = w[0] - fr.o[a], v = w[1] - fr.o[b]; return [q((u * m[1][1] - v * m[0][1]) / det), q((m[0][0] * v - m[1][0] * u) / det)]; },
+  };
+}
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -4356,7 +4378,7 @@ export class ModelController {
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
-          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${(["X", "Y"] as const).map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(p[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
           + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
@@ -4920,8 +4942,11 @@ export class ModelController {
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         inp.removeAttribute("aria-invalid");
         const p = f.pts[i];
-        if (!p || p[j] === v) return;
-        p[j] = v;
+        if (!p) return;
+        const ha = holeAxes(this.last?.frames[f.id]), shown = ha.show(p);
+        if (shown[j] === v) return;
+        shown[j] = v;
+        f.pts[i] = ha.store(shown);
         this.draftChanged();
       };
       inp.addEventListener("change", apply);

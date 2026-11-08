@@ -518,8 +518,10 @@ export class SketchEditor {
   }
 
   private drawClick(raw: V2, e: { detail: number }, exact?: { hv: "horizontal" | "vertical" | null; dims: (made: SkEnt[]) => SkDim[] }) {
-    // A typed end that lands on an existing point joins it (a typed chain closes on its start, as when clicked).
-    const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= 1e-7 * Math.max(1, Math.hypot(raw[0], raw[1])))?.id ?? null : null;
+    // A typed end that lands on an existing point (within 0.001 mm: typed angles are rounded) joins it, so a
+    // typed chain closes on its start, as when clicked.
+    const joinTol = Math.min(1e-3, this.px(raw));
+    const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= joinTol)?.id ?? (Math.hypot(raw[0], raw[1]) <= joinTol ? ORIGIN : null) : null;
     const s = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
     const p = s.p;
     const d = this.draft;
@@ -542,7 +544,7 @@ export class SketchEditor {
       if (s.hv) rels.push({ id: uid("r"), t: s.hv, e: [lid] });
       finish("Add line");
       // Chain on from the end, unless the loop closed on an existing point.
-      const closed = !!s.id && s.id !== ORIGIN && d.ids.length > 0;
+      const closed = !!s.id && (s.id !== ORIGIN || d.chainStart === ORIGIN) && d.ids.length > 0;
       if (closed || e.detail >= 2) { this.draft = { pts: [], ids: [], cursor: null, snap: null }; }
       else { d.pts.push(p); d.ids.push(bId); d.snapCurve = null; d.snapOrigin = false; }
       this.render();

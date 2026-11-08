@@ -539,7 +539,11 @@ export class Modeller {
       const back = upto ? 0 : f.mid ? angle / 2 : Math.max(0, Math.min(f.angle2?.v ?? 0, Math.PI * 2 - angle));
       if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
       if (!f.mid) angle += back;
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], new Set([ax.id]));
+      // A solid profile line may be the axis too (SolidWorks allows it): leave the axis out only when the
+      // profile closes without it, so a stand-alone line or centreline still works as before.
+      const axSkip = new Set([ax.id]);
+      const skip = ax.cons || !sketchProfile(sk, axSkip).error ? axSkip : undefined;
+      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip);
       for (let face0 of faces) {
         let face = f.thin ? this.thinFace(face0, f.thin) : face0;
         if (back > 1e-9 && angle < Math.PI * 2 - 1e-9) {
