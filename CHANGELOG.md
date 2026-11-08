@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.197.0] - 2026-11-08
+
+### Added
+
+- Drawing notes can link to sheet properties (FR-DRW-023): `$PRP:"Material"` (also `$PRPSHEET:`) shows the title block's value, so the note follows the model and the sheet. The Note panel's **Link to property** list inserts one. Unknown names stay as typed.
+
 ## [1.196.0] - 2026-11-08
 
 ### Fixed
@@ -1459,7 +1465,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.196.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.197.0...HEAD
+[1.197.0]: https://github.com/kothf/step-viewer/compare/v1.196.0...v1.197.0
 [1.196.0]: https://github.com/kothf/step-viewer/compare/v1.194.0...v1.196.0
 [1.194.0]: https://github.com/kothf/step-viewer/compare/v1.191.0...v1.194.0
 [1.191.0]: https://github.com/kothf/step-viewer/compare/v1.190.0...v1.191.0

@@ -7,7 +7,7 @@ import type { Projection, Seg2, V3 } from "../kernel/drawing";
 import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, HatchPattern, Sheet } from "./types";
-import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
+import { sheetNotes, useProps, viewAnnots, type AnnotCtx } from "./annot";
 import { alignedLegs, altReq, boxInView, cutLegs, findView, isShaded, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
@@ -669,6 +669,7 @@ export interface Composed { prims: Prim[]; boxes: ViewBox[] }
 
 /** The whole sheet. `projections` is looked up by each view's request key. */
 export function composeSheet(sheet: Sheet, fields: Fields, projections: Map<string, Projection>, modelBox: [V3, V3] | null, label: (s: string, p?: Record<string, string>) => string, ctx?: AnnotCtx): Composed {
+  useProps(fields as unknown as Record<string, string>);
   const prims = formatPrims(sheet, fields, label);
   const boxes: ViewBox[] = [];
   for (const v of sheet.views) {
