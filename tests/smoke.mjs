@@ -4636,7 +4636,7 @@ try {
     const cube = [...(await readFile(join(fixtures, "cube-10x10mm", "Cube 10x10.stp")))];
     await mp.evaluate(b => window.__sv.asm.insertComponent(new File([new Uint8Array(b)], "Cube 10x10.stp")), cube);
     await shown(3);
-    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent }));
+    const a0 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#asm-tree .ft-comp .ft-name")].map(e => e.textContent), keys: Object.keys(window.__sv.asm.doc.parts).length, v: window.__sv.asm.props?.volume, status: document.querySelector("#asm-status").textContent, exact: window.__sv.viewer.parts[0].data.faces.filter(f => f.surface === "plane").length }));
     // Move the second plate by typing its pose: X = 100, 90° about Z.
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
@@ -4665,7 +4665,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined"
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined" && a0.exact > 0
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -7500,6 +7500,14 @@ try {
     for (let i = 0; i < 5; i++) { await np.keyboard.press("Alt+z"); await settleCam(); }
     const back = await cam();
     check(dist(back, c0) < 1e-6 * Math.max(1, Math.hypot(...c0.p)) + 1e-6, `navigation: Alt+Z steps back through the previous views to where it started (${dist(back, c0).toExponential(2)})`);
+    // A command button keeps focus after its click; the arrows still turn the view (exam bug 29).
+    await np.focus("#lang-btn");
+    const cb0 = await cam();
+    await np.keyboard.press("ArrowLeft"); await settleCam();
+    const cb1 = await cam();
+    check(Math.abs(ang(cb0, cb1) - 15) < 0.5, `navigation: ← turns the view with a header button focused (${ang(cb0, cb1).toFixed(2)}°)`);
+    await np.keyboard.press("ArrowRight"); await settleCam();
+    await np.evaluate(() => document.activeElement?.blur());
     // Double middle click fits: the same camera as F.
     await np.keyboard.press("f"); await settleCam();
     const cf = await cam();
@@ -7768,8 +7776,17 @@ try {
     await runCmd(mp, "Cut List");
     await mp.waitForSelector("#wld-cut[open]");
     const cl = await mp.evaluate(() => ({ rows: document.querySelectorAll("#wld-cut tbody tr").length, total: document.querySelector("#wld-cut [data-wtotal]")?.textContent }));
+    // Item properties typed in the dialog are kept with the part and rename the item in the tree and the CSV.
+    await mp.fill('#wld-cut input[data-cp="desc"][data-ci="0"]', "Top rail");
+    await mp.press('#wld-cut input[data-cp="desc"][data-ci="0"]', "Tab");
+    await mp.fill('#wld-cut input[data-cp="part"][data-ci="0"]', "FR-001");
+    await mp.press('#wld-cut input[data-cp="part"][data-ci="0"]', "Tab");
+    await settle();
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
+    await settle();
+    const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
+    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
     await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);
@@ -7777,7 +7794,7 @@ try {
       const hl = window.__sv.modeller.decor.children.filter(o => o.isMesh && o.material?.opacity === 0.45);
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
-    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["SHS 50x50x4 × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();
@@ -7855,6 +7872,16 @@ try {
     await settle();
     const pb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.qty, c.length]) }; });
     check(!pb.bad && pb.beads.length === 1 && pb.beads[0][0] === 1 && Math.abs(pb.beads[0][1] - (4 * 28 + 12 * Math.PI)) < 0.2, `weldments: a bead all round a square tube from one picked side (${JSON.stringify(pb)})`);
+    // Intermittent bead from the panel: the defaults (50 every 100) round the 149.7 mm loop give welds at 0 and 100.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInter"]');
+    await settle();
+    const ifs = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm [data-num="inter.len"], #mc-pm [data-num="inter.pitch"], #mc-pm input[data-k="wStagger"]')].length);
+    await mp.click("#mc-ok");
+    await settle();
+    const ib = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => [c.length, c.inter]) }; });
+    check(ifs === 3 && !ib.bad && ib.beads.length === 1 && Math.abs(ib.beads[0][0] - (50 + 4 * 28 + 12 * Math.PI - 100)) < 0.2 && JSON.stringify(ib.beads[0][1]) === "[50,100]", `weldments: intermittent fillet bead (${JSON.stringify({ ifs, ib })})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
     await mp.evaluate(() => { const v = window.__sv.viewer, a = window.__sv.modeller.arrows?.[0]; if (!a) return; v.controls.target.copy(a.base); v.camera.position.copy(a.base).add(a.base.clone().set(1, -1, 0.6).multiplyScalar(300)); v.camera.lookAt(a.base); v.controls.update(); });

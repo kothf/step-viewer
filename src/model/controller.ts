@@ -197,6 +197,28 @@ function statusText(s: FeatureStatus) {
 /** A part kept in a document tab while another document is shown. */
 export interface PartTab { store: DocStore; fileName: string; handle: FileSystemFileHandle | null; vault: ModelController["vault"]; returnTo: ModelController["returnTo"]; context: PartContext | null }
 
+/**
+ * Hole positions in the panel (FR-FT-052): on a face square to a world axis they show as the world coordinates
+ * of the other two axes (a face square to Y shows X and Z), so a typed value means what the drawing says
+ * whatever way the face's own sketch axes point; on any other face, the face's sketch X/Y.
+ */
+function holeAxes(fr: Frame | undefined): { names: string[]; show: (p: [number, number]) => [number, number]; store: (q: [number, number]) => [number, number] } {
+  const plain = { names: ["X", "Y"], show: (p: [number, number]) => [p[0], p[1]] as [number, number], store: (q: [number, number]) => [q[0], q[1]] as [number, number] };
+  if (!fr) return plain;
+  const k = [0, 1, 2].find(a => Math.abs(Math.abs(fr.n[a]) - 1) < 1e-9);
+  if (k === undefined) return plain;
+  const [a, b] = [0, 1, 2].filter(x => x !== k);
+  // World (a, b) = o + x·fx + y·fy restricted to the two axes; fx, fy lie in that plane.
+  const m = [[fr.x[a], fr.y[a]], [fr.x[b], fr.y[b]]], det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  if (Math.abs(det) < 1e-12) return plain;
+  const q = (x: number) => Math.abs(x) < 1e-9 ? 0 : Math.round(x * 1e9) / 1e9;
+  return {
+    names: ["XYZ"[a], "XYZ"[b]],
+    show: p => [q(fr.o[a] + fr.x[a] * p[0] + fr.y[a] * p[1]), q(fr.o[b] + fr.x[b] * p[0] + fr.y[b] * p[1])],
+    store: w => { const u = w[0] - fr.o[a], v = w[1] - fr.o[b]; return [q((u * m[1][1] - v * m[0][1]) / det), q((m[0][0] * v - m[1][0] * u) / det)]; },
+  };
+}
+
 export class ModelController {
   store: DocStore | null = null;
   private kernel: ModelKernel;
@@ -664,7 +686,7 @@ export class ModelController {
     const name = this.last?.faceNames[faceId];
     const face = this.host.viewer.parts[0]?.data.faces[faceId];
     if (!name || !face) return null;
-    if (face.type !== "plane") { toast(t("A sketch needs a flat face or a plane."), true); return null; }
+    if (face.type !== "plane") { toast(t("Pick a flat face or a plane: this one is curved."), true); return null; }
     return { face: { name, hint: face.centroid } };
   }
 
@@ -1756,7 +1778,8 @@ export class ModelController {
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
     if (m.kind === "sketch") {
       if (k === "enter") { stop(); this.ok(); return; }
-      if (m.editor.key(e)) { stop(); this.renderBar(); return; }
+      // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
+      if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
       if (k === "escape") { stop(); void this.cancel(); }
       return;
     }
@@ -3975,7 +3998,7 @@ export class ModelController {
       case "exit": this.ok(); break;
       case "sketch": this.startSketch(); break;
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
-      case "cutlist": showCutList(this.last?.cutList, this.doc); break;
+      case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
       case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
@@ -4051,7 +4074,7 @@ export class ModelController {
     for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
-    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row);
+    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -4227,7 +4250,7 @@ export class ModelController {
         if (id === "part" || id === "material") { this.editProps(); return; }
         if (id === "equations") { this.editEquations(); return; }
         if (id === "folder:bodies" || id === "folder:cutlist") return;
-        if (id.startsWith("cut:")) { showCutList(this.last?.cutList, this.doc); return; }
+        if (id.startsWith("cut:")) { this.cutList(); return; }
         if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
@@ -4313,7 +4336,7 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => showCutList(this.last?.cutList, this.doc)]);
+    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => this.cutList()]);
     if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
@@ -4643,6 +4666,8 @@ export class ModelController {
           + (f.end === "next" ? `<p class="pm-help muted">${esc(t("Each hole stops where it leaves the material."))}</p>` : "")
           + (f.end === "blind" ? numField("depth", t("Depth"), f.depth, "length") + chk("flat", f.flat, t("Flat bottom (no drill point)")) : ""))
         + group(t("Positions"), hbox("hplane", t("Face"), this.refLabel(f.plane)) + hbox("pts", t("Hole positions"), t("{n} hole|{n} holes", { n: f.pts.length }))
+          + (f.pts.length ? `<ul class="pm-items pm-hpts" aria-label="${esc(t("Hole positions"))}">${f.pts.map((p, i) => `<li><span>${i + 1}</span>${holeAxes(this.last?.frames[f.id]).names.map((ax, j) => `<span class="pm-in"><span class="muted">${ax}</span><input type="text" inputmode="decimal" data-hp="${i}:${j}" value="${esc(trimNum(holeAxes(this.last?.frames[f.id]).show(p)[j] * UNITS[unit].f, 6))}" aria-label="${esc(t("Hole {n}", { n: i + 1 }))} ${ax}" spellcheck="false" /></span>`).join("")}<button class="icon" data-rmh="${i}" title="${esc(t("Remove"))}" aria-label="${esc(t("Remove"))} ${esc(t("Hole {n}", { n: i + 1 }))}">✕</button></li>`).join("")}</ul>` : "")
+          + (f.plane ? `<button class="btn small" data-k="addPt">${esc(t("Add hole"))}</button> ` : "")
           + (f.pts.length ? `<button class="btn small" data-k="clearPts">${esc(t("Clear holes"))}</button>` : "")
           + `<p class="pm-help muted">${esc(f.plane ? t("Click on the face to place holes; click a hole again to remove it.") : t("Click the flat face (or a plane) for the holes."))}</p>`);
     }
@@ -4777,8 +4802,8 @@ export class ModelController {
     // SolidWorks habit: ✓ and ✕ at the top of the panel, then the message box, then the groups.
     // A rebuild re-renders the panel; keep what is being typed (and the caret) instead of the stored value.
     const typing = new Map<string, { value: string; focus: boolean; a: number | null; b: number | null }>();
-    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k]").forEach(inp => {
-      const key = inp.dataset.num ? `n:${inp.dataset.num}` : `k:${inp.dataset.k}`;
+    pm.querySelectorAll<HTMLInputElement>("input[data-num], input[type=text][data-k], input[data-hp]").forEach(inp => {
+      const key = inp.dataset.num ? `n:${inp.dataset.num}` : inp.dataset.hp ? `h:${inp.dataset.hp}` : `k:${inp.dataset.k}`;
       const focus = document.activeElement === inp;
       if (focus || inp.value !== inp.defaultValue) typing.set(key, { value: inp.value, focus, a: inp.selectionStart, b: inp.selectionEnd });
     });
@@ -4786,7 +4811,7 @@ export class ModelController {
       + err + `<p class="pm-help muted">${esc(m.isNew ? t("Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.") : t("Editing: ✓ or Enter applies the change, ✕ or Esc cancels."))}</p>`
       + name + body;
     typing.forEach((st, key) => {
-      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
+      const inp = pm.querySelector<HTMLInputElement>(key.startsWith("n:") ? `input[data-num="${key.slice(2)}"]` : key.startsWith("h:") ? `input[data-hp="${key.slice(2)}"]` : `input[type=text][data-k="${key.slice(2)}"]`);
       if (!inp) return;
       inp.value = st.value;
       if (st.focus) { inp.focus(); try { inp.setSelectionRange(st.a, st.b); } catch { /* not a text input */ } }
@@ -4808,6 +4833,22 @@ export class ModelController {
         const cur = host?.[last];
         if (cur && cur.v === n.v && cur.expr === n.expr) return;
         upd(() => {
+          // Head sizes still at their automatic values (the size's ISO table, or the custom defaults) follow
+          // a typed diameter: a Ø3.2 countersink kept the M6 head (Ø13.44) before.
+          if (f.type === "hole" && key === "diameter" && cur && cur.v > 0) {
+            const auto: HoleFeature = JSON.parse(JSON.stringify(f));
+            if (f.size) applyHoleSize(auto);
+            else {
+              const d0 = cur.v;
+              auto.cbDia = { v: Math.round(d0 * 17) / 10 }; auto.cbDepth = { v: d0 }; auto.csDia = { v: d0 * 2 }; auto.threadDepth = { v: d0 * 2 };
+              auto.cdDia = { v: Math.round(d0 * 17) / 10 }; auto.cdDepth = { v: d0 }; auto.slotLen = { v: Math.round(d0 * 20) / 10 };
+            }
+            const k = n.v / cur.v;
+            for (const h of ["cbDia", "cbDepth", "csDia", "threadDepth", "cdDia", "cdDepth", "slotLen"] as const) {
+              const x = f[h], a = auto[h];
+              if (x && a && !x.expr && Math.abs(x.v - a.v) < 1e-9) f[h] = { v: Math.round(x.v * k * 100) / 100 };
+            }
+          }
           (host as Record<string, Num>)[last] = n;
           // A typed size makes the hole custom (SolidWorks' "Show custom sizing").
           if (f.type === "hole" && key !== "depth" && key !== "threadDepth" && f.size) { delete f.size; delete f.fit; }
@@ -5187,6 +5228,46 @@ export class ModelController {
     if (f.type === "sketch3d") this.bindSk3Panel(pm, f, unit);
     pm.querySelector("[data-k=clearSets]")?.addEventListener("click", () => { if (f.type === "fillet") { f.faces1 = []; f.faces2 = []; if (f.kind === "full") f.center = []; if (m.kind === "feature") m.focus = "fs1"; this.draftChanged(); } });
     pm.querySelector("[data-k=clearPts]")?.addEventListener("click", () => { if (f.type === "hole") { f.pts = []; this.draftChanged(); } });
+    // Hole positions typed as X/Y in the face's sketch axes (FR-FT-052): a clicked position can be made exact.
+    pm.querySelector("[data-k=addPt]")?.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      const last = f.pts.at(-1);
+      f.pts.push(last ? [last[0] + Math.max(f.diameter.v * 2, 5), last[1]] : [0, 0]);
+      this.draftChanged();
+      setTimeout(() => { const inp = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${f.pts.length - 1}:0"]`); inp?.focus(); inp?.select(); }, 0);
+    });
+    pm.querySelectorAll<HTMLElement>("[data-rmh]").forEach(b => b.addEventListener("click", () => {
+      if (f.type !== "hole") return;
+      f.pts.splice(+b.dataset.rmh!, 1);
+      this.draftChanged();
+    }));
+    pm.querySelectorAll<HTMLInputElement>("input[data-hp]").forEach(inp => {
+      const apply = () => {
+        if (f.type !== "hole") return;
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        let v: number;
+        try { v = evaluate(inp.value, "length", unit, evalVars(this.doc, unit).values); }
+        catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
+        inp.removeAttribute("aria-invalid");
+        const p = f.pts[i];
+        if (!p) return;
+        const ha = holeAxes(this.last?.frames[f.id]), shown = ha.show(p);
+        if (shown[j] === v) return;
+        shown[j] = v;
+        f.pts[i] = ha.store(shown);
+        this.draftChanged();
+      };
+      inp.addEventListener("change", apply);
+      // Enter applies and goes on to the next coordinate (X, Y, then the next hole), so a table of holes is typed in one go.
+      inp.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault(); e.stopPropagation();
+        const [i, j] = inp.dataset.hp!.split(":").map(Number);
+        const next = j === 0 ? `${i}:1` : `${i + 1}:0`;
+        apply();
+        setTimeout(() => { const n = $("#mc-pm").querySelector<HTMLInputElement>(`input[data-hp="${next}"]`); n?.focus(); n?.select(); }, 0);
+      });
+    });
     pm.querySelector("[data-k=clearSurfaces]")?.addEventListener("click", () => { if (f.type === "knit") { f.surfaces = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearCopy]")?.addEventListener("click", () => { if (isCopy(f)) { if (f.copy === "faces") f.faces = []; else f.bodies = []; this.draftChanged(); } });
     pm.querySelector("[data-k=clearFaces]")?.addEventListener("click", () => { if (f.type === "shell" || f.type === "draft" || f.type === "split" || f.type === "delface" || f.type === "moveface" || f.type === "offsurf" || f.type === "replaceface") { f.faces = []; this.draftChanged(); }
@@ -6173,6 +6254,15 @@ export class ModelController {
   bodyProps() { return this.last?.props ?? null; }
 
   /** The part's mass property override (FR-MAT-004), if any. */
+  /** The weldment Cut List dialog; typed item properties go into `PartDoc.cutProps` as one undo step each. */
+  cutList() {
+    showCutList(this.last?.cutList, this.doc, (key, p) => this.store?.change("Cut list properties", d => {
+      const all = { ...(d.cutProps ?? {}) };
+      if (Object.keys(p).length) all[key] = p; else delete all[key];
+      if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;
+    }));
+  }
+
   massOverride() { return this.store?.doc.massOverride ?? null; }
 
   /** The open sketch's normal (Normal to). */

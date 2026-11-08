@@ -5,11 +5,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.163.0] - 2026-11-08
+## [1.165.0] - 2026-11-08
 
 ### Fixed
 
 - **Russian part names in STEP files** show as Cyrillic in the Model tree and the file info, not as "ÏË31à-ï_÷åðí". Many Russian CAD exports write names as raw Windows-1251 bytes, and OpenCASCADE read them as Latin-1. Names are now decoded again: Windows-1251 when the file's names look Cyrillic (decided once per file, so real Latin-1 names such as "Müller" stay as they are), UTF-8 written through \X\ escapes, and UTF-16 code units written as bytes. The STEP header reader also understands \X4\ and \S\ escapes. The interface font list has Noto Sans / DejaVu Sans / Liberation Sans fallbacks, which cover Cyrillic on Linux.
+
+## [1.163.0] - 2026-11-08
+
+### Added
+
+- **Intermittent fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' Intermittent weld option: welds of a set length every pitch (centre to centre) from the start of each run of edges, following round corners; **Staggered** starts every other run half a pitch on, so welds on two sides of a joint alternate. The cut list lists intermittent and staggered welds as their own rows with the weld length and pitch, and the length is the total weld actually laid.
+
+## [1.161.0] - 2026-11-08
+
+### Added
+
+- **Hole position table**: the Hole panel lists every hole centre with typed X/Y positions. On a face square to a world axis the columns are the two world axes in that face, so typed positions match the drawing.
+
+### Fixed
+
+Found while modelling the Leuenberger steam engine through the UI only:
+
+- Assemblies: placed parts never got exact geometry (their faces lost the face type when moved), so axes and radii came from the mesh and valid mates were refused as "over-defined". Parts now get exact faces again, and a solve that stalls within 1e-5 of the model size (mesh-only components) counts as solved.
+- Revolve accepts a profile line lying on the axis as the axis, as SolidWorks does.
+- Hole: counterbore, countersink and counterdrill sizes still at their automatic values follow a typed diameter (a Ø3.2 countersink kept the M6 head). Clicking a curved face says "Pick a flat face or a plane: this one is curved."
+- Sketcher: a typed line chain ending on the sketch origin joins it; typed sizes place dimensions clear of the geometry; sketch fillets work on construction corners and virtual sharps; tangency at a shared end counts once, so a fully dimensioned slot shows 0 DOF.
+- The arrow keys turn the view while a command button has focus (they did nothing after clicking Mate or Insert).
+
+## [1.160.0] - 2026-11-08
+
+### Added
+
+- **Cut list item properties (FR-FT-121).** In the weldment Cut List dialog each item's description, part number and notes can be typed, like SolidWorks' cut list item properties. They are kept with the part (and survive rebuilds while the item stays the same size), rename the item in the Features tree's Cut list folder and go into the CSV as extra columns.
 
 ## [1.158.0] - 2026-11-08
 
@@ -1304,8 +1332,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.163.0...HEAD
-[1.163.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.163.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.165.0...HEAD
+[1.165.0]: https://github.com/kothf/step-viewer/compare/v1.163.0...v1.165.0
+[1.163.0]: https://github.com/kothf/step-viewer/compare/v1.161.0...v1.163.0
+[1.161.0]: https://github.com/kothf/step-viewer/compare/v1.160.0...v1.161.0
+[1.160.0]: https://github.com/kothf/step-viewer/compare/v1.158.0...v1.160.0
 [1.158.0]: https://github.com/kothf/step-viewer/compare/v1.157.0...v1.158.0
 [1.157.0]: https://github.com/kothf/step-viewer/compare/v1.156.0...v1.157.0
 [1.156.0]: https://github.com/kothf/step-viewer/compare/v1.153.0...v1.156.0

@@ -9,7 +9,7 @@ import { units, UNITS } from "../tools/units";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
-import { cornerKey } from "./types";
+import { cornerKey, cutKey } from "./types";
 import { segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
@@ -228,7 +228,10 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
   }
   return {
     title: t("Fillet Bead"),
-    body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length") + chk("wTangent", f.tangent !== false, t("Tangent propagation")))
+    body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length") + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
+        + chk("wInter", !!f.inter, t("Intermittent weld"))
+        + (f.inter ? numField("inter.len", t("Weld length"), f.inter.len, "length") + numField("inter.pitch", t("Pitch"), f.inter.pitch, "length")
+          + chk("wStagger", !!f.inter.stagger, t("Staggered")) + help(t("Welds of this length every pitch, centre to centre, from the start of each run of edges. Staggered starts every other run half a pitch on.")) : ""))
       + group(t("Face set 1"), box("wf1", t("Faces"), faces(f.faces1.length)) + (f.faces1.length ? `<button class="btn small" data-k="wclear" data-wlist="faces1">${esc(t("Clear faces"))}</button>` : ""))
       + group(t("Face set 2"), box("wf2", t("Faces"), faces(f.faces2.length)) + (f.faces2.length ? `<button class="btn small" data-k="wclear" data-wlist="faces2">${esc(t("Clear faces"))}</button>` : "")
         + help(t("Click flat or cylindrical faces: the bead runs along the straight and round edges where set 1 meets set 2. With tangent propagation it follows on round corners."))),
@@ -291,6 +294,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
+  if (f.type === "weldbead" && k === "wInter") return () => { if (val) f.inter = { len: { v: 50 }, pitch: { v: 100 } }; else delete f.inter; };
+  if (f.type === "weldbead" && k === "wStagger") return () => { if (!f.inter) return; if (val) f.inter.stagger = true; else delete f.inter.stagger; };
   return null;
 }
 
@@ -408,13 +413,23 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
 
 // ---------- cut list ----------
 
+/** A bead row's description: leg, and for intermittent welds the weld length and pitch. */
+function beadText(c: CutItem, tr: (k: string, p?: Record<string, string | number>) => string) {
+  if (!c.inter) return tr("Fillet weld, leg {s}", { s: c.desc });
+  return tr(c.inter[2] ? "Staggered fillet weld, leg {s}, {l} every {e}" : "Intermittent fillet weld, leg {s}, {l} every {e}", { s: c.desc, l: c.inter[0], e: c.inter[1] });
+}
+
 /** Display rows of a cut list: item number, quantity, description, length, angles, mass each. */
-function rowsOf(items: CutItem[], density: number) {
+type CutProps = NonNullable<PartDoc["cutProps"]>;
+
+function rowsOf(items: CutItem[], density: number, props?: CutProps) {
   const L = (mm: number | undefined) => mm == null ? "" : (mm * UNITS[units.current].f).toLocaleString(undefined, { maximumFractionDigits: 1 });
   return items.map((c, i) => {
-    const desc = c.kind === "member" ? c.desc : c.kind === "plate" ? t("Plate {t} × {w} × {l}", { t: c.plate![2], w: c.plate![0], l: c.plate![1] }) : t("Fillet weld, leg {s}", { s: c.desc });
+    const auto = c.kind === "member" ? c.desc : c.kind === "plate" ? t("Plate {t} × {w} × {l}", { t: c.plate![2], w: c.plate![0], l: c.plate![1] }) : beadText(c, t);
+    const key = cutKey(c), p = props?.[key] ?? {};
+    const desc = p.desc || auto;
     const kg = (c.volume * density) / 1e6;
-    return { item: i + 1, qty: c.kind === "bead" ? 1 : c.qty, desc, length: L(c.length), a1: c.kind === "member" ? String(c.angle1 ?? 0) : "", a2: c.kind === "member" ? String(c.angle2 ?? 0) : "", kg: c.kind === "bead" ? kg : kg, total: c.kind === "bead" ? kg : kg * c.qty };
+    return { key, auto, part: p.part ?? "", note: p.note ?? "", item: i + 1, qty: c.kind === "bead" ? 1 : c.qty, desc, length: L(c.length), a1: c.kind === "member" ? String(c.angle1 ?? 0) : "", a2: c.kind === "member" ? String(c.angle2 ?? 0) : "", kg: c.kind === "bead" ? kg : kg, total: c.kind === "bead" ? kg : kg * c.qty };
   });
 }
 
@@ -422,11 +437,11 @@ function rowsOf(items: CutItem[], density: number) {
  * The Cut list folder of the Features tree (SolidWorks' "Cut list"): one row per item with its quantity;
  * a click selects `cut:<i>`, which lights up the item's bodies.
  */
-export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string): string {
+export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (id: string, icon: string, label: string, extra?: string, cls?: string, aria?: string) => string, props?: CutProps): string {
   if (!items?.length) return "";
   let html = row("folder:cutlist", open ? "▾" : "▸", t("Cut list ({n})", { n: items.length }), "", " ft-bodies", ` aria-expanded="${open}"`);
   if (!open) return html;
-  rowsOf(items, STEEL).forEach((r, i) => {
+  rowsOf(items, STEEL, props).forEach((r, i) => {
     const len = r.length ? ` × ${r.length} ${units.current}` : "";
     html += row(`cut:${i}`, items[i].kind === "member" ? "▭" : items[i].kind === "plate" ? "▱" : "◣", `${r.desc}${len} (${r.qty})`, "", " infolder ft-body");
   });
@@ -434,35 +449,53 @@ export function cutListRows(items: CutItem[] | undefined, open: boolean, row: (i
 }
 
 /** The weldment cut list as CSV (English, like the other exports; lengths in mm). */
-export function cutListCsv(items: CutItem[], density: number): string {
+export function cutListCsv(items: CutItem[], density: number, props?: CutProps): string {
   const q = (v: string | number) => { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Mass each (kg)", "Mass (kg)"].join(",")];
+  const lines = [["Item", "Qty", "Description", "Length (mm)", "Angle 1 (deg)", "Angle 2 (deg)", "Mass each (kg)", "Mass (kg)", "Part number", "Notes"].join(",")];
   items.forEach((c, i) => {
-    const desc = c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : `Fillet weld, leg ${c.desc}`;
+    const p = props?.[cutKey(c)] ?? {};
+    const desc = p.desc || (c.kind === "member" ? c.desc : c.kind === "plate" ? `Plate ${c.plate![2]} x ${c.plate![0]} x ${c.plate![1]}` : beadText(c, (k, p) => k.replace(/\{(\w+)\}/g, (_m, n) => String(p?.[n] ?? ""))));
     const kg = (c.volume * density) / 1e6, qty = c.kind === "bead" ? 1 : c.qty;
-    lines.push([i + 1, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4)].map(q).join(","));
+    lines.push([i + 1, qty, desc, c.length ?? "", c.kind === "member" ? c.angle1 ?? 0 : "", c.kind === "member" ? c.angle2 ?? 0 : "", kg.toFixed(4), (kg * (c.kind === "bead" ? 1 : c.qty)).toFixed(4), p.part ?? "", p.note ?? ""].map(q).join(","));
   });
   return `${lines.join("\r\n")}\r\n`;
 }
 
 const STEEL = 7.85;
 
-/** Opens the cut list dialog for the part's current cut list. */
-export function showCutList(items: CutItem[] | undefined, doc: PartDoc) {
+/**
+ * Opens the cut list dialog for the part's current cut list. Description, part number and notes of each item can be
+ * typed (SolidWorks' cut list item properties); `onProps` stores them in `PartDoc.cutProps`.
+ */
+export function showCutList(items: CutItem[] | undefined, doc: PartDoc, onProps?: (key: string, p: { desc?: string; part?: string; note?: string }) => void) {
   const dlg = document.querySelector<HTMLDialogElement>("#wld-cut");
   if (!dlg) return;
   if (!items?.length) { toast(t("There are no weldment members yet: add a Structural Member first."), true); return; }
   const density = doc.material?.density ?? STEEL;
-  const rows = rowsOf(items, density);
+  const props: CutProps = { ...(doc.cutProps ?? {}) };
+  const rows = rowsOf(items, density, props);
   const kg = (m: number) => m.toLocaleString(undefined, { maximumFractionDigits: 3 });
   const total = rows.reduce((s, r) => s + r.total, 0);
-  dlg.querySelector<HTMLElement>("#wld-cut-body")!.innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Length"))} (${esc(units.current)})</th><th>${esc(t("Angle 1"))}</th><th>${esc(t("Angle 2"))}</th><th>${esc(t("Mass (kg)"))}</th></tr></thead><tbody>`
-    + rows.map(r => `<tr><td>${r.item}</td><td>${r.qty}</td><td translate="no">${esc(r.desc)}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${kg(r.total)}</td></tr>`).join("")
+  dlg.querySelector<HTMLElement>("#wld-cut-body")!.innerHTML = `<table class="v-table"><thead><tr><th>${esc(t("Item"))}</th><th>${esc(t("Qty"))}</th><th>${esc(t("Description"))}</th><th>${esc(t("Length"))} (${esc(units.current)})</th><th>${esc(t("Angle 1"))}</th><th>${esc(t("Angle 2"))}</th><th>${esc(t("Mass (kg)"))}</th><th>${esc(t("Part number"))}</th><th>${esc(t("Notes"))}</th></tr></thead><tbody>`
+    + rows.map((r, i) => {
+      const inp = (f: "desc" | "part" | "note", v: string, ph: string, label: string) => onProps
+        ? `<input type="text" class="wld-cp" data-cp="${f}" data-ci="${i}" value="${esc(v)}" placeholder="${esc(ph)}" aria-label="${esc(label)} ${r.item}" translate="no" />`
+        : esc(v || ph);
+      return `<tr><td>${r.item}</td><td>${r.qty}</td><td translate="no">${inp("desc", props[r.key]?.desc ?? "", r.auto, t("Description"))}</td><td>${r.length}</td><td>${r.a1}</td><td>${r.a2}</td><td>${kg(r.total)}</td><td>${inp("part", r.part, "", t("Part number"))}</td><td>${inp("note", r.note, "", t("Notes"))}</td></tr>`;
+    }).join("")
     + `</tbody></table><p class="muted" data-wtotal>${esc(t("Total mass {m} kg", { m: kg(total) }))}${doc.material ? "" : ` · ${esc(t("Steel assumed (7.85 g/cm³): set the part's material in Properties."))}`}</p>`;
+  dlg.querySelectorAll<HTMLInputElement>("input[data-cp]").forEach(el => el.addEventListener("change", () => {
+    const r = rows[Number(el.dataset.ci)], f = el.dataset.cp as "desc" | "part" | "note";
+    const p = { ...(props[r.key] ?? {}) };
+    const v = el.value.trim();
+    if (v) p[f] = v; else delete p[f];
+    if (Object.keys(p).length) props[r.key] = p; else delete props[r.key];
+    onProps?.(r.key, p);
+  }));
   dlg.querySelector<HTMLButtonElement>("[data-a=close]")!.onclick = () => dlg.close();
   dlg.querySelector<HTMLButtonElement>("[data-a=csv]")!.onclick = () => {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density)], { type: "text/csv" }));
+    a.href = URL.createObjectURL(new Blob([cutListCsv(items, density, props)], { type: "text/csv" }));
     a.download = `${doc.name}-cut-list.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);

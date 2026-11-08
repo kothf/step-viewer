@@ -249,6 +249,14 @@ export class Modeller {
     const pos = ad.Plane().Position();
     let n = this.xyz(pos.Direction());
     const x = this.xyz(pos.XDirection());
+    // The face's own normal is du × dv of its surface; a plane made by revolving a straight edge (a revolve's
+    // flat end or web face) is a surface of revolution whose du × dv can point against the plane's axis.
+    {
+      const q = new oc.gp_Pnt_1(), du = new oc.gp_Vec_1(), dv = new oc.gp_Vec_1();
+      ad.D1((ad.FirstUParameter() + ad.LastUParameter()) / 2, (ad.FirstVParameter() + ad.LastVParameter()) / 2, q, du, dv);
+      const pn = cross(this.xyz(du), this.xyz(dv));
+      if (dot(pn, n) < 0) n = mul(n, -1);
+    }
     const reversed = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
     if (reversed) { n = mul(n, -1); }
     let o: V3 = mul(n, dot(this.xyz(pos.Location()), n));
@@ -542,7 +550,11 @@ export class Modeller {
       const back = upto ? 0 : f.mid ? angle / 2 : Math.max(0, Math.min(f.angle2?.v ?? 0, Math.PI * 2 - angle));
       if (!(angle > 1e-9)) throw new FeatureError("E-FT-ZERO", "The angle must be more than 0.");
       if (!f.mid) angle += back;
-      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], new Set([ax.id]));
+      // A solid profile line may be the axis too (SolidWorks allows it): leave the axis out only when the
+      // profile closes without it, so a stand-alone line or centreline still works as before.
+      const axSkip = new Set([ax.id]);
+      const skip = ax.cons || !sketchProfile(sk, axSkip).error ? axSkip : undefined;
+      const { faces, edgeEnt } = this.profileFaces(sk, frame, [0, 0, 0], skip);
       for (let face0 of faces) {
         let face = f.thin ? this.thinFace(face0, f.thin) : face0;
         if (back > 1e-9 && angle < Math.PI * 2 - 1e-9) {
