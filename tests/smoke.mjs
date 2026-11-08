@@ -7518,10 +7518,12 @@ try {
     // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
     const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
     await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();
-    await dp.waitForTimeout(250);
+    // The columns animate (180 ms): wait for the width to settle rather than a fixed time.
+    const settled = w => dp.waitForFunction(w => Math.abs(document.querySelector("#tree-panel").getBoundingClientRect().width - w) <= 2, w, { timeout: 5000 }).catch(() => {});
+    await settled(350);
     const w1 = await dp.evaluate(() => ({ w: document.querySelector("#tree-panel").getBoundingClientRect().width, saved: localStorage.getItem("mc:size:left") }));
     await dp.dblclick("#app > .grip-left");
-    await dp.waitForTimeout(250);
+    await settled(270);
     const w2 = await dp.evaluate(() => document.querySelector("#tree-panel").getBoundingClientRect().width);
     check(grip.role === "separator" && Math.abs(w1.w - 350) <= 2 && w1.saved === "350" && Math.abs(w2 - 270) <= 2, `ui: the side panel resizes from its grip, the width is remembered and double-click restores it (${JSON.stringify({ grip, w1, w2 })})`);
     await ctx.close();
