@@ -113,22 +113,23 @@ const inShard = k => (k - 1) % shardN + 1 === shardI;
  * their flyouts, picks the tab, then the button or the flyout entry (exact label first, else one starting with it).
  */
 async function runCmd(pg, label) {
-  const pick = async sel => {
-    const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
-    let i = texts.indexOf(label);
-    if (i < 0) i = texts.findIndex(x => x.startsWith(label));
-    return i;
-  };
-  for (const tab of ["features", "surfaces", "weldments", "sketch"]) {
-    if (!(await pg.$(`#cm-t-${tab}`))) continue;
-    await pg.click(`#cm-t-${tab}`);
-    const i = await pick("#mc-tools [data-c]");
-    if (i >= 0) { await pg.locator("#mc-tools [data-c]").nth(i).click(); return; }
-    for (const key of await pg.$$eval("#mc-tools [data-fly]", els => els.map(e => e.dataset.fly))) {
-      await pg.click(`#mc-tools [data-fly="${key}"]`);
-      const j = await pick("#mc-menu button");
-      if (j >= 0) { await pg.locator("#mc-menu button").nth(j).click(); return; }
-      await pg.keyboard.press("Escape");
+  // Exact label first, on every tab and flyout; then the first label that starts with it.
+  for (const exact of [true, false]) {
+    const pick = async sel => {
+      const texts = await pg.$$eval(sel, els => els.map(e => (e.querySelector(".mc-l") ?? e).textContent.trim()));
+      return exact ? texts.indexOf(label) : texts.findIndex(x => x.startsWith(label));
+    };
+    for (const tab of ["features", "surfaces", "weldments", "sketch"]) {
+      if (!(await pg.$(`#cm-t-${tab}`))) continue;
+      await pg.click(`#cm-t-${tab}`);
+      const i = await pick("#mc-tools [data-c]");
+      if (i >= 0) { await pg.locator("#mc-tools [data-c]").nth(i).click(); return; }
+      for (const key of await pg.$$eval("#mc-tools [data-fly]", els => els.map(e => e.dataset.fly))) {
+        await pg.click(`#mc-tools [data-fly="${key}"]`);
+        const j = await pick("#mc-menu button");
+        if (j >= 0) { await pg.locator("#mc-menu button").nth(j).click(); return; }
+        await pg.keyboard.press("Escape");
+      }
     }
   }
   throw new Error(`No command labelled ${label}`);
@@ -1681,7 +1682,7 @@ try {
     await mp.click("#lang-btn");
     await mp.waitForTimeout(200);
     const leftRu = await mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
@@ -1935,7 +1936,7 @@ try {
     const axe = () => mp.evaluate(async () => (await window.axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
     const ax1 = await axe();
     const ruScan = () => mp.evaluate(() => {
-      const OK = /^(MöbiusCAD|STEP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
+      const OK = /^(MöbiusCAD|STEP|IGES|BREP|DXF|XY|YZ|XZ|Ctrl|Esc|Enter|Shift|Del|Delete|mcadprt|mm|DOF|D\d+|Part\d+|Base|Hex|body|S|L|R|C|A|P|D|Q|Y|Z|H|V|T|M|g|cm|Ti|Al|ABS|PLA|PA6|POM|Delrin|PEEK)$/;
       const skip = e => !e || e.closest('[translate="no"], script, style, [hidden]') || getComputedStyle(e).display === "none";
       const bad = new Set();
       const test = (s, where) => { if (s.split(/[^A-Za-zö0-9]+/).map(w => w.replace(/^\d+/, "")).some(w => /[A-Za-z]{2,}/.test(w) && !OK.test(w))) bad.add(`${where}: ${s.trim().slice(0, 60)}`); };
