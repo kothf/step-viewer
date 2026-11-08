@@ -61,6 +61,8 @@ startI18n();
 const vpEl = $("#viewport");
 const viewer = new Viewer(vpEl);
 const section = new SectionManager(viewer);
+/** The plane of the sketch Section toggle (FR-SK-006), removed when the sketch closes. */
+let skSection: SectionPlane | null = null;
 const snapper = new Snapper(viewer);
 const annotations = new Annotations(viewer, $("#labels"));
 new NavCube($<HTMLCanvasElement>("#navcube"), viewer);
@@ -106,6 +108,18 @@ const modeller = new ModelController({
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
+  sketchSection: pl => {
+    if (skSection) { if (section.planes.includes(skSection)) section.remove(skSection); skSection = null; }
+    if (pl) {
+      if (!section.canAdd) toast(t("Up to 3 section planes"), true);
+      else {
+        const n = new THREE.Vector3(...pl.n).normalize();
+        skSection = section.add("Sketch", n, n.dot(new THREE.Vector3(...pl.o)) + viewer.modelSize * 1e-4);
+        section.setGizmo(null, null);
+      }
+    }
+    renderSections();
+  },
   leaveOthers: () => { docs?.before3d(); asm.close(); },
   opened: label => docs?.opened("part", label),
   appVersion: __APP_VERSION__,

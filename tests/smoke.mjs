@@ -2759,6 +2759,57 @@ try {
     await ctx.close();
   }
 
+  // --- Part modelling 1.139.0: section at the sketch plane (FR-SK-006), configuration table CSV (FR-CFG-003) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    mp.on("dialog", d => d.accept());
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 40 × 40 block 20 high, then a sketch on the XZ plane through its middle.
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [{ id: "d1", name: "D1", t: "distance", e: ["p1", "p2"], val: { v: 40 } }], ents: [
+        { id: "p1", t: "point", x: -20, y: -20 }, { id: "p2", t: "point", x: 20, y: -20 }, { id: "p3", t: "point", x: 20, y: 20 }, { id: "p4", t: "point", x: -20, y: 20 },
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XZ" }, rels: [], dims: [], ents: [] });
+    }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s2"));
+    await mp.waitForTimeout(1000);
+    await mp.click('#mc-tools [data-c="sksec"]');
+    await mp.waitForTimeout(300);
+    const on = await mp.evaluate(() => { const sp = window.__sv.section.planes.find(p => p.label === "Sketch"); return sp ? { n: sp.axis.toArray().map(v => Math.round(v * 1000) / 1000), off: Math.round(sp.offset * 1000) / 1000, pressed: document.querySelector('#mc-tools [data-c="sksec"]').getAttribute("aria-pressed"), clip: window.__sv.viewer.renderer.clippingPlanes?.length ?? 0 } : null; });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const off = await mp.evaluate(() => window.__sv.section.planes.filter(p => p.label === "Sketch").length);
+    check(on && Math.abs(Math.abs(on.n[1]) - 1) < 1e-6 && Math.abs(on.off) < 0.1 && on.pressed === "true" && off === 0, `model 1.139: Section at the sketch plane while sketching, gone on exit (${JSON.stringify(on)}, ${off})`);
+    // Configuration table: export lists both configurations; importing a CSV edits one and adds another.
+    await mp.evaluate(() => window.__sv.modeller.editConfigs());
+    await mp.click("#mc-pm [data-a=add]");
+    await idle();
+    const dl = mp.waitForEvent("download");
+    await mp.click("#mc-pm [data-a=cfgcsv]");
+    const csv = await (await dl).createReadStream().then(r => new Promise(res => { let t = ""; r.on("data", c => (t += c)); r.on("end", () => res(t)); }));
+    await mp.evaluate(() => window.__sv.modeller.importConfigTable("Configuration,depth@Extrude1,D1@Sketch1\nConfig2,35,30\nTall,60,\n"));
+    await idle();
+    const cfg = await mp.evaluate(() => { const d = window.__sv.model.store.doc; return { names: d.configs.map(c => c.name), act: d.config, depth: d.features[1].depth.v, d1: d.features[0].dims[0].val.v, ok: window.__sv.model.last().statuses.every(s => s.ok) }; });
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => [...document.querySelectorAll("#mc-pm fieldset:last-of-type legend, #mc-pm [data-a=cfgcsv], #mc-pm [data-a=cfgin]")].map(e => e.textContent.trim()).join("|"));
+    await mp.evaluate(() => document.querySelector("#lang-btn").click());
+    check(/^Configuration,\$STATE@Sketch1,/.test(csv) && /\nDefault,/.test(csv) && /\nConfig2,/.test(csv) && /D1@Sketch1/.test(csv) && cfg.names.join() === "Default,Config2,Tall" && cfg.act === "Config2" && cfg.depth === 35 && cfg.d1 === 30 && cfg.ok, `model 1.139: configuration table export and import (${csv.split("\n")[0]}, ${JSON.stringify(cfg)})`);
+    check(ru === "Таблица конфигураций|Экспорт таблицы|Импорт таблицы…", `model 1.139: configuration table in Russian (${ru})`);
+    await ctx.close();
+  }
+
   // --- Part modelling 1.36.0: selection helpers while picking fillet edges (FR-SEL-005) ---
   if (inShard(4)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
