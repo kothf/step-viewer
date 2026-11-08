@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.116.0] - 2026-11-08
+
+### Added
+
+- **Recognize Holes (FR-FT-102).** Sweep ▾ → Recognize Holes finds the round holes in the body, through or blind with a flat or drilled bottom, like SolidWorks FeatureWorks. A Delete Face fills them, and they come back as Hole features, one per face and size. An imported STEP body gets holes you can resize, move or delete, and the solid stays the same.
+
 ## [1.115.0] - 2026-11-08
 
 ### Added
@@ -1070,7 +1076,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.115.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.116.0...HEAD
+[1.116.0]: https://github.com/kothf/step-viewer/compare/v1.115.0...v1.116.0
 [1.115.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.115.0
 [1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
 [1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0

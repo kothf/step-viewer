@@ -388,6 +388,9 @@ export interface ThreadFeature {
 }
 
 /** Hole wizard (FR-FT-050..053): holes of one kind at points on a flat face or plane. */
+/** A hole found on a body (FR-FT-102): where a hole feature would rebuild it. */
+export interface RecognizedHole { plane: PlaneRef; pt: [number, number]; diameter: number; end: "blind" | "through"; depth: number; flat: boolean }
+
 export interface HoleFeature {
   id: string; type: "hole"; name: string; suppressed?: boolean;
   plane?: PlaneRef;
