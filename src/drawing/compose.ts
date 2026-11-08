@@ -8,7 +8,7 @@ import type { Pen, Layer, Prim } from "./prims";
 import { formatPrims, type Fields } from "./sheet";
 import type { DrawingView, Sheet } from "./types";
 import { sheetNotes, viewAnnots, type AnnotCtx } from "./annot";
-import { altReq, boxInView, findView, lookDir, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
+import { altReq, boxInView, cutLegs, findView, lookDir, type CutLeg, viewReq, viewDir, viewScale, viewScalePair, scaleText } from "./views";
 
 export interface ViewBox { id: string; x0: number; y0: number; x1: number; y1: number; ready: boolean }
 
@@ -331,6 +331,8 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
       continue;
     }
     if (!v.line) continue;
+    const legs = v.kind === "section" && v.path ? cutLegs(v.path) : null;
+    if (legs) { out.push(...pathMarks(legs, lookDir(v), letter, pl, r)); continue; }
     const [a, b] = [toSheet(pl, v.line[0], v.line[1]), toSheet(pl, v.line[2], v.line[3])];
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
     const q = lookDir(v);
@@ -364,6 +366,47 @@ export function childMarks(sheet: Sheet, parent: DrawingView, pl: Placement): Pr
       out.push(arrowHead(m[0], m[1], -q[0], -q[1]));
       out.push({ t: "t", x: tail[0] + q[0] * 3, y: tail[1] + q[1] * 3 - 1.7, s: letter, h: 5, al: "c", layer: "ANNOT" });
     }
+  }
+  return out;
+}
+
+/** How far a ray from `s` along unit `d` runs before it leaves the rectangle `r` (0 when it starts outside). */
+function exitAt(s: [number, number], d: [number, number], r: [number, number, number, number]): number {
+  let k = Infinity;
+  for (const [u, p0, m0, m1] of [[d[0], s[0], r[0], r[2]], [d[1], s[1], r[1], r[3]]]) {
+    if (p0 < m0 || p0 > m1) return 0;
+    if (Math.abs(u) > 1e-9) k = Math.min(k, ((u > 0 ? m1 : m0) - p0) / u);
+  }
+  return Number.isFinite(k) ? Math.max(0, k) : 0;
+}
+
+/**
+ * The cutting path of an offset or half section (ISO 128-44): thin chain line, thick at the ends and at every
+ * bend, the ends run out past the view; arrows the way the view looks at the start and, unless the path stops
+ * on a step (half section), at the end.
+ */
+function pathMarks(legs: CutLeg[], q: [number, number], letter: string, pl: Placement, r: [number, number, number, number]): Prim[] {
+  const out: Prim[] = [];
+  const pts = [legs[0].a, ...legs.map(l => l.b)].map(p => toSheet(pl, p[0], p[1]));
+  const dir = (a: [number, number], b: [number, number]): [number, number] => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+  const d0 = dir(pts[1], pts[0]), last = legs[legs.length - 1].cut, n = pts.length;
+  const d1 = dir(pts[n - 2], pts[n - 1]);
+  const run = (p: [number, number], d: [number, number], k: number): [number, number] => [p[0] + d[0] * k, p[1] + d[1] * k];
+  const s0 = run(pts[0], d0, exitAt(pts[0], d0, r) + 4), s1 = run(pts[n - 1], d1, last ? exitAt(pts[n - 1], d1, r) + 4 : 0);
+  const line = [s0, ...pts.slice(1, -1), s1];
+  for (let i = 0; i + 1 < line.length; i++) out.push({ t: "l", p: [...line[i], ...line[i + 1]] as [number, number, number, number], pen: "center", layer: "ANNOT" });
+  out.push({ t: "l", p: [...s0, ...run(s0, d0, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  out.push({ t: "l", p: [...s1, ...run(s1, d1, -6)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  for (let i = 1; i < n - 1; i++) {
+    const a = dir(pts[i], pts[i - 1]), b = dir(pts[i], pts[i + 1]);
+    out.push({ t: "l", p: [...run(pts[i], a, 3), ...pts[i]] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+    out.push({ t: "l", p: [...pts[i], ...run(pts[i], b, 3)] as [number, number, number, number], pen: "frame", layer: "ANNOT" });
+  }
+  for (const s of last ? [s0, s1] : [s0]) {
+    const tail: [number, number] = [s[0] + q[0] * 8, s[1] + q[1] * 8];
+    out.push({ t: "l", p: [tail[0], tail[1], s[0] + q[0] * 3.5, s[1] + q[1] * 3.5], pen: "thin", layer: "ANNOT" });
+    out.push(arrowHead(s[0], s[1], -q[0], -q[1]));
+    out.push({ t: "t", x: tail[0] + q[0] * 2, y: tail[1] + q[1] * 2 - 1.7, s: letter, h: 5, al: "c", layer: "ANNOT" });
   }
   return out;
 }

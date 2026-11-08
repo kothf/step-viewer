@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.110.0] - 2026-11-08
+## [1.116.0] - 2026-11-08
 
 ### Added
 
@@ -25,12 +25,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The right panel's tabs (Measurements, Section, Display, Properties) moved from the header to the top of the right panel.
 - The part and assembly status lines keep their place below the view; the filter bar no longer shifts the view.
 
+## [1.114.0] - 2026-11-08
+
+### Added
+
+- **Offset and half sections** in drawings (FR-DRW-012, Section ▾). Offset section takes a cutting path: after the first leg, each click adds a leg along or square to it (Enter or a second click on the last point ends it). Every leg along the first cuts, the square legs step between them, and the cut faces on all those planes are hatched. Half section takes the start, the centre and the end of the step and cuts only up to the centre, so half the view stays whole. The cutting path is drawn with thick ends and bends, with arrows at its ends (only at the start for a half section).
+- **Components left uncut** in assembly sections (FR-DRW-012): a section's panel lists the assembly's components under Don't cut, plus a Fasteners box that ticks every fastener from the library at once. Those components are drawn whole in the section.
+
+## [1.112.0] - 2026-11-08
+
+### Added
+
+- **Hole table** in drawings (FR-DRW-024; Annotate ▾ and the Annotation tab). Click the origin on a view (a corner or a circle centre), then place the table. It lists every hole the view shows end-on with its X and Y from the origin along the view's axes and its size from the hole feature (Ø16 THRU, M6-6H…). Each size gets a letter from the smallest up (A1, A2, B1…), and the tags are written beside the holes, with X and Y arrows at the origin. The table follows the model; select it to set the decimals or to take the holes again after the model changed (Update holes). A hole that disappears frames the table in orange.
+- **Inspection dimensions** (FR-DRW-021): tick Inspection dimension in a dimension's panel and its text sits in an obround frame.
+
+
+## [1.110.0] - 2026-11-08
+
+### Added
+
+- **Weldments** (FR-FT-121):
+  - **Gusset**: two arrows in the view, one per leg, change the lengths along face 1 and face 2 by dragging (also from the tree, like extrude depth); click an arrow's value to type it.
+  - **Fillet Bead**: **Tangent propagation** (on by default) brings in the faces that run on smoothly from a picked one, so picking one side of a square tube and the plate gives a bead all round it, round corners included.
+  - Bead pieces that meet end to end are fused into one bead body; the cut list gives its length along the root.
+
 ## [1.108.0] - 2026-11-08
 
 ### Added
 
 - **Indent (FR-BODY-007).** Pick a target body and the tool bodies pressed into it. The tools are cut out of the target, grown by the clearance, and a wall of the given thickness follows their shape on the side they press into, like SolidWorks' Indent on a stamped plate. **Cut** leaves only the pocket. The tool bodies stay. Find it in Sweep ▾ next to Combine.
 - **Sweep start tangency (FR-FT-080).** Start and End Tangency → **Path tangent** turns a profile that is not square to the path so that it starts square to it.
+
 ## [1.107.0] - 2026-11-08
 
 ### Added
@@ -1056,7 +1081,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.110.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.116.0...HEAD
+[1.116.0]: https://github.com/kothf/step-viewer/compare/v1.114.0...v1.116.0
+[1.114.0]: https://github.com/kothf/step-viewer/compare/v1.112.0...v1.114.0
+[1.112.0]: https://github.com/kothf/step-viewer/compare/v1.110.0...v1.112.0
 [1.110.0]: https://github.com/kothf/step-viewer/compare/v1.108.0...v1.110.0
 [1.108.0]: https://github.com/kothf/step-viewer/compare/v1.107.0...v1.108.0
 [1.107.0]: https://github.com/kothf/step-viewer/compare/v1.106.0...v1.107.0

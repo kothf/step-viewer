@@ -1622,7 +1622,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
 | Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
-| Command search Ctrl+K | FR-UI-014 (S) | Done (1.110.0) | Done |
+| Command search Ctrl+K | FR-UI-014 (S) | Done (1.116.0) | Done |
 | Units in the status bar | FR-UI-116 | No | New |
 | Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
 
@@ -1637,7 +1637,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-DOC-003 | Several documents open at once in tabs | One part, assembly or drawing at a time: opening one closes the other (`leaveOthers`) | Partly |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
-| FR-UI-014 | Command search (Ctrl+K) | Done in 1.110.0 | Done |
+| FR-UI-014 | Command search (Ctrl+K) | Done in 1.116.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | No | Not built |
 | FR-UI-043 | Panels remember the last options per feature type | Only hole favourites | Not built |
@@ -1654,7 +1654,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | --- | --- | --- | --- |
 | FR-SK-006 | Section view at the sketch plane (S) | No one-click "section at sketch plane" | Not built |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
-| FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.110.0 (sketch panel Check) | Done |
+| FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.116.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
 
 **Part features (section 9)**
