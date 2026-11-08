@@ -867,3 +867,30 @@ test("insert part: another part's result as BREP text goes in as a body (FR-BODY
   assert.equal(out.props!.bodies, 2);
   close(out.props!.volume, 8000 + Math.PI * 25 * 30, 1e-6);
 });
+
+test("direct editing: move face out and in, delete face heals (FR-FT-101)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = rect("s1", 0, 0, 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  // Top face out 5 mm, then a side face in 10 mm: 100·60·25, then 90·60·25.
+  const up: Feature = { id: "f2", type: "moveface", name: "MoveFace1", faces: [{ name: "f1:end" }], distance: { v: 5 } };
+  let r = run(m, doc([s1, ex, up]));
+  close(r.props!.volume, 150000);
+  assert.ok(r.body!.names.includes("f1:end"), r.body!.names.join());
+  // The new side faces merge into the old ones: still a plain block of 6 faces.
+  assert.equal(r.body!.faces.length, 6, r.body!.names.join());
+  const side: Feature = { id: "f3", type: "moveface", name: "MoveFace2", faces: [{ name: "f1:side:s1l2" }], distance: { v: 10 }, flip: true };
+  r = run(m, doc([s1, ex, up, side]));
+  close(r.props!.volume, 135000);
+  assert.ok(r.body!.names.includes("f1:side:s1l2"));
+  // A blind pocket in the top; deleting its floor and walls fills it again.
+  const s2 = rect("s2", 0, 0, 20, 10, { face: { name: "f1:end" } });
+  const cut: Feature = { id: "f4", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "blind", depth: { v: 5 } };
+  r = run(m, doc([s1, ex, s2, cut]));
+  close(r.props!.volume, 120000 - 1000);
+  const pocket = r.body!.names.filter(n => n.startsWith("f4:"));
+  assert.ok(pocket.length >= 5, pocket.join());
+  const del: Feature = { id: "f5", type: "delface", name: "DeleteFace1", faces: pocket.map(name => ({ name })) };
+  r = run(m, doc([s1, ex, s2, cut, del]));
+  close(r.props!.volume, 120000, 1e-6);
+});
