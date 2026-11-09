@@ -23,10 +23,12 @@ import {
   type CircleMode,
   type Entity, type Measurement, type MeasureSource, type MeasureType, type PickRef,
 } from "./tools/measure";
-import { MATERIALS, massProperties } from "./tools/analysis";
+import { MATERIALS, massProperties, type MassResult } from "./tools/analysis";
+import { massReport, principal, type Combined, type Frame } from "./tools/inertia";
+import { inertiaUnit, massPanelHtml, massText, type MassView } from "./tools/massPanel";
 import { exportMesh, inspectionReport, measurementsCsv, measurementsJson, snapshot, download } from "./tools/exporters";
 import { csys, makeCsys, type Csys } from "./tools/csys";
-import { fmtArea, fmtLen, fmtMass, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
+import { fmtArea, fmtLen, fmtMass, fmtNum, fmtVec, fmtVol, unitMm, units, type Unit } from "./tools/units";
 import { readStepMeta, type StepMeta } from "./stepMeta";
 import { analyzeMesh, type EdgeInfo, type PartData, type TreeNode, type V3 } from "./topology";
 import ImportWorker from "./worker/import.worker?worker";
@@ -233,6 +235,15 @@ screenSized(hl.com, 5);
 hl.com.renderOrder = 2000;
 hl.com.visible = false;
 viewer.scene.add(hl.hoverFace, hl.selFace, hl.hoverEdge, hl.selEdge, hl.pickMarks, hl.com);
+/** Principal axes of inertia through the centre of mass (Mass properties panel): Px red, Py green, Pz blue. */
+const mpAxes = new THREE.Group();
+for (const color of [0xe03131, 0x2f9e44, 0x1c7ed6]) {
+  const l = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color, depthTest: false }));
+  l.renderOrder = 2000;
+  mpAxes.add(l);
+}
+mpAxes.visible = false;
+viewer.scene.add(mpAxes);
 // X, Y, Z axes from the model origin (0, 0, 0), always on top, with letters at the tips.
 const originAxes = (() => {
   const group = new THREE.Group();
@@ -755,7 +766,7 @@ function startKernel(bytes: ArrayBuffer, name: string, token: number, t0: number
 function exactReady() {
   if (state.live && state.livePicks.length) showLive(state.livePicks);
   renderProps();
-  if (lastMassRun) runMass();
+  if (lastMassRun || mp.open) runMass();
 }
 function showKernelStatus() {
   const el = $("#st-kernel");
@@ -818,6 +829,7 @@ function showModel(parts: PartData[], tree: TreeNode, name: string, key: string,
   buildTree();
   loadMeasurements();
   renderProps();
+  if (mp.open) runMass();
   const tris = result.parts.reduce((s, p) => s + p.index.length / 3, 0);
   const faces = result.parts.reduce((s, p) => s + p.faces.length, 0);
   modelStats = { parts: result.parts.length, faces, tris, s: (performance.now() - t0) / 1000 };
@@ -866,7 +878,7 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   renderProps();
   updateHint();
   if (first && parts.length) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
-  if (lastMassRun) runMass();
+  if (lastMassRun || mp.open) runMass();
   for (const f of partListeners) f();
 }
 
@@ -897,6 +909,9 @@ function resetForNewModel() {
   $("#mass-out").innerHTML = "";
   lastMassRun = null;
   lastMass = [];
+  mp.picking = false; mp.typing = false;
+  mpAxes.visible = false; mpFrameMark.visible = false;
+  if (mp.open) renderMassPanel();
 }
 
 /** Skeleton loaders replace panel content when loading takes longer than this. */
@@ -1050,6 +1065,7 @@ function setPartVisible(p: Part, on: boolean) {
 }
 function afterVisibilityChange() {
   refreshTreeVisibility();
+  massChanged();
   section.rebuild();
   viewer.computeBounds();
   viewer.invalidate();
@@ -1070,6 +1086,7 @@ function selectNode(n: TreeNode | null, fromViewport = false) {
   }
   refreshTreeVisibility();
   renderProps();
+  massChanged();
   viewer.invalidate();
 }
 
@@ -1470,6 +1487,13 @@ function pickMark(p: THREE.Vector3) {
 }
 
 function handlePick(snap: Snap | null) {
+  // Mass properties ▸ Pick axes: the click makes the output axes and selects nothing.
+  if (mp.picking && snap) {
+    const c = csysFrom(entityFromSnap(snap));
+    if (!c) { toast(t("Pick a flat face, a straight edge, a circle, a cylinder or a point."), true); return; }
+    addMassAxes({ ...c, name: t("Axes {n}", { n: mp.user.length + 1 }) });
+    return;
+  }
   if (state.tool === "select") {
     if (!snap) {
       state.selection = null;
@@ -1616,6 +1640,8 @@ function setCsys(c: Csys | null, refresh = true, quiet = false) {
   if (!refresh) return;
   refreshMeasurements();
   renderProps();
+  renderMass();
+  showMassMarks();
   if (c && !quiet) toast(t("Coordinates relative to {name}", { name: t(c.name) }));
   viewer.invalidate();
 }
@@ -2159,6 +2185,7 @@ function setUnits(u: Unit) {
   refreshMeasurements();
   renderProps();
   renderSections();
+  renderMass();
 }
 function setDecimals(d: string) {
   units.decimals = d === "" ? null : Number(d);
@@ -2167,6 +2194,7 @@ function setDecimals(d: string) {
   refreshMeasurements();
   renderProps();
   renderSections();
+  renderMass();
 }
 $("#csys-reset").addEventListener("click", () => setCsys(null));
 $<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
@@ -2449,54 +2477,204 @@ function validateDensity(): number | null {
 }
 let lastMass: [string, string][] = [];
 /** Inputs of the last mass calculation, so the table can be rebuilt in another language (the PDF is English). */
-let lastMassRun: { r: ReturnType<typeof massProperties>; n: number; whole: boolean; density: number } | null = null;
+let lastMassRun: { r: MassResult; c: Combined; n: number; whole: boolean; density: number; perPart: boolean; exact: boolean; ovr: { mass: boolean; com: boolean } } | null = null;
+/** Mass Properties panel (Evaluate ▸ Mass properties): open, Include hidden bodies, Show principal axes, output frame. */
+const mp = {
+  open: false, hidden: false, axes: true,
+  /** Output frame key: "active" (the active CSYS), "global", "f:<feature id>" (a part coordinate system) or "u:<i>" (axes added here). */
+  frame: "active",
+  /** Axes the user added in the panel (picked on the model or typed), world mm. */
+  user: [] as Csys[],
+  /** The next click on the model makes axes (picked, not selected). */
+  picking: false,
+  typing: false,
+};
+const frameOf = (c: Csys | null): Frame | null => (c ? { origin: c.origin, x: c.x, y: c.y, z: c.z } : null);
+/** The output coordinate system: the active one unless the panel asks for the global one. */
+function mpFrame(): Csys | null {
+  const k = mp.frame;
+  if (k === "active") return csys.active;
+  if (k.startsWith("u:")) return mp.user[+k.slice(2)] ?? null;
+  if (k.startsWith("f:") && modeller.active) {
+    const f = modeller.csysList().find(x => x.id === k.slice(2));
+    return f ? makeCsys(f.name, f.o, f.z, f.x) : null;
+  }
+  return null;
+}
+/** Adds user axes and makes them the output frame. */
+function addMassAxes(c: Csys) {
+  mp.user.push(c);
+  mp.frame = `u:${mp.user.length - 1}`;
+  mp.picking = false; mp.typing = false;
+  renderMassPanel(); showMassMarks();
+}
+const fmtI = (v: number, massG: number) => { const u = inertiaUnit(massG); return `${fmtNum(v * u.k)}`; };
 function massRows(): [string, string][] {
   if (!lastMassRun) return [];
-  const { r, n, whole, density } = lastMassRun;
+  const { r, c, n, whole, density, perPart, ovr } = lastMassRun;
+  const rep = massReport(c, frameOf(csys.active)), u = inertiaUnit(c.mass).label, sfx = ` (${t("overridden")})`;
+  const tri = (a: number, b: number, d: number) => `${fmtI(a, c.mass)}, ${fmtI(b, c.mass)}, ${fmtI(d, c.mass)} ${u}`;
   const rows: [string, string][] = [
     ["Scope", whole ? t("whole model") : t("{n} parts", { n })],
-    ["Density", `${density} g/cm³`],
-    ["Volume", fmtVol(r.volume)], ["Mass", fmtMass(r.mass)], ["Surface area", fmtArea(r.area)],
-    ["Centre of mass", fmtVec(r.com)],
+    ["Density", perPart ? t("from part materials") : `${density} g/cm³`],
+    ["Volume", fmtVol(c.volume)], ["Mass", fmtMass(c.mass) + (ovr.mass ? sfx : "")], ["Surface area", fmtArea(c.area)],
+    ["Centre of mass", fmtVec(new THREE.Vector3(...c.com)) + (ovr.com ? sfx : "")],
+    ["Principal moments", tri(...rep.principal.moments)],
+    ["Principal axes", rep.principal.axes.map(a => `(${a.map(x => (Math.abs(x) < 5e-7 ? 0 : x).toFixed(3)).join(", ")})`).join(" ")],
+    ["Moments at centre of mass", `Lxx, Lyy, Lzz = ${tri(rep.atCom.xx, rep.atCom.yy, rep.atCom.zz)}`],
+    ["Products at centre of mass", `Lxy, Lyz, Lzx = ${tri(rep.atCom.xy, rep.atCom.yz, rep.atCom.zx)}`],
+    ["Moments at origin", `Ixx, Iyy, Izz = ${tri(rep.atOrigin.xx, rep.atOrigin.yy, rep.atOrigin.zz)}`],
     ["Bounding box", `${fmtLen(r.bbox.x, false)} × ${fmtLen(r.bbox.y, false)} × ${fmtLen(r.bbox.z)}`],
-    ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((r.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
+    ["Box volume", fmtVol(r.bboxVolume)], ["Fill ratio", r.bboxVolume ? `${((c.volume / r.bboxVolume) * 100).toFixed(1)} %` : "-"],
   ];
   if (r.openParts.length) rows.push(["Warning", t("{n} open shells: volume not reliable", { n: r.openParts.length })]);
-  // Mass property override of a modelled part (FR-MAT-004): entered values replace the calculated ones.
-  const ovr = whole && modeller.active ? modeller.massOverride() : null;
-  if (ovr && (ovr.mass !== undefined || ovr.com)) {
-    const sfx = ` (${t("overridden")})`;
-    for (const row of rows) {
-      if (row[0] === "Mass" && ovr.mass !== undefined) row[1] = fmtMass(ovr.mass * 1000) + sfx;
-      if (row[0] === "Centre of mass" && ovr.com) row[1] = fmtVec(new THREE.Vector3(...ovr.com)) + sfx;
-    }
-  }
-  // Modelled parts: exact principal moments of inertia from the kernel (FR-MAT-002).
-  const mp = whole && modeller.active ? modeller.bodyProps() : null;
-  if (mp?.moments && mp.axes) {
-    const k = density / 1000 / 1000; // mm⁵ × g/mm³ → g·mm² → kg·mm²
-    rows.push(["Principal moments", `${mp.moments.map(v => Number((v * k).toPrecision(5)).toLocaleString("en")).join(", ")} kg·mm²`]);
-    rows.push(["Principal axes", mp.axes.map(a => `(${a.map(c => (Math.abs(c) < 5e-7 ? 0 : c).toFixed(3)).join(", ")})`).join(" ")]);
-  }
   return rows;
 }
-function renderMass() { $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : ""; }
+function renderMass() {
+  $("#mass-out").innerHTML = lastMassRun ? kv(massRows().map(([k, v]) => [k, esc(v)])) : "";
+  renderMassPanel();
+}
+/** The parts mass properties are taken of: the selected ones, else the shown ones (all with Include hidden bodies). */
+function massParts() {
+  const sel = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : null;
+  return sel ?? (mp.hidden ? viewer.parts : viewer.parts.filter(p => p.visible));
+}
 function runMass() {
   if (!viewer.parts.length) return;
-  const parts = state.selectedParts.length && state.selectedNode !== viewer.tree ? state.selectedParts : viewer.parts.filter(p => p.visible);
+  const parts = massParts();
   const density = validateDensity();
   if (density === null) return;
-  const r = massProperties(viewer, parts, density);
-  lastMassRun = { r, n: parts.length, whole: parts.length === viewer.parts.length, density };
+  // Assemblies take each component's part material (the field's density where a part has none), like the BOM.
+  const each = asm.active ? (p: Part) => asm.partDensity(viewer.parts.indexOf(p)) ?? density : density;
+  const r = massProperties(viewer, parts, each);
+  const whole = !(state.selectedParts.length && state.selectedNode !== viewer.tree);
+  // Mass property override of a modelled part (FR-MAT-004): an entered mass scales the moments with it; an entered centre moves it.
+  const o = whole && modeller.active ? modeller.massOverride() : null;
+  let c: Combined = r;
+  const ovr = { mass: false, com: false };
+  if (o?.mass !== undefined && r.mass > 0) {
+    const k = (o.mass * 1000) / r.mass;
+    c = { ...c, mass: o.mass * 1000, cov: c.cov.map(v => v * k) as Combined["cov"] };
+    ovr.mass = true;
+  }
+  if (o?.com) { c = { ...c, com: [...o.com] }; ovr.com = true; }
+  lastMassRun = { r, c, n: parts.length, whole, density, perPart: r.densities.length > 1 || (asm.active && r.densities.some(d => d !== density)), exact: parts.every(p => p.data.exact), ovr };
   lastMass = withLang("en", massRows);
   renderMass();
-  const ovr = lastMassRun.whole && modeller.active ? modeller.massOverride() : null;
-  hl.com.position.copy(ovr?.com ? new THREE.Vector3(...ovr.com) : r.com);
-  hl.com.visible = $<HTMLInputElement>("#com-show").checked;
+  showMassMarks();
+}
+/** Centre of mass ball (Show CoM or the panel) and principal axes (panel) in the view. */
+function showMassMarks() {
+  const c = lastMassRun?.c;
+  hl.com.visible = !!c && ($<HTMLInputElement>("#com-show").checked || mp.open);
+  mpAxes.visible = !!c && mp.open && mp.axes && c.mass > 0;
+  const f = mp.open ? mpFrame() : null;
+  mpFrameMark.visible = !!f && f !== csys.active;
+  if (f) {
+    mpFrameMark.position.set(...f.origin);
+    mpFrameMark.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.x), new THREE.Vector3(...f.y), new THREE.Vector3(...f.z)));
+    mpFrameMark.scale.setScalar(Math.max(viewer.modelSize * 0.1, 1));
+  }
+  if (c) {
+    hl.com.position.set(...c.com);
+    mpAxes.position.set(...c.com);
+    const p = principal(c.cov), L = Math.max(viewer.modelSize * 0.35, 1);
+    p.axes.forEach((a, i) => {
+      const g = (mpAxes.children[i] as THREE.Line).geometry;
+      g.setAttribute("position", new THREE.Float32BufferAttribute([-a[0] * L, -a[1] * L, -a[2] * L, a[0] * L, a[1] * L, a[2] * L], 3));
+      g.computeBoundingSphere();
+    });
+  }
   viewer.invalidate();
 }
 $("#mass-run").addEventListener("click", e => busy(e.currentTarget as HTMLElement, runMass));
-$<HTMLInputElement>("#com-show").addEventListener("change", e => { hl.com.visible = (e.target as HTMLInputElement).checked && lastMass.length > 0; viewer.invalidate(); });
+// Mass properties panel (FR-MAT-002): Evaluate ▸ Mass properties, like SolidWorks' dialog but beside the view,
+// following the selection, visibility, units and coordinate system while it is open.
+const mpPanel = $("#mp-panel"), mpBtn = $("#mp-btn");
+function massView(): MassView | null {
+  const run = lastMassRun;
+  if (!run) return null;
+  const active = csys.active, f = mpFrame();
+  const options = [
+    { key: "global", name: t("Default (global)") },
+    ...(active ? [{ key: "active", name: `${t(active.name)} (${t("active")})` }] : []),
+    ...(modeller.active ? modeller.csysList().map(c => ({ key: `f:${c.id}`, name: c.name })) : []),
+    ...mp.user.map((c, i) => ({ key: `u:${i}`, name: c.name })),
+  ];
+  const key = f ? mp.frame : "global";
+  const notes: string[] = [];
+  if (run.r.openParts.length) notes.push(t("{n} open shells: volume not reliable", { n: run.r.openParts.length }));
+  if (!run.exact) notes.push(t("Some values come from the tessellation, so curved faces make them approximate."));
+  if (run.c.partial) notes.push(t("Some bodies have no moments of inertia; only their mass is counted."));
+  if (run.perPart) notes.push(t("Each part uses its own material; parts without one use {d} g/cm³.", { d: run.density }));
+  if (run.c.mass <= 0) notes.push(t("The density is 0, so there is no mass."));
+  return {
+    rep: massReport(run.c, frameOf(f)),
+    scope: run.whole ? t("Whole model ({n} parts)", { n: run.n }) : t("{n} selected parts", { n: run.n }),
+    density: run.perPart ? t("from part materials") : `${run.density} g/cm³`,
+    frame: { name: f ? t(f.name) : t("Default (global)"), options, key, picking: mp.picking, typing: mp.typing, user: key.startsWith("u:"), unit: units.current },
+    hidden: mp.hidden, axes: mp.axes, notes, overridden: run.ovr, canMaterial: !asm.active,
+  };
+}
+function renderMassPanel() {
+  mpPanel.hidden = !mp.open;
+  mpBtn.classList.toggle("on", mp.open);
+  mpBtn.setAttribute("aria-pressed", String(mp.open));
+  if (mp.open) mpPanel.innerHTML = massPanelHtml(massView(), t("Open a model to begin."));
+}
+function openMassPanel(on = !mp.open) {
+  mp.open = on;
+  if (on && viewer.parts.length) runMass();
+  renderMassPanel();
+  showMassMarks();
+}
+/** Runs again while the panel is open (selection, visibility or a rebuild changed what it measures). */
+function massChanged() { if (mp.open && viewer.parts.length) runMass(); }
+/** Output axes other than the global ones, drawn while the panel is open. */
+const mpFrameMark = new THREE.AxesHelper(1);
+(mpFrameMark.material as THREE.LineBasicMaterial).depthTest = false;
+mpFrameMark.renderOrder = 2000;
+mpFrameMark.visible = false;
+viewer.scene.add(mpFrameMark);
+mpBtn.addEventListener("click", () => openMassPanel());
+mpPanel.addEventListener("click", e => {
+  const a = (e.target as HTMLElement).closest<HTMLElement>("[data-mp]")?.dataset.mp;
+  if (a === "close") openMassPanel(false);
+  else if (a === "recalc") runMass();
+  else if (a === "pick") { mp.picking = !mp.picking; mp.typing = false; if (mp.picking && state.tool !== "select") setTool("select"); renderMassPanel(); }
+  else if (a === "type") { mp.typing = !mp.typing; mp.picking = false; renderMassPanel(); mpPanel.querySelector<HTMLInputElement>("[data-ax]")?.focus(); }
+  else if (a === "delframe" && mp.frame.startsWith("u:")) {
+    mp.user.splice(+mp.frame.slice(2), 1);
+    mp.frame = "global";
+    renderMassPanel(); showMassMarks();
+  } else if (a === "addaxes") {
+    const num = (k: string) => parseFloat(mpPanel.querySelector<HTMLInputElement>(`[data-ax="${k}"]`)?.value.replace(",", ".") ?? "");
+    const v3 = (k: string): V3 => [num(`${k}0`), num(`${k}1`), num(`${k}2`)];
+    const o = v3("o").map(x => x * unitMm()) as V3, x = v3("x"), z = v3("z");
+    const bad = [...o, ...x, ...z].some(n => !isFinite(n)) || Math.hypot(...x) < 1e-9 || Math.hypot(...z) < 1e-9;
+    const cr = Math.hypot(x[1] * z[2] - x[2] * z[1], x[2] * z[0] - x[0] * z[2], x[0] * z[1] - x[1] * z[0]) / (Math.hypot(...x) * Math.hypot(...z) || 1);
+    if (bad || cr < 1e-6) { toast(t("Enter an origin and two directions that are not parallel."), true); return; }
+    const name = mpPanel.querySelector<HTMLInputElement>('[data-ax="name"]')?.value.trim() || t("Axes {n}", { n: mp.user.length + 1 });
+    addMassAxes(makeCsys(name, o, z, x));
+  }
+  else if (a === "copy") {
+    const v = massView();
+    if (v) navigator.clipboard?.writeText(massText(v)).then(() => toast(t("Mass properties copied")), () => toast(t("Could not copy to the clipboard"), true));
+  } else if (a === "material") {
+    if (modeller.active) modeller.editProps();
+    else { panels.show("right"); showPage("mass"); $("#material").focus(); }
+  }
+});
+mpPanel.addEventListener("change", e => {
+  const el = e.target as HTMLInputElement, k = el.dataset.mp;
+  if (k === "frame") { mp.frame = el.value; renderMassPanel(); showMassMarks(); }
+  else if (k === "hidden") { mp.hidden = el.checked; runMass(); }
+  else if (k === "axes") { mp.axes = el.checked; showMassMarks(); }
+});
+mpPanel.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); openMassPanel(false); mpBtn.focus(); } });
+onLangChange(renderMassPanel);
+
+$<HTMLInputElement>("#com-show").addEventListener("change", showMassMarks);
 
 // ---------- export ----------
 const baseName = () => state.fileName.replace(/\.[^.]+$/, "") || "model";
