@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Quick previews of drawing views** (FR-DRW-016): views of a big model (80 edges or more, or once an exact view took longer than 0.4 s) first show a paler preview from OCCT's polygonal hidden-line removal, then the exact lines replace it. On the CAx-IF test parts the preview comes in about 14 times sooner than the exact view (0.1–0.3 s instead of 1.8–4 s). Dimensions, picking and exports always use the exact lines.
+
 ## [1.298.0] - 2026-11-09
 
 ### Added
