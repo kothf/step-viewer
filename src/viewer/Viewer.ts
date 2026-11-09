@@ -145,6 +145,7 @@ export class Viewer {
   }
   private pxTmp = new THREE.Vector3();
   invalidate() { this.dirty = true; }
+  private hookFailed = false;
   /** Called each frame after the camera settles, before drawing (screen-sized overlays). */
   readonly beforeRender: (() => void)[] = [];
 
@@ -180,7 +181,8 @@ export class Viewer {
     this.updateClipRange();
     this.headlight.position.copy(this.camera.position);
     this.headlight.target.position.copy(this.controls.target);
-    for (const fn of this.beforeRender) fn();
+    // One failing hook must not stop the view from drawing (exam bug 40: a closed part's hook froze the assembly's view).
+    for (const fn of this.beforeRender) { try { fn(); } catch (err) { if (!this.hookFailed) { this.hookFailed = true; console.error(err); } } }
     this.render();
     for (const fn of this.listeners) fn();
   }
