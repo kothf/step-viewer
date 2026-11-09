@@ -5262,7 +5262,7 @@ try {
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store && !document.querySelector("#app").classList.contains("asm"));
     const left = await mp.evaluate(() => ({ asm: !!window.__sv.asm.doc, tab: document.querySelector("#t-asm").hidden }));
-    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && a0.status === "3 components · Under defined" && a0.exact > 0
+    check(!swap.model && swap.tab === "true" && swap.bar && !swap.partBar && a0.rows.join() === "(f) plate<1>,(-) plate<2>,(-) Cube 10x10<1>" && a0.keys === 2 && Math.abs(a0.v - 17000) < 1 && /^3 components · Under defined, 12 DOF( · .+: 6 DOF)?$/.test(a0.status) && a0.exact > 0
       && mv.tf[3] === 100 && Math.abs(mv.tf[1] + 1) < 1e-6 && Math.abs(mv.min[0] - 90) < 0.01 && Math.abs(mv.max[0] - 110) < 0.01 && Math.abs(mv.min[1] + 20) < 0.01 && mv.pm
       && Math.abs(hid - 17000) < 1 && re.same && !left.asm && left.tab,
       `asm 1.62: new assembly, insert parts and STEP, move by pose, hide, undo, save and reopen (FR-ASM-001..005, FR-MATE-002) (${JSON.stringify({ swap, a0, mv, hid, re, left })})`);
@@ -5353,9 +5353,52 @@ try {
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
     await shown(2);
     const after = await mp.evaluate(() => ({ n: window.__sv.asm.doc.mates.length, dof: window.__sv.asm.solved.dof[window.__sv.asm.doc.components[1].id] }));
+    // 1.330 (exam #54-#59, #61): Select Other in the Mate panel, the Mate button starting afresh, "added"
+    // note, Lock rotation on Concentric, DOF in the status, the tree's show/hide button in sight, Views ▾.
+    {
+      await mp.click('#asm-tools [data-ac="mate"]');
+      const sp = await onCyl([5, 0, 10.8], 3, true);
+      await mp.keyboard.down("Alt");
+      await mp.mouse.click(sp[0], sp[1]);
+      const o1 = await mp.evaluate(() => { const m = window.__sv.asm.mating; return { a: m.a && `${m.a.comp}|${m.a.face}`, b: !!m.b }; });
+      await mp.mouse.click(sp[0], sp[1]);
+      const o2 = await mp.evaluate(() => { const m = window.__sv.asm.mating; return { a: m.a && `${m.a.comp}|${m.a.face}`, b: !!m.b }; });
+      await mp.keyboard.up("Alt");
+      const front = await mp.evaluate(([x, y]) => { const h = window.__sv.asm.host.partAt(x, y); return h && `${window.__sv.asm.shownIds[h.idx]}|${window.__sv.asm.faceNames[h.idx][h.face]}`; }, sp);
+      const under = await mp.evaluate(([x, y]) => window.__sv.asm.host.facesAt(x, y).length, sp);
+      await mp.click('#asm-tools [data-ac="mate"]');
+      const fresh = await mp.evaluate(() => { const m = window.__sv.asm.mating; return !!m && !m.a && !m.b; });
+      // Re-add the coincident: the panel stays open and says what was added.
+      await mp.evaluate(r => { const a = window.__sv.asm; Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } }); a.setMateType("coincident"); a.okMate(); }, ref);
+      await shown(2);
+      const added = await mp.evaluate(() => ({ open: !!window.__sv.asm.mating, note: document.querySelector("#asm-pm [data-mstatus]")?.textContent ?? "" }));
+      // Edit Concentric1 with Lock rotation: nothing is left free.
+      await mp.evaluate(() => { const a = window.__sv.asm; a.cancelMate(); a.startMate(a.doc.mates.find(m => m.type === "concentric")); });
+      const box = await mp.evaluate(() => !!document.querySelector("#asm-pm input[data-a=lockrot]"));
+      await mp.click("#asm-pm input[data-a=lockrot]");
+      await mp.evaluate(() => window.__sv.asm.okMate());
+      await shown(2);
+      const lock = await mp.evaluate(() => { const a = window.__sv.asm, c = a.doc.mates.find(m => m.type === "concentric"); return { lockRot: c.lockRot, t0: !!c.t0, dof: a.solved.dof[a.doc.components[1].id], free: a.solved.free, status: document.querySelector("#asm-status").textContent }; });
+      // Undo both, back to the concentric alone.
+      await mp.evaluate(() => { window.__sv.asm.undo(); window.__sv.asm.undo(); });
+      await shown(2);
+      await mp.mouse.move(5, 5);
+      const eye = await mp.evaluate(() => { const b = document.querySelector("#asm-tree .ft-comp:not(.sel) [data-a=hide]"); return b ? getComputedStyle(b).display !== "none" && b.getBoundingClientRect().width > 0 : false; });
+      // Views ▾ in the 1440 px header: the hidden standard views as a menu.
+      const more = await mp.evaluate(() => { const b = document.querySelector("#views-more"); return !!b && getComputedStyle(b).display !== "none"; });
+      await mp.click("#views-more");
+      const items = await mp.evaluate(() => [...document.querySelectorAll("#views-menu [data-view]")].map(e => e.dataset.view).join());
+      await mp.click('#views-menu [data-view="top"]');
+      await mp.waitForTimeout(700);
+      const top = await mp.evaluate(() => { const c = window.__sv.viewer.camera, d = c.getWorldDirection(new c.position.constructor()); return { z: Math.round(d.z * 1000) / 1000, gone: !document.querySelector("#views-menu") }; });
+      check(o1.a && !o1.b && o1.a !== front && o2.a && o2.a !== o1.a && !o2.b && under >= 2 && fresh && added.open && /Coincident\d+ added/.test(added.note)
+        && box && lock.lockRot && lock.t0 && lock.dof === 0 && lock.free === 0 && /Fully defined/.test(lock.status) && eye
+        && more && items === "iso,front,top,right,normal" && top.z === -1 && top.gone,
+        `asm 1.330: Alt+click picks faces behind in Mate, Mate button starts afresh, added note, Lock rotation, DOF status, tree eye, Views ▾ (${JSON.stringify({ o1, o2, front, under, fresh, added, box, lock, eye, more, items, top })})`);
+    }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
     check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
-      && m2.n === 2 && m2.types === "concentric,coincident" && m2.dof === 1 && Math.abs(m2.at[0] - 5) < 1e-3 && Math.abs(m2.at[1]) < 1e-3 && Math.abs(m2.at[2] - 10) < 1e-3 && m2.mark === "(-) pin<1>" && m2.rows === 2 && m2.status === "2 components · Under defined" && m2.panel
+      && m2.n === 2 && m2.types === "concentric,coincident" && m2.dof === 1 && Math.abs(m2.at[0] - 5) < 1e-3 && Math.abs(m2.at[1]) < 1e-3 && Math.abs(m2.at[2] - 10) < 1e-3 && m2.mark === "(-) pin<1>" && m2.rows === 2 && /^2 components · Under defined, 1 DOF( · pin<1>: 1 DOF)?$/.test(m2.status) && m2.panel
       && conflict.n === 2 && /over-defined/.test(conflict.problem) && conflict.err === "pm-err"
       && Math.abs(drag[0] - 5) < 1e-3 && Math.abs(drag[1]) < 1e-3 && Math.abs(drag[2] - 10) < 1e-3 && after.n === 1 && after.dof === 2 && re === "concentric",
       `asm 1.62: mates picked in the view, previewed, DOF, conflict refused, constrained drag, delete (FR-MATE-003/008, AT-P4-1/3) (${JSON.stringify({ pick, m2, conflict, drag, after, re })})`);
@@ -5985,6 +6028,23 @@ try {
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
+    // 1.330 (exam #60): Play with frames still to solve calculates them first (yielding, progress in the bar), then plays.
+    const calc = await mp.evaluate(async () => {
+      const m = window.__sv.motion;
+      m.pause(); m.time = 0; m.frames = [];
+      m.play();
+      const waiting = document.querySelector("#motion [data-mo=play]")?.textContent;
+      const t0 = performance.now();
+      while (!m.playing && performance.now() - t0 < 60000) await new Promise(r => setTimeout(r, 20));
+      const played = m.playing, n = m.frames.length;
+      m.pause();
+      // Play twice: the second press cancels the calculation.
+      m.frames = []; m.play(); m.play();
+      await new Promise(r => setTimeout(r, 200));
+      return { waiting, played, n, want: Math.round(m.study.duration * m.study.fps) + 1, cancelled: !m.playing && !m.calculating, span: !!document.querySelector("#motion [data-mo=calc]") };
+    });
+    check(calc.played && calc.n >= calc.want && calc.waiting === "⏸" && calc.cancelled && calc.span, `motion 1.330: Play solves the study's frames first, with progress, then plays; Play again cancels (${JSON.stringify(calc)})`);
+    await mp.evaluate(() => window.__sv.motion.seek(0.5));
     // Motor profiles from its panel: Distance 180° over the study (half way at 2.5 s), Data points 0 → 90° in 1 s.
     const setP = (sel, v) => mp.evaluate(([sel, v]) => { const el = document.querySelector(`#motion ${sel}`); el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }, [sel, v]);
     await mp.evaluate(() => { const m = window.__sv.motion; const k = m.study.tracks.find(x => x.kind === "motor"); m.sel = { track: k.id }; m.render(); });
