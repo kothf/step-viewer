@@ -4870,6 +4870,8 @@ export class ModelController {
     const g = f as unknown as Record<string, unknown>, out: { key: string; q: "length" | "angle" | "count"; label: string }[] = [];
     for (const [key, q, label] of INSTANT_VALUES) {
       if (f.type === "extrude" && key === "depth") continue;
+      // The revolve angle has its own drag handle with the value on it.
+      if (f.type === "revolve" && key === "angle") continue;
       if (key === "depth" && typeof g.end === "string" && g.end !== "blind") continue;
       const v = g[key];
       if (q === "count" ? typeof v === "number" : !!v && typeof v === "object" && typeof (v as Num).v === "number") out.push({ key, q, label: t(label) });
