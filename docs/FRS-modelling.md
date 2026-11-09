@@ -1617,7 +1617,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
 | Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
 | Shift+C collapse, eye buttons in the tree | FR-HIS-013 | Folders collapse; sketch Show/Hide in the menu | New |
-| Copy and paste features | FR-HIS-014 | No | New |
+| Copy and paste features | FR-HIS-014 | 1.342.0: Ctrl+C/Ctrl+V and Ctrl+drag for sketches, extrudes, revolves and holes; lost references listed | Done |
 | Tree reorder by drag, Alt+↑/↓ | FR-HIS-006 | Done | Done |
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
 | Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
