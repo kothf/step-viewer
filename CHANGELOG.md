@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.342.0] - 2026-11-09
+
+### Added
+
+- **Copy and paste features (FR-HIS-014)**: as in SolidWorks, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
+
 ## [1.335.0] - 2026-11-09
 
 ### Added
@@ -1981,7 +1987,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.335.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.342.0...HEAD
+[1.342.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.342.0
 [1.335.0]: https://github.com/kothf/step-viewer/compare/v1.334.0...v1.335.0
 [1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
 [1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0
