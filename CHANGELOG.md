@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.335.0] - 2026-11-09
+
+### Added
+
+- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. It is see-through until the pointer is over it, and its title row folds it away (remembered). Starting a command brings the Features tab forward. On phones the tree stays under the panel.
+
 ## [1.329.0] - 2026-11-09
 
 ### Added
@@ -1938,7 +1944,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.329.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.335.0...HEAD
+[1.335.0]: https://github.com/kothf/step-viewer/compare/v1.329.0...v1.335.0
 [1.329.0]: https://github.com/kothf/step-viewer/compare/v1.328.0...v1.329.0
 [1.328.0]: https://github.com/kothf/step-viewer/compare/v1.327.0...v1.328.0
 [1.327.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.327.0

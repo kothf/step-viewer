@@ -736,6 +736,16 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft-tools .icon { width: 22px; height: 20px; font-size: 11px; }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
+/* FR-UI-003: with a command open the panel fills the Features tab and the tree flies out over the view. */
+#tab-features.pm-full > .pm { flex: 1; max-height: none; border-bottom: 0; }
+#tab-features.pm-full > #ft-search { display: none; }
+.mc-treefly { pointer-events: auto; display: flex; flex-direction: column; max-width: min(260px, 100%); max-height: 55vh; background: color-mix(in srgb, var(--panel) 86%, transparent); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); backdrop-filter: blur(3px); }
+.mc-treefly:hover, .mc-treefly:focus-within { background: var(--panel); }
+.mc-treefly-h { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; min-height: 26px; }
+.mc-treefly-tw { width: 12px; color: var(--muted); }
+.mc-treefly-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-treefly > .ft { flex: 1; min-height: 0; padding: 0 4px 6px; border-top: 1px solid var(--line); }
+.mc-treefly .ft-row { min-height: 24px; padding: 2px 8px; }
 .pm-head h3 { margin: 2px 0 4px; font-size: 15px; }
 /* The panel scrolls under its title row, so ✓/✕ stay in reach however long the panel is. */
 .pm > .pm-head { position: sticky; top: -8px; z-index: 2; margin: -8px -12px 4px; padding: 8px 12px 4px; background: var(--panel-2); border-bottom: 1px solid transparent; }

@@ -2486,6 +2486,21 @@ try {
     const pfBack = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed }));
     check(pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
       `model 1.329: Preferences set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
+    // 1.335: fly-out tree (FR-UI-003): a command panel fills the Features tab, the tree flies out over the view and still picks planes.
+    await mp.click("#t-measures");
+    await mp.evaluate(() => window.__sv.modeller.command("plane"));
+    await mp.waitForSelector("#mc-treefly #mc-tree");
+    const ftOpen = await mp.evaluate(() => { const r = document.querySelector("#mc-treefly").getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return { tab: document.querySelector("#t-features").getAttribute("aria-selected"), full: document.querySelector("#tab-features").classList.contains("pm-full"), inView: r.left >= v.left && r.top >= v.top && r.left - v.left < 40, name: document.querySelector("#mc-treefly .mc-treefly-n").textContent }; });
+    await mp.click('#mc-treefly .ft-row[data-id="std:YZ"]');
+    const ftBase = await mp.evaluate(() => window.__sv.modeller.mode.draft?.base);
+    await mp.click("#mc-treefly .mc-treefly-h");
+    const ftFold = await mp.evaluate(() => ({ hidden: document.querySelector("#mc-tree").hidden, exp: document.querySelector(".mc-treefly-h").getAttribute("aria-expanded"), ls: localStorage.getItem("mc:flyTree") }));
+    await mp.click("#mc-treefly .mc-treefly-h");
+    await mp.click("#mc-cancel");
+    await idle();
+    const ftBack = await mp.evaluate(() => ({ fly: !!document.querySelector("#mc-treefly"), parent: document.querySelector("#mc-tree").parentElement.id, prev: document.querySelector("#mc-tree").previousElementSibling?.id, shown: !document.querySelector("#mc-tree").hidden, full: document.querySelector("#tab-features").classList.contains("pm-full") }));
+    check(ftOpen.tab === "true" && ftOpen.full && ftOpen.inView && ftOpen.name && ftBase?.std === "YZ" && ftFold.hidden && ftFold.exp === "false" && ftFold.ls === "0" && !ftBack.fly && ftBack.parent === "tab-features" && ftBack.prev === "ft-search" && ftBack.shown && !ftBack.full,
+      `model 1.335: a command panel fills the Features tab, the tree flies out over the view, picks a plane and folds; Cancel puts it back (${JSON.stringify([ftOpen, ftBase, ftFold, ftBack])})`);
     await ctx.close();
   }
 
