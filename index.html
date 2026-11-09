@@ -18,7 +18,7 @@
     <button class="icon nav-toggle" id="nav-toggle" aria-label="Toggle side panel (Ctrl+[)" title="Toggle side panel (Ctrl+[)" aria-expanded="true" aria-controls="g-left tree-panel"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
     <div class="brand"><img class="brand-logo" src="icons/logo-mark.png" width="28" height="28" alt="" /><span class="brand-txt">MöbiusCAD<small id="app-version"></small></span></div>
     <input id="file-input" type="file" multiple accept=".mcadprt,.mcadasm,.mcaddrw,.step,.stp,.STEP,.STP,.iges,.igs,.IGS,.IGES,.brep,.sldprt,.SLDPRT,.sldasm,.SLDASM,.stl,.STL,.obj,.OBJ,.3mf,.3MF,.zip,.gbr,.ger,.gbx,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gko,.gm1,.gml,.drl,.xln,.exc,.txt,.cmp,.sol,.stc,.sts,.plc,.pls,.art,.pho" hidden aria-hidden="true" tabindex="-1" />
-    <div class="open-grp"><button class="btn primary" data-open title="Open STEP / IGES / BREP, STL / OBJ / 3MF, or Gerber / Excellon layers and .zip sets (Ctrl+O)"><span class="open-long">Open file</span><span class="open-short">Open</span></button>
+    <div class="open-grp"><button class="btn primary file-btn" id="file-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="File: new, open, save, Pack and Go, export, print, recent documents"><span class="file-lbl">File</span><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="M1.5 7l2.5 2.5L6.5 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button class="icon step-only" id="new-part" title="New part: sketch and model a part" aria-label="New part: sketch and model a part"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3M8 7.5v5M5.5 10h5"/></svg></button>
     <button class="icon step-only new-more" id="new-more" aria-haspopup="menu" aria-expanded="false" aria-controls="new-menu" title="New: part or assembly" aria-label="New: part or assembly"><svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true"><path d="M1.5 7l2.5 2.5L6.5 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
     <div id="new-menu" class="mc-menu" role="menu" hidden><button role="menuitem" id="new-menu-part">New part</button><button role="menuitem" id="new-asm">New assembly</button><button role="menuitem" id="new-asm-part" title="A new assembly with the open part as its first, fixed component" hidden>Make assembly from part</button><button role="menuitem" id="new-drawing" title="Drawing: sheets with views of the open model">New drawing</button></div>
@@ -43,6 +43,7 @@
       <button data-view="top" title="Top">Top</button>
       <button data-view="right" title="Right">Right</button>
       <button data-view="normal" title="Normal to the selected flat face or the sketch (N); again for the other side">Normal to</button>
+      <button data-view="more" id="views-more" title="More views" aria-label="More views" aria-haspopup="menu" aria-expanded="false">▾</button>
     </div>
     <div class="sep gerber-only"></div>
     <div class="seg gerber-only" id="g-dim" role="group" aria-label="2D or 3D board">
@@ -314,6 +315,7 @@
   <label class="menu-row">Mesh <select id="quality" title="Tessellation quality (applies on next open)"><option value="draft">Draft mesh</option><option value="normal" selected>Normal mesh</option><option value="fine">Fine mesh</option></select></label>
   <label class="menu-row" title="Colour the model by draft, curvature, wall thickness or undercut, or show zebra stripes">Analysis <select id="analysis"><option value="">None</option><option value="draft">Draft</option><option value="zebra">Zebra stripes</option><option value="curvature">Curvature</option><option value="thickness">Thickness</option><option value="undercut">Undercut</option></select></label>
   <button type="button" class="btn" id="gestures-btn" title="Right-drag in a part or a sketch runs a command">Mouse gestures…</button>
+  <button type="button" class="btn" id="prefs-btn" title="Modelling, sketch and mouse settings">Preferences…</button>
   <h4 class="menu-h">Measurements</h4>
   <label class="menu-row" title="Units">Units <select id="units"><option>mm</option><option>cm</option><option>m</option><option>in</option><option>ft</option></select></label>
   <label class="menu-row" title="Decimals">Decimals <select id="decimals"><option value="">Auto</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>

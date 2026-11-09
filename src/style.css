@@ -594,8 +594,11 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
   #app:not(.gerber) .open-grp { gap: 2px; }
   #app:not(.gerber) .open-long { display: none; }
   #app:not(.gerber) .open-short { display: inline; }
-  #app:not(.gerber) #views button:not([data-view="fit"]) { display: none; }
+  #app:not(.gerber) #views button:not([data-view="fit"]):not([data-view="more"]) { display: none; }
 }
+/* The views hidden in a narrow header are in the ▾ menu beside Fit (exam #61). */
+#views-more { display: none; }
+@media (max-width: 1599px) { #app:not(.gerber) #views-more { display: inline-flex; } }
 @media (max-width: 1359px) { #app:not(.gerber) .brand-txt { display: none; } }
 @media (max-width: 1279px) {
   #app:not(.gerber) .seg button { padding: 5px 6px; font-size: 12px; }
@@ -659,7 +662,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #gst-dlg .gst-t { border-collapse: collapse; margin: 8px 0; }
 #gst-dlg .gst-t th, #gst-dlg .gst-t td { padding: 3px 6px; text-align: left; }
 #gst-dlg .gst-t select { max-width: 160px; }
-#gestures-btn { width: 100%; margin-top: 6px; }
+#gestures-btn, #prefs-btn { width: 100%; margin-top: 6px; }
 .mc-fly .mc-b { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 3px; }
 .mc-caret { width: 14px; padding: 0; border: 1px solid transparent; border-radius: 0 7px 7px 0; background: none; color: var(--muted); font-size: 10px; cursor: pointer; }
 .mc-caret:hover, .mc-caret[aria-expanded=true] { background: var(--panel-2); border-color: var(--line); color: var(--text); }
@@ -721,6 +724,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft { overflow: auto; flex: 1; padding: 6px 4px 12px; }
 .ft-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; cursor: pointer; user-select: none; min-height: 26px; }
 .ft-row:hover { background: var(--panel-2); }
+.ft-row.hover:not(.sel) { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
 .ft-row.sel { background: var(--accent-soft); color: var(--accent-text); }
 .ft-row.editing { outline: 1px dashed var(--accent); }
 .ft-row.sup .ft-name, .ft-row.rolled .ft-name { color: var(--muted); text-decoration: line-through; }
@@ -733,6 +737,10 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft-tools { display: none; gap: 2px; }
 .ft-row:hover .ft-tools, .ft-row.sel .ft-tools, .ft-row:focus-within .ft-tools { display: inline-flex; }
 .ft-tools .icon { width: 22px; height: 20px; font-size: 11px; }
+/* Assembly tree: the show/hide button stays in sight (faint until hovered), so hidden components can be found and shown (exam #57). */
+#asm-tree .ft-tools { display: inline-flex; }
+#asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
+#asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 .pm-head h3 { margin: 2px 0 4px; font-size: 15px; }
@@ -776,7 +784,11 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft-row.ft-comp .ft-ico { color: var(--accent-text); }
 .open-grp { display: flex; align-items: center; gap: 4px; flex: none; }
 .open-grp #new-part { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.open-grp .new-more { width: 13px; min-width: 13px; padding: 0; margin-left: -5px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.open-grp .new-more { width: 20px; min-width: 20px; padding: 0; margin-left: -3px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+/* File, New part and its ▾ share one height, so the group reads as one row of equal buttons. */
+.open-grp > button { height: 32px; }
+.open-grp #new-part { width: 38px; }
+.open-grp .new-more svg { width: 11px; height: 18px; }
 /* 1.19.0: rollback bar, context menu, empty part, drag handles, child rows */
 .ft-rollback { height: 6px; margin: 2px 6px; border-radius: 3px; background: var(--accent); opacity: .75; cursor: ns-resize; outline-offset: 2px; }
 .ft-rollback:hover, .ft-rollback:focus-visible, .ft-rollback.drag { opacity: 1; height: 8px; }
@@ -797,6 +809,17 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-menu button { text-align: left; background: none; border: 0; padding: 6px 10px; border-radius: 5px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; }
 .mc-menu button:hover, .mc-menu button:focus-visible { background: var(--accent-soft); color: var(--accent-text); outline: none; }
 .mc-menu hr { border: 0; border-top: 1px solid var(--line); margin: 3px 0; width: 100%; }
+/* File menu (FR-UI-010): above the drawing workspace too; shortcuts right-aligned, recent documents numbered. */
+.file-menu { z-index: 1200; min-width: 250px; max-width: min(420px, calc(100vw - 8px)); max-height: calc(100vh - 8px); overflow-y: auto; }
+.file-menu button { display: flex; align-items: center; gap: 16px; }
+.file-menu button:disabled { color: var(--muted); cursor: default; background: none; }
+.file-menu .fm-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-menu .fm-k { font: inherit; font-size: 12px; color: var(--muted); background: none; border: 0; padding: 0; white-space: nowrap; }
+.file-menu button:hover .fm-k, .file-menu button:focus-visible .fm-k { color: inherit; }
+.file-menu .fm-n { display: inline-block; min-width: 1em; text-decoration: underline; }
+.file-btn { display: inline-flex; align-items: center; gap: 6px; }
+#pack-dlg .pack-list { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; max-height: 40vh; overflow-y: auto; }
+#pack-dlg .pm-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .mc-empty { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px; text-align: center; }
 .mc-empty p { margin: 0 0 10px; font-weight: 600; }
 .mc-empty .row { gap: 6px; }
@@ -1134,3 +1157,14 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-snapgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
 .pm-grid .pm-field { grid-column: 1 / -1; margin: 2px 0; }
 .pm-grid .pm-field input { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: inherit; }
+
+/* Preferences (FR-UI-080) */
+#prefs-dlg { width: min(560px, calc(100vw - 32px)); }
+#prefs-dlg .prefs-tabs { margin-bottom: 8px; }
+#prefs-dlg .prefs-page { min-height: 300px; display: flex; flex-direction: column; gap: 6px; }
+#prefs-dlg .prefs-page[hidden] { display: none; }
+#prefs-dlg .prefs-page .row { display: flex; align-items: center; gap: 8px; }
+#prefs-dlg .prefs-page input[type=number] { width: 7em; }
+#prefs-dlg .prefs-legend, #prefs-dlg .prefs-mouse { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+#prefs-dlg .prefs-mouse { list-style: disc; padding-left: 20px; }
+#prefs-dlg .prefs-sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); }

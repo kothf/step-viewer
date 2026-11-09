@@ -95,6 +95,10 @@ export class MotionManager {
   private frames: Record<string, Tf>[] = [];
   /** Frames where the mates could not all be solved. */
   private badFrames = new Set<number>();
+  /** Odd while `calculate` runs; bumping it cancels the run. */
+  private calcRun = 0;
+  /** Play waits for this calculation, then starts. */
+  private pendingPlay: Promise<boolean> | null = null;
   private cacheKey = "";
   private raf = 0;
   private playStart = 0;
@@ -796,8 +800,58 @@ export class MotionManager {
 
   // ---------- playback ----------
 
+  /** Whether frames up to `i` are solved for the study as it is now. */
+  private solvedTo(i: number) { return this.key0() === this.cacheKey && this.frames.length > i; }
+
+  /**
+   * Solves frames up to `i` a few at a time, yielding between batches so the page stays live, with
+   * "Calculating frame k of n" in the transport bar (exam #60: a big assembly's first Play froze the
+   * page for minutes). Resolves false when cancelled (Play again, Stop, or the study closing).
+   */
+  async calculate(i: number): Promise<boolean> {
+    const run = ++this.calcRun;
+    const t0 = performance.now();
+    let slice = performance.now();
+    while (!this.solvedTo(i)) {
+      if (run !== this.calcRun || !this.open) return false;
+      const key = this.key0();
+      this.ensure(key === this.cacheKey ? this.frames.length : 0);
+      if (performance.now() - slice > 40) {
+        if (performance.now() - t0 > 200) this.showCalc(this.frames.length, i + 1);
+        await new Promise(r => setTimeout(r, 0));
+        slice = performance.now();
+      }
+    }
+    const done = run === this.calcRun;
+    if (done) { this.calcRun++; this.showCalc(0, 0); }
+    return done;
+  }
+
+  /** Is a calculation running (Play shows ⏸ and cancels it). */
+  get calculating() { return this.calcRun % 2 === 1; }
+
+  private showCalc(k: number, n: number) {
+    const el = this.pane.querySelector<HTMLElement>("[data-mo=calc]");
+    if (!el) return;
+    el.hidden = !n;
+    el.textContent = n ? t("Calculating frame {k} of {n}…", { k, n }) : "";
+  }
+
   play() {
-    if (this.playing) { this.pause(); return; }
+    if (this.playing || this.pendingPlay) { this.pause(); return; }
+    const n = frameCount(this.study);
+    if (!this.solvedTo(n - 1)) {
+      const go = this.calculate(n - 1);
+      this.pendingPlay = go;
+      this.renderTransport();
+      void go.then(ok => {
+        if (this.pendingPlay !== go) return;
+        this.pendingPlay = null;
+        this.renderTransport();
+        if (ok) this.play();
+      });
+      return;
+    }
     const s = this.study;
     if ((s.play ?? "once") === "once" && this.time >= s.duration - 1e-9) this.time = 0;
     this.playing = true;
@@ -828,7 +882,7 @@ export class MotionManager {
     step();
   }
 
-  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.renderTransport(); }
+  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.pendingPlay = null; if (this.calculating) { this.calcRun++; this.showCalc(0, 0); } this.renderTransport(); }
   stop() { this.pause(); this.time = 0; this.showAt(0); }
   seek(tq: number) { this.pause(); this.time = Math.max(0, Math.min(this.study.duration, tq)); this.showAt(this.time); }
 
@@ -1075,7 +1129,7 @@ export class MotionManager {
       + ib("start", "⏮", t("To start")) + ib("play", this.playing ? "⏸" : "▶", this.playing ? t("Pause") : t("Play")) + ib("stop", "⏹", t("Stop")) + ib("end", "⏭", t("To end"))
       + `<label class="mo-f"><select data-mo="mode" aria-label="${esc(t("Playback mode"))}">${(["once", "loop", "reciprocate"] as const).map(m => `<option value="${m}"${m === playMode ? " selected" : ""}>${esc(t(m === "once" ? "Play once" : m === "loop" ? "Loop" : "Reciprocate"))}</option>`).join("")}</select></label>`
       + `<label class="mo-f"><select data-mo="speed" aria-label="${esc(t("Playback speed"))}">${[0.25, 0.5, 1, 2, 4].map(v => `<option value="${v}"${v === this.speed ? " selected" : ""}>${v}×</option>`).join("")}</select></label>`
-      + `<span class="mo-time" data-mo="time" aria-live="off"></span>`
+      + `<span class="mo-time" data-mo="time" aria-live="off"></span><span class="mo-calc muted" data-mo="calc" role="status" hidden></span>`
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
@@ -1196,7 +1250,8 @@ export class MotionManager {
   private renderTransport() {
     if (!this.open) return;
     const p = this.pane.querySelector<HTMLButtonElement>("[data-mo=play]");
-    if (p) { p.textContent = this.playing ? "⏸" : "▶"; const l = this.playing ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
+    const busy = this.playing || !!this.pendingPlay;
+    if (p) { p.textContent = busy ? "⏸" : "▶"; const l = busy ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
     const w = this.pane.querySelector<HTMLButtonElement>("[data-mo=webm]"), g = this.pane.querySelector<HTMLButtonElement>("[data-mo=gif]");
     if (w) { w.textContent = this.recording === "webm" ? t("Stop recording") : t("Video"); w.disabled = !!this.recording && this.recording !== "webm"; }
     if (g) { g.textContent = this.recording === "gif" ? t("Stop recording") : "GIF"; g.disabled = !!this.recording && this.recording !== "gif"; }

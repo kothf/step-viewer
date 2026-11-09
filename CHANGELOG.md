@@ -11,6 +11,60 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: appearance keys can carry a **colour**. Tick **Colour** on a key and pick one: the component wears it from that key and blends to the next coloured key, as SolidWorks appearance keys do. Coloured keys show their colour on the timeline, and the component gets its own colour back when the track goes (FR-FT-122).
 
+## [1.330.0] - 2026-11-09
+
+### Added
+
+- Mate: Alt+click picks the face behind the one under the cursor, and again cycles through every face there, so faces hidden behind others can be mated (Select Other).
+- Concentric mate: Lock rotation, which stops the second component turning about the shared axis.
+- The assembly status shows the free degrees of freedom of the whole assembly ("Under defined, 1 DOF"; a linkage that moves as one counts once), and the selected component's own.
+- Header below 1600 px: a ▾ button beside Fit lists the standard views that no longer fit.
+
+### Changed
+
+- Mate panel: after ✓ adds a mate the panel says what was added and that ✓ again closes it; the Mate button with faces picked starts a new mate instead of closing the panel.
+- Assembly tree: the show/hide button is always shown (faint until hovered), so hidden components are easy to find and show.
+- Motion study: Play first calculates the frames still to solve a few at a time, showing "Calculating frame k of n" and keeping the page responsive; Play or Pause again cancels. A big assembly's first Play froze the page for minutes.
+## [1.329.0] - 2026-11-09
+
+### Added
+
+- **Preferences (FR-UI-080)**: Display ▾ → Preferences… opens one dialog for the settings that were spread over panels and menus, as SolidWorks' System Options. **Modelling**: units and decimals, image quality (Coarse rebuilds faster, Fine draws smoother; the exact geometry is the same), **Verification on rebuild** (each feature's body is checked, and a feature that leaves it invalid gets a warning in the tree and What's wrong), how soon unsaved work is kept for recovery (after each change, 10 s … 5 min, or off), and the ↑/↓ and spin arrow steps for lengths and angles. **Sketch**: rotate the view to the sketch plane on opening, automatic relations, relation glyphs, model edge snapping, slot dimensions, grid and grid snap, and a legend of the sketch colours. **Mouse**: middle button pans or rotates (SolidWorks), wheel zoom direction, and Mouse gestures. Defaults resets the open page; the sketch panel and quick bar toggles stay in step.
+
+## [1.328.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Unfold and Fold (FR-FT-120): Unfold flattens the picked bends (or all of them) with a clicked flat face kept in place, so ordinary features can cut across them; Fold bends them back. Cuts made across a flat bend wrap onto the bend with lengths on the neutral surface kept, cuts in the panels move with them, and forms and other added material go with their panel. Other sheet metal features wait until the bends are folded back; a Flat-Pattern after an Unfold folds back first.
+
+## [1.327.0] - 2026-11-09
+
+### Added
+- **File menu like SolidWorks (FR-UI-010)**: the blue Open file button is now **File ▾**, and drawings have the same button. It has New part / assembly / drawing, Make assembly from part, Open (Ctrl+O), Close (Ctrl+Alt+W), Close all, Save (Ctrl+S), Save as (Ctrl+Shift+S; for a STEP or mesh model it saves a copy of the file), Save all (Ctrl+Alt+S), Pack and Go, Export, Print (Ctrl+P: the drawing, or the 3D view as shown), Properties, the recent documents and Exit. Commands that don't apply are greyed out.
+- **Pack and Go**: the chosen open documents in one .zip, with each assembly's parts as separate files under `parts/` if you like.
+- **Recent documents**: the last 8 files you opened or saved are listed at the bottom of the File menu (numbered, so 1–8 open them from the keyboard) and open again without the file picker.
+
+### Changed
+- The New part button and its ▾ arrow are as tall as the File button, with a bigger arrow.
+
+## [1.326.0] - 2026-11-09
+
+### Added
+- Arc slot centre marks in drawings (FR-DRW-023): an arc slot seen end-on gets a centre-line arc through its end centres, 2 mm past both ends, and a radial centre line across each rounded end.
+
+## [1.325.0] - 2026-11-09
+
+### Fixed
+
+- Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
+- Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
+- "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
+## [1.324.0] - 2026-11-09
+
+### Added
+
+- **Hover link between the Features tree and the view (FR-UI-061)**: point at a feature, body or cut list item in the Features tree and its faces light up see-through blue in the view; point at a face in the view and the tree marks the row of the feature that made it. It works while no command is open, as in SolidWorks.
+
 ## [1.323.0] - 2026-11-09
 
 ### Added
@@ -1905,7 +1959,14 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.332.0...HEAD
-[1.332.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.332.0
+[1.332.0]: https://github.com/kothf/step-viewer/compare/v1.330.0...v1.332.0
+[1.330.0]: https://github.com/kothf/step-viewer/compare/v1.329.0...v1.330.0
+[1.329.0]: https://github.com/kothf/step-viewer/compare/v1.328.0...v1.329.0
+[1.328.0]: https://github.com/kothf/step-viewer/compare/v1.327.0...v1.328.0
+[1.327.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.327.0
+[1.326.0]: https://github.com/kothf/step-viewer/compare/v1.325.0...v1.326.0
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.324.0...v1.325.0
+[1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0
 [1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0

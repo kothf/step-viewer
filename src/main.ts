@@ -7,7 +7,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { DocTabs, type DocTab } from "./docTabs";
-import { journalDrop } from "./model/file";
+import { journalDrop, packPart, PART_EXT } from "./model/file";
 import type { PartTab } from "./model/controller";
 import type { AsmTab } from "./asm/controller";
 import type { DrawingTab } from "./drawing/workspace";
@@ -43,12 +43,17 @@ import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
 import { gestureDialog } from "./gestureUi";
+import { openPrefs } from "./prefsUi";
+import { getPref, onPrefs } from "./prefs";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
+import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
+import { recentAdd } from "./recent";
+import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -83,6 +88,7 @@ applyThemeToViewer();
 let docs: DocTabs | undefined;
 const modeller = new ModelController({
   viewer,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
   vp: vpEl,
   show: (data, name, first) => showPartModel(data, name, first),
   faceAt: (x, y) => {
@@ -140,12 +146,17 @@ const modeller = new ModelController({
 // Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
 const asm = new AsmController({
   viewer,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
   vp: vpEl,
   show: (parts, tree, first) => showModelled(parts, tree, tree.name, first),
   partAt: (x, y) => {
     const r = viewer.renderer.domElement.getBoundingClientRect();
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { idx: viewer.parts.indexOf(f.part), face: f.part.data.faces.indexOf(f.face), point: f.point.toArray() as [number, number, number] } : null;
+  },
+  facesAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    return snapper.facesUnder(x - r.left, y - r.top).map(s => ({ idx: viewer.parts.indexOf(s.part!), face: s.part!.data.faces.indexOf(s.face!) }));
   },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
@@ -363,6 +374,8 @@ bindGerberPanel(gerber, {
 const partListeners: (() => void)[] = [];
 const drawing = new DrawingWorkspace({
   appVersion: __APP_VERSION__,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
+  fileMenu: btn => fileMenu.toggle(btn),
   occtBase: new URL("occt/", document.baseURI).href,
   async currentModel() {
     const live = modeller.store?.doc;
@@ -531,6 +544,11 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
+  {
+    const main = files.find(f => isDrawingName(f.name) || modeller.isPartName(f.name) || asm.isAsmName(f.name)) ?? files.filter(f => is3dName(f.name)).sort((a, b) => b.size - a.size)[0] ?? files[0];
+    void recentAdd([main, ...files.filter(f => f !== main)].map(f => ({ name: f.name, data: f })));
+  }
   const drawingFile = files.find(f => isDrawingName(f.name));
   if (drawingFile) return drawing.openFile(drawingFile);
   const partFile = files.find(f => modeller.isPartName(f.name));
@@ -1963,8 +1981,39 @@ const VIEWS: Record<string, THREE.Vector3> = {
 };
 $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
-  if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
+  if (v === "more") viewsMenu(b); else if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
 }));
+/** The standard views a narrow header hides, as a menu under the ▾ button beside Fit. */
+function viewsMenu(btn: HTMLElement) {
+  const was = document.querySelector("#views-menu");
+  if (was) { was.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+  const m = document.createElement("div");
+  m.className = "mc-menu";
+  m.id = "views-menu";
+  m.setAttribute("role", "menu");
+  const close = () => { m.remove(); btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc, true); };
+  const away = (e: Event) => { if (!m.contains(e.target as Node) && e.target !== btn) close(); };
+  const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); btn.focus(); } };
+  for (const b of $$<HTMLButtonElement>("#views button")) {
+    const v = b.dataset.view!;
+    if (v === "fit" || v === "more") continue;
+    const it = document.createElement("button");
+    it.setAttribute("role", "menuitem");
+    it.dataset.view = v;
+    it.textContent = b.textContent;
+    it.title = b.title;
+    it.addEventListener("click", () => { close(); b.click(); });
+    m.append(it);
+  }
+  const r = btn.getBoundingClientRect();
+  m.style.left = `${Math.round(r.left)}px`;
+  m.style.top = `${Math.round(r.bottom + 4)}px`;
+  document.body.append(m);
+  btn.setAttribute("aria-expanded", "true");
+  document.addEventListener("pointerdown", away, true);
+  document.addEventListener("keydown", esc, true);
+  m.querySelector("button")?.focus();
+}
 /** World box of the picked face, edge or parts, for Zoom to selection (FR-UI-103). */
 function selectionBox(): THREE.Box3 | null {
   const sk = modeller.sketchSelectionBox();
@@ -2030,6 +2079,21 @@ function normalTo(given?: [number, number, number]) {
 }
 // Mouse gestures (FR-UI-024): the settings dialog; the part controller reads the stored settings on each right press.
 $("#gestures-btn").addEventListener("click", () => { $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false"); gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))); });
+// Preferences (FR-UI-080). The mouse page acts on the view controls here; the part controller reads the rest.
+const applyMousePrefs = () => {
+  viewer.controls.mouseButtons.MIDDLE = getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+  viewer.controls.zoomSpeed = getPref("wheel") === "reverse" ? -1 : 1;
+};
+applyMousePrefs();
+onPrefs(applyMousePrefs);
+$("#prefs-btn").addEventListener("click", () => {
+  $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false");
+  openPrefs({
+    units: () => units.current, decimals: () => (units.decimals === null ? "" : String(units.decimals)),
+    setUnits: u => setUnits(u as Unit), setDecimals: d => setDecimals(d),
+    gestures: () => gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))),
+  });
+});
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
 const surfAna = new SurfaceAnalysis(viewer, {
@@ -2472,6 +2536,120 @@ $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement,
 $("#step-export").addEventListener("click", e => busy(e.currentTarget as HTMLElement, exportStep));
 $("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 
+// ---------- File menu (FR-UI-010) ----------
+/** Prints the 3D view as it is shown (File ▸ Print, Ctrl+P). */
+function print3d() {
+  if (!viewer.parts.length) { toast(t("Nothing to print yet.")); return; }
+  const url = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" }).toDataURL("image/png");
+  const fr = document.createElement("iframe");
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  fr.setAttribute("aria-hidden", "true");
+  document.body.appendChild(fr);
+  const d = fr.contentDocument!;
+  const title = (docState[0] || baseName()).replace(/\s*•$/, "");
+  d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/[&<>]/g, "")}</title><style>@page{margin:10mm}html,body{margin:0}img{display:block;max-width:100%;max-height:100vh;margin:auto;object-fit:contain}</style></head><body><img src="${url}" alt=""></body></html>`);
+  d.close();
+  const img = d.querySelector("img")!;
+  const go = () => { try { fr.contentWindow!.focus(); fr.contentWindow!.print(); } finally { setTimeout(() => fr.remove(), 60_000); } };
+  if (img.complete) setTimeout(go, 50); else img.onload = () => setTimeout(go, 50);
+}
+const appGen = `MöbiusCAD ${__APP_VERSION__}`;
+const plainLabel = (s: string) => s.replace(/\s*•$/, "");
+/** Saves the live document (File ▸ Save / Save as). A model file has no document of ours: Save as keeps a copy of it. */
+async function saveLive(as: boolean) {
+  const k = fileMenuLive();
+  if (k === "drawing") await drawing.save();
+  else if (k === "part") await modeller.save(as);
+  else if (k === "asm") await asm.save(as);
+  else if (k === "model" && modelSrc && as) download(new Blob([modelSrc.data]), modelSrc.name);
+}
+function fileMenuLive(): LiveKind {
+  if (drawing.open) return "drawing";
+  if (isPcbMode()) return "pcb";
+  const k = docs?.active?.kind;
+  if (k && k !== "drawing") return k;
+  return modeller.active ? "part" : asm.active ? "asm" : viewer.parts.length ? "model" : null;
+}
+const fileMenu = new FileMenu({
+  live: fileMenuLive,
+  docCount: () => docs?.tabs.length ?? 0,
+  dirtyCount: () => docs?.dirtyTabs().length ?? 0,
+  open: () => { warmKernel(); openPicker(); },
+  openFiles: fs => void openFiles(fs),
+  newPart: () => $("#new-part").click(),
+  newAsm: () => $("#new-asm").click(),
+  newDrawing: () => $("#new-drawing").click(),
+  get asmFromPart() { return modeller.active && !drawing.open ? () => $("#new-asm-part").click() : null; },
+  async close() { const a = docs?.active; if (a) await docs!.close(a.id); },
+  async closeAll() {
+    if (!docs) return true;
+    for (const tab of [...docs.tabs].reverse()) { await docs.close(tab.id); if (docs.tabs.includes(tab)) return false; }
+    return true;
+  },
+  save: as => saveLive(as),
+  async saveAll() {
+    if (!docs) return;
+    const todo = docs.dirtyTabs().filter(x => x.kind !== "model");
+    if (!todo.length) { toast(t("Nothing to save: every document is saved.")); return; }
+    const start = docs.active;
+    for (const tab of todo) {
+      if (tab.state != null) await docs.activate(tab.id);
+      else if (tab.kind === "drawing" ? !drawing.open : drawing.open && docs.active?.kind === "drawing") await docs.activate(tab.id);
+      await saveLive(false);
+    }
+    if (start && docs.active !== start && docs.tabs.includes(start)) await docs.activate(start.id);
+  },
+  packDocs() {
+    if (!docs) return [];
+    return docs.tabs.map((tab): PackDoc => {
+      const live = tab.state == null, label = plainLabel(tab.label);
+      if (tab.kind === "part") {
+        const st = tab.state as PartTab | null;
+        return { label, kind: "part", live, async files() {
+          const doc = st ? st.store.doc : modeller.store!.doc;
+          const data = st ? await packPart(doc, appGen) : (await modeller.partBytes())!;
+          return [{ name: (st ? st.fileName : plainLabel(modeller.partName)) || `${doc.name}${PART_EXT}`, data }];
+        } };
+      }
+      if (tab.kind === "asm") {
+        const st = tab.state as AsmTab | null;
+        const doc = () => (st ? st.doc : asm.doc!);
+        return {
+          label, kind: "asm", live,
+          async files() { return [{ name: (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`, data: await packAsm(doc(), appGen) }]; },
+          async parts() {
+            return Promise.all(Object.values(doc().parts).map(async p => p.asm
+              ? { name: `${p.asm.name || p.name}${ASM_EXT}`, data: await packAsm(p.asm, appGen) }
+              : { name: /\.mcadprt$/i.test(p.file) ? p.file : `${p.doc.name || p.name}${PART_EXT}`, data: await packPart(p.doc, appGen) }));
+          },
+        };
+      }
+      if (tab.kind === "drawing") {
+        const st = tab.state as DrawingTab | null;
+        return { label, kind: "drawing", live, async files() { const r = await drawing.packed(st ?? undefined); return r ? [r] : []; } };
+      }
+      const src = (tab.state as { name: string; data: ArrayBuffer } | null) ?? modelSrc;
+      return { label, kind: "model", live, async files() { return src ? [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }] : []; } };
+    });
+  },
+  download: (b, n) => download(b, n),
+  exportDoc() {
+    if (drawing.open) { drawing.openExportMenu(); return; }
+    $("#rt-export").click();
+  },
+  print() {
+    if (drawing.open) void drawing.exportAs("print");
+    else print3d();
+  },
+  properties() {
+    if (drawing.open) drawing.sheetProperties();
+    else if (fileMenuLive() === "part") modeller.editProps();
+    else $("#rt-props").click();
+  },
+});
+$("#file-btn").addEventListener("click", e => fileMenu.toggle(e.currentTarget as HTMLElement));
+
 // ---------- keyboard ----------
 window.addEventListener("keydown", e => {
   if (drawing.open) return;
@@ -2480,7 +2658,6 @@ window.addEventListener("keydown", e => {
   // Keyboard users: let Enter / Space press the focused control, and keep keys inside dialogs and sheets.
   if ((e.key === "Enter" || e.key === " ") && t.matches("button, summary, a, [role=treeitem], [role=tab]")) return;
   if (t.closest("dialog") || ($("#app").dataset.sheet && t.closest(".sheet"))) return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
   // Standard views Ctrl+1..7 and Normal to Ctrl+8 (FR-UI-030/031).
   if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[1-8]$/.test(e.key) && viewer.parts.length + (modeller.active ? 1 : 0) > 0 && !isPcbMode()) {
     e.preventDefault();

@@ -3816,6 +3816,11 @@ export class Modeller {
   // ---------- evaluation ----------
 
   /** Evaluates the document; unchanged leading features come from the cache. */
+  /** Verification on rebuild (FR-UI-080): check the body after every feature that changes it. */
+  private verify = false;
+  /** Turns verification on or off; the cached results were made the other way, so they are dropped. */
+  setVerify(on: boolean) { if (on !== this.verify) { this.verify = on; this.cache = []; } }
+
   evaluate(doc: PartDoc): { body: Named | null; sheets: Named | null; statuses: FeatureStatus[]; frames: Record<string, Frame>; sketches: Record<string, SketchFeature>; curves: Record<string, V3[]>; regions: Record<string, IntersectRegion[]>; sheet: SheetState | null } {
     const end = doc.rollback ?? doc.features.length;
     // Sketches whose On edge curves moved with the model (FR-SK-064): later features use the moved copy.
@@ -3863,6 +3868,7 @@ export class Modeller {
         try {
           if (featureRefs(f).features.some(p => failed.has(p))) throw new FeatureError("E-FT-PARENT", "A sketch or plane this feature uses has an error.");
           this.warning = "";
+          const before = body;
           if (f.type === "sketch") {
             frame = this.frameOf(f, body, frames);
             frames[f.id] = frame;
@@ -3922,6 +3928,8 @@ export class Modeller {
             const e = this.resolveEdge(body, f.edge);
             if (f.modelled) body = this.helicalThread(f, body, e);
           }
+          if (this.verify && body && body !== before && !this.warning && !new this.oc.BRepCheck_Analyzer(body.shape, true, false).IsValid_2())
+            this.warning = "The body did not pass the check after this feature (verification on rebuild).";
           if (this.warning) status = { id: f.id, ok: true, code: "warning", warning: this.warning };
         } catch (err) {
           const e = err as Error;
@@ -3945,8 +3953,11 @@ export class Modeller {
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */
+  private meshQuality = 1;
   mesh(body: Named, name: string, color: [number, number, number], quality = 1): ModelMesh {
     const oc = this.oc;
+    // A coarser quality than the shape was meshed at needs the old triangles gone (BRepMesh keeps finer ones).
+    if (quality !== this.meshQuality) { oc.BRepTools.Clean(body.shape, true); this.meshQuality = quality; }
     const lin = Math.max(this.size(body.shape) * 4e-4 * quality, 1e-3);
     new oc.BRepMesh_IncrementalMesh_2(body.shape, lin, false, 0.35 * quality, false);
     const pos: number[] = [], nrm: number[] = [], idx: number[] = [];
