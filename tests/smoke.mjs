@@ -2690,6 +2690,97 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
+    await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
+    const flow = await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, open = m.mode.focus === (d.features.length ? "dir" : "seeds");
+      d.features = []; delete d.dir; m.mode.focus = "dir"; d.dir = { axis: "x" }; m.draftChanged();
+      const after = m.mode.focus;
+      const sel = document.querySelector('#mc-pm .pm-box.focus')?.dataset.focus;
+      const edit = m.openFocus({ type: "csys", id: "c", name: "c", origin: { point: "p" } }, undefined);
+      const keep = m.openFocus({ type: "draft", id: "d", name: "d", plane: { std: "XY" }, faces: [] }, "faces");
+      return { open, after, sel, edit, keep };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(flow.open && flow.after === "seeds" && flow.sel === "seeds" && flow.edit === "cz" && flow.keep === "faces",
+      `model 1.354: selection boxes hand focus on by themselves (${JSON.stringify(flow)})`);
+    // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
+    // reach the view at the magnified point, G or Esc closes it.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("g");
+      await mp.waitForSelector(".mag-lens");
+      await mp.waitForTimeout(150);
+      const lens = await mp.evaluate(() => {
+        const c = document.querySelector(".mag-lens"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) lit++;
+        return { lit, f: document.querySelector(".mag-ring").dataset.f };
+      });
+      await mp.mouse.wheel(0, -100);
+      await mp.waitForTimeout(50);
+      const f2 = await mp.evaluate(() => document.querySelector(".mag-ring").dataset.f);
+      const probe = mp.evaluate(() => new Promise(res => window.__sv.viewer.renderer.domElement.addEventListener("pointermove", e => res({ x: e.clientX, y: e.clientY }), { once: true })));
+      await mp.mouse.move(vb.x + 50, vb.y);
+      const moved = await probe;
+      await mp.keyboard.press("Escape");
+      const closed = await mp.evaluate(() => !document.querySelector(".mag-lens"));
+      const fac = Number(f2.slice(1));
+      check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
+        `model 1.354: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
+    }
+    // 1.354 (FR-SEL-009): a pick shows breadcrumbs (face → feature → sketch → body → part); hovering a crumb lights it up,
+    // a click selects its tree row, Shift+D brings the crumbs to the cursor, Esc hides them.
+    {
+      const vb = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; });
+      await mp.evaluate(() => { const m = window.__sv.modeller; m.selected = null; m.renderTree(); m.drawDecor(); });
+      await mp.mouse.click(vb.x, vb.y);
+      await mp.waitForSelector("#mc-crumbs", { timeout: 5000 }).catch(() => {});
+      const crumbs = await mp.evaluate(() => [...document.querySelectorAll("#mc-crumbs .mc-crumb")].map(b => b.dataset.id ?? "·" + b.textContent));
+      const feat = crumbs.find(c => c !== "part" && !c.startsWith("·") && !c.startsWith("body:"));
+      let hov = null, picked = null;
+      if (feat) {
+        await mp.hover(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        hov = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+        await mp.click(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        picked = await mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: document.querySelector("#mc-tree .ft-row.sel")?.dataset.id }));
+      }
+      await mp.mouse.move(vb.x - 40, vb.y + 30);
+      await mp.keyboard.press("Shift+D");
+      const near = await mp.evaluate(p => { const r = document.querySelector("#mc-crumbs")?.getBoundingClientRect(); return r && { at: document.querySelector("#mc-crumbs").classList.contains("at-cursor"), dx: Math.round(r.left - p.x), dy: Math.round(r.top - p.y), w: Math.round(r.width) }; }, { x: vb.x - 40, y: vb.y + 30 });
+      await mp.keyboard.press("Escape");
+      const gone = await mp.evaluate(() => !document.querySelector("#mc-crumbs"));
+      check(crumbs[0]?.startsWith("·") && feat && crumbs.some(c => c.startsWith("body:")) && crumbs.at(-1) === "part" && hov > 0 && picked?.sel === feat && picked.row === feat
+        && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
+        `model 1.354: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
+    }
+    // 1.354 (FR-UI-110): value callouts: Shell's thickness shows on the model; a click opens the Modify box and the typed value goes to the panel and the feature.
+    {
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.waitForSelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle', { timeout: 8000 }).catch(() => {});
+      const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
+      if (before) {
+        await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
+        await mp.waitForSelector(".mod-box input");
+        await mp.fill(".mod-box input", "2.5");
+        await mp.keyboard.press("Enter");
+        await idle();
+      }
+      const after = await mp.evaluate(() => ({ v: window.__sv.modeller.mode.draft.thickness?.v, inp: document.querySelector('#mc-pm input[data-num="thickness"]')?.value, call: document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent, box: !!document.querySelector(".mod-box") }));
+      await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+      await idle();
+      check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
+        `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });

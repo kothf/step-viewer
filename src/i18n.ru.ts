@@ -4154,4 +4154,8 @@ export const RU: Record<string, string> = {
   // FR-UI-105: hide/show under the cursor
   "No hidden body under the cursor.": "Под курсором нет скрытого тела.",
   "No hidden component under the cursor.": "Под курсором нет скрытого компонента.",
+  // FR-SEL-009: selection breadcrumbs
+  "Selection breadcrumbs": "Цепочка выбора",
+  // FR-UI-110: value callouts
+  "Click to type the value": "Щёлкните, чтобы ввести значение",
 };

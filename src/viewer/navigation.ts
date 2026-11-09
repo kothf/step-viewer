@@ -1,6 +1,7 @@
 // View navigation habits of mechanical CAD (FRS 13.13, FR-UI-101..104): arrow keys turn and pan the view,
 // Z / Shift+Z zoom, Alt+Z goes back to the previous view, a double middle click fits, Zoom to area draws a box,
 // Zoom to selection frames what is picked, and Space opens the orientation picker at the cursor.
+import { Magnifier } from "./Magnifier";
 import * as THREE from "three";
 import type { Viewer } from "./Viewer";
 import { t } from "../i18n";
@@ -28,12 +29,15 @@ export interface Navigation {
   previousView(): void;
   openPicker(at?: { x: number; y: number }): void;
   closePicker(): void;
+  /** The magnifying glass (FR-SEL-010). */
+  magnifier: Magnifier;
 }
 
 export function bindNavigation(host: NavHost): Navigation {
   const { viewer } = host;
   const canvas = viewer.renderer.domElement;
   const pointer = { x: -1, y: -1 };
+  const magnifier = new Magnifier(viewer);
   window.addEventListener("pointermove", e => { pointer.x = e.clientX; pointer.y = e.clientY; }, { passive: true });
 
   // The keys act when nothing that takes keys has focus: the page itself or the view.
@@ -209,8 +213,16 @@ export function bindNavigation(host: NavHost): Navigation {
     if (e.altKey && (k === "z" || k === "Z" || e.code === "KeyZ")) { stop(); previousView(); return; }
     if (e.altKey) return;
     if (e.code === "KeyZ") { stop(); viewer.zoomView(e.shiftKey ? ZOOM : 1 / ZOOM); return; }
+    if (e.code === "KeyG" && !e.shiftKey && !e.repeat) {
+      stop();
+      if (magnifier.open) { magnifier.close(); return; }
+      const r = canvas.getBoundingClientRect();
+      const on = pointer.x >= r.left && pointer.x <= r.right && pointer.y >= r.top && pointer.y <= r.bottom;
+      magnifier.show(on ? pointer.x : (r.left + r.right) / 2, on ? pointer.y : (r.top + r.bottom) / 2);
+      return;
+    }
     if (k === " " && !e.repeat) { stop(); openPicker(); }
   });
 
-  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker };
+  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker, magnifier };
 }
