@@ -3761,4 +3761,5 @@ export const RU: Record<string, string> = {
   "Click the points of the polyline.": "Щёлкайте точки ломаной.",
   "Click more points; click the first point to close it, or press Enter to end it.": "Щёлкайте следующие точки; щелчок по первой точке замыкает ломаную, Enter завершает её.",
   "Mark the model's centre of mass; dimensions can measure from it": "Показать центр масс модели; от него можно ставить размеры",
+  "The sketch has changes: ✓ keeps them, ✕ discards them.": "В эскизе есть изменения: ✓ сохраняет их, ✕ отменяет.",
 };
