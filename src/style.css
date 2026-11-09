@@ -1286,3 +1286,5 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .hud[hidden] { display: none; }
 .hud .seg { background: var(--panel); }
 .hud [data-hud] { font-size: 14px; line-height: 1; padding: 4px 8px; }
+/* The status line, filter, fly-out tree and breadcrumbs start below the heads-up bar, so it never covers them. */
+#viewport:has(.hud:not([hidden])) .mc-bar { top: 48px; }

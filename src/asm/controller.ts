@@ -2307,7 +2307,7 @@ export class AsmController {
           return;
         }
       }
-      if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target as HTMLElement).closest("input, textarea, select, dialog[open]")) {
+      if (this.doc && !this.picking && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.target instanceof Element && e.target.closest("input, textarea, select, dialog[open]"))) {
         // Breadcrumbs (FR-SEL-009): Esc hides them, Shift+D brings them to the cursor.
         if (e.key === "Escape" && document.getElementById("asm-crumbs") && !document.querySelector(".mag-lens")) this.hideCrumbs();
         if (e.key.toLowerCase() === "d" && e.shiftKey && this.pointer && document.getElementById("asm-crumbs")) { e.preventDefault(); e.stopImmediatePropagation(); this.crumbAt = { ...this.pointer }; this.placeCrumbs(); return; }
