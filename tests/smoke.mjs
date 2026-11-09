@@ -1205,9 +1205,9 @@ try {
       document.querySelector("#display-menu").hidden = false;
     });
     await pg.waitForTimeout(200);
-    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));
+    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#st-hint").textContent, banner: !document.querySelector("#tool-hint").hidden }));
     const leftModel = await untranslated();
-    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint), `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
     check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
     for (const lang of ["ru", "en"]) {
       for (const w of [1024, 1280, 1440]) {
