@@ -1658,7 +1658,7 @@ export class SketchEditor {
       dim.driven = true;
       this.sk.dims.push(dim);
       this.commit("Add dimension");
-      this.host.toast(t("The sketch is already defined there: added as a reference dimension."), "warn");
+      this.host.toast(t("The sketch is already defined there: added as a reference dimension."), "info");
       return;
     }
     this.sk = r.sketch;
@@ -1861,8 +1861,12 @@ export class SketchEditor {
       const c = P(e.c), r = e.t === "circle" ? e.r : Math.hypot(P(e.a)[0] - c[0], P(e.a)[1] - c[1]);
       dim(e.t === "circle" ? "diameter" : "radius", [e.id], [c[0] + r * 0.9, c[1] + r * 0.9]);
     }
+    // Defining points first, as SolidWorks does: arc and circle centres and the ends of construction lines
+    // (a slot's centreline), then other curve points, then free points; nearest the origin first in each.
+    const centres = new Set(sk.ents.flatMap(x => (x.t === "circle" || x.t === "arc") ? [x.c] : x.t === "line" && x.cons ? [x.a, x.b] : []));
     const onCurve = new Set(sk.ents.filter(x => x.t !== "point" && !x.cons).flatMap(x => refPts(x)));
-    const order = pts.map(q => ({ q, k: onCurve.has(q.id) ? 0 : 1, d: Math.hypot(q.x, q.y) })).sort((a, b) => a.k - b.k || a.d - b.d);
+    const rank = (id: string) => (centres.has(id) ? 0 : onCurve.has(id) ? 1 : 2);
+    const order = pts.map(q => ({ q, k: rank(q.id), d: Math.hypot(q.x, q.y) })).sort((a, b) => a.k - b.k || a.d - b.d);
     let nh = 0, nv = 0;
     for (const { q } of order) {
       if (dof === 0) break;
@@ -3559,6 +3563,9 @@ export class SketchEditor {
       per.set(anchor, k + 1);
       el.dataset.pos = JSON.stringify(this.anchorOf(anchor));
       el.dataset.k = String(k);
+      // Beside a curve, not on it: a click on the curve must not land on its glyph (exam bug 47).
+      const side = this.glyphSide(anchor);
+      if (side) { el.dataset.pos = JSON.stringify(side.p); el.dataset.nrm = JSON.stringify(side.n); } else delete el.dataset.nrm;
     }
     for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); if (this.hoverRel === id) this.hoverRel = null; }
     this.syncGrip();
@@ -3726,6 +3733,32 @@ export class SketchEditor {
     return this.pt(e.a);
   }
 
+  /** A point on a line, arc or circle and the outward normal there, for placing relation glyphs beside it. */
+  private glyphSide(id: string): { p: V2; n: V2 } | null {
+    const e = this.ent(id);
+    if (!e) return null;
+    if (e.t === "line") {
+      const a = this.pt(e.a), b = this.pt(e.b), l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (l < 1e-12) return null;
+      return { p: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], n: [-(b[1] - a[1]) / l, (b[0] - a[0]) / l] };
+    }
+    if (e.t === "circle" || e.t === "arc") {
+      const c = this.pt(e.c);
+      let ang = Math.PI / 4, r = e.t === "circle" ? e.r : 0;
+      if (e.t === "arc") {
+        const a = this.pt(e.a), b = this.pt(e.b);
+        r = Math.hypot(a[0] - c[0], a[1] - c[1]);
+        const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0;
+        while (sw <= 0) sw += 2 * Math.PI;
+        ang = a0 + sw / 2;
+      }
+      const n: V2 = [Math.cos(ang), Math.sin(ang)];
+      return { p: [c[0] + n[0] * r, c[1] + n[1] * r], n };
+    }
+    return null;
+  }
+
   /** Where a dimension's value is drawn: ordinate values follow their point along the row. */
   private labelPos(d: SkDim): V2 {
     const pos = d.pos ?? [0, 0];
@@ -3743,6 +3776,17 @@ export class SketchEditor {
       const p = JSON.parse(el.dataset.pos ?? "[0,0]") as V2;
       const [x, y] = this.screen(p);
       const k = Number(el.dataset.k ?? 0);
+      if (el.dataset.nrm) {
+        // 14 px out along the curve's normal, more glyphs on the same curve side by side along it.
+        const n = JSON.parse(el.dataset.nrm) as V2, q = this.screen([p[0] + n[0] * this.px(p), p[1] + n[1] * this.px(p)]);
+        let sx = q[0] - x, sy = q[1] - y;
+        const l = Math.hypot(sx, sy) || 1;
+        sx /= l; sy /= l;
+        const cx = x + sx * 14 + -sy * k * 18, cy = y + sy * 14 + sx * k * 18;
+        el.style.left = `${cx - 8}px`;
+        el.style.top = `${cy - 8}px`;
+        continue;
+      }
       el.style.left = `${x + (el.classList.contains("sk-rel") ? 10 + k * 16 : 0)}px`;
       el.style.top = `${y + (el.classList.contains("sk-rel") ? 10 : 0)}px`;
     }

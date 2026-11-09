@@ -3347,6 +3347,32 @@ try {
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
       return { mid: m && ax ? [m.x, m.y, P(ax.a).x, P(ax.b).x].map(v => Math.round(v * 1000) / 1000) : null, dims: sk.dims.map(d => `${d.t}:${d.val.v}`).join(","), ok: ed.info.status };
     });
+    // Fully define dimensions the slot from its centreline ends and arc centres, not the cap tangent points (exam bug 48).
+    const fdSlot = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk0 = ed.sk, n0 = sk0.dims.length;
+      ed.fullyDefine();
+      const sk = ed.sk, key = new Set(sk.ents.flatMap(e => e.t === "arc" || e.t === "circle" ? [e.c] : e.t === "line" && e.cons ? [e.a, e.b] : []));
+      const added = sk.dims.slice(n0).filter(d => (d.t === "hdistance" || d.t === "vdistance") && d.e[1] !== "q2");
+      return { n: added.length, onKey: added.filter(d => key.has(d.e[1])).length, dof: ed.info.dof };
+    });
+    // Relation glyphs sit beside their curves: points along each arc and line are the curve, not a glyph (exam bug 47).
+    const onGlyph = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => { const e = sk.ents.find(x => x.id === id); return [e.x, e.y]; };
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), w = ed.frame;
+      const scr = p => { const q = new v.camera.position.constructor(w.o[0] + w.x[0] * p[0] + w.y[0] * p[1], w.o[1] + w.x[1] * p[0] + w.y[1] * p[1], w.o[2] + w.x[2] * p[0] + w.y[2] * p[1]).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const ids = new Set(sk.rels.flatMap(x => x.e));
+      const mids = sk.ents.filter(e => ids.has(e.id) && (e.t === "line" || e.t === "arc")).flatMap(e => [0.15, 0.3, 0.5, 0.7, 0.85].map(u => {
+        if (e.t === "line") { const a = P(e.a), b = P(e.b); return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+        const c = P(e.c), a = P(e.a), b = P(e.b), rr = Math.hypot(a[0] - c[0], a[1] - c[1]), a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0; while (sw <= 0) sw += 2 * Math.PI;
+        return [c[0] + rr * Math.cos(a0 + sw * u), c[1] + rr * Math.sin(a0 + sw * u)];
+      }));
+      return { n: mids.length, hit: mids.map(scr).filter(([x, y]) => document.elementFromPoint(x, y)?.classList.contains("sk-rel")).length, glyphs: document.querySelectorAll(".sk-rel").length };
+    });
+    check(onGlyph.n > 4 && onGlyph.glyphs > 0 && onGlyph.hit === 0, `model 1.325: relation glyphs leave the curves clickable (${JSON.stringify(onGlyph)})`);
+    check(fdSlot.n > 0 && fdSlot.onKey === fdSlot.n && fdSlot.dof === 0, `model 1.325: Fully define dimensions slot centres, not tangent points (${JSON.stringify(fdSlot)})`);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(200);
     check(a3.arcs === 5 && a3.dims === 0 && a3.ok === "ok" && !a3.box && a3.off === false && a3.saved === "0", `model 1.144: 3-point arc slot with Add dimensions off (${JSON.stringify(a3)})`);
     check(cs.mid && cs.mid[0] === 15 && cs.mid[1] === 15 && cs.mid[2] === 0 && cs.mid[3] === 30 && cs.dims === "diameter:8,distance:30" && cs.ok === "ok",
       `model 1.144: Centerpoint straight slot stays centred on its first click as the length changes (${JSON.stringify(cs)})`);
@@ -9925,6 +9951,45 @@ try {
     });
     const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
     check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: arc slot centre marks (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // An 8 mm wide arc slot about (0, -10), centre radius 25 from 30° to 150°, through a 100 × 60 plate.
+    const A = (id, R, deg) => P(id, R * Math.cos(deg * Math.PI / 180), -10 + R * Math.sin(deg * Math.PI / 180));
+    const part = { schema: 1, kind: "part", id: "d_drwaslot", name: "ArcSlotted", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        A("o", 0, 0), A("c1", 25, 30), A("c2", 25, 150), A("o1", 29, 30), A("o2", 29, 150), A("i1", 21, 30), A("i2", 21, 150),
+        { id: "k1", t: "arc", c: "c1", a: "i1", b: "o1" }, { id: "k2", t: "arc", c: "c2", a: "o2", b: "i2" },
+        { id: "ao", t: "arc", c: "o", a: "o1", b: "o2" }, { id: "ai", t: "arc", c: "o", a: "i1", b: "i2" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "ArcSlotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre-line prims in model mm about the plate centre.
+    const am = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const pts = q => { const o = []; for (let i = 0; i + 1 < q.p.length; i += 2) o.push([U(q.p[i]), W(q.p[i + 1])]); return o; };
+      const near = q => pts(q).every(([x, y]) => Math.abs(x) < 40 && y > -12 && y < 25);
+      const prims = window.__sv.drw.prims().filter(q => q.layer === "CENTER" && (q.t === "l" || q.t === "p")).filter(near);
+      return { lines: prims.filter(q => q.t === "l").map(pts), arcs: prims.filter(q => q.t === "p").map(pts) };
+    });
+    const onR = am.arcs.length === 1 && am.arcs[0].every(([x, y]) => Math.abs(Math.hypot(x, y + 10) - 25) < 0.05);
+    const radial = am.lines.length === 2 && am.lines.every(([[x0, y0], [x1, y1]]) => Math.abs(Math.hypot(x1 - x0, y1 - y0) - 12) < 0.05 && Math.abs(Math.hypot((x0 + x1) / 2, (y0 + y1) / 2 + 10) - 25) < 0.05);
+    check(onR && radial, `drawing: arc slot centre-line arc and radial end lines, no crosses (${JSON.stringify(am).slice(0, 400)})`);
     await ctx.close();
   }
 

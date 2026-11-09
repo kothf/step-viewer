@@ -11,6 +11,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Preferences (FR-UI-080)**: Display ▾ → Preferences… opens one dialog for the settings that were spread over panels and menus, as SolidWorks' System Options. **Modelling**: units and decimals, image quality (Coarse rebuilds faster, Fine draws smoother; the exact geometry is the same), **Verification on rebuild** (each feature's body is checked, and a feature that leaves it invalid gets a warning in the tree and What's wrong), how soon unsaved work is kept for recovery (after each change, 10 s … 5 min, or off), and the ↑/↓ and spin arrow steps for lengths and angles. **Sketch**: rotate the view to the sketch plane on opening, automatic relations, relation glyphs, model edge snapping, slot dimensions, grid and grid snap, and a legend of the sketch colours. **Mouse**: middle button pans or rotates (SolidWorks), wheel zoom direction, and Mouse gestures. Defaults resets the open page; the sketch panel and quick bar toggles stay in step.
 
+## [1.326.0] - 2026-11-09
+
+### Added
+- Arc slot centre marks in drawings (FR-DRW-023): an arc slot seen end-on gets a centre-line arc through its end centres, 2 mm past both ends, and a radial centre line across each rounded end.
+
+## [1.325.0] - 2026-11-09
+
+### Fixed
+
+- Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
+- Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
+- "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
 ## [1.324.0] - 2026-11-09
 
 ### Added
@@ -1911,7 +1923,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.329.0...HEAD
-[1.329.0]: https://github.com/kothf/step-viewer/compare/v1.328.0...v1.329.0
+[1.329.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.329.0
+[1.326.0]: https://github.com/kothf/step-viewer/compare/v1.325.0...v1.326.0
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.324.0...v1.325.0
 [1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0
 [1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
