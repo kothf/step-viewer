@@ -1056,3 +1056,31 @@ test("cones and tori seen from the side get a centreline on their axis (FR-DRW-0
   const part = { edges: [], cyls: [], revs: [{ k: "cone" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: 0, v1: 5, sp: Math.PI / 2 }] };
   assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, part, front.P, front.n).length, 0);
 });
+
+test("hole callouts read from the geometry: count, counterbore, countersink, blind with a point (FR-DRW-022)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { holeText, geoHole } = await import("../../src/drawing/annot");
+  const oc = await occ(), m = new Modeller(oc);
+  const s1 = rect("s1", 100, 60);
+  const ex: Feature = { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } };
+  const top = { face: { name: "f1:end" } };
+  const feats: Feature[] = [s1, ex,
+    { id: "h1", type: "hole", name: "H1", plane: top, pts: [[-30, 15], [-10, 15], [10, 15], [30, 15]], kind: "cbore", diameter: { v: 6.6 }, end: "through", depth: { v: 0 }, cbDia: { v: 11 }, cbDepth: { v: 6.4 } } as Feature,
+    { id: "h2", type: "hole", name: "H2", plane: top, pts: [[-30, -15], [0, -15]], kind: "csink", diameter: { v: 6.6 }, end: "through", depth: { v: 0 }, csDia: { v: 13.44 }, csAngle: { v: Math.PI / 2 } } as Feature,
+    { id: "h3", type: "hole", name: "H3", plane: top, pts: [[30, -15]], kind: "simple", diameter: { v: 5 }, end: "blind", depth: { v: 12 } } as Feature];
+  const r = m.evaluate(doc(feats));
+  const topo = topology(oc, r.body!.shape, r.body!.names);
+  assert.equal(topo.holes?.length, 7, JSON.stringify(topo.holes?.map(h => h.segs.length)));
+  // As if read from a STEP file: no hole features to go by.
+  const ctx = { topo, holes: [], items: [], box: [[-50, -30, 0], [50, 30, 20]] as [V3, V3], dec: ".", label: (s: string) => s };
+  const at = (x: number, y: number, r: number) => topo.edges.find(e => e.t === "c" && Math.abs(e.r! - r) < 1e-6 && Math.abs(e.c![0] - x) < 1e-6 && Math.abs(e.c![1] - y) < 1e-6)!;
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"]);
+  assert.deepEqual(holeText(at(10, 15, 5.5), ctx), ["4× Ø6.6 THRU", "⌴Ø11 ↧6.4"], "the counterbore's own circle gives the same callout");
+  assert.deepEqual(holeText(at(0, -15, 6.72), ctx), ["2× Ø6.6 THRU", "⌵Ø13.44 × 90°"]);
+  assert.deepEqual(holeText(at(30, -15, 2.5), ctx), ["Ø5 ↧12"]);
+  assert.deepEqual(holeText(at(-30, 15, 3.3), ctx, false), ["Ø6.6 THRU", "⌴Ø11 ↧6.4"], "no count in a hole table");
+  assert.deepEqual(holeText(at(-30, 15, 3.3), { ...ctx, dec: ",", label: (s: string) => (s === "THRU" ? "СКВОЗН." : s) }), ["4× Ø6,6 СКВОЗН.", "⌴Ø11 ↧6,4"]);
+  // Entered from the bottom, a counterbore is a different hole: holes count only with the same way in.
+  const flip = geoHole({ ...topo.holes!.find(h => h.segs.length === 2 && h.segs.some(s => Math.abs(s.r0 - 5.5) < 1e-6))!, ax: [0, 0, 1] });
+  assert.ok(flip && /⌴Ø11/.test(flip.lines[1]));
+});
