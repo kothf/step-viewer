@@ -1277,7 +1277,15 @@ export class MotionManager {
         + field(t("Time scale"), "scale", "100", "%")
         + `<span class="muted">${esc(t("Drag one of them or press Alt+←/→ to move them together. Alt+drag stretches their timing, Ctrl+drag copies them."))}</span>`;
     }
-    if (tr.kind === "camera") return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp) + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
+    if (tr.kind === "camera") {
+      const ck = key as unknown as CamKey, d = Math.hypot(ck.pos[0] - ck.target[0], ck.pos[1] - ck.target[1], ck.pos[2] - ck.target[2]);
+      return field(t("Time"), "t", fmt(key.t), t("s")) + interpSel(key.interp)
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Position {axis}", { axis: a.toUpperCase() }), `cp${a}`, fmt(ck.pos[j]), "mm")).join("")
+        + (["x", "y", "z"] as const).map((a, j) => field(t("Target {axis}", { axis: a.toUpperCase() }), `ct${a}`, fmt(ck.target[j]), "mm")).join("")
+        + field(t("Distance"), "cdist", fmt(d), "mm")
+        + (ck.zoom !== undefined ? field(t("Zoom"), "czoom", fmt(ck.zoom * 100, 1), "%") : "")
+        + `<button class="btn small" data-p="setcam">${esc(t("Set to current view"))}</button>`;
+    }
     if (tr.kind === "pose") {
       const pk = key as unknown as PoseKey;
       return field(t("Time"), "t", fmt(pk.t), t("s"))
@@ -1640,6 +1648,13 @@ export class MotionManager {
       if (p === "t") k.t = this.snap(v);
       else if (p === "interp") { const i = interpOf(raw); if (i) k.interp = i; else delete k.interp; }
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
+      else if (/^c[pt][xyz]$/.test(p) && tr.kind === "camera") { const ck = k as CamKey; (p[1] === "p" ? ck.pos : ck.target)["xyz".indexOf(p[2])] = v; }
+      else if (p === "cdist" && tr.kind === "camera") {
+        // Dolly along the line of sight: the target stays, the position moves to the typed distance.
+        const ck = k as CamKey, dv = ck.pos.map((x, j) => x - ck.target[j]), L = Math.hypot(...dv);
+        if (v > 0 && L > 1e-9) ck.pos = ck.target.map((x, j) => x + (dv[j] * v) / L) as V3;
+      }
+      else if (p === "czoom" && tr.kind === "camera" && v > 0) (k as CamKey).zoom = v / 100;
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
       else if (/^[dr][xyz]$/.test(p) && tr.kind === "pose") { const pk = k as unknown as PoseKey; (p[0] === "d" ? pk.d : pk.r)["xyz".indexOf(p[1])] = v; }
       else if (p === "c" && tr.kind === "look" && /^#[0-9a-f]{6}$/i.test(raw)) (k as Key).c = raw.toLowerCase();
@@ -1652,6 +1667,7 @@ export class MotionManager {
     });
     if (newIdx != null) this.sel = { track: sel.track, key: newIdx };
     this.render();
+    if (tr0.kind === "camera" && /^c(p[xyz]|t[xyz]|dist|zoom)$/.test(p)) this.showAt(this.time);
   }
 
   /** Moves the selected key by `dt` seconds (Alt+←/→, Shift for ten frames), keeping it inside the study and off its neighbours. */
