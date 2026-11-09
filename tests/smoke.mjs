@@ -9367,6 +9367,37 @@ try {
     await settle();
     const co = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "member"); return { corners: f.corners, gap: f.gap?.v, rows: (l.cutList ?? []).filter(c => c.desc === "SHS 50x50x4").map(c => [c.qty, c.length, c.angle1, c.angle2]) }; });
     check(nCorners === 4 && Object.keys(co.corners ?? {}).length === 1 && co.gap === 2 && JSON.stringify(co.rows) === "[[1,648.6,0,45],[1,647.2,45,45],[1,447.2,45,45],[1,396.6,0,45]]", `weldments: per-corner treatment and weld gap (${JSON.stringify({ nCorners, co })})`);
+    // Corner callouts in the view: one per corner, the one set above in bold; a click offers that corner's treatments.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "member").id));
+    await settle();
+    const cc0 = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-corner")].map(e => [e.classList.contains("own"), e.textContent]));
+    await mp.click("#mc-layer .wld-corner:not(.own) >> nth=0");
+    const ccMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:has-text("End butt 2")');
+    await settle();
+    const cc1 = await mp.evaluate(() => ({ corners: Object.values(window.__sv.model.mode().draft.corners ?? {}), own: document.querySelectorAll("#mc-layer .wld-corner.own").length, panel: [...document.querySelectorAll('#mc-pm select[data-k^="wcorner:"]')].map(e => e.value).sort() }));
+    await mp.click("#mc-cancel");
+    await settle();
+    check(cc0.length === 4 && cc0.filter(x => x[0]).length === 1 && ccMenu.length === 5 && /As set/.test(ccMenu[0]) && JSON.stringify(cc1.corners.sort()) === '["butt1","butt2"]' && cc1.own === 2 && JSON.stringify(cc1.panel) === '["","","butt1","butt2"]',
+      `weldments: corner callouts in the view (${JSON.stringify({ cc0, ccMenu, cc1 })})`);
+    // Locate profile: a point of the profile sketch on the path.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m3"));
+    await settle();
+    const lpOpts = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="anchor"] option')].filter(o => o.value.startsWith("p:")).map(o => o.textContent));
+    // Located in the view: Locate profile shows the profile's points at the path start; a click on one moves it onto the path.
+    await mp.click('#mc-pm button[data-focus="wlocate"]');
+    await settle();
+    await mp.waitForTimeout(800); // the view zooms to the profile
+    const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
+    await settle();
+    const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));
+    await mp.click("#mc-ok");
+    await settle();
+    const lp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), anchor: window.__sv.model.store.doc.features.find(f => f.id === "m3").anchor, prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]) }; });
+    check(lpOpts.length === 4 && lpOpts[2] === "Sketch point 3" && JSON.stringify(lpDots) === '["p:q1*","p:q2","p:q3","p:q4","t","l","c","r","b"]' && lpAfter.anchor === "p:q3" && lpAfter.dots === 0 && lpAfter.sel === "p:q3" && !lp.bad && lp.anchor === "p:q3" && JSON.stringify(lp.prof) === "[[1,300]]", `weldments: Locate profile on a sketch point (${JSON.stringify({ lpOpts, lpDots, lpAfter, lp })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });

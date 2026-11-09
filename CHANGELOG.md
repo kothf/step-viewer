@@ -13,6 +13,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
 - **Selection breadcrumbs (FR-SEL-009)**: after picking a face or an edge of a part, a bar at the top left of the view shows the chain up to the part (face or edge → feature → its sketch → body → part; a picked plane → part). Hovering a crumb lights it up in the view, a click selects it as in the Features tree, a right-click opens its tree menu. Shift+D brings the breadcrumbs, or the ✓/✕ corner while a command is open, to the cursor (D stays the distance tool); Esc hides them.
 
+## [1.352.0] - 2026-11-09
+
+### Added
+
+- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path, for group 1 and for each group. **Locate profile** beside it zooms to the start of the path and shows the profile's points there (sketch points and the box's anchors); click one and the profile moves so that point lies on the path, as in SolidWorks.
+
 ## [1.351.0] - 2026-11-09
 
 ### Added
@@ -2113,7 +2119,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.353.0...HEAD
-[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.353.0
+[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
+[1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0
 [1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
 [1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0

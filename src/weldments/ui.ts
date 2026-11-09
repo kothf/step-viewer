@@ -9,9 +9,9 @@ import { units, UNITS } from "../tools/units";
 import { MATERIALS } from "../tools/analysis";
 import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } from "./profiles";
 import { sketchProfile } from "../sketch/profile";
-import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
+import type { CutItem, Pierce, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
 import { capDir, cornerKey, cutKey } from "./types";
-import { segOf } from "./kernel";
+import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
 export const WELD_TOOL_SET: ReadonlySet<string> = new Set(["member", "trimext", "endcap", "gusset", "weldbead"]);
@@ -102,6 +102,69 @@ function memberCorners(sk: SketchFeature | Sketch3dFeature, ents: string[]): str
   return [...at.values()].filter(l => l.length > 1);
 }
 
+/** The treatments a corner of `n` segments can take (a mitre needs exactly two). */
+function cornerOpts(n: number): [string, string][] {
+  return [...(n === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
+}
+
+/** A corner of a structural member as the view shows it (SolidWorks' corner callouts). */
+export interface CornerSpot {
+  key: string;
+  /** Where the segments meet, world mm. */
+  at: V3;
+  /** "Line 1 / Line 2". */
+  label: string;
+  /** The treatment used there, in words. */
+  text: string;
+  /** Its own treatment is set (not the member's). */
+  own: boolean;
+  /** Menu rows: value ("" = as the member) and label, the current one first ticked by the caller. */
+  opts: [string, string][];
+  cur: string;
+}
+
+/** The corners of an open structural member with their treatments, placed where the segments meet. */
+export function cornerSpots(ctx: WeldCtx, f: MemberFeature): CornerSpot[] {
+  const sk = pathSketches(ctx).find(s => s.id === f.segs[0]?.sketch);
+  if (!sk || f.segs.length < 2) return [];
+  const frames = ctx.last?.frames ?? {};
+  const out: CornerSpot[] = [];
+  for (const c of memberCorners(sk, f.segs.map(x => x.ent))) {
+    let at: V3 | null = null;
+    try {
+      const a = segOf({ sketch: sk.id, ent: c[0] }, ctx.doc, frames), b = segOf({ sketch: sk.id, ent: c[1] }, ctx.doc, frames);
+      const d = (p: V3) => Math.min(Math.hypot(p[0] - b.a[0], p[1] - b.a[1], p[2] - b.a[2]), Math.hypot(p[0] - b.b[0], p[1] - b.b[1], p[2] - b.b[2]));
+      at = d(a.a) <= d(a.b) ? a.a : a.b;
+    } catch { continue; }
+    const key = cornerKey(c), own = f.corners?.[key];
+    const opts = cornerOpts(c.length);
+    // Three or more segments can't be mitred: the kernel runs the first through, like End butt 1.
+    const used = own ?? (f.corner === "miter" && c.length > 2 ? "butt1" : f.corner);
+    out.push({ key, at, label: c.map(ent => segLabel(sk, ent)).join(" / "), text: opts.find(o => o[0] === used)?.[1] ?? used, own: !!own, opts: [["", t("As set for the member")], ...opts], cur: own ?? "" });
+  }
+  return out;
+}
+
+/** Where a sketch profile's points can sit on the path (Locate profile): "Sketch point n" for every point of the profile sketch. */
+function profilePoints(ctx: WeldCtx, f: MemberFeature): [string, string][] {
+  const sk = f.profile === "sketch" ? ctx.before.find(x => x.id === f.psketch) : undefined;
+  if (sk?.type !== "sketch") return [];
+  return sk.ents.filter(e => e.t === "point").map((e, i): [string, string] => [`p:${e.id}`, t("Sketch point {n}", { n: i + 1 })]);
+}
+
+/** Locate profile in the view: the profile points of a group's first segment (gi 0 = group 1), labelled, with the one in use. */
+export function locateSpots(ctx: WeldCtx, f: MemberFeature, gi: number): { key: Pierce; at: V3; label: string; cur: boolean }[] {
+  const groups = f.groups ?? [];
+  const ent = gi ? groups[gi - 1]?.ents[0] : f.segs.find(s => !groups.some(g => g.ents.includes(s.ent)))?.ent;
+  if (!ent) return [];
+  const pts = new Map(profilePoints(ctx, f));
+  const cur = (gi ? groups[gi - 1].anchor : f.anchor) ?? (f.profile === "sketch" ? "o" : "c");
+  return pierceSpots(f, ent, ctx.doc, ctx.last?.frames ?? {}).map(({ key, at, also }) => ({
+    key, at, cur: key === cur || also.includes(cur),
+    label: key === "o" ? t("Sketch origin") : key.startsWith("p:") ? pts.get(key) ?? key : t(ANCHOR_LABEL[key as Anchor]),
+  }));
+}
+
 /** 2D sketches with a closed region (custom member profiles), before the edited feature; not the path sketch. */
 function profileSketches(ctx: WeldCtx, path?: string): SketchFeature[] {
   return ctx.before.filter((x): x is SketchFeature => x.type === "sketch" && x.id !== path && !x.suppressed && sketchProfile(x).faces.length > 0);
@@ -175,11 +238,17 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const gOf = (ent: string) => groups.findIndex(g => g.ents.includes(ent)) + 1;
     const gSel = (ent: string) => f.segs.length < 2 ? "" : `<select data-k="wgroup:${esc(ent)}" aria-label="${esc(t("Group of {seg}", { seg: segLabel(sk!, ent) }))}">${Array.from({ length: groups.length + 1 }, (_, i) => `<option value="${i}"${gOf(ent) === i ? " selected" : ""}>${esc(t("Group {n}", { n: i + 1 }))}</option>`).join("")}<option value="new">${esc(t("New group"))}</option></select>`;
     const segList = lines.map(ent => `<div class="wseg-row"><label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(segLabel(sk!, ent))}</label>${on.has(ent) ? gSel(ent) : ""}</div>`).join("");
-    const anchorOpts: [string, string][] = [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])])];
+    const anchorOpts: [string, string][] = [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])]), ...profilePoints(ctx, f)];
     const defAnchor = f.profile === "sketch" ? "o" : "c";
+    // Locate profile: points of the profile drawn at the start of the group's first segment, a click puts one on the path.
+    const locate = (gi: number) => {
+      const fo = gi ? `wlocate:${gi}` : "wlocate";
+      return `<button class="btn small${focus === fo ? " focus" : ""}" data-focus="${focus === fo ? "" : fo}" aria-pressed="${focus === fo}">${esc(t("Locate profile"))}</button>`
+        + (focus === fo ? help(t("Click a point of the profile in the view: it moves onto the path.")) : "");
+    };
     const groupBoxes = groups.map((g, i) => group(t("Group {n}", { n: i + 2 }),
       `<p class="pm-count">${esc(g.ents.map(e => segLabel(sk!, e)).join(", "))}</p>`
-      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor)
+      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor) + locate(i + 1)
       + numField(`groups.${i}.angle`, t("Rotation angle"), g.angle ?? { v: 0 }, "angle")
       + chk(`wgmirror:${i}`, g.mirror, t("Mirror profile")))).join("");
     return {
@@ -187,7 +256,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
       body: group(t("Selections"), sel("wtype", t("Type"), [...PROFILE_TYPES.map(([v, l]): [string, string] => [v, t(l)]), ["sketch", t("Custom profile (sketch)")]], f.profile)
         + (f.profile === "sketch"
           ? sel("wpsketch", t("Profile sketch"), [["", t("None")], ...profileSketches(ctx, cur).map((s): [string, string] => [s.id, featureLabel(s.name)])], f.psketch ?? "")
-            + help(t("A closed sketch drawn at the origin: its largest region is the profile, the sketch origin sits on the path."))
+            + help(t("A closed sketch: its largest region is the profile. The sketch origin sits on the path, or any point of the sketch picked under Profile position."))
           : `<label class="pm-field"><span>${esc(t("Size"))}</span><select data-k="wsize" translate="no">${profileSizes(f.profile).map(s => `<option${s === f.size ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`))
         + group(t("Path segments"), sel("wsketch", t("Sketch"), paths.map(s => [s.id, featureLabel(s.name)]), cur)
           + `<p class="pm-count">${esc(t("{n} segment|{n} segments", { n: f.segs.length }))}</p>${segList}`
@@ -200,7 +269,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + (f.segs.length > 1 && (f.corner === "miter" || Object.values(f.corners ?? {}).includes("miter")) ? chk("wMergeMiter", !!f.mergeMiter, t("Merge miter trimmed bodies"))
             + (f.mergeMiter && (f.gap?.v ?? 0) > 0 ? help(t("Mitred bodies with a weld gap don't touch, so they stay apart.")) : "") : "")
           + (groups.length ? `<p class="pm-count">${esc(t("Group {n}", { n: 1 }))}</p>` : "")
-          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
+          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor) + locate(0)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
           + chk("mirror", f.mirror, t("Mirror profile"))
           + sel("walign", t("Alignment"), [["", t("None")], ...alignOpts(ctx)], f.align ? `${f.align.sketch}|${f.align.ent}` : "")
@@ -211,9 +280,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + (corners.length ? group(t("Corners"), corners.map(c => {
           const key = cornerKey(c);
           const label = c.map(ent => segLabel(sk!, ent)).join(" / ");
-          const opts: [string, string][] = [["", t("As set above")], ...(c.length === 2 ? [["miter", t("End miter")] as [string, string]] : []), ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]];
+          const opts: [string, string][] = [["", t("As set above")], ...cornerOpts(c.length)];
           return sel(`wcorner:${key}`, label, opts, f.corners?.[key] ?? "");
-        }).join("") + help(t("A corner set here keeps its own treatment when the one above changes."))) : "")
+        }).join("") + help(t("A corner set here keeps its own treatment when the one above changes. The callouts at the corners in the view set them too."))) : "")
         + group(t("Cut list"), `<label class="pm-field"><span>${esc(t("Description"))}</span><input type="text" data-k="wdesc" value="${esc(f.desc ?? "")}" placeholder="${esc(f.profile === "sketch" ? t("Profile sketch") : f.size)}" /></label>`),
     };
   }
@@ -301,12 +370,17 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
         delete f.anchor;
         return;
       }
-      if (f.profile === "sketch") delete f.anchor;
+      if (f.profile === "sketch") { delete f.anchor; for (const g of f.groups ?? []) if (g.anchor === "o" || g.anchor?.startsWith("p:")) delete g.anchor; }
       f.profile = val as ProfileType;
       const sizes = profileSizes(f.profile);
       if (!sizes.includes(f.size)) f.size = sizes[Math.min(sizes.length - 1, Math.floor(sizes.length / 3))];
     };
-    if (k === "wpsketch") return () => { if (val) f.psketch = String(val); else delete f.psketch; };
+    if (k === "wpsketch") return () => {
+      if (val) f.psketch = String(val); else delete f.psketch;
+      // Points of the old profile sketch mean nothing on the new one.
+      if (f.anchor?.startsWith("p:")) delete f.anchor;
+      for (const g of f.groups ?? []) if (g.anchor?.startsWith("p:")) delete g.anchor;
+    };
     if (k === "wsize") return () => { f.size = String(val); };
     if (k === "wsketch") return () => { const sk = pathSketches(ctx).find(s => s.id === val); f.segs = sk ? pathLines(sk).map(ent => ({ sketch: sk.id, ent })) : []; delete f.groups; };
     if (k === "corner") return () => { f.corner = val as MemberFeature["corner"]; };
@@ -322,14 +396,14 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "walignAxis") return () => { if (f.align) f.align.axis = val === "h" ? "h" : "v"; };
     if (k === "wMergeMiter") return () => { if (val) f.mergeMiter = true; else delete f.mergeMiter; };
     if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
-    if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
+    if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Pierce; };
     if (k.startsWith("wgroup:")) return () => {
       const ent = k.slice(7), gs = (f.groups ?? []).map(g => ({ ...g, ents: g.ents.filter(e => e !== ent) }));
       if (val === "new") gs.push({ ents: [ent], ...(f.anchor ? { anchor: f.anchor } : {}), ...(f.angle ? { angle: { ...f.angle } } : {}), ...(f.mirror ? { mirror: true } : {}) });
       else if (+val > 0) gs[+val - 1]?.ents.push(ent);
       setGroups(f, gs);
     };
-    if (k.startsWith("wganchor:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val === (f.profile === "sketch" ? "o" : "c")) delete g.anchor; else g.anchor = val as Anchor; };
+    if (k.startsWith("wganchor:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val === (f.profile === "sketch" ? "o" : "c")) delete g.anchor; else g.anchor = val as Pierce; };
     if (k.startsWith("wgmirror:")) return () => { const g = f.groups?.[+k.slice(9)]; if (!g) return; if (val) g.mirror = true; else delete g.mirror; };
   }
   if (f.type === "trimext") {
@@ -442,7 +516,11 @@ function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
 
 /** A click in the view while a weldment feature is open. Returns the new focus (or the old one). */
 export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: string | undefined): string | undefined {
-  if (f.type === "member") { pickSegment(ctx, e, f); return focus; }
+  if (f.type === "member") {
+    if (focus?.startsWith("wlocate")) { toast(t("Click a point of the profile in the view: it moves onto the path.")); return focus; }
+    pickSegment(ctx, e, f);
+    return focus;
+  }
   const hit = ctx.faceAt(e.clientX, e.clientY);
   const fr = hit ? ctx.faceRef(hit.faceId) : null;
   if (!hit || !fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return focus; }
