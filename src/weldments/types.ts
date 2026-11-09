@@ -128,6 +128,8 @@ export interface WeldBeadFeature {
   faces1: FaceRef[];
   faces2: FaceRef[];
   size: Num;
+  /** Leg on the faces of set 2 when the legs differ (unequal leg fillet); absent = both legs `size`. */
+  size2?: Num;
   /** false: only the picked faces; otherwise faces that run on smoothly from them join their set (tangent propagation). */
   tangent?: boolean;
   /** Intermittent weld: welds of length `len` every `pitch` (centre to centre) along each chain of edges; `stagger` starts every other chain half a pitch on. */
