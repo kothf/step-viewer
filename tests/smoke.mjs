@@ -1982,19 +1982,67 @@ try {
     await idle();
     // Part properties: material Aluminium; the mass panel shows principal moments.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
-    await mp.waitForSelector("#mc-pm select[data-p=material]");
-    await mp.selectOption("#mc-pm select[data-p=material]", { label: "Aluminium 6061 (2.7)" });
+    // 1.372.0 (FR-MAT-001): the material comes from the library dialog: categories, search by another standard's name, properties.
+    await mp.waitForSelector("#mc-pm [data-a=matpick]");
+    await mp.click("#mc-pm [data-a=matpick]");
+    await mp.waitForSelector("#mat-dlg[open]");
+    const matRows = () => mp.evaluate(() => [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent));
+    const lib = { all: (await matRows()).length, cats: await mp.evaluate(() => document.querySelectorAll("#mat-dlg .mat-cat:not([disabled])").length) };
+    await mp.click('#mat-dlg .mat-cat[data-cat="titanium"]');
+    lib.ti = (await matRows()).length;
+    await mp.fill("#mat-q", "aisi 316l");
+    lib.found = await matRows();
+    lib.cat = await mp.evaluate(() => document.querySelector("#mat-dlg .mat-cat.on").dataset.cat);
+    lib.props = await mp.evaluate(() => [...document.querySelectorAll("#mat-dlg .mat-table tr")].map(r => r.textContent.replace(/\s+/g, " ")));
+    lib.src = await mp.evaluate(() => document.querySelector("#mat-dlg .mat-src").textContent);
+    const axMat = await axe();
+    await mp.fill("#mat-q", "д16т");
+    lib.gost = await matRows();
+    await mp.fill("#mat-q", "6061");
+    await mp.keyboard.press("ArrowDown");
+    await mp.keyboard.press("ArrowUp");
+    await mp.keyboard.press("Enter");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    lib.btn = await mp.evaluate(() => ({ text: document.querySelector("#mc-pm [data-a=matpick]").textContent, dens: document.querySelector("#mc-pm [data-p=density]").value, col: document.querySelector("#mc-pm [data-p=color]").value, focus: document.activeElement?.dataset.a }));
+    check(lib.all >= 150 && lib.cats >= 15 && lib.ti === 5 && lib.found.length === 1 && /1\.4404/.test(lib.found[0]) && lib.cat === "all" && lib.props.some(r => /Density ?8 g\/cm³/.test(r)) && lib.props.some(r => /Yield strength ?220 MPa/.test(r)) && /EN 10088/.test(lib.src)
+      && lib.gost.length === 1 && /2024/.test(lib.gost[0]) && /Aluminium 6061/.test(lib.btn.text) && lib.btn.dens === "2.7" && lib.btn.col === "#c9ced6" && lib.btn.focus === "matpick",
+      `model 1.372: the material library lists 150+ materials by category, finds one by AISI or GOST name, shows its properties and source, Enter applies it with its colour (${JSON.stringify(lib)})`);
+    check(axMat.length === 0, `model 1.372: 0 WCAG 2.1 AA violations with the material library open${axMat.length ? ": " + axMat.join(" | ") : ""}`);
     await mp.fill("#mc-pm input[data-p=partNumber]", "HX-001");
     await mp.press("#mc-pm input[data-p=partNumber]", "Tab");
     const ax2 = await axe();
     await mp.click("#lang-btn");
     await mp.waitForTimeout(200);
     const ru2 = await ruScan();
+    // The library in Russian: a new material of my own, found by its name, then deleted.
+    await mp.click("#mc-pm [data-a=matpick]");
+    await mp.waitForSelector("#mat-dlg[open]");
+    const matRu = await mp.evaluate(() => {
+      const d = document.querySelector("#mat-dlg"), bad = [];
+      const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) if (!n.parentElement.closest('[translate="no"]') && /[A-Za-z]{2,}/.test(n.data)) bad.push(n.data.trim().slice(0, 40));
+      for (const e of d.querySelectorAll("[title], [aria-label], [placeholder]")) for (const a of ["title", "aria-label", "placeholder"]) { const v = e.getAttribute(a); if (v && /[A-Za-z]{2,}/.test(v)) bad.push(v); }
+      return { bad, sel: d.querySelector(".mat-list li.on b")?.textContent, cat: d.querySelector('.mat-cat[data-cat="steel"]').textContent };
+    });
+    await mp.click("#mat-dlg [data-a=new]");
+    await mp.fill('#mat-dlg [data-f="name"]', "Сплав 7");
+    await mp.fill('#mat-dlg [data-f="density"]', "3,3");
+    await mp.fill('#mat-dlg [data-f="E"]', "55");
+    await mp.click("#mat-dlg [data-a=save]");
+    const own = await mp.evaluate(() => ({ cat: document.querySelector("#mat-dlg .mat-cat.on").dataset.cat, rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent), stored: JSON.parse(localStorage.getItem("mc:materials")) }));
+    await mp.click("#mat-dlg [data-a=del]");
+    await mp.click("#confirm [data-a=ok]");
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
+    const ownGone = await mp.evaluate(() => JSON.parse(localStorage.getItem("mc:materials")).length);
+    await mp.keyboard.press("Escape");
+    await mp.waitForSelector("#mat-dlg", { state: "detached" });
+    check(matRu.bad.length === 0 && matRu.sel === "Алюминий 6061" && /^Стали/.test(matRu.cat) && own.cat === "custom" && own.rows.join() === "Сплав 7" && own.stored[0]?.density === 3.3 && own.stored[0]?.E === 55 && ownGone === 0,
+      `model 1.372: the material library in Russian, and a material of my own is saved in the browser and deleted again (${JSON.stringify({ matRu, own, ownGone })})`);
     await mp.click("#lang-btn");
     await mp.click("#mc-ok");
     await idle();
     const props = await mp.evaluate(() => ({ m: window.__sv.model.store.doc.material, pn: window.__sv.model.store.doc.props.partNumber, row: document.querySelector('#mc-tree .ft-row[data-id="material"] .ft-name').textContent, dens: document.querySelector("#density").value }));
-    check(props.m?.density === 2.7 && props.pn === "HX-001" && props.row === "Aluminium 6061" && props.dens === "2.7", `model 1.19: part properties set the material, part number and the mass panel's density (${JSON.stringify(props)})`);
+    check(props.m?.density === 2.7 && props.pn === "HX-001" && props.row === "Aluminium 6061" && props.dens === "2.7" && props.m?.sy === 276 && props.m?.E === 68.9, `model 1.19: part properties set the material, part number and the mass panel's density (${JSON.stringify(props)})`);
     await mp.evaluate(() => document.querySelector("#mass-run").click());
     await mp.waitForTimeout(300);
     const massTxt = await mp.evaluate(() => document.querySelector("#mass-out").textContent);
@@ -10995,6 +11043,14 @@ try {
     });
     const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
     check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
+    // Front view (views[0]): the axis of each rounded slot end, 2 mm past the plate's faces (FR-DRW-023).
+    const sf = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const box = [p.x + (p.box[0] - p.uc) * p.s - 5, p.x + (p.box[2] - p.uc) * p.s + 5];
+      return { orient: v.orient, ls: window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l" && Math.abs(q.p[1] - p.y) < 20 * p.s && q.p[0] > box[0] && q.p[0] < box[1]).map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100)) };
+    });
+    const xs = sf.ls.filter(q => q[0] === q[2] && Math.abs(Math.abs(q[3] - q[1]) - 14) < 0.05).map(q => q[0]).sort((a, b) => a - b);
+    check(sf.ls.length === 2 && xs.length === 2 && xs[0] === -20 && xs[1] === 20, `drawing: a slot seen from the side gets an axis at each rounded end (${JSON.stringify(sf)})`);
     await ctx.close();
   }
 
