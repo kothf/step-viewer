@@ -195,13 +195,15 @@ try {
       return {
         n: tools.length, off: tools.filter(b => !inView(b)).map(b => b.dataset.tool), tab: document.querySelector("#cm-tabs [aria-selected=true]")?.dataset.cm,
         pages: pages.length, pagesOff: pages.filter(b => !inView(b)).map(b => b.dataset.tab),
+        // A page tab's name stays inside its own button (exam #10: the names ran into the next tab's icon).
+        lblOut: pages.filter(b => { const l = b.querySelector(".tb-lbl").getBoundingClientRect(), q = b.getBoundingClientRect(); return l.width > 2 && (l.right > q.right + 0.5 || l.left < q.left - 0.5); }).map(b => b.dataset.tab),
         named: [...tools, ...pages].every(b => b.textContent.trim().length > 1 && b.title),
         over: tb.scrollWidth - tb.clientWidth, page: document.documentElement.scrollWidth - innerWidth,
         h: Math.round(tb.getBoundingClientRect().height), cmH: Math.round(cm.getBoundingClientRect().height),
       };
     });
     check(r.n === 12 && r.pages === 5 && r.tab === "evaluate" && r.named && r.over <= 1 && r.page <= 0 && (w < 1024 || r.h <= 48) && r.cmH <= 80
-      && (w < 1024 || r.off.length === 0) && (w < 1280 || r.pagesOff.length === 0),
+      && (w < 1024 || r.off.length === 0) && (w < 1280 || r.pagesOff.length === 0) && r.lblOut.length === 0,
       `command bar ${w}px: Evaluate holds the 12 tools${w >= 1024 ? " on screen" : ""}, ${w >= 1280 ? "5 panel pages in view, " : ""}one-row header (${JSON.stringify(r)})`);
   }
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -5407,6 +5409,9 @@ try {
     const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
     await mp.click("#new-part");
     await mp.waitForFunction(() => window.__sv.model?.store);
+    await settle();
+    // An empty part says how to start (exam #11), not "Open a model to begin."
+    const emptyHint = await mp.evaluate(() => document.querySelector("#props")?.textContent ?? "");
     await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
       const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
       d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", -20, -10), P("b", 20, -10), P("c", 20, 10), P("d", -20, 10), Ln("l1", "a", "b"), Ln("l2", "b", "c"), Ln("l3", "c", "d"), Ln("l4", "d", "a")] },
@@ -5437,6 +5442,8 @@ try {
     await settle();
     await mp.evaluate(() => window.__sv.modeller.command("extrude"));
     await settle();
+    // The cursor starts in Depth (exam #7).
+    const depthFocus = await mp.evaluate(() => document.activeElement?.dataset?.num ?? "");
     const on = await mp.evaluate(() => document.querySelector('#mc-pm input[data-k="merge"]')?.checked);
     await mp.click('#mc-pm input[data-k="merge"]');
     await settle();
@@ -5444,6 +5451,26 @@ try {
     await mp.click("#mc-ok");
     await settle();
     check(on === true && mb.merge === false && mb.bodies === 2, `model 1.57: Extrude with Merge result off makes a new body (FR-FT-006) (${on}, ${JSON.stringify(mb)})`);
+    // 1.363 (exam #7, #8, #11, #12, #24): Overall size comes from the exact box; a cut sketched on a plane under the
+    // part starts towards the part; Extrude seen straight on turns the view.
+    {
+      const size = await mp.evaluate(() => ({ box: window.__sv.model.last().props.box, text: [...document.querySelectorAll("#props .kv .v")].map(e => e.textContent).find(x => /×/.test(x)) ?? "" }));
+      await mp.evaluate(() => window.__sv.model.store.change("Circle", d => { d.features.push({ id: "k2", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "o", t: "point", x: 10, y: 0 }, { id: "c", t: "circle", c: "o", r: 2 }] }); }));
+      await settle();
+      await mp.evaluate(() => window.__sv.viewer.viewFrom(new window.__sv.viewer.camera.position.constructor(0, 0, 1), false));
+      await mp.evaluate(() => window.__sv.modeller.command("cut"));
+      await settle();
+      await mp.waitForTimeout(600);
+      const cut = await mp.evaluate(() => { const v = window.__sv.viewer, m = window.__sv.model.mode(), d = v.camera.position.clone().sub(v.controls.target).normalize(); return { flip: m.draft?.flip, end: m.draft?.end, bad: window.__sv.model.last().statuses.filter(x => !x.ok).length, look: Math.round(d.z * 100) / 100 }; });
+      await mp.click("#mc-cancel");
+      await settle();
+      await mp.evaluate(() => window.__sv.model.store.change("Drop", d => { d.features = d.features.filter(f => f.id !== "k2"); }));
+      await settle();
+      check(/empty/i.test(emptyHint) && !/Open a model/.test(emptyHint) && depthFocus === "depth"
+        && size.box && Math.abs(size.box[0][0] + 20) < 1e-6 && Math.abs(size.box[1][2] - 20) < 1e-6 && /^40\.000 × 20\.000 × 20\.000/.test(size.text)
+        && cut.flip === true && cut.end === "through" && cut.bad === 0 && cut.look > 0.2 && cut.look < 0.9,
+        `model 1.363: empty-part hint, Depth focused, exact Overall size, a cut from a plane under the part goes into it, Extrude turns a straight-on view (${JSON.stringify({ emptyHint, depthFocus, size, cut })})`);
+    }
     // Variable radius fillet on a corner edge: callouts at both ends, the end radius typed in the list.
     const v1 = await mp.evaluate(() => window.__sv.model.last().props.volume);
     await mp.evaluate(() => window.__sv.modeller.command("fillet"));
@@ -8787,6 +8814,14 @@ try {
     await ap.selectOption('.drw-props [data-st="ang"]', "");
     const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
+    // Default ± tolerance (FR-DRW-025): typed with a comma or a point; cleared, it is gone.
+    await ap.fill('.drw-props [data-st="tol"]', "0,05");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol1 = await ap.evaluate(() => window.__sv.drw.doc().style?.tol);
+    await ap.fill('.drw-props [data-st="tol"]', "");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);

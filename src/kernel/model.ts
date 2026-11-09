@@ -4007,7 +4007,14 @@ export class Modeller {
     const m = vp.MatrixOfInertia();
     const I = [0, 1, 2].map(r => [0, 1, 2].map(c => m.Value(r + 1, c + 1)));
     const { values, vectors } = eigenSym3(I);
-    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape) };
+    // The exact box: the mesh's own is a little small on round faces (a Ø15 cylinder read 14.995; exam #12).
+    let box: [V3, V3] | undefined;
+    try {
+      const b = new oc.Bnd_Box_1();
+      oc.BRepBndLib.AddOptimal(body.shape, b, false, false);
+      if (!b.IsVoid()) box = [this.xyz(b.CornerMin()), this.xyz(b.CornerMax())];
+    } catch { /* no box: the view's is used */ }
+    return { volume: vp.Mass(), area: sp.Mass(), com: this.xyz(vp.CentreOfMass()), moments: values as V3, axes: vectors as [V3, V3, V3], bodies: this.solids(body.shape), ...(box ? { box } : {}) };
   }
 
   /** Drops cached shapes (a new document). */

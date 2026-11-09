@@ -160,6 +160,7 @@ export const RU: Record<string, string> = {
   // ---------- right panel (3D) ----------
   "Properties and tools": "Свойства и инструменты",
   "Properties": "Свойства",
+  "This part is empty. Start a sketch on a plane to begin.": "Деталь пуста. Начните эскиз на плоскости.",
   "Open a model to begin.": "Откройте модель, чтобы начать.",
   "Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)": "Умное измерение: щёлкните элемент, чтобы узнать его размер, второй — расстояние, шаг или угол между ними (Esc сбрасывает)",
   "Point to point (D)": "Точка–точка (D)",
@@ -2859,6 +2860,9 @@ export const RU: Record<string, string> = {
   "Line group": "Группа линий",
   "Linear decimals": "Знаков у линейных размеров",
   "Angle decimals": "Знаков у угловых размеров",
+  "Default tolerance (±)": "Допуск по умолчанию (±)",
+  "Default angle tolerance (±°)": "Угловой допуск по умолчанию (±°)",
+  "Document": "Документ",
   "mm": "мм",
   "Filled": "Залитые",
   "Dot": "Точка",
