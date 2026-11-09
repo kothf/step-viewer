@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.352.0] - 2026-11-09
+
+### Added
+
+- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path (SolidWorks' Locate profile), for group 1 and for each group.
+
 ## [1.343.0] - 2026-11-09
 
 ### Added
@@ -2048,7 +2054,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.343.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.352.0...HEAD
+[1.352.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.352.0
 [1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0
 [1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0

@@ -875,6 +875,9 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 :root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
 .mc-callout.wld-sym { border-color: #495057; background: #fff; color: #212529; font-variant-numeric: tabular-nums; }
 :root[data-theme="dark"] .mc-callout.wld-sym { background: #212529; color: #f1f3f5; border-color: #adb5bd; }
+.mc-callout.wld-corner { border-color: #c2255c; background: #fff0f6; color: #a61e4d; }
+.mc-callout.wld-corner.own { font-weight: 600; border-width: 2px; }
+:root[data-theme="dark"] .mc-callout.wld-corner { background: #3b1027; color: #faa2c1; border-color: #f06595; }
 .sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }
 /* Equations panel (FR-PAR-001/005) */
 .eq-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }

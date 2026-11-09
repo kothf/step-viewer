@@ -4,9 +4,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../model/types";
 import { FeatureError, type Named } from "../kernel/model";
-import { anchorPoint, loopSegs, outline, profileName, profileShape, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
+import { anchorPoint, loopSegs, outline, profileName, profileShape, type Anchor, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
-import type { CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
+import type { Pierce, CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
 import { capDir, cornerKey } from "./types";
 
 /** The parts of `Modeller` the weldment features use (its private helpers, reached at run time). */
@@ -141,11 +141,22 @@ export function groupOf(f: MemberFeature, ent: string): Pick<MemberFeature, "anc
   return f.groups?.find(g => g.ents.includes(ent)) ?? f;
 }
 
+/** The profile point that goes on the path: an anchor, the sketch origin ("o", the default), or a profile sketch point (`p:<id>`). */
+export function pierceOf(shape: ProfileShape, a: Pierce | undefined): V2 {
+  if (!a || a === "o") return shape.origin ?? [0, 0];
+  if (a.startsWith("p:")) {
+    const p = shape.points?.[a.slice(2)];
+    if (!p) throw new FeatureError("E-WLD-PIERCE", "The profile point the member is located by is gone: pick another profile position.");
+    return p;
+  }
+  return anchorPoint(shape, a as Anchor);
+}
+
 function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
   const v = upOf(ref, seg, doc, frames, f.align);
   const u = cross(v, seg.wa);
   const g = groupOf(f, ref.ent);
-  const an = g.anchor ? anchorPoint(shape, g.anchor) : shape.origin ?? [0, 0];
+  const an = pierceOf(shape, g.anchor);
   const a = g.angle?.v ?? 0, c = Math.cos(a), s = Math.sin(a);
   const p2 = (q: V2): V2 => {
     let x = q[0] - an[0];

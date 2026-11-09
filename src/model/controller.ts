@@ -58,7 +58,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
@@ -3179,6 +3179,7 @@ export class ModelController {
     this.drawHoles();
     this.drawThreads();
     this.drawWeldSymbols();
+    this.drawCornerCallouts();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       const pos: number[] = [];
@@ -3272,6 +3273,36 @@ export class ModelController {
       label.title = t("Weld symbol: click to edit the bead");
       label.dataset.at = JSON.stringify(fi.center);
       label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
+  /**
+   * Corner callouts of an open structural member (FR-FT-121, SolidWorks' corner spheres): the treatment at
+   * each corner where its segments meet; a click offers the treatments for that corner alone.
+   */
+  private drawCornerCallouts() {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.draft.type !== "member") return;
+    const f = m.draft, ctx = this.weldCtx(m.index);
+    for (const c of cornerSpots(ctx, f)) {
+      const label = document.createElement("button");
+      label.className = `mc-handle mc-callout wld-corner${c.own ? " own" : ""}`;
+      label.dataset.corner = c.key;
+      label.dataset.at = JSON.stringify(c.at);
+      label.textContent = c.text;
+      label.title = t("Corner {corner}: click to change its treatment", { corner: c.label });
+      label.setAttribute("aria-haspopup", "menu");
+      label.addEventListener("pointerdown", e => e.stopPropagation());
+      label.addEventListener("click", e => {
+        e.stopPropagation();
+        const r = label.getBoundingClientRect();
+        this.showMenu(c.opts.map(([v, l]): [string, () => void] => [(v === c.cur ? "✓ " : "") + l, () => {
+          const fn = weldChange(f, `wcorner:${c.key}`, v, ctx);
+          if (fn) { fn(); this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        }]), r.left, r.bottom + 4, () => label.focus());
+      });
       $("#mc-layer").appendChild(label);
     }
     this.placeCallouts();
