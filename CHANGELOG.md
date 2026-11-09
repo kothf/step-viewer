@@ -19,6 +19,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - The heads-up view bar no longer covers the selection filter and the status line at the top left of the view.
 
+## [1.356.0] - 2026-11-09
+
+### Added
+- Insert Bends and Convert to Sheet Metal follow walls that don't touch the fixed face (FR-FT-120): Insert Bends finds the next wall across each wall's far edge (a hat section's brims, a Z section's flanges) and bends it too, the right way round; Convert to Sheet Metal does the same for each wall far edge you pick, so a box can become a C channel with lips.
+- Corner Relief at return flanges and three-bend corners (FR-FT-120): a flange off a flange's end (a return) now makes a corner with that flange's bend, and where it meets a two-bend corner the relief covers all three bend zones. The panel names three-bend corners.
+- Sheet Metal Gusset tip shapes (FR-FT-120): a Rounded tip (a half round across the rib's width) or a flat tip with filleted edges; the groove follows, and the flat pattern still leaves the gusset out.
+
+## [1.355.0] - 2026-11-09
+
+### Added
+- Thread callouts from geometry (FR-DRW-022): a hole read from the shape with a cosmetic thread on it now adds the thread line ("M6-6H ↧10", or the drill depth or THRU when the thread runs the full length), so a tapped hole cut without the Hole wizard reads like one made with it, and equal tapped holes are counted together.
+- Default decimals in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Linear decimals and Angle decimals set the precision of every dimension that has none of its own; Auto keeps the old behaviour (up to two, trailing zeros dropped).
+
 ## [1.354.0] - 2026-11-09
 
 ### Added
@@ -2140,7 +2153,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.360.0...HEAD
-[1.360.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.360.0
+[1.360.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.360.0
+[1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
+[1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
 [1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
 [1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0

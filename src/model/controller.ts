@@ -2463,7 +2463,8 @@ export class ModelController {
   private pickConvert(e: PointerEvent, f: SmConvertFeature | SmInsertFeature) {
     const ed = f.type === "smconvert" && f.face.name ? this.host.edgeAt(e.clientX, e.clientY)?.edge : undefined;
     const ref = ed && ed.type === "line" ? this.edgeRefs([ed])[0] : undefined;
-    if (f.type === "smconvert" && ref && ref.faces.includes(f.face.name)) {
+    // An edge of the fixed face, or a wall's far edge (it shares a face with a picked edge): a further wall.
+    if (f.type === "smconvert" && ref && (ref.faces.includes(f.face.name) || f.edges.some(x => x.faces.some(n => n !== f.face.name && ref.faces.includes(n))))) {
       const key = (r: EdgeRef) => [...r.faces].sort().join("|");
       const i = f.edges.findIndex(x => key(x) === key(ref));
       if (i >= 0) f.edges.splice(i, 1); else f.edges.push(ref);
