@@ -148,7 +148,10 @@ export class SketchEditor {
   /** Model snapping while drawing (SolidWorks inferencing to model geometry); off with the panel switch. */
   modelSnap = true;
   private draft: { pts: V2[]; ids: (string | null)[]; cursor: V2 | null; snap: string | null; chainStart?: string; snapCurve?: string | null; snapOrigin?: boolean; curves?: (string | null)[]; hoverCurve?: string | null } = { pts: [], ids: [], cursor: null, snap: null };
-  private dimDraft: { picks: Hit[]; dim: SkDim | null } = { picks: [], dim: null };
+  private dimDraft: { picks: Hit[]; dim: SkDim | null; lock?: boolean } = { picks: [], dim: null };
+  /** Instant 2D (FR-SK-067): the round handle on a selected driving dimension and its drag. */
+  private grip: HTMLButtonElement | null = null;
+  private gripDrag: { id: string; base: SketchFeature; baseInfo: SolveResult; v0: number; p0: V2; dir: V2; k: number; from: V2; step: number; moved: boolean } | null = null;
   /** Ordinate dimensioning: the base picked first, then the row the values go on. */
   private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
   /** Box selection in progress (sketch coordinates), started at screen x0. */
@@ -206,6 +209,8 @@ export class SketchEditor {
     this.clearGroup();
     for (const l of this.labels.values()) l.remove();
     this.labels.clear();
+    this.grip = null;
+    this.gripDrag = null;
     this.host.layer.replaceChildren();
     this.host.viewer.invalidate();
     this.disposed = true;
@@ -238,7 +243,7 @@ export class SketchEditor {
   }
 
   /** Something is in progress (drag, drawing, value box): the stored sketch must not replace it now. */
-  get busy() { return !!(this.drag || this.labelDrag || this.box || this.input || this.draft.pts.length || this.dimDraft.picks.length); }
+  get busy() { return !!(this.drag || this.labelDrag || this.gripDrag || this.box || this.input || this.draft.pts.length || this.dimDraft.picks.length); }
 
   private has(id: string) {
     return id === ORIGIN || this.sk.ents.some(e => e.id === id) || this.sk.rels.some(r => r.id === id) || this.sk.dims.some(d => d.id === id);
@@ -480,6 +485,58 @@ export class SketchEditor {
       return false;
     }
     return false;
+  }
+
+  /**
+   * The sketch right-click menu (FR-SK-045), for a right-click without movement at `e`: rows of
+   * [label, action, icon], null = separator. An item under the cursor that is not selected becomes the selection.
+   * With the line tool in the middle of a chain the chain ends at once (as a double-click) and null comes back.
+   */
+  contextMenu(e: { clientX: number; clientY: number }): ([string, () => void, string?] | null)[] | null {
+    const d = this.draft;
+    if (this.tool === "line" && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
+    // Placing a dimension: a right-click locks (or frees) its orientation, so the text can go anywhere (FR-SK-068).
+    if (this.tool === "dim" && this.dimDraft.dim) { this.dimDraft.lock = !this.dimDraft.lock; this.render(); this.statusHint(); return null; }
+    const rows: ([string, () => void, string?] | null)[] = [];
+    const sep = () => { if (rows.length && rows.at(-1) !== null) rows.push(null); };
+    if ((this.tool === "spline" || this.tool === "sspline") && d.pts.length >= 2) rows.push([t("End chain"), () => this.drawClick(d.pts.at(-1)!, { detail: 2 })]);
+    if (d.pts.length || this.dimDraft.picks.length) rows.push([t("Cancel drawing"), () => this.setTool(this.tool), "✕"]);
+    if (this.tool !== "select") rows.push([t("Select"), () => this.setTool("select")]);
+    else {
+      const p = this.uv(e as PointerEvent);
+      const h = p ? this.hits(p)[0] : undefined;
+      if (h && h.kind !== "dim" && h.kind !== "rel" && !this.selection.has(h.id)) { this.selection = new Set([h.id]); this.render(); this.emitSel(); }
+    }
+    if (!this.selection.size) return rows;
+    sep();
+    const ids = [...this.selection];
+    const one = ids.length === 1 ? this.ent(ids[0]) : undefined;
+    if (one && (one.t === "line" || one.t === "arc") && !one.cons) rows.push([t("Select chain"), () => this.select(this.chainOf(one.id).segs.map(s => s.id))]);
+    const curves = ids.map(id => this.ent(id)).filter(x => x && x.t !== "point");
+    if (curves.length) rows.push([curves.every(x => x!.cons) ? t("Normal geometry") : t("Construction geometry"), () => this.toggleConstruction()]);
+    const rels = this.validRelations();
+    if (rels.length) { sep(); for (const k of rels) rows.push([t(REL_NAME[k]), () => this.addRelation(k), REL_GLYPH[k]]); }
+    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints()]);
+    sep();
+    rows.push([t("Delete"), () => this.deleteSelection(), "🗑"]);
+    rows.push([t("Zoom to selection"), () => { const b = this.selectionBox(); if (b) this.host.viewer.fit(true, b); }]);
+    return rows;
+  }
+
+  /** World box of the selected sketch items, with a margin (Zoom to selection while sketching). */
+  selectionBox(): THREE.Box3 | null {
+    const b = new THREE.Box3();
+    for (const id of this.selection) {
+      const e = id === ORIGIN ? null : this.ent(id);
+      if (id === ORIGIN) b.expandByPoint(this.w([0, 0]));
+      else if (!e) continue;
+      else if (e.t === "circle") { const c = this.pt(e.c); for (const s of [[1, 0], [-1, 0], [0, 1], [0, -1]]) b.expandByPoint(this.w([c[0] + s[0] * e.r, c[1] + s[1] * e.r])); }
+      else if (e.t === "point") b.expandByPoint(this.w([e.x, e.y]));
+      else for (const q of refPts(e)) b.expandByPoint(this.w(this.pt(q)));
+    }
+    if (b.isEmpty()) return null;
+    const s = b.getSize(new THREE.Vector3());
+    return b.expandByScalar(Math.max(s.x, s.y, s.z, 1) * 0.1);
   }
 
   /**
@@ -1231,6 +1288,7 @@ export class SketchEditor {
   private placeDimDraft(p: V2) {
     const dim = this.dimDraft.dim!;
     dim.pos = p;
+    if (this.dimDraft.lock) { dim.val.v = measureDim(this.sk, dim); return; }
     this.diaSide(dim, p);
     const pts = this.dimPoints(dim);
     if ((dim.t === "distance" || dim.t === "hdistance" || dim.t === "vdistance") && pts) {
@@ -2636,6 +2694,7 @@ export class SketchEditor {
     const k = e.key.toLowerCase();
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (k === "escape") {
+      if (this.gripDrag) { this.endGrip(false); return true; }
       if (this.pattern) { this.cancelPattern(); this.host.onSelection?.([...this.selection]); return true; }
       if (this.draft.pts.length || this.dimDraft.picks.length) { this.setTool(this.tool); return true; }
       if (this.tool !== "select") { this.setTool("select"); return true; }
@@ -2918,6 +2977,17 @@ export class SketchEditor {
     // Dimension lines.
     const dims = [...this.sk.dims, ...(this.dimDraft.dim ? [this.dimDraft.dim] : [])];
     for (const dm of dims) this.dimGeometry(dm, (a, b) => push(a, b, this.selection.has(dm.id) ? C.sel : C.dim, dimSegs, dimCols));
+    // Instant 2D ruler: ticks every snap step along the drag, a longer one every fifth (FR-SK-067).
+    const gd = this.gripDrag;
+    if (gd) {
+      const nrm: V2 = [-gd.dir[1], gd.dir[0]], h = this.px(gd.p0) * 4;
+      const cur = this.sk.dims.find(x => x.id === gd.id)?.val.v ?? gd.v0;
+      const n0 = Math.round(cur / gd.step);
+      for (let n = Math.max(1, n0 - 12); n <= n0 + 12; n++) {
+        const s = (n * gd.step) / gd.k, q: V2 = [gd.from[0] + gd.dir[0] * s, gd.from[1] + gd.dir[1] * s], L = n % 5 === 0 ? 2 : 1;
+        push([q[0] - nrm[0] * h * L, q[1] - nrm[1] * h * L], [q[0] + nrm[0] * h * L, q[1] + nrm[1] * h * L], n === n0 ? C.sel : C.dim, dimSegs, dimCols);
+      }
+    }
 
     const v = this.host.viewer;
     const mkLines = (s: number[], c: number[], width: number) => {
@@ -3070,6 +3140,7 @@ export class SketchEditor {
       el.classList.toggle("sel", this.selection.has(d.id));
       el.classList.toggle("driven", !!d.driven);
       el.classList.toggle("draft", d === this.dimDraft.dim);
+      el.classList.toggle("locked", d === this.dimDraft.dim && !!this.dimDraft.lock);
       el.dataset.pos = JSON.stringify(this.labelPos(d));
     }
     // Ordinate dimensions: a 0 at the base of each row.
@@ -3104,6 +3175,7 @@ export class SketchEditor {
       el.dataset.k = String(k);
     }
     for (const [id, el] of this.labels) if (!seen.has(id)) { el.remove(); this.labels.delete(id); if (this.hoverRel === id) this.hoverRel = null; }
+    this.syncGrip();
     this.placeLabels();
   }
 
@@ -3155,6 +3227,107 @@ export class SketchEditor {
     el.addEventListener("pointercancel", up);
   }
 
+  /**
+   * Instant 2D (FR-SK-067): where a driving dimension's handle sits and which way dragging it changes the
+   * value (k = value change per unit of pointer travel: 2 for diameters).
+   */
+  private gripGeo(d: SkDim): { at: V2; dir: V2; k: number } | null {
+    if (d.driven || d.ord || d.off || d.t === "angle" || d.val.expr) return null;
+    const pos = d.pos ?? [0, 0];
+    if (d.t === "radius" || d.t === "diameter") {
+      const e = this.ent(d.e[0]);
+      if (!e || (e.t !== "circle" && e.t !== "arc")) return null;
+      const c = this.pt(e.c), r = e.t === "circle" ? e.r : Math.hypot(this.pt(e.a)[0] - c[0], this.pt(e.a)[1] - c[1]);
+      const a = Math.atan2(pos[1] - c[1], pos[0] - c[0]), dir: V2 = [Math.cos(a), Math.sin(a)];
+      return { at: [c[0] + dir[0] * r, c[1] + dir[1] * r], dir, k: d.t === "diameter" ? 2 : 1 };
+    }
+    const pts = this.dimPoints(d);
+    if (!pts) return null;
+    const [a, b] = pts;
+    let dir: V2 = d.t === "hdistance" ? [1, 0] : d.t === "vdistance" ? [0, 1] : norm2(sub2(b, a));
+    const along = dot2(sub2(b, a), dir);
+    if (!(Math.abs(along) > 1e-9)) return null;
+    if (along < 0) dir = [-dir[0], -dir[1]];
+    const nrm: V2 = [-dir[1], dir[0]], off = dot2(sub2(pos, b), nrm);
+    return { at: [b[0] + nrm[0] * off, b[1] + nrm[1] * off], dir, k: d.dia ? 2 : 1 };
+  }
+
+  /** Shows the handle on the one selected driving dimension while the Select tool is on. */
+  private syncGrip() {
+    const ids = [...this.selection];
+    const d = this.gripDrag ? this.sk.dims.find(x => x.id === this.gripDrag!.id)
+      : ids.length === 1 && this.tool === "select" && !this.input && !this.pattern ? this.sk.dims.find(x => x.id === ids[0]) : undefined;
+    const g = d ? this.gripGeo(d) : null;
+    if (!d || !g) { this.grip?.remove(); this.grip = null; return; }
+    if (!this.grip) {
+      const b = this.grip = document.createElement("button");
+      b.className = "sk-grip";
+      b.title = t("Drag to change the value");
+      b.setAttribute("aria-label", t("Drag to change the value"));
+      b.addEventListener("pointerdown", e => { e.stopPropagation(); this.gripDown(e); });
+      b.addEventListener("click", e => e.stopPropagation());
+      this.host.layer.appendChild(b);
+    }
+    this.grip.dataset.id = d.id;
+    this.grip.dataset.pos = JSON.stringify(g.at);
+  }
+
+  private gripDown(e: PointerEvent) {
+    const b = this.grip, id = b?.dataset.id;
+    const d = id ? this.sk.dims.find(x => x.id === id) : undefined;
+    const g = d ? this.gripGeo(d) : null;
+    const p0 = this.uv(e);
+    if (e.button !== 0 || !b || !d || !g || !p0) return;
+    this.closeInput(false);
+    const u = this.host.unit();
+    // Snap step to suit the zoom, in the display unit (Shift while dragging: ten times finer).
+    const stepU = 10 ** Math.floor(Math.log10(Math.max((this.px(g.at) * 6) / u.mm, 1e-9)));
+    this.gripDrag = { id: d.id, base: structuredClone(this.sk), baseInfo: this.info, v0: d.val.v, p0: g.at, dir: g.dir, k: g.k,
+      from: [g.at[0] - (g.dir[0] * d.val.v) / g.k, g.at[1] - (g.dir[1] * d.val.v) / g.k], step: stepU * u.mm, moved: false };
+    const start = p0;
+    try { b.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+    const move = (ev: PointerEvent) => {
+      const gd = this.gripDrag, p = this.uv(ev);
+      if (!gd || !p) return;
+      const step = ev.shiftKey ? gd.step / 10 : gd.step;
+      let v = Math.round((gd.v0 + dot2(sub2(p, start), gd.dir) * gd.k) / step) * step;
+      if (!(v > 1e-9)) v = step;
+      const cur = this.sk.dims.find(x => x.id === gd.id);
+      if (!cur || Math.abs(v - cur.val.v) < 1e-12) return;
+      const next: SketchFeature = structuredClone(gd.base);
+      const nd = next.dims.find(x => x.id === gd.id)!;
+      nd.val = { v };
+      const r = solve(next);
+      // Values the other relations cannot reach are skipped: the sketch stays at the last one that solved.
+      if (r.status !== "ok") return;
+      gd.moved = true;
+      this.sk = next;
+      this.info = r;
+      this.render();
+    };
+    const up = () => {
+      b.removeEventListener("pointermove", move);
+      b.removeEventListener("pointerup", up);
+      b.removeEventListener("pointercancel", up);
+      this.endGrip(true);
+    };
+    b.addEventListener("pointermove", move);
+    b.addEventListener("pointerup", up);
+    b.addEventListener("pointercancel", up);
+    this.render();
+  }
+
+  /** Ends a handle drag: one undo step when the value changed, or back to where it started. */
+  private endGrip(keep: boolean) {
+    const gd = this.gripDrag;
+    if (!gd) return;
+    this.gripDrag = null;
+    const now = this.sk.dims.find(x => x.id === gd.id)?.val.v;
+    if (keep && gd.moved && now !== undefined && Math.abs(now - gd.v0) > 1e-12) this.commit("Change dimension");
+    else { this.sk = gd.base; this.info = gd.baseInfo; }
+    this.render();
+  }
+
   private anchorOf(id: string): V2 {
     const e = this.ent(id);
     if (!e) return [0, 0];
@@ -3178,6 +3351,7 @@ export class SketchEditor {
 
   private placeLabels() {
     if (this.disposed) return;
+    if (this.grip) { const [x, y] = this.screen(JSON.parse(this.grip.dataset.pos ?? "[0,0]") as V2); this.grip.style.left = `${x}px`; this.grip.style.top = `${y}px`; }
     for (const el of this.labels.values()) {
       const p = JSON.parse(el.dataset.pos ?? "[0,0]") as V2;
       const [x, y] = this.screen(p);

@@ -2218,6 +2218,61 @@ try {
     }, { id: ends.l4, n: nBefore });
     check(merged.rel && merged.gap < 1e-6 && merged.status === "ok" && /x -?[\d.]+, y -?[\d.]+/.test(statusText) && copied.n === 1 && copied.dx.every(v => near(v, 8, 0.05)) && copied.dy.every(v => near(v, 0, 0.05)) && copied.sel && copied.rels === 0,
       `model 1.266: drag a point onto a point merges them, Ctrl+drag copies the selection, status shows x/y (${JSON.stringify(merged)}, ${statusText}, ${JSON.stringify(copied)})`);
+    // Sketch right-click (FR-SK-045): with the line tool it ends the chain; with Select it opens the menu for the item under it.
+    const rclick = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down({ button: "right" }); await mp.mouse.up({ button: "right" }); await mp.waitForTimeout(150); };
+    const linesBefore = (await lineIds()).length;
+    await tool("line");
+    await click([30, 38]);
+    await click([46, 38]);
+    await rclick([60, 30]);
+    const ended = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { tool: ed.tool, pts: ed.draft.pts.length, menu: !document.querySelector("#mc-menu").hidden }; });
+    const added = (await lineIds()).filter(id => !before.includes(id)).at(-1);
+    await tool("select");
+    await rclick([38, 38]);
+    const menuItems = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent === "Construction geometry")?.click());
+    const ctxAfter = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { sel: [...ed.selection], cons: !!ed.sk.ents.find(e => e.id === id)?.cons }; }, added);
+    check(ended.tool === "line" && ended.pts === 0 && !ended.menu && (await lineIds()).length === linesBefore + 1
+      && ["Select chain", "Construction geometry", "Horizontal", "Delete", "Exit sketch", "Discard"].every(l => menuItems.some(m => m.endsWith(l))) && ctxAfter.sel.includes(added) && ctxAfter.cons,
+      `model 1.275: right-click ends a line chain, and the sketch menu sets construction on the line under the cursor (${JSON.stringify(ended)}, ${JSON.stringify(menuItems)}, ${JSON.stringify(ctxAfter)})`);
+    // Instant 2D (FR-SK-067/068): a right-click while placing locks the dimension horizontal; dragging the selected
+    // dimension's handle by 10 mm changes 30 to 40, and one Ctrl+Z puts it back.
+    await tool("line");
+    await click([20, -25]);
+    await click([50, -10]);
+    await rclick([70, 0]);
+    const slant = (await lineIds()).at(-1);
+    await tool("dim");
+    await click([35, -17.5]);
+    const hover = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(60); };
+    await hover([35, -2]);
+    const tFree = await mp.evaluate(() => window.__sv.model.editor().dimDraft.dim?.t);
+    await rclick([35, -2]);
+    await hover([65, -17]);
+    const tLocked = await mp.evaluate(() => ({ t: window.__sv.model.editor().dimDraft.dim?.t, lock: !!window.__sv.model.editor().dimDraft.lock, cls: !!document.querySelector(".sk-dim.draft.locked") }));
+    await click([65, -17]);
+    await mp.waitForTimeout(150);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(100);
+    const dimNow = () => mp.evaluate(id => { const sk = window.__sv.model.editor().sk; const d = sk.dims.filter(x => x.e.includes(id)).at(-1); return d && { id: d.id, t: d.t, v: d.val.v }; }, slant);
+    const placed = await dimNow();
+    await tool("select");
+    await mp.evaluate(id => document.querySelector(`.sk-dim[data-id="${id}"]`).click(), placed.id);
+    await mp.waitForTimeout(80);
+    const gripPos = await mp.evaluate(() => { const g = document.querySelector(".sk-grip"); return g ? JSON.parse(g.dataset.pos) : null; });
+    if (gripPos) {
+      const [fx, fy] = await toPage(gripPos), [tx, ty] = await toPage([gripPos[0] + 10, gripPos[1]]);
+      await mp.mouse.move(fx, fy); await mp.waitForTimeout(40); await mp.mouse.down();
+      for (let i = 1; i <= 8; i++) { await mp.mouse.move(fx + ((tx - fx) * i) / 8, fy + ((ty - fy) * i) / 8); await mp.waitForTimeout(30); }
+      await mp.mouse.up(); await mp.waitForTimeout(120);
+    }
+    const dragged = await dimNow();
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(150);
+    const undoneDim = await dimNow();
+    check(tFree === "hdistance" && tLocked.t === "hdistance" && tLocked.lock && tLocked.cls && placed?.t === "hdistance" && near(placed.v, 30, 0.01) && gripPos && near(gripPos[0], 50, 0.01)
+      && near(dragged?.v, 40, 1e-6) && near(undoneDim?.v, placed?.v, 1e-9),
+      `model 1.282: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
@@ -7811,7 +7866,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 21 && mode === "note", `drawing: annotation tab shows the 21 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 25 && mode === "note", `drawing: annotation tab shows the 25 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8571,6 +8626,33 @@ try {
     await settle();
     const tp = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { plane: f.plane, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 200) < 0.01).map(c => c.qty) }; });
     check(noFaceBox && tp.plane?.plane === "xpl" && !tp.bad && JSON.stringify(tp.rows) === "[1]", `weldments: Trim/Extend to a reference plane (${JSON.stringify({ noFaceBox, tp })})`);
+    // Planar trim against a body: Beam C (300 long) runs back flat to Beam D's near side (x = 3020): 380 long, square ends.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xsc", type: "sketch", name: "SketchC", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c1", 3100, 3000), P("c2", 3400, 3000), L("wc", "c1", "c2")] },
+          { id: "xsd", type: "sketch", name: "SketchD", plane: { std: "XY" }, rels: [], dims: [], ents: [P("d1", 3000, 2900), P("d2", 3000, 3100), L("wd", "d1", "d2")] },
+          { id: "xmc", type: "member", name: "Beam C", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsc", ent: "wc" }], corner: "none" },
+          { id: "xmd", type: "member", name: "Beam D", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsd", ent: "wd" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    const qtyAt = len => (window.__sv.model.last().cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - len) < 0.01 && c.angle1 + c.angle2 === 0).reduce((n, c) => n + c.qty, 0);
+    const before = await mp.evaluate(`[${qtyAt}][0](380)`);
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "body");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wplanar"]', "1");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xmc:wc:start" }]; m.draft.boundary = { name: "xmd:wd:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const pt = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { planar: f.planar, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), }; });
+    pt.added = (await mp.evaluate(`[${qtyAt}][0](380)`)) - before;
+    check(pt.planar === true && !pt.bad && pt.added === 1, `weldments: Trim/Extend planar trim against a body (${JSON.stringify(pt)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
@@ -9352,6 +9434,29 @@ try {
     const d2 = await dt(), q2 = await prims();
     const area = q2.some(p => p.t === "a" && p.pen === "phantom"), sz = q2.some(p => p.t === "t" && p.s === "Ø8");
     check(d2?.kind === "area" && d2.size === "Ø8" && area && sz, `drawing: datum target area: phantom circle, hatching and its size in the frame (${JSON.stringify({ d2, area, sz })})`);
+    // Sheet sketch: a line drawn off the views snaps horizontal; a centre line type and a typed length.
+    await dp.keyboard.press("Escape");
+    const sk = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(x => x.t === "sk").map(x => JSON.parse(JSON.stringify(x))));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+    await clickSheet(30, 30);
+    await clickSheet(70, 30.6);
+    await dp.waitForTimeout(150);
+    const s1 = await sk();
+    const skPanel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skpen"]'));
+    check(s1.length === 1 && s1[0].k === "line" && s1[0].pts[1] === 0 && Math.abs(s1[0].pts[0] - 40) < 0.5 && skPanel, `drawing: sheet sketch line, snapped horizontal (${JSON.stringify({ s1, skPanel })})`);
+    if (skPanel) {
+      await dp.selectOption('#drw .drw-props [data-d="skpen"]', "center"); await dp.waitForTimeout(150);
+      await dp.fill('#drw .drw-props [data-d="sklen"]', "50"); await dp.press('#drw .drw-props [data-d="sklen"]', "Enter"); await dp.waitForTimeout(150);
+    }
+    const s2 = await sk(), q3 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "CENTER" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-6 && Math.abs(Math.abs(p.p[2] - p.p[0]) - 50) < 0.01).length);
+    // Rectangle: two corners, picked again by clicking its edge.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skrect"]');
+    await clickSheet(30, 50); await clickSheet(60, 70);
+    await dp.waitForTimeout(150);
+    await dp.keyboard.press("Escape"); await clickSheet(45, 70.3); await dp.waitForTimeout(150);
+    const rectSel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skw"]'));
+    const s3 = await sk();
+    check(s2[0]?.pen === "center" && Math.abs(s2[0].pts[0] - 50) < 0.01 && q3 === 1 && s3.some(x => x.k === "rect" && JSON.stringify(x.pts) === "[30,20]") && rectSel, `drawing: sheet sketch line type and length, rectangle picked by its edge (${JSON.stringify({ s2, q3, s3, rectSel })})`);
     await ctx.close();
   }
 

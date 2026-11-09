@@ -1092,14 +1092,14 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 
 - **FR-UI-114** (P1, M) **Modify box** (completes FR-UI-053 and FR-UI-028): the box shows the dimension's name as its title (editable, FR-SK-065), the value with units, ✓, ✕, **Rebuild** (applies and keeps the box open), **Reverse direction** for linear dimensions, an increment field with spin buttons, and the mouse wheel over the box steps the value by the increment (Shift ×10, Alt ×0.1) with a live rebuild/solve; typing `=` starts an expression with variable and dimension name completion (FR-PAR-002). Enter = ✓, Esc = ✕ keeping the old value.
 - **FR-UI-115** (P1, M) **Feature dimensions on the model** (completes FR-HIS-010): a single click on a feature in the tree, or on one of its faces with Instant3D on, shows its driving dimensions (its sketch's and the feature's own) on the model in blue; a double click on a shown dimension opens the Modify box; a change rebuilds as one undo step. Double-clicking a feature row shows its dimensions (SW habit) and Edit feature stays in the context bar, the menu and Enter on the row. (1.85.0 opens Edit feature on a double click and shows no feature dimensions on the model.)
-- **FR-SK-067** (P1, M) **Instant 2D**: in a sketch, a selected driving dimension shows a round handle at its moving end; dragging it changes the value with a ruler and snap ticks, as model handles do (FR-UI-027), and is one undo step.
-- **FR-SK-068** (P1, M) Dimension placement feedback: while placing, the preview follows the cursor and shows the type it will be (horizontal, vertical, aligned, the angle quadrant, radius/diameter); a right-click locks the current orientation so the text can be moved freely; Esc cancels placement only. Clicking a placed dimension's arrow dots flips its arrows inside/outside.
+- **FR-SK-067** (P1, M) **Instant 2D**: in a sketch, a selected driving dimension shows a round handle at its moving end; dragging it changes the value with a ruler and snap ticks, as model handles do (FR-UI-027), and is one undo step. *Done in 1.282.0.*
+- **FR-SK-068** (P1, M) Dimension placement feedback: while placing, the preview follows the cursor and shows the type it will be (horizontal, vertical, aligned, the angle quadrant, radius/diameter); a right-click locks the current orientation so the text can be moved freely; Esc cancels placement only. Clicking a placed dimension's arrow dots flips its arrows inside/outside. *Right-click lock done in 1.282.0 (the preview already showed the type and Esc cancels only the placement); arrow flipping waits for sketch arrowheads (sketch dimensions draw ticks).*
 
 **Sketch interaction**
 
 - **FR-SK-043** (P1, M) **Drag to merge**: dragging an end point onto another point, the origin or a curve adds the coincident relation (or merges the points, FR-SK-051) with the coincident glyph shown while hovering the target; holding Ctrl while releasing suppresses it (FR-SK-052). *Done in 1.266.0.*
 - **FR-SK-044** (P1, M) **Copy by drag**: Ctrl+drag of selected sketch entities copies them (relations between the copies kept, relations to the rest dropped); *Done in 1.266.0.*
-- **FR-SK-045** (P1, M) **Sketch context menu** (right-click without movement): End chain (while drawing), Select chain, Construction on/off, the relations valid for the selection (FR-SK-054), Fully define…, Delete, Zoom to selection, Exit sketch, Discard. A right-click with the line tool ends the chain like a double click.
+- **FR-SK-045** (P1, M) **Sketch context menu** (right-click without movement): End chain (while drawing), Select chain, Construction on/off, the relations valid for the selection (FR-SK-054), Fully define…, Delete, Zoom to selection, Exit sketch, Discard. A right-click with the line tool ends the chain like a double click. *Done in 1.275.0 (no Fully define yet).*
 - **FR-SK-046** (P1, S) **Quick snaps**: a menu (heads-up bar while sketching and the sketch context menu) picks one snap type for the next point only (end point, midpoint, centre, quadrant, intersection, tangent, perpendicular, parallel, nearest, horizontal/vertical); Preferences turn each inference type on or off permanently.
 - **FR-SK-047** (P1, M) The status bar shows the cursor position in sketch coordinates (x, y in document units) while sketching, next to the sketch status (FR-UI-050). *Done in 1.266.0.*
 
@@ -1605,14 +1605,14 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
 | Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
 | Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
-| Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | No | New |
+| Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0) | Done (no arrow flip yet) |
 | Typing a number while drawing | FR-UI-052 | No | Weaker |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
-| Drag an end point onto another to merge | FR-SK-043 | Drag moves; no relation added | New |
-| Ctrl+drag copies sketch entities | FR-SK-044 | No | New |
-| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | No | New |
+| Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | New |
+| Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | New |
+| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu (no Fully define yet); a line-tool right-click ends the chain | New |
 | Quick snaps | FR-SK-046 | No | New |
-| Cursor x, y in the status bar while sketching | FR-SK-047 | Status shows DOF and the tool hint | New |
+| Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | New |
 | Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | Selecting a row highlights its faces (FR-HIS-003); no hover link | Weaker |
 | Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
 | Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
