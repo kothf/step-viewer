@@ -8342,11 +8342,20 @@ try {
     await mp.fill('#wld-cut input[data-cp="part"][data-ci="0"]', "FR-001");
     await mp.press('#wld-cut input[data-cp="part"][data-ci="0"]', "Tab");
     await settle();
+    // A cut list item can have its own material: the row mass and the total follow its density (steel 7.85 → aluminium 2.7).
+    const num = v => Number(String(v).replace(/[^\d.]/g, ""));
+    const kgOf = () => mp.evaluate(() => [...document.querySelectorAll("#wld-cut [data-wkg]")].map(e => e.textContent));
+    const kg0 = await kgOf();
+    await mp.selectOption('#wld-cut select[data-cp="mat"][data-ci="0"]', "Aluminium 6061");
+    await settle();
+    const kg1 = await kgOf();
+    const matRatio = num(kg1[0]) / num(kg0[0]);
+    check(Math.abs(matRatio - 2.7 / 7.85) < 0.01 && kg1[1] === kg0[1], `weldments: cut list item material (${JSON.stringify({ kg0, kg1, matRatio })})`);
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
     await settle();
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
-    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
     await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);

@@ -3038,6 +3038,8 @@ export const RU: Record<string, string> = {
   "Weld gap": "Зазор под сварку",
   "Body trim": "Отсечение по телу",
   "Planar trim": "Плоское отсечение",
+  "Part material ({m})": "Материал детали ({m})",
+  "Steel (assumed)": "Сталь (по умолчанию)",
   "Gap": "Зазор",
   "Corners": "Углы",
   "As set above": "Как задано выше",
