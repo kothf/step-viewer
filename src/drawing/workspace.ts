@@ -1115,6 +1115,12 @@ export class DrawingWorkspace {
         if (d < bd) { bd = d; best = { kind: "pt", ref, e }; }
       }
     }
+    // The centre of mass point (a view showing it) is picked like a corner; the reference follows the model.
+    const com = v.com ? topo.com : undefined;
+    if (!only && com && inDetail(P(com))) {
+      const d = Math.hypot(...(([x, y]) => [x - p[0], y - p[1]])(S(com)));
+      if (d < bd) { bd = d; best = { kind: "pt", ref: { pt: com, com: true }, e: { k: "@com", t: "l", a: com, b: com, m: com } }; }
+    }
     // A circle right under the cursor beats a point that is not (a small hole's own centre, a nearby centre or line end), so
     // circles smaller than the snap radius can still be picked (exam bug 37).
     const pt = best, pd = bd;
@@ -2447,6 +2453,7 @@ export class DrawingWorkspace {
           <label class="drw-chk"><input type="checkbox" data-v="marks"${v.marks !== false ? " checked" : ""}> ${esc(t("Centre marks and centrelines"))}</label>
           <label class="drw-chk"><input type="checkbox" data-v="threads"${v.threads !== false ? " checked" : ""}> ${esc(t("Cosmetic threads"))}</label>
           <label class="drw-chk"><input type="checkbox" data-v="sketches"${v.sketches ? " checked" : ""}> ${esc(t("Sketches"))}</label>
+          ${this.factsOf(v.id)?.topo.com ? `<label class="drw-chk" title="${esc(t("Mark the model's centre of mass; dimensions can measure from it"))}"><input type="checkbox" data-v="com"${v.com ? " checked" : ""}> ${esc(t("Centre of mass"))}</label>` : ""}
         </fieldset>
         ${v.parent && (v.kind !== "detail") ? `<fieldset class="pm-group"><legend>${esc(t("Alignment"))}</legend>
           <p class="drw-note">${esc(v.free ? t("Moves on its own.") : t("Lined up with {name}.", { name: findView(sh, v.parent)?.name ?? "?" }))}</p>
@@ -2776,6 +2783,7 @@ export class DrawingWorkspace {
     else if (vk === "bendLines" || vk === "bendNotes") this.setView(vk === "bendLines" ? "Bend lines" : "Bend notes", v => { if ((el as HTMLInputElement).checked) delete v[vk]; else v[vk] = false; });
     else if (vk === "threads") this.setView("Cosmetic threads", v => { if ((el as HTMLInputElement).checked) delete v.threads; else v.threads = false; });
     else if (vk === "sketches") this.setView("Show sketches", v => { v.sketches = (el as HTMLInputElement).checked || undefined; });
+    else if (vk === "com") this.setView("Centre of mass", v => { v.com = (el as HTMLInputElement).checked || undefined; });
     else if (vk === "letter") {
       const L = val.trim().toUpperCase();
       if (!L) { this.renderProps(); return; }

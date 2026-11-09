@@ -81,7 +81,7 @@ export function refEdge(ref: GeoRef, topo: Topo | null): MEdge | null {
 
 /** The model point a reference stands for (for an edge "e": its middle, or a circle's centre). */
 export function refPoint(ref: GeoRef, topo: Topo | null): V3 | null {
-  if ("pt" in ref) return ref.pt;
+  if ("pt" in ref) return ref.com && topo?.com ? topo.com : ref.pt;
   const e = refEdge(ref, topo);
   if (!e) return null;
   if (ref.p === "c" || (ref.p === "e" && e.t === "c")) return e.c ?? e.m;
@@ -118,7 +118,7 @@ export function dimGeo(a: DimAnnot, P: (p: V3) => P2, topo: Topo | null): DimGeo
     if ("pt" in r0) {
       const p1 = a.refs[1] && refPoint(a.refs[1], topo);
       if (!p1) return null;
-      const c = P(r0.pt), q = P(p1), r = d2(c, q);
+      const c = P(refPoint(r0, topo)!), q = P(p1), r = d2(c, q);
       return { k: kind, pts: [], c, r, value: kind === "rad" ? r : 2 * r };
     }
     const e = refEdge(r0, topo);
@@ -543,6 +543,7 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
   if (v.sketches && ctx.sketches?.length) out.prims.push(...sketchPrims(v, pl, ctx.sketches, P));
   const btable = (sheet.annots ?? []).some(a => a.t === "btable" && a.view === v.id);
   if (v.bendLines !== false && ctx.bends?.length) out.prims.push(...bendPrims(v, pl, ctx.bends, P, ctx, btable));
+  if (v.com && ctx.topo?.com) out.prims.push(...comPrims(toSheet(pl, ...P(ctx.topo.com))));
   for (const a of sheet.annots ?? []) {
     if (a.view !== v.id) continue;
     let r: { prims: Prim[]; box: [number, number, number, number] } | null = null;
@@ -658,7 +659,7 @@ export function clineSegs(a: CLineAnnot, P: (p: V3) => P2, topo: Topo | null, pl
 /** The point of a referenced edge nearest to `T` on the sheet, and the edge's direction there. */
 export function edgeFoot(ref: GeoRef, topo: Topo | null, P: (p: V3) => P2, pl: Placement, T: P2): { at: P2; d: P2 } | null {
   const e = refEdge(ref, topo);
-  if (!e) { if ("pt" in ref) { const p = toSheet(pl, ...P(ref.pt)); return { at: p, d: [1, 0] }; } return null; }
+  if (!e) { if ("pt" in ref) { const p = toSheet(pl, ...P(refPoint(ref, topo)!)); return { at: p, d: [1, 0] }; } return null; }
   const A = toSheet(pl, ...P(e.a)), B = toSheet(pl, ...P(e.b));
   if (e.t === "l" && d2(A, B) > 1e-6) {
     const d = unit2([B[0] - A[0], B[1] - A[1]]), k = Math.max(0, Math.min(d2(A, B), (T[0] - A[0]) * d[0] + (T[1] - A[1]) * d[1]));
@@ -887,6 +888,21 @@ export function bendPrims(v: DrawingView, pl: Placement, bends: FlatBend[], P: (
     const deg = Math.round(b.angle * 180 / Math.PI * 100) / 100, rad = Math.round(b.r * 100) / 100;
     const s = tags ? tags[i] : `${ctx.label(b.up ? "UP" : "DOWN")} ${String(deg).replace(".", ctx.dec)}° R${String(rad).replace(".", ctx.dec)}`;
     out.push({ t: "t", x: (A[0] + B[0]) / 2 + nx * 0.8, y: (A[1] + B[1]) / 2 + ny * 0.8, s, h, al: "c", rot: ang, layer: "ANNOT" });
+  }
+  return out;
+}
+
+/** Radius of the centre of mass symbol on the sheet (mm). */
+export const COM_R = 2;
+
+/** The centre of mass symbol (ISO 7000-0626 style): a circle with a cross and two opposite quarters filled. */
+export function comPrims(C: P2): Prim[] {
+  const r = COM_R, out: Prim[] = [{ t: "a", o: C, r, a0: 0, a1: TAU, pen: "thin", layer: "ANNOT" },
+    { t: "l", p: [C[0] - r, C[1], C[0] + r, C[1]], pen: "thin", layer: "ANNOT" }, { t: "l", p: [C[0], C[1] - r, C[0], C[1] + r], pen: "thin", layer: "ANNOT" }];
+  for (const q of [0, 2]) {
+    const p: number[] = [C[0], C[1]];
+    for (let k = 0; k <= 8; k++) { const a = (q + k / 8) * Math.PI / 2; p.push(C[0] + r * Math.cos(a), C[1] + r * Math.sin(a)); }
+    out.push({ t: "p", p, pen: "thin", layer: "ANNOT", closed: true, fill: true });
   }
   return out;
 }

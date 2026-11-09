@@ -191,6 +191,15 @@ test("annotations: topology names, centre marks, dimensions, hole callout, model
   const r = m.evaluate(d);
   const oc = await occ();
   const topo = topology(oc, r.body!.shape, r.body!.names);
+  // Centre of mass (uniform density): the Ø10 hole 10 mm off centre pulls it 15708/118429 mm the other way; a COM reference follows it.
+  const vh = Math.PI * 25 * 20, cx = vh * 10 / (120000 - vh);
+  assert.ok(topo.com && Math.abs(Math.abs(topo.com[0]) - cx) < 1e-6 && Math.abs(topo.com[1]) < 1e-6 && Math.abs(topo.com[2] - 10) < 1e-6, `com ${topo.com}`);
+  const { refPoint, comPrims, COM_R } = await import("../../src/drawing/annot");
+  assert.deepEqual(refPoint({ pt: [5, 5, 5], com: true }, topo), topo.com);
+  assert.deepEqual(refPoint({ pt: [5, 5, 5], com: true }, { edges: [], cyls: [] }), [5, 5, 5], "the last place when the model has none");
+  assert.deepEqual(refPoint({ pt: [5, 5, 5] }, topo), [5, 5, 5]);
+  const sym = comPrims([10, 20]);
+  assert.ok(sym.some(p => p.t === "a" && p.r === COM_R) && sym.filter(p => p.t === "p" && p.fill).length === 2);
   const circles = topo.edges.filter(e => e.t === "c" && Math.abs(e.r! - 5) < 1e-9);
   assert.ok(circles.length >= 2 && circles.every(e => e.k.includes("f2")), `hole circles named by their faces: ${circles.map(e => e.k)}`);
   const cyl = topo.cyls.filter(c => Math.abs(c.r - 5) < 1e-9);

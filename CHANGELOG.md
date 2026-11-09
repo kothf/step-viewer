@@ -11,6 +11,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Lofted Bend (FR-FT-120)**: Sheet Metal → Lofted Bend joins two open profiles of lines and arcs, each sketched on its own plane, with a sheet of thickness, like SolidWorks' Lofted-Bend with the Bent method. The sheet is made of flat facets with sharp folds between them (Facets per arc sets how finely arcs are split), so it unfolds exactly: Flatten and the flat pattern DXF show the developed outline with every fold as a bend line (up or down), and drawings get the flat pattern view and bend table. Facets lying in one plane stay one face. Typical uses are transitions such as square-to-round ducts and hoppers.
 
+## [1.300.0] - 2026-11-09
+
+### Added
+
+- **Exclude from cut list (FR-FT-121).** Each item in the weldment Cut List dialog has an Exclude box, as in SolidWorks: an excluded item stays in the list, struck through, but gets no item number, adds nothing to the total mass and is left out of the CSV. The Cut list folder in the Features tree marks it as excluded.
+
+## [1.298.0] - 2026-11-09
+
+### Added
+
+- **Fully define sketch (FR-SK-045)**: a Fully define sketch button beside an under-defined sketch's status in the sketch panel, and the same item in the right-click menu on empty space. It adds horizontal/vertical relations to lines within 1° of level or plumb, diameters to circles, radii to arcs, then horizontal and vertical dimensions from the origin to the points, keeping only what removes freedom, until the sketch is fully defined. One undo takes it all back.
+
+## [1.297.0] - 2026-11-09
+
+### Added
+
+- **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as SolidWorks' Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
 ## [1.296.0] - 2026-11-09
 
 ### Added
@@ -1750,7 +1767,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.302.0...HEAD
-[1.302.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.302.0
+[1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
+[1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0
+[1.298.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.298.0
+[1.297.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.297.0
 [1.296.0]: https://github.com/kothf/step-viewer/compare/v1.295.0...v1.296.0
 [1.295.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.295.0
 [1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0

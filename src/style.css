@@ -1097,6 +1097,7 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 
 /* Weldment cut list: editable item properties. */
 #wld-cut .wld-cp { width: 100%; min-width: 7em; font: inherit; padding: 2px 4px; }
+#wld-cut tr.wld-excl td:not(:last-child), .ft-body.wld-excl { font-style: italic; text-decoration: line-through; }
 /* Motion trace paths (FR-FT-122): their rows have an empty lane; the panel plots the selected one. */
 .motion .mo-tlane { position: relative; height: 26px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(90deg, transparent 0 6px, color-mix(in srgb, var(--line) 50%, transparent) 6px 7px); }
 .motion .mo-tlane.off { opacity: 0.55; }
