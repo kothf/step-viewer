@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.316.0] - 2026-11-09
+
+### Added
+
+- **Mouse gestures (FR-UI-024)**: turn them on in Display ▾ → Mouse gestures…, then press the right button in a part or a sketch, drag in a direction and release to run that direction's command. A radial guide around the press point shows the 4 (or 8) commands and lights the one you point at. By default a part offers Top, Right, Front and Normal to (8 directions add Isometric, Sketch, Extrude and Zoom to fit), and a sketch offers Line, Circle, Dimension and Rectangle (plus Arc, Trim, Fillet and Normal to). Every direction's command can be changed. A right-click without a drag still opens the menu, Esc cancels a gesture, and panning moves to the middle button (Ctrl+middle in a sketch) while gestures are on.
+
 ## [1.310.0] - 2026-11-09
 
 ### Added
@@ -1813,7 +1819,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.310.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.316.0...HEAD
+[1.316.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.316.0
 [1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
 [1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0

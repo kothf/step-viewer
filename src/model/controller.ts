@@ -66,6 +66,8 @@ import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
 import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../sketch/check";
 import { lang, onLangChange, t, withLang } from "../i18n";
+import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
+import { gestureGuide } from "../gestureUi";
 
 /** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
 type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
@@ -93,6 +95,8 @@ export interface ModelHost {
   setMaterial?(m: { name: string; density: number } | undefined): void;
   /** Normal to the picked flat face (the view's "8"). */
   normalTo?(normal?: V3): void;
+  /** A standard view by name (front, top, iso, ..., "normal", "fit"), for mouse gestures. */
+  view?(name: string): void;
   /** Makes a coordinate system feature the active measurement and export frame (null: back to global); `src` is its feature id. */
   setCsys?(c: { name: string; src: string; o: V3; x: V3; z: V3 } | null, quiet?: boolean): void;
   /** Section view at the sketch plane (FR-SK-006): cuts away what lies in front of the plane; null removes it. */
@@ -1680,6 +1684,8 @@ export class ModelController {
       const m = this.mode;
       // The edge under a right-click, taken before the view controls react to the button.
       this.rightHit = e.button === 2 && m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer") ? this.host.edgeAt(e.clientX, e.clientY) : null;
+      // Mouse gestures (FR-UI-024): a right-drag runs a command; the view controls never see this button.
+      if (e.button === 2 && this.gestureStart(e)) { e.stopPropagation(); e.preventDefault(); return; }
       if (m.kind === "sketch" && m.editor.pointerDown(e)) { e.stopPropagation(); e.preventDefault(); return; }
       if (e.button === 0 && this.arrowHit(e)) {
         // Dragging the depth arrow: the orbit controls never see this button.
@@ -2160,6 +2166,75 @@ export class ModelController {
     inp.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== inp) box.remove(); }, 0));
     draw();
     inp.focus();
+  }
+
+  /** The right-drag in progress (FR-UI-024). */
+  private gesture: { x: number; y: number; slot: number; guide: ReturnType<typeof gestureGuide> | null; end: () => void } | null = null;
+
+  /**
+   * Starts a mouse gesture on a right-button press in a part or a sketch when the preference is on (FR-UI-024).
+   * A release without a drag is left to the viewport (the right-click menu); a drag shows the radial guide and
+   * a release past `GESTURE_RUN` runs the slot's command. Esc cancels.
+   */
+  private gestureStart(e: PointerEvent): boolean {
+    const m = this.mode;
+    const mode: GestureMode | null = m.kind === "sketch" ? (m.editor.pattern ? null : "sketch") : m.kind === "none" && this.store ? "part" : null;
+    if (!mode) return false;
+    const cfg = loadGestures();
+    if (!cfg.on) return false;
+    this.gesture?.end();
+    this.hideShortcutBar();
+    this.closeMenu();
+    const canvas = this.host.viewer.renderer.domElement;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    let done = false;
+    const g = {
+      x: e.clientX, y: e.clientY, slot: -1, guide: null as ReturnType<typeof gestureGuide> | null,
+      end: () => {
+        if (done) return;
+        done = true;
+        g.guide?.remove();
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        window.removeEventListener("keydown", key, true);
+        try { canvas.releasePointerCapture(e.pointerId); } catch { /* gone */ }
+        if (this.gesture === g) this.gesture = null;
+      },
+    };
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - g.x, dy = ev.clientY - g.y;
+      if (!g.guide && Math.hypot(dx, dy) >= GESTURE_SHOW) g.guide = gestureGuide(g.x, g.y, mode, cfg);
+      if (g.guide) { g.slot = gestureSlot(dx, dy, cfg.n); g.guide.set(g.slot); }
+      ev.stopPropagation();
+    };
+    const up = (ev: PointerEvent) => {
+      if (ev.button !== 2) return;
+      const shown = !!g.guide, slot = g.slot;
+      g.end();
+      // A right-click: the viewport's own handler opens the menu.
+      if (!shown && Math.hypot(ev.clientX - g.x, ev.clientY - g.y) <= 4) return;
+      ev.stopPropagation();
+      this.down = null;
+      const id = slot >= 0 ? cfg[mode][slot] : "";
+      if (id) this.runGesture(id);
+    };
+    const key = (ev: KeyboardEvent) => { if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); g.end(); this.down = null; } };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("keydown", key, true);
+    this.gesture = g;
+    return true;
+  }
+
+  /** Runs a gesture's command (ids from `GESTURE_CMDS`). */
+  private runGesture(id: string) {
+    const m = this.mode;
+    if (id.startsWith("view:")) { this.host.view?.(id.slice(5)); return; }
+    if (id.startsWith("sk:") && m.kind !== "sketch") return;
+    if (id === "exit" && m.kind !== "sketch") return;
+    if (m.kind === "sketch" && !id.startsWith("sk:") && id !== "exit" && id !== "undo" && id !== "redo") return;
+    this.command(id);
+    if (id.startsWith("sk:")) this.renderPanel();
   }
 
   /** OK / Cancel at the top of a right-click menu while a command runs (FR-UI-107). */
