@@ -256,22 +256,40 @@ export class MotionManager {
     let idx = 0;
     this.edit(s => {
       const k = s.tracks.find(x => x.id === trackId)!;
-      if (k.kind === "camera") { k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9); k.keys.push(this.camKey(tq)); k.keys = sortKeys(k.keys); idx = k.keys.findIndex(x => x.t === tq); }
-      else if (k.kind === "pose") {
-        const p = poseAt(k.keys, tq) ?? { d: [0, 0, 0], r: [0, 0, 0] };
-        k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, d: p.d, r: p.r }]);
-        idx = k.keys.findIndex(x => x.t === tq);
-      }
-      else if (k.kind === "mate" || k.kind === "explode" || k.kind === "look") {
-        const v = valueAt(k.keys, tq) ?? (k.kind === "mate" ? (this.asm.doc?.mates ?? []).find(m => m.id === k.mate)?.value ?? 0 : k.kind === "look" ? this.compOpacity(k.comp) : 0);
-        k.keys = k.keys.filter(x => Math.abs(x.t - tq) > 1e-9);
-        k.keys.push({ t: tq, v });
-        k.keys = sortKeys(k.keys);
-        idx = k.keys.findIndex(x => x.t === tq);
-      }
+      this.keyInto(k, tq);
+      idx = ((k as { keys: AnyKey[] }).keys).findIndex(x => x.t === tq);
     });
     this.sel = { track: trackId, key: idx };
     this.render();
+  }
+
+  /**
+   * Adds a key at `at` to every key track that is on, each with the value it has there now (SolidWorks: Place
+   * key on the whole assembly), as one undo step, and selects them together.
+   */
+  keyAll(at = this.time) {
+    const ids = this.study.tracks.filter(k => k.kind !== "motor" && !k.off).map(k => k.id);
+    if (!ids.length) { toast(t("Add a track first: there is nothing to key."), "warn"); return; }
+    const tq = this.snap(at);
+    this.edit(s => { for (const k of s.tracks) if (ids.includes(k.id)) this.keyInto(k, tq); });
+    this.pick(ids.map(track => ({ track, t: tq })));
+    this.render();
+  }
+
+  /** Puts a key at `tq` on a key track (replacing one already there) holding the value the track has there. */
+  private keyInto(k: Track, tq: number) {
+    if (k.kind === "camera") { k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), this.camKey(tq)]); return; }
+    if (k.kind === "pose") {
+      const p = poseAt(k.keys, tq) ?? { d: [0, 0, 0], r: [0, 0, 0] };
+      k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, d: p.d, r: p.r }]);
+      return;
+    }
+    if (k.kind === "mate" || k.kind === "explode" || k.kind === "look") {
+      const v = valueAt(k.keys, tq) ?? (k.kind === "mate" ? (this.asm.doc?.mates ?? []).find(m => m.id === k.mate)?.value ?? 0 : k.kind === "look" ? this.compOpacity(k.comp) : 0);
+      // A key in the middle of a colour blend keeps the colour shown there.
+      const c = k.kind === "look" ? colorAt(k.keys, tq) : null;
+      k.keys = sortKeys([...k.keys.filter(x => Math.abs(x.t - tq) > 1e-9), { t: tq, v, ...(c ? { c } : {}) }]);
+    }
   }
 
   private deleteSel() {
@@ -1133,6 +1151,7 @@ export class MotionManager {
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
+      + `<button class="btn small" data-mo="keyall"${this.study.tracks.some(k => k.kind !== "motor" && !k.off) ? "" : " disabled"} title="${esc(t("Add a key at the playhead to every track, holding what each shows there"))}">${esc(t("Key all"))}</button>`
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`
       + `<button class="btn small" data-mo="orbit" title="${esc(t("Rotate the model once round over the study (camera keys)"))}">${esc(t("Rotate model"))}</button>`
@@ -1274,6 +1293,7 @@ export class MotionManager {
       else if (a === "start") this.seek(0);
       else if (a === "end") this.seek(this.study.duration);
       else if (a === "addkey" && this.sel) this.addKey(this.sel.track);
+      else if (a === "keyall") this.keyAll();
       else if (a === "zin") this.setZoom(this.zoom * 2);
       else if (a === "zout") this.setZoom(this.zoom / 2);
       else if (a === "zfit") { this.scrollX = 0; this.setZoom(1); }
@@ -1352,6 +1372,11 @@ export class MotionManager {
       this.setZoom(this.zoom * (e.deltaY < 0 ? 1.5 : 1 / 1.5), at);
     }, { passive: false });
     const tAt = (ev: PointerEvent, el: HTMLElement) => { const r = el.getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left) / Math.max(1, r.width))) * s.duration; };
+    ruler?.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      const at = this.snap(tAt(e as PointerEvent, ruler));
+      this.menu([{ label: t("Key all tracks here"), run: () => this.keyAll(at), off: !this.study.tracks.some(k => k.kind !== "motor" && !k.off) }], e.clientX, e.clientY);
+    });
     ruler?.addEventListener("pointerdown", e => {
       ruler.setPointerCapture(e.pointerId);
       this.seek(this.snap(tAt(e, ruler)));
@@ -1876,6 +1901,7 @@ export class MotionManager {
     if (!tr || tr.kind === "motor") return;
     this.menu([
       { label: t("Add key here"), run: () => this.addKey(trackId, at) },
+      { label: t("Key all tracks here"), run: () => this.keyAll(at) },
       { label: t("Paste here"), run: () => this.pasteKey(trackId, at), off: !this.canPaste(trackId) },
     ], x, y);
   }
