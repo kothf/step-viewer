@@ -14,6 +14,7 @@ import type { CLineAnnot, CloudAnnot, DimAnnot, DraftStyle, DrawingView, GeoRef,
 import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
+import { dtargetPrims } from "./dtarget";
 import { textWidth } from "./textWidth";
 
 type P2 = [number, number];
@@ -560,6 +561,10 @@ export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: Ann
       const f = a.leader ? edgeFoot(a.leader, ctx.topo, P, pl, toSheet(pl, a.pos[0], a.pos[1])) : null;
       r = weldPrims(a, toSheet(pl, a.pos[0], a.pos[1]), f?.at ?? null);
       if (a.leader && !f) out.dangling.push(a.id);
+    } else if (a.t === "dtarget") {
+      const at = toSheet(pl, a.pos[0], a.pos[1]), f = a.leader ? edgeFoot(a.leader, ctx.topo, P, pl, a.tp ? toSheet(pl, a.tp[0], a.tp[1]) : at) : null;
+      r = dtargetPrims(a, at, f?.at ?? null, f?.d ?? [1, 0], pl.s);
+      if (a.leader && !f) out.dangling.push(a.id);
     } else if (a.t === "gtol") {
       const pt = a.leader ? refPoint(a.leader, ctx.topo) : null;
       r = gtolPrims(a, toSheet(pl, a.pos[0], a.pos[1]), pt ? toSheet(pl, ...P(pt)) : null, ctx.dec);
@@ -736,7 +741,7 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
       out.hits.push({ id: a.id, box: r.box, ring: a.pts.map((c, i) => c + a.pos[i % 2]), band: Math.max(1, a.arc ?? 6) });
       continue;
     }
-    const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
+    const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)
       : a.t === "surf" ? surfPrims(a, a.pos, dec) : a.t === "table" ? tablePrims(a.kind === "bom" ? { ...a, rows: bom ? bomCells(bom) : [] } : a, label) : null;
     if (r) { out.prims.push(...r.prims); out.hits.push({ id: a.id, box: r.box }); }
   }

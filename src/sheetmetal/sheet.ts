@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { BendCalc, BendPosition, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -400,6 +400,114 @@ function mitre(st: SheetState, ida: string, idb: string, gap: number) {
     try { P.outer = clipOuter(P.outer, n, k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the cut misses: leave the flange */ }
   };
   cut(A); cut(B);
+}
+
+/** A miter flange's profile: the sketch's open chain of lines as world points, in chain order. */
+export function miterProfile(sk: SketchFeature, frame: Frame): V3[] {
+  const path = sketchPath(sk);
+  if (path.error || path.closed || !path.segs.length || path.segs.some(x => x.kind !== "line")) throw new SheetError("E-SM-MITERSK", "The miter flange sketch must be an open chain of lines.");
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  const segs = path.segs as Extract<Seg, { kind: "line" }>[];
+  return [w(segs[0].a), ...segs.map(x => w(x.b))];
+}
+
+/**
+ * Miter flange (SolidWorks): the profile, drawn on a plane square to one of the picked edges and starting at it,
+ * becomes a chain of bends and flat flanges on every picked edge. Each line of the profile is one level of flanges;
+ * the lengths run to the virtual sharps on the profile's side, which is the outside of the first bend.
+ * Flanges of edges meeting at a corner of the face run on and are mitred, level by level.
+ */
+export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { state: SheetState; ops: SheetOp[] } {
+  if (!f.edges.length) throw new SheetError("E-SM-NOEDGE", "Pick the edges for the flange.");
+  if (prof.length < 2) throw new SheetError("E-SM-MITERSK", "The miter flange sketch must be an open chain of lines.");
+  const st = clone(prev);
+  const T = st.T, r = f.radius?.v ?? st.R;
+  if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  // The edge the profile starts at: the picked edge nearest either end of the chain.
+  const size = Math.max(1, ...prof.flatMap(p => p.map(Math.abs)));
+  type Start = { j: number; pts: V3[]; dist: number; o: V3; z: V3; e: V3 };
+  let best = null as Start | null;
+  f.edges.forEach((ref, j) => {
+    let found;
+    try { found = findEdge(st, ref.faces); } catch { return; }
+    const seg = found.panel.outer[found.index];
+    if (seg.kind !== "line") return;
+    const M = found.panel.M, l = d2(seg.a, seg.b);
+    const e2: V2 = [(seg.b[0] - seg.a[0]) / l, (seg.b[1] - seg.a[1]) / l];
+    const A = apply(M, [seg.a[0], seg.a[1], T / 2]), e = applyDir(M, [e2[0], e2[1], 0]);
+    for (const pts of [prof, [...prof].reverse()]) {
+      const v = sub3(pts[0], A), t = Math.min(Math.max(dot(v, e), 0), l);
+      const dist = Math.hypot(...sub3(v, mul(e, t)));
+      if (!best || dist < best.dist) best = { j, pts, dist, o: applyDir(M, [e2[1], -e2[0], 0]), z: M.z, e };
+    }
+  });
+  const b = best as Start | null;
+  if (!b || b.dist > T + 1e-4 * size) throw new SheetError("E-SM-MITERSTART", "The miter flange profile must start at one of the picked edges.");
+  const P0 = b.pts[0];
+  if (b.pts.some(p => Math.abs(dot(sub3(p, P0), b.e)) > 1e-5 * size)) throw new SheetError("E-SM-MITERSQ", "Sketch the miter flange profile on a plane square to the edge.");
+  // The profile in the edge's (outward, normal) plane; collinear lines joined.
+  const lines: { d: V2; L: number }[] = [];
+  for (let i = 1; i < b.pts.length; i++) {
+    const q = sub3(b.pts[i], b.pts[i - 1]);
+    const u = dot(q, b.o), v = dot(q, b.z), L = Math.hypot(u, v);
+    if (L < 1e-9 * size) continue;
+    const d: V2 = [u / L, v / L], last = lines.at(-1);
+    if (last && Math.abs(last.d[0] * d[1] - last.d[1] * d[0]) < 1e-9 && last.d[0] * d[0] + last.d[1] * d[1] > 0) last.L += L;
+    else lines.push({ d, L });
+  }
+  const levels = lines.map((x, k) => {
+    const p = k ? lines[k - 1].d : [1, 0] as V2;
+    const angle = Math.acos(Math.min(1, Math.max(-1, p[0] * x.d[0] + p[1] * x.d[1])));
+    if (!(angle > 1e-6)) throw new SheetError("E-SM-MITERTURN", "The miter flange profile must turn away from the face at the edge.");
+    if (!(angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The flange angle must be between 0° and 180°.");
+    return { angle, up: p[0] * x.d[1] - p[1] * x.d[0] > 0, L: x.L };
+  });
+  // The profile lies on the outside of the first bend: later bends the same way have it outside too, the others inside.
+  const back = levels.map(x => x.up === levels[0].up ? outerSetback(T, x.angle, r) : innerSetback(x.angle, r));
+  const flat = levels.map((x, k) => x.L - back[k]);
+  levels.forEach((x, k) => {
+    if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-MITERLEN", "A line of the miter flange profile is too short for its bends.");
+  });
+  const nE = f.edges.length;
+  const corners = flangeCorners(st, f.edges.map(x => x.faces));
+  // Each corner's mitre plane: through the face's corner, square to the face, bisecting the two edges. The same
+  // profile on both edges meets itself there at every level (coplanar flanges too, which mid-planes can't place).
+  const planes = corners.map(([i, j]) => {
+    const a = findEdge(st, f.edges[i].faces), c = findEdge(st, f.edges[j].faces);
+    const sa = a.panel.outer[a.index], sc = c.panel.outer[c.index];
+    if (sa.kind !== "line" || sc.kind !== "line") return null;
+    const ua = applyDir(a.panel.M, [sa.b[0] - sa.a[0], sa.b[1] - sa.a[1], 0]), uc = applyDir(a.panel.M, [sc.b[0] - sc.a[0], sc.b[1] - sc.a[1], 0]);
+    const n = add(mul(ua, 1 / Math.hypot(...ua)), mul(uc, 1 / Math.hypot(...uc))), nl = Math.hypot(...n);
+    return nl < 1e-9 ? null : { V: apply(a.panel.M, [sa.b[0], sa.b[1], T / 2]), n: mul(n, 1 / nl) };
+  });
+  const E = 2 * Math.max(...levels.map((x, k) => flat[k] + back[k] + bendAllowance(st, x.angle, r) + 2 * T));
+  const gap = Math.max(f.gap?.v ?? 0.1, 0);
+  const ops: SheetOp[] = [];
+  const pid = (k: number, j: number) => `${f.id}:p${k * nE + j}`;
+  levels.forEach((x, k) => {
+    f.edges.forEach((ref, j) => {
+      let faces: [string, string], flip: boolean;
+      if (k === 0) { faces = ref.faces; flip = findEdge(st, ref.faces).up !== x.up; }
+      else { faces = [`${pid(k - 1, j)}:tip`, `${pid(k - 1, j)}:top`]; flip = !x.up; }
+      ops.push(...addFlange(st, faces, {
+        angle: x.angle, r, s: flat[k], d: back[k], off0: 0, off1: 0, flip,
+        ext0: corners.some(c => c[1] === j) ? E : 0, ext1: corners.some(c => c[0] === j) ? E : 0,
+      }, pid(k, j), `${f.id}:b${k * nE + j}`));
+    });
+    corners.forEach(([i, j], c) => { const pl = planes[c]; if (pl) { planeCut(st, pid(k, i), pl.V, pl.n, -1, gap); planeCut(st, pid(k, j), pl.V, pl.n, 1, gap); } });
+  });
+  return { state: st, ops };
+}
+
+/** Clips a panel's outline where the world plane through V with unit normal n crosses its mid-plane, keeping the
+ * side `keep` (+1: n·(X − V) ≥ gap/2, −1: ≤ −gap/2); the new edges are named "miter". */
+function planeCut(st: SheetState, id: string, V: V3, n: V3, keep: 1 | -1, gap: number) {
+  const P = st.panels.find(p => p.id === id);
+  if (!P) return;
+  const n2: V2 = [dot(n, P.M.x), dot(n, P.M.y)], l = Math.hypot(...n2);
+  if (l < 1e-9) return;
+  const k = (dot(n, V) - dot(n, P.M.o) - (st.T / 2) * dot(n, P.M.z)) / l + keep * gap / (2 * l);
+  try { P.outer = clipOuter(P.outer, [n2[0] / l, n2[1] / l], k, keep, "miter", 1e-7 * (1 + st.T)); } catch { /* the plane misses the panel */ }
 }
 
 /** Hem: a 180° fold, closed (radius next to nothing) or open (radius half the gap). */

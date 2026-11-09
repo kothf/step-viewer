@@ -7757,7 +7757,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 20 && mode === "note", `drawing: annotation tab shows the 20 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 21 && mode === "note", `drawing: annotation tab shows the 21 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -8725,6 +8725,33 @@ try {
     });
     check(cc0.title === "Closed Corner" && JSON.stringify(cc0.faces) === '["fa:p0:s1"]' && !cc1.bad && Math.abs(cc1.fx - (100 + T)) < 1e-6 && Math.abs(cc1.gy - 0.1) < 1e-6,
       `sheet metal: Closed Corner runs the clicked flange end over the other flange, which runs to the gap (${JSON.stringify({ cc0, cc1 })})`);
+    // Miter Flange: a profile on Right (YZ) at the front edge's start, up 20 then 10 outwards; the right and front top edges clicked.
+    await mp.evaluate(() => window.__sv.model.store.change("Miter profile", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s5", type: "sketch", name: "Sketch5", plane: { std: "YZ" }, rels: [], dims: [], ents: [P("w1", 0, 0), P("w2", 0, 20), P("w3", -10, 20), { id: "w4", t: "line", a: "w1", b: "w2" }, { id: "w5", t: "line", a: "w2", b: "w3" }] });
+    }));
+    await settle();
+    await smMenu("Miter Flange");
+    for (const p of [[100, 25, T], [60, 0, T]]) { const [x, y] = await scr(p); await mp.mouse.click(x, y); await settle(); }
+    const mf0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, edges: window.__sv.model.mode().draft?.edges.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const mf1 = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), mitres: (l.sheet?.panels ?? []).filter(p => p.outer.some(x => x.ent === "miter")).length, names: window.__sv.model.store.doc.features.map(f => f.name).join(",") };
+    });
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smmiter").id));
+    await settle();
+    const mru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm .pm-count, #mc-pm button")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await mp.click("#lang-btn");
+    check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
+      && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
+      `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
     await ctx.close();
   }
 
@@ -9236,6 +9263,22 @@ try {
     const dash = p2.filter(p => p.t === "l" && p.pen === "hidden").length, ring = p2.some(p => p.t === "a" && Math.abs(p.r - 1.5) < 1e-9);
     const ru = await dp.evaluate(() => document.querySelector('#drw .drw-props [data-d="wosym"]')?.closest("fieldset")?.querySelector("legend")?.textContent);
     check(w2.other?.sym === "v" && w2.around === true && dash === 1 && ring, `drawing: other-side V adds the dashed identification line; all around draws the circle (${JSON.stringify({ other: w2.other, dash, ring, ru })})`);
+    // Datum target (ISO 5459): click a point on the bottom edge, place the frame below; then make it a hatched area.
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="dtarget"]');
+    const tx = fr[0] + (fr[2] - fr[0]) * 0.6;
+    await clickSheet(tx, fr[1]);
+    await clickSheet(tx - 12, fr[1] - 14);
+    await dp.waitForTimeout(150);
+    const dt = () => dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "dtarget"); return a && JSON.parse(JSON.stringify(a)); });
+    const d1 = await dt(), q1 = await prims();
+    const cross = q1.filter(p => p.t === "l" && p.pen === "thick").length, lab = q1.some(p => p.t === "t" && p.s === "A1");
+    const dpanel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="dtkind"]'));
+    check(d1 && d1.leader && d1.tp && d1.label === "A1" && d1.kind === "point" && cross === 2 && lab && dpanel, `drawing: datum target A1 on the clicked point of an edge, with its cross (${JSON.stringify({ d1, cross, lab, dpanel })})`);
+    if (dpanel) { await dp.selectOption('#drw .drw-props [data-d="dtkind"]', "area"); await dp.waitForTimeout(150); }
+    const d2 = await dt(), q2 = await prims();
+    const area = q2.some(p => p.t === "a" && p.pen === "phantom"), sz = q2.some(p => p.t === "t" && p.s === "Ø8");
+    check(d2?.kind === "area" && d2.size === "Ø8" && area && sz, `drawing: datum target area: phantom circle, hatching and its size in the frame (${JSON.stringify({ d2, area, sz })})`);
     await ctx.close();
   }
 

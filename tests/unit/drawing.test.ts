@@ -792,3 +792,25 @@ test("weld symbol: reference line away from the arrow, identification line only 
   assert.equal(sym.prims.filter(p => p.t === "p" && p.closed && !(p as any).fill).length, 2);
   assert.ok(sym.prims.some(p => p.t === "a" && p.r === 1.5) && sym.prims.some(p => p.t === "p" && (p as any).fill) && sym.prims.some(p => p.t === "t" && p.s === "111"));
 });
+
+test("datum target: split frame, plain leader, cross / phantom line / hatched phantom area", async () => {
+  const { dtargetPrims, targetRadius } = await import("../../src/drawing/dtarget");
+  const base = { id: "d", t: "dtarget" as const, pos: [100, 100] as [number, number], label: "A1" };
+  const R = targetRadius(base);
+  assert.equal(R, 4.5);
+  const pt = dtargetPrims({ ...base, kind: "point" }, [100, 100], [80, 100]);
+  assert.ok(pt.prims.some(p => p.t === "a" && p.r === R) && pt.prims.some(p => p.t === "t" && p.s === "A1"));
+  assert.ok(!pt.prims.some(p => p.t === "p" && (p as any).fill), "no arrowhead");
+  assert.equal(pt.prims.filter(p => p.t === "l" && p.pen === "thick").length, 2, "a cross on the point");
+  const leader = pt.prims.find(p => p.t === "l" && p.pen === "thin" && p.p[2] === 80) as any;
+  assert.ok(leader && leader.p[0] === 100 - R, "leader from the frame to the cross");
+  assert.deepEqual(pt.box, [100 - R, 100 - R, 100 + R, 100 + R], "picked by its frame");
+  const ln = dtargetPrims({ ...base, kind: "line", d: 20 }, [100, 100], [80, 60], [0, 1], 0.5);
+  const ph = ln.prims.find(p => p.t === "l" && p.pen === "phantom") as any;
+  assert.deepEqual(ph.p, [80, 55, 80, 65], "line along the edge, d × scale long");
+  const ar = dtargetPrims({ ...base, kind: "area", d: 8, size: "Ø8" }, [100, 100], [70, 100], [1, 0], 1);
+  assert.ok(ar.prims.some(p => p.t === "a" && p.pen === "phantom" && p.r === 4) && ar.prims.some(p => p.t === "t" && p.s === "Ø8"));
+  const hatch = ar.prims.filter(p => p.t === "l" && p.pen === "thin").slice(2) as any[];
+  assert.ok(hatch.length >= 4 && hatch.every(h => Math.hypot(h.p[0] - 70, h.p[1] - 100) <= 4 + 1e-9 && Math.hypot(h.p[2] - 70, h.p[3] - 100) <= 4 + 1e-9), "hatching inside the area");
+  assert.ok(targetRadius({ label: "A1", size: "Ø12.5×20" }) > 4.5, "long texts widen the frame");
+});
