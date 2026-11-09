@@ -2757,6 +2757,30 @@ try {
         && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
         `model 1.353: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
     }
+    // 1.353 (FR-UI-110): value callouts: Shell's thickness shows on the model; a click opens the Modify box and the typed value goes to the panel and the feature.
+    {
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.waitForSelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle', { timeout: 8000 }).catch(() => {});
+      const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
+      if (before) {
+        await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
+        await mp.waitForSelector(".mod-box input");
+        await mp.fill(".mod-box input", "2.5");
+        await mp.keyboard.press("Enter");
+        await idle();
+      }
+      const after = await mp.evaluate(() => ({ v: window.__sv.modeller.mode.draft.thickness?.v, inp: document.querySelector('#mc-pm input[data-num="thickness"]')?.value, call: document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent, box: !!document.querySelector(".mod-box") }));
+      await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+      await idle();
+      check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
+        `model 1.353: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });

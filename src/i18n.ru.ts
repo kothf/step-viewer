@@ -4156,4 +4156,6 @@ export const RU: Record<string, string> = {
   "No hidden component under the cursor.": "Под курсором нет скрытого компонента.",
   // FR-SEL-009: selection breadcrumbs
   "Selection breadcrumbs": "Цепочка выбора",
+  // FR-UI-110: value callouts
+  "Click to type the value": "Щёлкните, чтобы ввести значение",
 };

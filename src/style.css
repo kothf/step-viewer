@@ -1258,3 +1258,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-crumb[data-id]:hover, .mc-crumb[data-id]:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
 .mc-crumb-sep { color: var(--muted); }
 .mc-crumbs.at-cursor, .mc-confirm.at-cursor { position: fixed; right: auto; z-index: 30; max-width: 60vw; }
+
+/* Value callouts (FR-UI-110): the label button plus an optional ⇄ in one pill */
+.mc-vcall { position: absolute; display: inline-flex; gap: 2px; padding: 0; border: 0; background: none; pointer-events: auto; }
+.mc-vcall > .mc-handle { position: static; transform: none; border-color: #e0a800; background: #fff8db; color: #5c4400; }
+:root[data-theme="dark"] .mc-vcall > .mc-handle { background: #3a3110; color: #ffe08a; }
+:root[data-theme="dark"] .mc-vcall { background: none; }

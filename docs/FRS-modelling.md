@@ -1601,7 +1601,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
 | Selection box focus moves on by itself | FR-UI-109 | 1.353.0: one-item boxes hand focus to the next empty required box; panels open on the first empty box | Done |
 | Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
-| Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
+| Value callouts on the model | FR-UI-110 | 1.353.0: callouts for the main values of every feature panel (Modify box, two-way with the panel, ⇄ flip); extrude/revolve/fillet/chamfer/end cap/gusset/flange keep their handles | Done |
 | Enter repeats the last command | FR-UI-111 | 1.107.0: Enter with no command running repeats the last one | Done |
 | Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
 | Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |

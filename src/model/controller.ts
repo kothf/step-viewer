@@ -133,6 +133,9 @@ type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool"
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
+/** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
+const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
@@ -3484,7 +3487,83 @@ export class ModelController {
     this.drawArrow();
     this.drawFeatureFaces();
     this.drawBoxPicks();
+    this.drawValueCallouts();
     this.host.viewer.invalidate();
+  }
+
+  /**
+   * Value callouts (FR-UI-110): the main values of the open feature (thickness, angle, distance, spacing, count…)
+   * in small labels on the model by its result, as in SolidWorks. A click opens the Modify box; the value goes
+   * through the panel's own field, so both stay in step. A ⇄ beside the first one reverses the direction.
+   * Features with drag handles or their own callouts (extrude, revolve, fillet, chamfer, end cap, gusset, flange) keep those.
+   */
+  private drawValueCallouts() {
+    const layer = document.getElementById("mc-layer");
+    layer?.querySelectorAll(".mc-vcall").forEach(x => x.remove());
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    if (m.kind !== "feature" || !layer || !pm || !this.last) return;
+    const f = m.draft;
+    if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
+    if (!fields.length) return;
+    const at = this.calloutPoint(f);
+    if (!at) return;
+    const flip = pm.querySelector<HTMLInputElement>('input[type=checkbox][data-k="flip"]');
+    fields.forEach((inp, row) => {
+      const lab = inp.closest(".pm-field")?.querySelector("span")?.textContent ?? "";
+      const unit = inp.parentElement?.querySelector(".muted")?.textContent ?? "";
+      const key = inp.dataset.num ?? inp.dataset.int!;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-vcall";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = key;
+      const b = document.createElement("button");
+      b.className = "mc-handle";
+      b.title = t("Click to type the value");
+      b.textContent = `${lab}: ${inp.value}${unit === "°" ? "°" : unit ? ` ${unit}` : ""}`;
+      b.addEventListener("click", () => {
+        const r = b.getBoundingClientRect();
+        new ModifyBox({
+          at: { x: r.right, y: r.top + r.height / 2 }, title: lab, value: inp.value,
+          step: inp.dataset.int ? 1 : stepFor(inp.dataset.q === "angle" ? "angle" : "length", units.current),
+          accept: text => {
+            inp.value = text;
+            inp.dispatchEvent(new Event("change"));
+            return inp.getAttribute("aria-invalid") !== "true";
+          },
+          cancel: () => {},
+        });
+      });
+      el.append(b);
+      if (row === 0 && flip) {
+        const fb = document.createElement("button");
+        fb.className = "mc-handle mc-vflip";
+        fb.textContent = "⇄";
+        fb.title = t("Reverse direction");
+        fb.setAttribute("aria-label", t("Reverse direction"));
+        fb.addEventListener("click", () => { flip.click(); });
+        el.append(fb);
+      }
+      layer.append(el);
+    });
+    this.placeCallouts();
+  }
+
+  /** Where a feature's value callouts sit: the middle of its own faces in the last rebuild, else of the faces it picked. */
+  private calloutPoint(f: Feature): V3 | null {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return null;
+    const pre = `${f.id}:`, own: number[] = [];
+    names.forEach((n, i) => { if (n?.startsWith(pre)) own.push(i); });
+    if (!own.length) {
+      const refs = ((f as { faces?: FaceRef[] }).faces ?? []);
+      for (const r of refs) { const i = names.indexOf(r.name); if (i >= 0) own.push(i); }
+    }
+    if (!own.length) return null;
+    const c = [0, 0, 0];
+    for (const i of own) { const fc = data.faces[i]; if (!fc) continue; c[0] += fc.center[0]; c[1] += fc.center[1]; c[2] += fc.center[2]; }
+    return [c[0] / own.length, c[1] / own.length, c[2] / own.length];
   }
 
   /**
@@ -4405,7 +4484,7 @@ export class ModelController {
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
-      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24 + 28 * Number(el.dataset.row ?? 0)}px`;
     });
   }
 
@@ -5650,7 +5729,7 @@ export class ModelController {
     pm.hidden = false;
     this.noteDraft();
     // Selection box colours (FR-SEL-011) once the panel's markup is in.
-    queueMicrotask(() => this.tintBoxes());
+    queueMicrotask(() => { this.tintBoxes(); this.drawValueCallouts(); });
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
