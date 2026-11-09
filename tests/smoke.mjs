@@ -6169,9 +6169,15 @@ try {
       m.seek(0); const c0 = p().material.color.getHexString();
       m.seek(lastT / 2); const cMid = p().material.color.getHSL({}).h;
       const swatch = document.querySelectorAll("#motion .mo-key.colored").length;
+      // Key all: one key at the playhead on every track that is on, selected together; the look key keeps the blended colour.
+      m.seek(1); m.render();
+      document.querySelector('#motion [data-mo="keyall"]').click();
+      const keyed = m.study.tracks.filter(k => k.kind !== "motor" && !k.off);
+      const keyAll = { all: keyed.length >= 3 && keyed.every(k => k.keys.some(x => Math.abs(x.t - 1) < 1e-9)), sel: document.querySelectorAll("#motion .mo-key.sel").length === keyed.length,
+        c: m.study.tracks.find(k => k.kind === "look").keys.find(x => Math.abs(x.t - 1) < 1e-9)?.c ?? "" };
       m.deleteTrack(tr.id);
       m.seek(5);
-      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own };
+      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll };
       return { listed, half, end, moved, label, color, back: { op: p().opacity, vis: p().visible } };
     });
     // Recording: a GIF of a 1 s study and a WebM video.
@@ -6500,10 +6506,10 @@ try {
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
-      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
