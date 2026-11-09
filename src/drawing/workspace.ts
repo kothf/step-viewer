@@ -125,6 +125,8 @@ type Line4 = [number, number, number, number];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const SVGNS = "http://www.w3.org/2000/svg";
+/** Quick view previews (FR-DRW-016): for models with this many edges, or once an exact view took this long (ms). */
+const PREVIEW_EDGES = 80, PREVIEW_MS = 400;
 const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
@@ -559,8 +561,29 @@ export class DrawingWorkspace {
   private projFor(sheet: Sheet, v: DrawingView): Projection | undefined {
     const req = viewReq(sheet, v);
     const p = this.kernel.cache.get(req.key);
-    if (!p && this.facts) void this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+    if (!p && this.facts) {
+      const ask = () => this.kernel.request(req).then(() => this.renderSheet(), err => toast(t("A view could not be projected: {err}", { err: (err as Error).message }), true));
+      // With previews on, the exact requests go after this render's previews (the worker answers in order).
+      if (this.previewsOn()) void Promise.resolve().then(ask); else void ask();
+    }
     return p;
+  }
+
+  /** How many times a view was drawn from its quick preview (for the smoke test). */
+  private previewsShown = 0;
+
+  /** Slow models (many edges, or an exact view that took long) get quick previews first (FR-DRW-016). */
+  private previewsOn(): boolean {
+    return !!this.facts && (this.facts.topo.edges.length >= PREVIEW_EDGES || this.kernel.slowest > PREVIEW_MS);
+  }
+
+  /** A view's quick polygonal preview while its exact lines are on the way; none for sections. */
+  private previewFor(sheet: Sheet, v: DrawingView): Projection | undefined {
+    const req = viewReq(sheet, v);
+    if (req.p || !this.previewsOn() || this.kernel.cache.has(req.key)) return undefined;
+    const have = this.kernel.previews.get(req.key);
+    if (!have) void this.kernel.preview(req).then(() => { if (!this.kernel.cache.has(req.key)) this.renderSheet(); }, () => {});
+    return have;
   }
 
   /** A view's alternate position lines, asked for when missing. */
@@ -579,17 +602,18 @@ export class DrawingWorkspace {
     this.dangling.clear();
     let html = `<rect class="drw-paper" x="0" y="0" width="${W}" height="${H}"/><g class="drw-fmt">${svgBody(formatPrims(sh, this.fields(), s => t(s)), H)}</g>`;
     for (const v of sh.views) {
-      const proj = this.projFor(sh, v);
-      const pl = placement(sh, v, proj, this.facts?.box ?? null);
+      const pre = this.previewFor(sh, v), proj = this.projFor(sh, v), shown = proj ?? pre;
+      const pl = placement(sh, v, shown, this.facts?.box ?? null);
       this.placements.set(v.id, pl);
       const r = viewRect(pl);
-      let body = svgBody(viewBody(sh, v, proj, pl, (s, p) => t(s, p), undefined, this.altFor(sh, v)), H);
+      let body = svgBody(viewBody(sh, v, shown, pl, (s, p) => t(s, p), undefined, this.altFor(sh, v)), H);
       const an = viewAnnots(sh, v, pl, this.ctx());
       body += `<g class="drw-annots">${svgBody(an.prims, H)}</g>`;
       for (const h of an.hits) this.annotHits.push({ ...h, view: v.id });
       for (const id of an.dangling) this.dangling.add(id);
       if (!proj) body += `<rect class="drw-pending" x="${r[0]}" y="${H - r[3]}" width="${r[2] - r[0]}" height="${r[3] - r[1]}"/>`;
-      html += `<g class="drw-view" data-v="${v.id}">${body}</g>`;
+      if (!proj && pre) this.previewsShown++;
+      html += `<g class="drw-view${!proj && pre ? " drw-preview" : ""}" data-v="${v.id}">${body}</g>`;
     }
     const notes = sheetNotes(sh, (s, p) => t(s, p), this.ctx().dec, this.bom);
     html += `<g class="drw-notes">${svgBody(notes.prims, H)}</g>`;
@@ -2923,6 +2947,7 @@ export class DrawingWorkspace {
       sheetPt: (x: number, y: number) => { const rc = this.svg.getBoundingClientRect(), H = sheetSize(this.sheet)[1]; return [rc.left + (x - this.vb.x) / this.vb.w * rc.width, rc.top + (H - y - this.vb.y) / this.vb.h * rc.height]; },
       placement: (id: string) => this.placements.get(id) ?? null,
       mode: () => this.mode.kind,
+      previews: () => ({ shown: this.previewsShown, made: this.kernel.previewsMade, left: this.svg.querySelectorAll(".drw-preview").length }),
       proj: (id: string) => { const sh = this.sheet, v = findView(sh, id); return v ? this.kernel.cache.get(viewReq(sh, v).key) ?? null : null; },
     };
   }
