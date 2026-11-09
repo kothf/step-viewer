@@ -8682,6 +8682,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Use thickness ratio: 0.5 of the SHS 40x40x3 wall = 1.5 mm inset, so a 37 × 37 plate.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInset"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wRatio"]');
+    await settle();
+    const capRt = await mp.evaluate(() => ({ ratio: window.__sv.model.mode().draft?.ratio?.v, field: !!document.querySelector('#mc-pm input[data-num="ratio"]'), inset: !!document.querySelector('#mc-pm input[data-num="inset"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const capRp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(capRt.ratio === 0.5 && capRt.field && !capRt.inset && !capRp.bad && JSON.stringify(capRp.plate) === "[37,37,5]", `weldments: end cap thickness ratio (${JSON.stringify({ ...capRt, ...capRp })})`);
     // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
     const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
     const len0 = await memLen();
