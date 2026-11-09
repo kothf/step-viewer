@@ -32,6 +32,8 @@ export function flatDrawing(st: SheetState): Drawing2 {
     const [p, q] = bendLine(b);
     entities.push({ kind: "line", a: p, b: q, layer: b.up ? "BEND_UP" : "BEND_DOWN" });
   }
+  // Cross breaks, on their own layer.
+  for (const c of st.crosses ?? []) entities.push({ kind: "line", a: c.a, b: c.b, layer: "CROSS_BREAK" });
   // Sharp folds between the facets of a lofted bend.
   for (const f of st.folds ?? []) entities.push({ kind: "line", a: f.a, b: f.b, layer: f.up ? "BEND_UP" : "BEND_DOWN" });
   return { entities, u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 1, 0), min, max };
