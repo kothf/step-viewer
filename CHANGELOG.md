@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.329.0] - 2026-11-09
+
+### Added
+
+- **Preferences (FR-UI-080)**: Display ▾ → Preferences… opens one dialog for the settings that were spread over panels and menus, as SolidWorks' System Options. **Modelling**: units and decimals, image quality (Coarse rebuilds faster, Fine draws smoother; the exact geometry is the same), **Verification on rebuild** (each feature's body is checked, and a feature that leaves it invalid gets a warning in the tree and What's wrong), how soon unsaved work is kept for recovery (after each change, 10 s … 5 min, or off), and the ↑/↓ and spin arrow steps for lengths and angles. **Sketch**: rotate the view to the sketch plane on opening, automatic relations, relation glyphs, model edge snapping, slot dimensions, grid and grid snap, and a legend of the sketch colours. **Mouse**: middle button pans or rotates (SolidWorks), wheel zoom direction, and Mouse gestures. Defaults resets the open page; the sketch panel and quick bar toggles stay in step.
+
 ## [1.324.0] - 2026-11-09
 
 ### Added
@@ -1904,7 +1910,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.324.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.329.0...HEAD
+[1.329.0]: https://github.com/kothf/step-viewer/compare/v1.328.0...v1.329.0
 [1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0
 [1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0

@@ -2459,6 +2459,33 @@ try {
     const hvView = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#mc-tree .ft-row.hover")].map(r => r.dataset.id), lit: window.__sv.modeller.hoverGroup.children.length }));
     await mp.mouse.move(5, 5);
     check(hvTree === 1 && hvView.rows.join() === "x" && hvView.lit === 0, `model 1.324: hovering the Extrude1 row lights its faces, hovering its top face marks the row (${JSON.stringify([hvTree, hvView])})`);
+    // 1.329: Preferences (FR-UI-080): coarse image quality and verification rebuild the part, the sketch and mouse pages store their keys.
+    const pfTris = () => mp.evaluate(() => window.__sv.viewer.parts.reduce((n, p) => n + (p.mesh.geometry.attributes.position.count), 0));
+    const pfBefore = await pfTris();
+    await mp.click("#display-btn");
+    await mp.click("#prefs-btn");
+    await mp.waitForSelector("#prefs-dlg[open]");
+    await mp.selectOption('#prefs-dlg [data-p="quality"]', "coarse");
+    await mp.check('#prefs-dlg [data-p="verify"]');
+    await mp.click("#pt-sketch");
+    await mp.uncheck('#prefs-dlg [data-p="autoRels"]');
+    await mp.click("#pt-mouse");
+    await mp.selectOption('#prefs-dlg [data-p="wheel"]', "reverse");
+    await mp.click('#prefs-dlg [data-a="ok"]');
+    await mp.waitForFunction(n => window.__sv.viewer.parts.reduce((k, p) => k + (p.mesh.geometry.attributes.position.count), 0) !== n, pfBefore, { timeout: 30000 }).catch(() => {});
+    await idle();
+    const pfSet = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed, warn: window.__sv.model.last()?.statuses.filter(s => s.code === "warning" || !s.ok).length, open: !!document.querySelector("#prefs-dlg") }));
+    const pfCoarse = await pfTris();
+    // Back to the defaults, page by page.
+    await mp.click("#display-btn");
+    await mp.click("#prefs-btn");
+    await mp.waitForSelector("#prefs-dlg[open]");
+    for (const pg of ["modelling", "sketch", "mouse"]) { await mp.click(`#pt-${pg}`); await mp.click('#prefs-dlg [data-a="reset"]'); }
+    await mp.click('#prefs-dlg [data-a="ok"]');
+    await idle();
+    const pfBack = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed }));
+    check(pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
+      `model 1.329: Preferences set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
     await ctx.close();
   }
 

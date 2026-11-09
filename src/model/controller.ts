@@ -68,6 +68,7 @@ import { checkSketch, SKETCH_USES, type CheckResult, type SketchUse } from "../s
 import { lang, onLangChange, t, withLang } from "../i18n";
 import { gestureSlot, loadGestures, GESTURE_SHOW, type GestureMode } from "../gestures";
 import { gestureGuide } from "../gestureUi";
+import { autosaveDelay, getPref, loadPrefs, onPrefs, qualityFactor, stepFor, type Prefs } from "../prefs";
 
 /** A drag handle in the view: an arrow, or the revolve angle grip (`ang`: centre on the axis, unit axis, radius vector at 0°). */
 type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir: THREE.Vector3; scale: number; mid: boolean; key: string; label?: HTMLElement; ang?: { c: THREE.Vector3; u: THREE.Vector3; r: THREE.Vector3; arc: THREE.Line; head: THREE.Group } };
@@ -183,6 +184,12 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySe
 export function featureLabel(name: string) {
   for (const b of BASES) { const m = name.match(new RegExp(`^${b}(\\d+)$`)); if (m) return `${t(b)}${m[1]}`; }
   return name;
+}
+
+/** The sketch editor settings from Preferences (FR-UI-080). */
+function sketchPrefs(ed: SketchEditor, p: Prefs) {
+  ed.modelSnap = p.modelSnap; ed.autoRels = p.autoRels; ed.showRels = p.showRels; ed.slotDims = p.slotDims;
+  ed.setGrid({ show: p.grid, snap: p.gridSnap, spacing: p.gridStep });
 }
 
 /** Kernel messages are fixed English sentences; a lost reference names internal ids, so it gets a plain one. */
@@ -395,6 +402,22 @@ export class ModelController {
     host.viewer.scene.add(this.decor);
     host.viewer.scene.add(this.hoverGroup);
     this.bindHover();
+    // Preferences (FR-UI-080): an open sketch takes the new sketch settings; quality and verification rebuild.
+    onPrefs((p, changed) => {
+      const m = this.mode;
+      if (m.kind === "sketch") {
+        const ed = m.editor;
+        sketchPrefs(ed, p);
+        const pm = document.getElementById("mc-pm");
+        const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
+        box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels); box("showrels", ed.showRels); box("slotdims", ed.slotDims); box("modelsnap", ed.modelSnap);
+        const gs = pm?.querySelector<HTMLInputElement>("[data-a=gridstep]");
+        if (gs) gs.value = ed.gridSpacing ? String(ed.gridSpacing) : "";
+        ed.render();
+        this.renderQuick();
+      }
+      if (this.store && (changed.includes("quality") || changed.includes("verify"))) void this.rebuild();
+    });
     onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
@@ -570,7 +593,8 @@ export class ModelController {
     if (why === "undo" || why === "redo" || why.startsWith("Properties")) this.host.setMaterial?.(this.doc.material);
     if (why !== "saved" && why !== "open") {
       clearTimeout(this.journalTimer);
-      this.journalTimer = window.setTimeout(() => { if (this.store?.dirty) journalSave(this.doc, this.fileName); }, 800);
+      const wait = autosaveDelay();
+      if (wait !== null) this.journalTimer = window.setTimeout(() => { if (this.store?.dirty) journalSave(this.doc, this.fileName); }, wait);
     }
   }
 
@@ -611,7 +635,7 @@ export class ModelController {
     const m = this.mode;
     const d = m.kind === "feature" ? m.draft : null;
     const previewAt = m.kind === "feature" && d && (((d.type === "fillet" || d.type === "chamfer") && roundReady(d)) || ((d.type === "extrude" || d.type === "revolve" || d.type === "sweep" || d.type === "loft") && d.op === "cut")) ? m.index : undefined;
-    const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, 1, previewAt);
+    const r = await this.kernel.rebuild(doc, doc.color ?? DEFAULT_COLOR, qualityFactor(getPref("quality")), previewAt, getPref("verify"));
     if (!quiet) this.setBusy(-1);
     if (!r || !this.store) return;
     this.last = r;
@@ -781,7 +805,8 @@ export class ModelController {
       },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
-    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; editor.autoRels = localStorage.getItem("mc:autoRels") !== "0"; editor.showRels = localStorage.getItem("mc:skRels") !== "0"; editor.slotDims = localStorage.getItem("mc:slotDims") !== "0"; editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); editor.setGrid({ show: localStorage.getItem("mc:skGrid") === "1", snap: localStorage.getItem("mc:skGridSnap") === "1", spacing: Number(localStorage.getItem("mc:skGridStep")) || 0 }); } catch { /* private mode */ }
+    sketchPrefs(editor, loadPrefs());
+    try { editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); } catch { /* private mode */ }
     editor.onQuickSnap = () => this.renderQuick();
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
@@ -792,7 +817,7 @@ export class ModelController {
     if (m.kind === "sketch" && m.id === id) {
       const f = this.frameOf(sk);
       m.editor.setSketch(this.store!.feature(id) as SketchFeature, f);
-      this.host.viewer.viewFrom(new THREE.Vector3(...f.n));
+      if (getPref("rotateToSketch")) this.host.viewer.viewFrom(new THREE.Vector3(...f.n));
     }
   }
 
@@ -1685,7 +1710,7 @@ export class ModelController {
     // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
     vp.addEventListener("pointerdown", () => {
       const mb = this.host.viewer.controls.mouseButtons;
-      mb.MIDDLE = this.mode.kind === "sketch" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+      mb.MIDDLE = this.mode.kind === "sketch" || getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
     }, true);
     vp.addEventListener("pointerdown", e => {
       if (!onCanvas(e)) return;
@@ -4140,7 +4165,7 @@ export class ModelController {
       at: { x: r.right, y: r.top + r.height / 2 },
       title,
       value,
-      step: units.current === "in" ? 0.1 : 1,
+      step: stepFor("length", units.current),
       preview: text => {
         const d = docWith(text);
         if (typeof d === "string") { toast(d, "error"); return; }
@@ -5225,7 +5250,7 @@ export class ModelController {
           // Arrow keys step the value (Shift: ×10).
           e.preventDefault();
           const q = inp.dataset.q;
-          const step = (q === "angle" ? 5 : 1) * (e.shiftKey ? 10 : 1) * (e.key === "ArrowUp" ? 1 : -1);
+          const step = stepFor(q === "angle" ? "angle" : "length", units.current) * (e.shiftKey ? 10 : 1) * (e.key === "ArrowUp" ? 1 : -1);
           const cur = parseFloat(inp.value.replace(",", "."));
           if (Number.isFinite(cur) && cur + step > 0) { inp.value = trimNum(cur + step, 6); apply(); }
         }

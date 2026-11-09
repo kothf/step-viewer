@@ -43,6 +43,8 @@ import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
 import { gestureDialog } from "./gestureUi";
+import { openPrefs } from "./prefsUi";
+import { getPref, onPrefs } from "./prefs";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
@@ -2030,6 +2032,21 @@ function normalTo(given?: [number, number, number]) {
 }
 // Mouse gestures (FR-UI-024): the settings dialog; the part controller reads the stored settings on each right press.
 $("#gestures-btn").addEventListener("click", () => { $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false"); gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))); });
+// Preferences (FR-UI-080). The mouse page acts on the view controls here; the part controller reads the rest.
+const applyMousePrefs = () => {
+  viewer.controls.mouseButtons.MIDDLE = getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+  viewer.controls.zoomSpeed = getPref("wheel") === "reverse" ? -1 : 1;
+};
+applyMousePrefs();
+onPrefs(applyMousePrefs);
+$("#prefs-btn").addEventListener("click", () => {
+  $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false");
+  openPrefs({
+    units: () => units.current, decimals: () => (units.decimals === null ? "" : String(units.decimals)),
+    setUnits: u => setUnits(u as Unit), setDecimals: d => setDecimals(d),
+    gestures: () => gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))),
+  });
+});
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
 const surfAna = new SurfaceAnalysis(viewer, {
