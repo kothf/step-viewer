@@ -9052,6 +9052,21 @@ try {
     const cb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(cb0.title === "Cross Break" && cb0.faces?.length === 1 && /:p0:top$/.test(cb0.faces[0]) && !cb1.bad && cb1.n === 2 && Math.abs(cb1.v - bc1.v) < 1e-6,
       `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ cb0, cb1 })})`);
+    // Vent: a sketch on the plate's bottom face (XY) with a 60 × 25 boundary and one rib across it; the command picks it up.
+    await mp.evaluate(() => window.__sv.model.store.change("Vent sketch", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "vsk", type: "sketch", name: "Sketch9", plane: { std: "XY" }, rels: [], dims: [], ents: [
+        P("v1", 20, 15), P("v2", 80, 15), P("v3", 80, 40), P("v4", 20, 40), L("w1", "v1", "v2"), L("w2", "v2", "v3"), L("w3", "v3", "v4"), L("w4", "v4", "v1"),
+        P("v5", 50, 15), P("v6", 50, 40), L("w5", "v5", "v6")] });
+    }));
+    await settle();
+    await smMenu("Vent");
+    const vt0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, info: document.querySelector("#mc-pm [data-sm-vent]")?.textContent }));
+    await mp.click("#mc-ok");
+    await settle();
+    const vt1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(vt0.title === "Vent" && vt0.sketch === "vsk" && /1/.test(vt0.info ?? "") && !vt1.bad && Math.abs(cb1.v - vt1.v - (60 * 25 - 2 * 25) * T) < 1e-3,
+      `sheet metal: Vent cuts the boundary less the rib through the plate (${JSON.stringify({ vt0, vt1 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
