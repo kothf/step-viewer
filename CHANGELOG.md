@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.375.0] - 2026-11-10
+
+### Added
+
+- **Weld both sides (FR-FT-121)**: a fillet bead's new **Weld both sides** option also welds the other side of each flat plate picked in face set 1, so a plate standing on another gets its two fillets from one pick. Staggered intermittent welds then alternate between the two sides, and the weld symbol shows two triangles (◺◹).
+
 ## [1.374.0] - 2026-11-09
 
 ### Added
@@ -2201,7 +2207,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.374.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.375.0...HEAD
+[1.375.0]: https://github.com/kothf/step-viewer/compare/v1.374.0...v1.375.0
 [1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
 [1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0

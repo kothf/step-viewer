@@ -9684,6 +9684,13 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Weld both sides: the symbol doubles its triangle; the plate's far side meets nothing here, so the bead stays valid.
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
+    const bothSym = await mp.evaluate(() => ({ t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(!!bothSym.t?.includes("◺◹") && !bothSym.bad, `weldments: weld both sides shows on the symbol (${JSON.stringify(bothSym)})`);
+    await mp.click('#mc-pm input[data-k="wBoth"]');
+    await settle();
     // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
     await mp.click('#mc-pm input[data-k="wEqual"]');
     await settle();
