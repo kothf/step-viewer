@@ -25,6 +25,7 @@ import { textBox, textKey, textOutline, textPolys } from "./text";
 import { inPolygon, textPath } from "./profile";
 import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
+import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -177,6 +178,12 @@ export class SketchEditor {
   autoRels = true;
   /** Relation glyphs next to the entities (FR-SK-053). */
   showRels = true;
+  /** Snap types on while drawing (FR-SK-046 preferences, localStorage `mc:skSnaps`). */
+  snaps = new Set<SnapKind>(DEFAULT_SNAPS);
+  /** Quick snap (FR-SK-046): the one snap type the next point uses; cleared once the point is placed. */
+  quickSnap: SnapKind | null = null;
+  /** Called when the quick snap changes (set, used or cancelled), so the bar can show it. */
+  onQuickSnap: (() => void) | null = null;
   /** The relation glyph under the pointer: its entities are highlighted (FR-SK-053). */
   private hoverRel: string | null = null;
   private relHot = new Set<string>();
@@ -233,6 +240,7 @@ export class SketchEditor {
     this.piercing = null;
     this.tool = tool;
     this.inferLine = null;
+    this.setQuickSnap(null);
     this.showInfer(null);
     this.draft = { pts: [], ids: [], cursor: null, snap: null };
     this.dimDraft = { picks: [], dim: null };
@@ -599,9 +607,11 @@ export class SketchEditor {
   private snapPoint(p: V2, active: boolean, materialize = false): Snap {
     this.marker.visible = false;
     // Ctrl held (or automatic relations off): the point goes where the cursor is, with no relation (FR-SK-052).
-    if (!active || this.suppressed()) return { p, id: null, curve: null, hv: null };
-    const exclude = new Set<string>();
-    const h = this.hits(p, { curves: false, exclude });
+    if (!active || (this.suppressed() && !this.quickSnap)) return { p, id: null, curve: null, hv: null };
+    if (this.quickSnap) return this.quickAt(this.quickSnap, p, materialize) ?? { p, id: null, curve: null, hv: null };
+    const on = this.snaps;
+    const centres = this.centreIds();
+    const h = this.hits(p, { curves: false }).filter(x => on.has(centres.has(x.id) ? "centre" : "end"));
     if (h.length) { const q = this.pt(h[0].id); this.showMarker(q); return { p: q, id: h[0].id, curve: null, hv: null }; }
     // Model vertices, edge midpoints and circle centres (projected onto the sketch) come next.
     const ms = this.modelSnapAt(p, true);
@@ -611,12 +621,19 @@ export class SketchEditor {
       const r = this.materialize(ms);
       return { p: ms.p, id: r.id, curve: r.curve, hv: null };
     }
+    // Midpoints, quadrants and intersections when turned on in the snap preferences (FR-SK-046).
+    const tol = this.px(p) * SNAP_PX;
+    const extra = (["mid", "quadrant", "intersection"] as const).filter(k => on.has(k))
+      .flatMap(k => this.snapCands(k)).map(c => ({ c, d: Math.hypot(c.p[0] - p[0], c.p[1] - p[1]) }))
+      .filter(x => x.d < tol).sort((a, b) => a.d - b.d)[0];
+    if (extra) return this.useCand(extra.c, materialize);
     let q = p;
     let hv: "horizontal" | "vertical" | null = null;
     const last = this.draft.pts.at(-1);
     if (last && (this.tool === "line")) {
       const a = Math.atan2(p[1] - last[1], p[0] - last[0]);
-      if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
+      if (!on.has("hv")) { /* off in the preferences */ }
+      else if (Math.abs(Math.sin(a)) < Math.sin(HV_TOL)) { q = [p[0], last[1]]; hv = "horizontal"; }
       else if (Math.abs(Math.cos(a)) < Math.sin(HV_TOL)) { q = [last[0], p[1]]; hv = "vertical"; }
       if (!hv) {
         const inf = this.inferDir(last, p);
@@ -627,9 +644,131 @@ export class SketchEditor {
     if (c && !hv) {
       // A line hovered while drawing a line becomes the parallel/perpendicular reference (SolidWorks inference).
       if (this.tool === "line" && this.sk.ents.find(x => x.id === c.id)?.t === "line") this.inferLine = c.id;
+      if (!on.has("nearest")) return { p: q, id: null, curve: null, hv };
       const proj = this.project(q, c.id); this.showMarker(proj); return { p: proj, id: null, curve: c.id, hv: null };
     }
     return { p: q, id: null, curve: null, hv };
+  }
+
+  /** Is a tool that places points running (quick snaps apply)? */
+  get drawing(): boolean {
+    return !["select", "fillet", "chamfer", "convert", "intersect", "trim", "extend", "split", "offset", "dim", "hord", "vord", "eqn"].includes(this.tool);
+  }
+
+  /** Sets (or with null cancels) the quick snap for the next point (FR-SK-046). */
+  setQuickSnap(k: SnapKind | null) {
+    if (this.quickSnap === k) return;
+    this.quickSnap = k;
+    this.statusHint();
+    this.onQuickSnap?.();
+  }
+
+  /** Ids of the centre points of circles, arcs and ellipses (the Centre snap; other points are end points). */
+  private centreIds(): Set<string> {
+    const s = new Set<string>();
+    for (const e of this.sk.ents) if (e.t === "circle" || e.t === "arc" || e.t === "ellipse") s.add(e.c);
+    return s;
+  }
+
+  /** Lines, circles and arcs as snap curves (construction ones too). */
+  private snapCurves(): SnapCurve[] {
+    const out: SnapCurve[] = [];
+    for (const e of this.sk.ents) {
+      if (e.t === "line") out.push({ id: e.id, k: "l", a: this.pt(e.a), b: this.pt(e.b) });
+      else if (e.t === "circle") out.push({ id: e.id, k: "c", c: this.pt(e.c), r: e.r });
+      else if (e.t === "arc") out.push(arcCurve(e.id, this.pt(e.c), this.pt(e.a), this.pt(e.b)));
+    }
+    return out;
+  }
+
+  /**
+   * Snap points of one kind: line midpoints (a new point with a midpoint relation), circle and arc quadrants
+   * (on the curve), or crossings of two curves (a new point with an intersection relation).
+   */
+  private snapCands(k: "mid" | "quadrant" | "intersection"): { p: V2; curve?: string; mid?: string; cross?: [string, string] }[] {
+    const cs = this.snapCurves();
+    if (k === "mid") return cs.filter(c => c.k === "l").map(c => { const l = c as SnapCurve & { k: "l" }; return { p: [(l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2] as V2, mid: l.id }; });
+    if (k === "quadrant") return cs.flatMap(c => c.k === "c" ? quadrants(c).map(p => ({ p, curve: c.id })) : []);
+    const out: { p: V2; cross: [string, string] }[] = [];
+    for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) for (const p of intersections(cs[i], cs[j])) out.push({ p, cross: [cs[i].id, cs[j].id] });
+    return out;
+  }
+
+  /** The snap a candidate point gives; with `materialize` the midpoint or crossing point is made (a click). */
+  private useCand(c: { p: V2; curve?: string; mid?: string; cross?: [string, string] }, materialize: boolean): Snap {
+    this.showMarker(c.p);
+    // A crossing at an existing point (a shared end) just uses that point.
+    const at = this.sk.ents.find(x => x.t === "point" && Math.hypot(x.x - c.p[0], x.y - c.p[1]) < 1e-7)?.id;
+    if (at) return { p: c.p, id: at, curve: null, hv: null };
+    if (c.curve) return { p: c.p, id: null, curve: c.curve, hv: null };
+    if (!materialize) return { p: c.p, id: null, curve: null, hv: null };
+    const id = uid("p");
+    this.sk.ents.push({ id, t: "point", x: c.p[0], y: c.p[1] });
+    this.sk.rels.push(c.mid ? { id: uid("r"), t: "midpoint", e: [id, c.mid] } : { id: uid("r"), t: "intersection", e: [id, ...c.cross!] });
+    return { p: c.p, id, curve: null, hv: null };
+  }
+
+  /**
+   * A quick snap (FR-SK-046): only the chosen kind snaps, in a wider radius; null leaves the point at the cursor.
+   * Tangent, perpendicular, parallel and horizontal/vertical work from the last point of a line chain.
+   */
+  private quickAt(k: SnapKind, p: V2, materialize: boolean): Snap | null {
+    const tol = this.px(p) * SNAP_PX * 3;
+    const near = <T extends { p: V2 }>(xs: T[]) => xs.map(x => ({ x, d: Math.hypot(x.p[0] - p[0], x.p[1] - p[1]) })).filter(x => x.d < tol).sort((a, b) => a.d - b.d)[0]?.x;
+    if (k === "end" || k === "centre") {
+      const centres = this.centreIds();
+      const pts = this.sk.ents.filter((e): e is SkEnt & { t: "point" } => e.t === "point" && centres.has(e.id) === (k === "centre")).map(e => ({ p: [e.x, e.y] as V2, id: e.id }));
+      if (k === "end") pts.push({ p: [0, 0], id: ORIGIN });
+      const b = near(pts);
+      if (!b) return null;
+      this.showMarker(b.p);
+      return { p: b.p, id: b.id, curve: null, hv: null };
+    }
+    if (k === "mid" || k === "quadrant" || k === "intersection") { const b = near(this.snapCands(k)); return b ? this.useCand(b, materialize) : null; }
+    if (k === "nearest") {
+      const c = this.hits(p, { points: false }).find(h => this.ent(h.id)?.t !== "text");
+      if (!c) return null;
+      const q = this.project(p, c.id);
+      this.showMarker(q);
+      return { p: q, id: null, curve: c.id, hv: null };
+    }
+    const last = this.draft.pts.at(-1);
+    if (!last || this.tool !== "line") return null;
+    if (k === "hv") {
+      const horiz = Math.abs(p[0] - last[0]) >= Math.abs(p[1] - last[1]);
+      return { p: horiz ? [p[0], last[1]] : [last[0], p[1]], id: null, curve: null, hv: horiz ? "horizontal" : "vertical" };
+    }
+    // The curve nearest the cursor within the wide radius.
+    const dist = (c: SnapCurve) => c.k === "l" ? segDist(p, c.a, c.b)
+      : c.a0 === undefined ? Math.abs(Math.hypot(p[0] - c.c[0], p[1] - c.c[1]) - c.r)
+      : arcDist(p, c.c, [c.c[0] + c.r * Math.cos(c.a0), c.c[1] + c.r * Math.sin(c.a0)], [c.c[0] + c.r * Math.cos(c.a0 + c.sw!), c.c[1] + c.r * Math.sin(c.a0 + c.sw!)]);
+    const startId = this.draft.ids.at(-1);
+    const own = (c: SnapCurve) => { const e = this.ent(c.id); return !!startId && !!e && (e.t === "line" || e.t === "arc") && (e.a === startId || e.b === startId); };
+    const curves = this.snapCurves().map(c => ({ c, d: dist(c) })).filter(x => x.d < tol).sort((a, b) => a.d - b.d);
+    if (k === "tangent") {
+      const c = curves.find(x => x.c.k === "c")?.c as (SnapCurve & { k: "c" }) | undefined;
+      if (!c) return null;
+      const q = tangentPoints(last, c).sort((a, b) => Math.hypot(a[0] - p[0], a[1] - p[1]) - Math.hypot(b[0] - p[0], b[1] - p[1]))[0];
+      if (!q) return null;
+      this.showMarker(q);
+      return { p: q, id: null, curve: c.id, hv: null, rel: { t: "tangent", ref: c.id } };
+    }
+    if (k === "perpendicular") {
+      const c = curves.find(x => x.c.k === "l" && !own(x.c))?.c as (SnapCurve & { k: "l" }) | undefined;
+      const f = c ? perpendicularFoot(last, c) : null;
+      if (!c || !f) return null;
+      this.showMarker(f);
+      return { p: f, id: null, curve: c.id, hv: null, rel: { t: "perpendicular", ref: c.id } };
+    }
+    // Parallel: hover a line to pick it, then the new line runs parallel to it.
+    const hov = curves.find(x => x.c.k === "l" && !own(x.c) && x.d < tol / 3)?.c;
+    if (hov) this.inferLine = hov.id;
+    const ref = this.inferLine ? this.ent(this.inferLine) : undefined;
+    if (ref?.t !== "line") return null;
+    const a = this.pt(ref.a), b = this.pt(ref.b), u: V2 = [b[0] - a[0], b[1] - a[1]], l2 = u[0] * u[0] + u[1] * u[1];
+    if (l2 < 1e-18) return null;
+    const s = ((p[0] - last[0]) * u[0] + (p[1] - last[1]) * u[1]) / l2;
+    return { p: [last[0] + u[0] * s, last[1] + u[1] * s], id: null, curve: null, hv: null, rel: { t: "parallel", ref: ref.id } };
   }
 
   /** Ctrl suppresses automatic relations while drawing, as in SolidWorks (FR-SK-052). */
@@ -672,6 +811,7 @@ export class SketchEditor {
     if (hov && hu && !cands.some(c => c.ref === hov)) cands.push({ t: "parallel", ref: hov, u: hu }, { t: "perpendicular", ref: hov, u: [-hu[1], hu[0]] });
     let best: (typeof cands)[number] | null = null, bd = tol;
     for (const c of cands) {
+      if (!this.snaps.has(c.t)) continue;
       const s = Math.abs(w[0] * c.u[1] - w[1] * c.u[0]) / L; // sine of the angle to the direction
       if (s < bd) { bd = s; best = c; }
     }
@@ -913,6 +1053,7 @@ export class SketchEditor {
     const joinTol = Math.min(1e-3, this.px(raw));
     const onPt = exact ? this.sk.ents.find((x): x is SkEnt & { t: "point" } => x.t === "point" && Math.hypot(x.x - raw[0], x.y - raw[1]) <= joinTol)?.id ?? (Math.hypot(raw[0], raw[1]) <= joinTol ? ORIGIN : null) : null;
     const s: Snap = exact ? { p: raw, id: onPt, curve: null, hv: exact.hv } : this.snapPoint(raw, true, true);
+    if (!exact && this.quickSnap) this.setQuickSnap(null);
     const p = s.p;
     const d = this.draft;
     const rels: SkRel[] = [];
@@ -2695,6 +2836,7 @@ export class SketchEditor {
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (k === "escape") {
       if (this.gripDrag) { this.endGrip(false); return true; }
+      if (this.quickSnap) { this.setQuickSnap(null); return true; }
       if (this.pattern) { this.cancelPattern(); this.host.onSelection?.([...this.selection]); return true; }
       if (this.draft.pts.length || this.dimDraft.picks.length) { this.setTool(this.tool); return true; }
       if (this.tool !== "select") { this.setTool("select"); return true; }
@@ -2754,7 +2896,8 @@ export class SketchEditor {
     // Cursor position in sketch coordinates (FR-SK-047).
     const u = this.host.unit(), c = this.cursorUV;
     const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
-    this.host.status(`${def} · ${t(hints[this.tool])}${at}`);
+    const qs = this.quickSnap ? ` · ${t("Quick snap")}: ${t(SNAP_KINDS.find(k => k[0] === this.quickSnap)![1])}` : "";
+    this.host.status(`${def} · ${t(hints[this.tool])}${qs}${at}`);
   }
 
   // ---------- drawing the sketch ----------
