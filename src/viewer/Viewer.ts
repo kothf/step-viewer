@@ -90,6 +90,15 @@ export class Viewer {
     this.controls.screenSpacePanning = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     this.controls.addEventListener("change", () => this.invalidate());
+    // The orbit controls also update from their own pointer handlers: every update goes through the pivot (FR-UI-100).
+    const update = this.controls.update.bind(this.controls);
+    this.controls.update = (dt?: number | null) => {
+      const cam = this.controls.object;
+      const q0 = this.pivot && !this.anim ? cam.quaternion.clone() : null;
+      const moved = update(dt);
+      if (q0 && moved) this.turnAboutPivot(q0);
+      return moved;
+    };
     // A drag or wheel zoom starts from a camera Previous view can return to.
     this.controls.addEventListener("start", () => { const now = performance.now(); if (now - this.lastStart > 600) this.pushView(); this.lastStart = now; });
 
@@ -285,7 +294,7 @@ export class Viewer {
     this.computeBounds();
     this.computeExplodeVectors();
     this.setMode(this.mode);
-    if (fit) { this.fit(false); this.views = []; }
+    if (fit) { this.fit(false); this.views = []; this.setPivot(null); }
   }
 
   /** Half size of the box the view fits when nothing is shown (a new part: 50 mm). */
@@ -453,6 +462,45 @@ export class Viewer {
   private lastStart = -1e9;
   /** Forgets earlier cameras (a new model). */
   clearViews() { this.views = []; }
+
+  /**
+   * Rotation centre (FR-UI-100): orbiting turns about this point instead of the view centre. The orbit controls
+   * still turn about their target; each frame the turn R they made is moved over to the pivot P by shifting
+   * camera and target by (I − R)(P − T), which is exactly the difference between the two rotations.
+   */
+  pivot: THREE.Vector3 | null = null;
+  private pivotMark: THREE.Sprite | null = null;
+
+  setPivot(p: THREE.Vector3 | null) {
+    this.pivot = p ? p.clone() : null;
+    if (!p) { if (this.pivotMark) { this.scene.remove(this.pivotMark); this.pivotMark.material.map?.dispose(); this.pivotMark.material.dispose(); this.pivotMark = null; } this.invalidate(); return; }
+    if (!this.pivotMark) {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      const g = c.getContext("2d")!;
+      const ring = (w: number, col: string) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(32, 32, 18, 0, Math.PI * 2); g.moveTo(32, 4); g.lineTo(32, 60); g.moveTo(4, 32); g.lineTo(60, 32); g.stroke(); };
+      ring(9, "rgba(255,255,255,0.9)");
+      ring(4, "#0b6bcb");
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      this.pivotMark = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true }));
+      this.pivotMark.scale.set(0.045, 0.045, 1);
+      this.pivotMark.renderOrder = 999;
+      this.pivotMark.userData.pivot = true;
+      this.scene.add(this.pivotMark);
+    }
+    this.pivotMark.position.copy(p);
+    this.invalidate();
+  }
+
+  private turnAboutPivot(q0: THREE.Quaternion) {
+    const R = this.camera.quaternion.clone().multiply(q0.invert());
+    if (Math.abs(R.w) > 1 - 1e-12) return;
+    const d = this.pivot!.clone().sub(this.controls.target);
+    const shift = d.clone().sub(d.clone().applyQuaternion(R));
+    this.controls.target.add(shift);
+    this.camera.position.add(shift);
+  }
   /** Earlier cameras for Previous view, newest last. */
   private views: { t: THREE.Vector3; p: THREE.Vector3; h: number }[] = [];
   /** Remembers the current camera (before a command or a drag moves it). */

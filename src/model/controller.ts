@@ -99,6 +99,8 @@ export interface ModelHost {
   selectedEdge?(): EdgeInfo | null;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
   setMaterial?(m: { name: string; density: number } | undefined): void;
+  /** The open part's length unit became the display unit (FR-UI-116). */
+  setUnits?(u: PartDoc["units"]["length"]): void;
   /** Normal to the picked flat face (the view's "8"). */
   normalTo?(normal?: V3): void;
   /** A standard view by name (front, top, iso, ..., "normal", "fit"), for mouse gestures. */
@@ -413,6 +415,8 @@ export class ModelController {
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
     host.viewer.scene.add(this.hoverGroup);
+    this.ghostGroup.visible = false;
+    host.viewer.scene.add(this.ghostGroup);
     this.bindHover();
     // Preferences (FR-UI-080): an open sketch takes the new sketch settings; quality and verification rebuild.
     onPrefs((p, changed) => {
@@ -532,6 +536,7 @@ export class ModelController {
     }
     // A part saved rolled back reopens rolled back, with a notice (FR-HIS-012); a parked tab keeps its own state.
     if (!keep) { this.rollNotice = doc.rollback != null; this.rollPrev = undefined; this.closedFeats.clear(); }
+    this.clearGhosts();
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
     $("#empty").hidden = true;
@@ -539,6 +544,8 @@ export class ModelController {
     $("#t-features").hidden = false;
     this.host.selectLeftTab("features");
     this.host.setMaterial?.(doc.material);
+    // The part's units are the display units while it is open (FR-UI-116).
+    if (doc.units.length !== units.current) this.host.setUnits?.(doc.units.length);
     this.renderAll();
     this.host.opened?.(this.docLabel());
     if (!doc.features.length) {
@@ -607,6 +614,7 @@ export class ModelController {
     this.renderEmpty();
     this.host.setDoc(this.docLabel());
     if (why === "undo" || why === "redo" || why.startsWith("Properties")) this.host.setMaterial?.(this.doc.material);
+    if (this.doc.units.length !== units.current) this.host.setUnits?.(this.doc.units.length);
     if (why !== "saved" && why !== "open") {
       clearTimeout(this.journalTimer);
       const wait = autosaveDelay();
@@ -644,6 +652,7 @@ export class ModelController {
 
   private async rebuild() {
     if (!this.store) return;
+    this.noteDraft();
     const doc = this.displayDoc();
     // An empty part has nothing to build: no busy sign while the kernel loads behind it.
     const quiet = !doc.features.length;
@@ -1393,6 +1402,78 @@ export class ModelController {
     bar.querySelector("button")!.addEventListener("click", () => this.setRollback(null));
   }
 
+  /** Units from the status bar (FR-UI-116): the part's length unit, as one undo step; values stay in mm. */
+  setDocUnits(u: PartDoc["units"]["length"]) {
+    if (!this.store || this.doc.units.length === u) return;
+    this.store.change(`Units: ${u}`, d => { d.units = { ...d.units, length: u }; });
+  }
+
+  /**
+   * Hide/show under the cursor (FR-UI-105). Hidden bodies are not meshed, so each one keeps the triangles it had
+   * when it was hidden (world coordinates) as a see-through ghost: Shift+Tab shows the one under the cursor, and
+   * holding Ctrl+Shift+Tab draws them all so one can be clicked.
+   */
+  private ghostGroup = new THREE.Group();
+  private pointerIn = false;
+
+  private keepGhost(key: string) {
+    const m = this.featureFaceMesh(`body:${key}`, 0x8c99a6, 0.28);
+    if (!m) return;
+    this.dropGhost(key);
+    m.userData.ghost = key;
+    m.raycast = THREE.Mesh.prototype.raycast;
+    this.ghostGroup.add(m);
+  }
+
+  private dropGhost(key: string) {
+    for (const o of [...this.ghostGroup.children]) if (o.userData.ghost === key) { this.ghostGroup.remove(o); const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+  }
+
+  private clearGhosts() { for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost); this.showGhosts(false); }
+
+  private showGhosts(on: boolean) {
+    if (this.ghostGroup.visible === on) return;
+    this.ghostGroup.visible = on;
+    this.host.viewer.invalidate();
+  }
+
+  /** The hidden body whose ghost is under a screen point (only bodies that are still hidden). */
+  private ghostAt(x: number, y: number): string | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const live = this.ghostGroup.children.filter(o => this.doc.bodies?.[o.userData.ghost]?.hidden);
+    return (rc.intersectObjects(live, false)[0]?.object.userData.ghost as string | undefined) ?? null;
+  }
+
+  /** The shown body under a screen point. */
+  bodyAt(x: number, y: number): string | null {
+    const hit = this.host.faceAt(x, y), bodies = this.last?.bodies ?? [];
+    if (!hit) return null;
+    let at = 0;
+    for (const b of bodies) { const n = b.faces ?? 0; if (hit.faceId >= at && hit.faceId < at + n) return b.key; at += n; }
+    return null;
+  }
+
+  /** Tab / Shift+Tab / Ctrl+Shift+Tab over the view; false when the keys are not for it. */
+  private tabKey(e: KeyboardEvent): boolean {
+    if (e.key !== "Tab" || e.altKey || this.mode.kind !== "none" || !this.pointerIn || !this.pointer) return false;
+    const tg = e.target as HTMLElement;
+    if (!(tg === document.body || tg === document.documentElement || tg === this.host.viewer.renderer.domElement || tg.id === "viewport")) return false;
+    const { x, y } = this.pointer;
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey) { this.showGhosts(true); return true; }
+    if (e.ctrlKey || e.metaKey) return false;
+    if (e.shiftKey) {
+      const key = this.ghostAt(x, y);
+      if (key) this.setBody(key, { hidden: false });
+      else toast(t("No hidden body under the cursor."));
+      return true;
+    }
+    const key = this.bodyAt(x, y);
+    if (key) this.setBody(key, { hidden: true });
+    return !!key;
+  }
+
   /** Shift+C (FR-HIS-013): folds every folder and every feature's absorbed sketch. */
   collapseAll() {
     if (!this.store) return;
@@ -1629,8 +1710,57 @@ export class ModelController {
     this.store!.change(`Delete ${f.name}`, d => { d.features = d.features.filter(x => !gone.has(x.id)); d.rollback = null; });
   }
 
-  undo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
-  redo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+  undo() { if (this.mode.kind === "feature") { this.stepDraft(-1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
+  redo() { if (this.mode.kind === "feature") { this.stepDraft(1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+
+  /**
+   * Undo inside a command (FR-UI-108): every state of the open feature's draft (picks, values, options, the box in
+   * focus) is kept per command; Ctrl+Z / Ctrl+Y step through them without leaving the panel, and the document's own
+   * undo stack is not touched until OK.
+   */
+  private drafts = new WeakMap<object, { snaps: string[]; at: number }>();
+
+  private draftSnap(m: Extract<Mode, { kind: "feature" }>) { return JSON.stringify({ d: m.draft, f: m.focus ?? null }); }
+
+  /** Records the draft's state when it differs from the last one kept. */
+  private noteDraft() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const snap = this.draftSnap(m), h = this.drafts.get(m);
+    if (!h) { this.drafts.set(m, { snaps: [snap], at: 0 }); return; }
+    if (h.snaps[h.at] === snap) return;
+    h.snaps.length = h.at + 1;
+    h.snaps.push(snap);
+    if (h.snaps.length > 100) h.snaps.shift();
+    h.at = h.snaps.length - 1;
+    this.renderQuick();
+  }
+
+  /** Whether the open command has a step to undo (-1) or redo (+1). */
+  draftCan(dir: -1 | 1) {
+    const m = this.mode, h = m.kind === "feature" ? this.drafts.get(m) : undefined;
+    return !!h && (dir < 0 ? h.at > 0 : h.at < h.snaps.length - 1);
+  }
+
+  private stepDraft(dir: -1 | 1) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    this.noteDraft();
+    const h = this.drafts.get(m)!;
+    const to = h.at + dir;
+    if (to < 0 || to >= h.snaps.length) { toast(dir < 0 ? t("Nothing to undo in this command.") : t("Nothing to redo in this command.")); return; }
+    h.at = to;
+    const { d, f } = JSON.parse(h.snaps[to]) as { d: Feature; f: Focus | null };
+    // The draft object keeps its identity: view state keyed by it (3D sketch tools) stays.
+    const dr = m.draft as unknown as Record<string, unknown>;
+    for (const k of Object.keys(dr)) delete dr[k];
+    Object.assign(dr, d);
+    if (f) m.focus = f; else delete m.focus;
+    this.renderQuick();
+    this.renderPanel();
+    this.drawDecor();
+    void this.rebuild();
+  }
 
   // ---------- files ----------
 
@@ -1858,7 +1988,18 @@ export class ModelController {
         this.startArrowDrag(e);
       }
     }, true);
-    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; this.pointerIn = e.target === this.host.viewer.renderer.domElement; }, true);
+    vp.addEventListener("pointerleave", () => { this.pointerIn = false; });
+    // Ctrl+Shift+Tab held (FR-UI-105): a click on a see-through hidden body shows it.
+    window.addEventListener("pointerdown", e => {
+      if (!this.ghostGroup.visible || e.button !== 0 || e.target !== this.host.viewer.renderer.domElement) return;
+      const key = this.ghostAt(e.clientX, e.clientY);
+      if (!key) return;
+      e.preventDefault(); e.stopPropagation();
+      this.setBody(key, { hidden: false });
+    }, true);
+    window.addEventListener("keyup", e => { if (this.ghostGroup.visible && (e.key === "Tab" || e.key === "Control" || e.key === "Shift" || e.key === "Meta")) this.showGhosts(false); });
+    window.addEventListener("blur", () => this.showGhosts(false));
     vp.addEventListener("pointermove", e => {
       if (this.arrowDrag) { e.stopPropagation(); this.moveArrow(e); return; }
       if (!onCanvas(e)) return;
@@ -1967,6 +2108,7 @@ export class ModelController {
     const k = e.key.toLowerCase();
     const mod = e.ctrlKey || e.metaKey;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    if (this.tabKey(e)) { stop(); return; }
     if (mod && k === "s") { stop(); void this.save(e.shiftKey); return; }
     if (mod && !e.shiftKey && k === "z") { stop(); this.undo(); return; }
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
@@ -4112,12 +4254,16 @@ export class ModelController {
     if (!this.store) { q.hidden = true; q.innerHTML = ""; return; }
     q.hidden = false;
     const m = this.mode, busy = m.kind !== "none" && m.kind !== "sketch", sk = m.kind === "sketch";
-    const btn = (id: string, label: string, title: string, on = false, dis = false) =>
-      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
-    const canUndo = sk ? this.store.canUndo : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : !busy && this.store.canRedo;
+    // A disabled button says why (FR-UI-112): `data-why` shows in its tooltip.
+    const btn = (id: string, label: string, title: string, on = false, dis = false, why = "") =>
+      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}${dis && why ? ` data-why="${esc(why)}"` : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
+    // Inside a feature command, Undo / Redo step the panel's own changes (FR-UI-108).
+    const inCmd = m.kind === "feature";
+    const canUndo = sk ? this.store.canUndo : inCmd ? this.draftCan(-1) : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : inCmd ? this.draftCan(1) : !busy && this.store.canRedo;
+    const whyNot = (redo: boolean) => busy && !inCmd ? t("Finish or cancel the command first.") : inCmd ? t(redo ? "Nothing to redo in this command." : "Nothing to undo in this command.") : t(redo ? "Nothing to redo." : "Nothing to undo.");
     q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
-      + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
-      + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
+      + `<span class="mc-fly">${btn("undo", t("Undo"), inCmd ? t("Undo in this command (Ctrl+Z)") : this.undoTip(), false, !canUndo, whyNot(false))}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
+      + btn("redo", t("Redo"), inCmd ? t("Redo in this command (Ctrl+Y)") : this.undoTip(true), false, !canRedo, whyNot(true))
       + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) + this.sketchToggles(m.editor) : "")
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
@@ -5119,6 +5265,9 @@ export class ModelController {
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
   setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
     if (!this.store) return;
+    // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
+    // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
+    if (ch.hidden === true) this.keepGhost(key);
     this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
@@ -5200,6 +5349,7 @@ export class ModelController {
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
+    this.noteDraft();
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;

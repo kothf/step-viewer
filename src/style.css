@@ -384,6 +384,15 @@ details > :last-child { margin-bottom: 12px; }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
 .st-kernel { color: var(--muted); white-space: nowrap; }
+.st-units { border: 1px solid transparent; background: none; color: var(--text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; min-height: 20px; }
+.st-units:hover, .st-units[aria-expanded="true"] { border-color: var(--line); background: var(--panel-2); }
+.st-units-menu { gap: 2px; min-width: 180px; }
+.st-units-menu .menu-h:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.st-units-menu button { text-align: left; border: 0; background: none; color: var(--text); font: inherit; padding: 4px 8px; border-radius: 5px; cursor: pointer; min-height: 24px; }
+.st-units-menu button:hover, .st-units-menu button:focus-visible { background: var(--panel-2); }
+.st-units-menu button[aria-checked="true"] { color: var(--accent-text); font-weight: 600; }
+.st-units-menu button[aria-checked="true"]::before { content: "✓ "; }
+.st-dec { display: flex; flex-wrap: wrap; gap: 2px; }
 .st-kernel[data-state="ready"]::before, .st-kernel[data-state="partial"]::before { content: "●"; color: var(--ok, #2f9e44); margin-right: 4px; }
 .st-kernel[data-state="loading"]::before { content: "◌"; margin-right: 4px; }
 
@@ -1217,3 +1226,10 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 #prefs-dlg .prefs-legend, #prefs-dlg .prefs-mouse { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 #prefs-dlg .prefs-mouse { list-style: disc; padding-left: 20px; }
 #prefs-dlg .prefs-sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); }
+
+/* Command tooltips (FR-UI-112): label, shortcut, description, why a button is unavailable. */
+.cm-tip { position: fixed; z-index: 1300; max-width: 300px; padding: 6px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow); font-size: 12px; pointer-events: none; }
+.cm-tip-h { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.cm-tip kbd { font: 11px/1.4 var(--mono, ui-monospace, monospace); padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--text); white-space: nowrap; }
+.cm-tip-d { margin-top: 2px; color: var(--muted); }
+.cm-tip-w { margin-top: 3px; color: var(--warn-text); }

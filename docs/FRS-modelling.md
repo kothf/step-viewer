@@ -1574,7 +1574,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | --- | --- | --- | --- |
 | Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | 1.329.0: Preferences → Mouse sets the middle button (rotate or pan) and the wheel direction | Done |
 | Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | 1.89.0 model snapping; 1.251.0 automatic relations while drawing; 1.303.0 alignment inference | Done |
-| Middle click sets the rotation centre | FR-UI-100 | No | New |
+| Middle click sets the rotation centre | FR-UI-100 | 1.351.0: middle click on a vertex/edge/face sets the pivot with a marker, empty space clears; an edge pivots about the clicked point, not its line (Z-up orbit) | Partly |
 | Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
 | Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
@@ -1588,7 +1588,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
 | Magnifying glass G | FR-SEL-010 | No | New |
 | Colour-coded selection boxes | FR-SEL-011 | One pick colour | New |
-| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | No (H hides the selection in the viewer) | New |
+| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
 | Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |
 | Context toolbar on selection | FR-UI-026 | Done | Done |
@@ -1598,7 +1598,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
 | Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | 1.107.0: 📌 Keep visible and Ctrl+Enter | Done |
-| Undo inside an open panel | FR-UI-108 | No | New |
+| Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
 | Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
 | Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
 | Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
@@ -1623,8 +1623,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
 | Command search Ctrl+K | FR-UI-014 (S) | Done (1.121.0) | Done |
-| Units in the status bar | FR-UI-116 | No | New |
-| Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
+| Units in the status bar | FR-UI-116 | 1.351.0: unit and decimals button in the status bar; the part's unit is a document change (undoable); mass stays g/kg | Done |
+| Tooltips with the shortcut key | FR-UI-112 | 1.351.0: command bar tooltips with name, shortcut key and description; disabled buttons say why | Done |
 
 ### Appendix G. Implementation status audit (2026-11-08, MöbiusCAD 1.87.0)
 

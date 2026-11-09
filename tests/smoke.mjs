@@ -2590,6 +2590,109 @@ try {
     await idle();
     check(rbMenu.includes("Roll back to here") && rbOpen.rb === rbN - 2 && rbOpen.note === "The part is rolled back: 2 features are not shown" && rbOpen.rolled >= 1 && rbEnd.rb === null && !rbEnd.note && rbBarMenu.join("|") === "Roll to previous" && rbPrev === rbN - 2,
       `model 1.350: Roll back to here, reopened rolled back with the notice, Roll to end from it, then Roll to previous from the bar menu (${JSON.stringify([rbMenu, rbOpen, rbEnd, rbBarMenu, rbPrev])})`);
+    // 1.351: undo inside a command (FR-UI-108): Ctrl+Z / Ctrl+Y step the open extrude's depth back and forth; the document stack is untouched.
+    const ucLabel = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    await mp.fill('#mc-pm input[data-num="depth"]', "15");
+    await mp.$eval('#mc-pm input[data-num="depth"]', el => { el.dispatchEvent(new Event("change", { bubbles: true })); el.blur(); });
+    await idle();
+    const ucSet = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const ucUndo = await mp.evaluate(() => ({ kind: window.__sv.modeller.mode.kind, v: window.__sv.modeller.mode.draft?.depth?.v, box: document.querySelector('#mc-pm input[data-num="depth"]')?.value, label: window.__sv.model.store.undoLabel }));
+    await mp.keyboard.press("Control+y");
+    await idle();
+    const ucRedo = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ucDoc = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "cpe").depth.v);
+    check(ucSet === 15 && ucUndo.kind === "feature" && ucUndo.v === 10 && /^10/.test(ucUndo.box) && ucUndo.label === ucLabel && ucRedo === 15 && ucDoc === 10,
+      `model 1.351: Ctrl+Z in the open extrude puts the depth back to 10 without leaving it or touching the document's undo, Ctrl+Y brings 15 back (${JSON.stringify([ucLabel, ucSet, ucUndo, ucRedo, ucDoc])})`);
+    // FR-UI-112: command tooltips: label, shortcut key and description; a disabled button says why.
+    await mp.click("#cm-t-features");
+    await mp.hover('#mc-tools [data-c="fillet"]');
+    await mp.waitForSelector("#cm-tip", { timeout: 3000 }).catch(() => {});
+    const ttFillet = await mp.evaluate(() => ({ h: document.querySelector("#cm-tip .cm-tip-h")?.textContent, d: document.querySelector("#cm-tip .cm-tip-d")?.textContent, title: document.querySelector('#mc-tools [data-c="fillet"]').getAttribute("title") }));
+    await mp.mouse.move(5, 5);
+    await mp.hover('#mc-quick [data-c="filter"]');
+    await mp.waitForSelector("#cm-tip kbd", { timeout: 3000 }).catch(() => {});
+    const ttKey = await mp.evaluate(() => document.querySelector("#cm-tip kbd")?.textContent);
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    const udBox = await mp.evaluate(() => { const r = document.querySelector('#mc-quick [data-c="undo"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await mp.mouse.move(udBox[0], udBox[1]);
+    await mp.waitForSelector("#cm-tip .cm-tip-w", { timeout: 3000 }).catch(() => {});
+    const ttWhy = await mp.evaluate(() => ({ dis: document.querySelector('#mc-quick [data-c="undo"]').disabled, w: document.querySelector("#cm-tip .cm-tip-w")?.textContent }));
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ttGone = await mp.evaluate(() => ({ tip: !!document.querySelector("#cm-tip"), title: document.querySelector('#mc-tools [data-c="fillet"]')?.getAttribute("title") }));
+    check(ttFillet.h === "Fillet" && ttFillet.d === "Round edges" && ttFillet.title === null && ttKey === "F5" && ttWhy.dis && ttWhy.w === "Unavailable: Nothing to undo in this command." && !ttGone.tip && ttGone.title === "Round edges",
+      `model 1.351: command tooltips show the label, the description and the shortcut key, and a disabled Undo in a command says why (${JSON.stringify([ttFillet, ttKey, ttWhy, ttGone])})`);
+    // FR-UI-116: units in the status bar: inches for the part as one undo step, Ctrl+Z goes back to mm.
+    await mp.click("#st-units");
+    const unMenu = await mp.evaluate(() => [...document.querySelectorAll("#st-units-menu [data-u]")].map(b => b.dataset.u).join());
+    await mp.click('#st-units-menu [data-u="in"]');
+    await idle();
+    const unIn = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent, sel: document.querySelector("#units").value, undo: window.__sv.model.store.undoLabel, menu: !!document.querySelector("#st-units-menu") }));
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const unBack = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent }));
+    check(unMenu === "mm,cm,m,in,ft" && unIn.doc === "in" && /^in /.test(unIn.btn) && unIn.sel === "in" && unIn.undo === "Units: in" && !unIn.menu && unBack.doc === "mm" && /^mm /.test(unBack.btn),
+      `model 1.351: the status bar unit button sets the part's units to inches as one undo step; Ctrl+Z goes back to mm (${JSON.stringify([unMenu, unIn, unBack])})`);
+    // FR-UI-105: Tab hides the body under the cursor, Shift+Tab shows it again, Ctrl+Shift+Tab held + click shows it too.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const thAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(thAt[0] + 1, thAt[1] + 1);
+    await mp.mouse.move(thAt[0], thAt[1]);
+    const thKey = await mp.evaluate(([x, y]) => window.__sv.modeller.bodyAt(x, y), thAt);
+    const thBodies = await mp.evaluate(() => window.__sv.model.last().bodies.length);
+    await mp.keyboard.press("Tab");
+    await idle();
+    const thHid = await mp.evaluate(k => ({ hidden: !!window.__sv.model.store.doc.bodies?.[k]?.hidden, undo: window.__sv.model.store.undoLabel, focus: document.activeElement === document.body }), thKey);
+    await mp.keyboard.press("Shift+Tab");
+    await idle();
+    const thShown = await mp.evaluate(k => !window.__sv.model.store.doc.bodies?.[k]?.hidden, thKey);
+    await mp.keyboard.press("Tab");
+    await idle();
+    await mp.keyboard.down("Control"); await mp.keyboard.down("Shift"); await mp.keyboard.down("Tab");
+    const thGhost = await mp.evaluate(() => window.__sv.modeller.ghostGroup.visible);
+    await mp.mouse.click(thAt[0], thAt[1]);
+    await mp.keyboard.up("Tab"); await mp.keyboard.up("Shift"); await mp.keyboard.up("Control");
+    await idle();
+    const thClick = await mp.evaluate(k => ({ shown: !window.__sv.model.store.doc.bodies?.[k]?.hidden, ghosts: window.__sv.modeller.ghostGroup.visible }), thKey);
+    check(thBodies >= 2 && thKey && thHid.hidden && thHid.undo === "Hide body" && thHid.focus && thShown && thGhost && thClick.shown && !thClick.ghosts,
+      `model 1.351: Tab hides the body under the cursor (one undo step), Shift+Tab shows it, holding Ctrl+Shift+Tab draws it see-through and a click shows it (${JSON.stringify([thBodies, thKey, thHid, thShown, thGhost, thClick])})`);
+    // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.click(pvAt[0], pvAt[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvScreen = () => mp.evaluate(() => { const v = window.__sv.viewer; if (!v.pivot) return null; const r = v.renderer.domElement.getBoundingClientRect(), s = v.pivot.clone().project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    const pvSet = await mp.evaluate(() => { const v = window.__sv.viewer; return v.pivot && { p: v.pivot.toArray().map(x => Math.round(x)), mark: !!v.scene.children.find(o => o.userData.pivot), q: v.camera.quaternion.toArray() }; });
+    const pv0 = await pvScreen();
+    const cvBox = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width * 0.3, r.top + r.height * 0.7]; });
+    await mp.mouse.move(cvBox[0], cvBox[1]);
+    await mp.mouse.down();
+    for (let k = 1; k <= 8; k++) await mp.mouse.move(cvBox[0] + k * 15, cvBox[1] - k * 6);
+    await mp.mouse.up();
+    await mp.waitForTimeout(800);
+    const pv1 = await pvScreen();
+    const pvTurned = await mp.evaluate(q => { const a = window.__sv.viewer.camera.quaternion.toArray(); return Math.abs(a.reduce((s, x, i) => s + x * q[i], 0)) < 0.9999; }, pvSet?.q ?? [0, 0, 0, 1]);
+    const cvCorner = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.right - 60, r.bottom - 60]; });
+    await mp.mouse.click(cvCorner[0], cvCorner[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvGone = await mp.evaluate(() => ({ pivot: window.__sv.viewer.pivot, mark: !!window.__sv.viewer.scene.children.find(o => o.userData.pivot) }));
+    check(pvSet && Math.hypot(pvSet.p[0] - 210, pvSet.p[1] - 210) < 15 && pvSet.mark && pvTurned && pv0 && pv1 && Math.hypot(pv1[0] - pv0[0], pv1[1] - pv0[1]) < 1.5 && pvGone.pivot === null && !pvGone.mark,
+      `model 1.351: a middle click sets the rotation centre with a marker, orbiting turns about it (it stays put on screen), a middle click on empty space clears it (${JSON.stringify([pvSet, pv0, pv1, pvTurned, pvGone])})`);
     await ctx.close();
   }
 
@@ -5466,6 +5569,25 @@ try {
     const hid = await mp.evaluate(() => window.__sv.asm.props?.volume);
     await mp.keyboard.press("ControlOrMeta+z");
     await shown(3);
+    // 1.351 (FR-UI-105): Tab over the cube hides it, Shift+Tab over the same place shows it again.
+    const tabAt = await mp.evaluate(() => {
+      const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[2].id, i = a.shownIds.findIndex(s => s === id);
+      const m = v.parts[i].mesh; m.geometry.computeBoundingBox();
+      const c = m.geometry.boundingBox.getCenter(new (v.camera.position.constructor)()).applyMatrix4(m.matrixWorld).project(v.camera);
+      const r = v.renderer.domElement.getBoundingClientRect();
+      return { id, x: r.left + ((c.x + 1) / 2) * r.width, y: r.top + ((1 - c.y) / 2) * r.height };
+    });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(tabAt.x + 1, tabAt.y);
+    await mp.mouse.move(tabAt.x, tabAt.y);
+    await mp.keyboard.press("Tab");
+    await shown(2);
+    // (The cube's box centre may sit behind another component: whichever is under the cursor goes.)
+    const tabHid = await mp.evaluate(() => window.__sv.asm.doc.components.filter(c => c.hidden).map(c => c.id));
+    await mp.keyboard.press("Shift+Tab");
+    await shown(3);
+    const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
+    check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
