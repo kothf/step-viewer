@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.319.0] - 2026-11-09
+
+### Added
+
+- **Measured values into input boxes (FR-MEA-002)**: drag a length, diameter, radius or angle from the measurement card onto a box in a feature panel or any other number box, and it goes in as if typed. A box that already shows the value's unit gets the bare number; another gets number and unit (say 1.5 in in a millimetre box), which the box reads as an expression. Clicking a value still copies it.
+
 ## [1.318.0] - 2026-11-09
 
 ### Added
@@ -1866,7 +1872,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.318.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.319.0...HEAD
+[1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
 [1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
 [1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0

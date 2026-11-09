@@ -49,6 +49,7 @@ import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
+import { bindValueDrops, dragValue } from "./valueDrop";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -1664,19 +1665,19 @@ function renderReadout() {
   const f = formatMeasurement(m);
   box.style.setProperty("--c", m.color);
   const det = f.pairs
-    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" translate="no" title="${esc(t("Click to copy"))}">${esc(x)}</b></span>`)
+    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" translate="no" title="${esc(t("Click to copy, or drag into a box"))}">${esc(x)}</b></span>`)
     : f.details.map(d => `<span>${esc(d)}</span>`);
   const unitOpts = UNIT_LIST.map(u => `<option${u === units.current ? " selected" : ""}>${u}</option>`).join("");
   const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? t("auto") : t("{n} dp", { n: d })}</option>`).join("");
   box.classList.toggle("floating", state.readoutFloat);
   box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${t(state.readoutFloat ? "Dock in the corner" : "Float next to the measurement")}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="${t("Units")}">${unitOpts}</select><select data-hud="decimals" title="${t("Decimal places")}">${decOpts}</select><button class="x close" title="${t("Close (Esc)")}">✕</button></span></div>
-    <div class="val"><b class="cp" translate="no" title="${t("Click to copy")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+    <div class="val"><b class="cp" translate="no" title="${t("Click to copy, or drag into a box")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
   box.querySelector(".dock")!.addEventListener("click", () => {
     state.readoutFloat = !state.readoutFloat;
     storage.set("sv:readout", state.readoutFloat ? "float" : "dock");
     renderReadout();
   });
-  box.querySelectorAll<HTMLElement>(".cp").forEach(el => el.addEventListener("click", () => copyValue(el.textContent ?? "")));
+  box.querySelectorAll<HTMLElement>(".cp").forEach(el => { el.addEventListener("click", () => copyValue(el.textContent ?? "")); dragValue(el); });
   box.querySelector<HTMLSelectElement>('[data-hud="units"]')!.addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
   box.querySelector<HTMLSelectElement>('[data-hud="decimals"]')!.addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
   box.querySelector(".close")!.addEventListener("click", () => {
@@ -1986,6 +1987,7 @@ function selectionBox(): THREE.Box3 | null {
   parts.forEach(p => b.expandByObject(p.mesh));
   return parts.length ? b : null;
 }
+bindValueDrops();
 const nav = bindNavigation({
   viewer,
   views: VIEWS,

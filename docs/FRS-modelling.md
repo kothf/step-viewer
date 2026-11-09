@@ -1040,7 +1040,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 ### 13.11 Measurement and evaluation integration
 
 - **FR-MEA-001** (P1, M) All existing measure tools (smart measure, distances, radius, angle, pitch, coordinates, bounding box) work on modelled parts and assemblies under the Evaluate tab and with the existing shortcuts when no sketch is active.
-- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box.
+- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box. *Done in 1.319.0: the result card's values (lengths, diameters, radii, angles) drag onto any text or number box; the box gets the number in its own unit, or number and unit as an expression, and applies as if typed. The sketch Modify box closes when focus leaves it, so a value goes there by click to copy and paste.*
 - **FR-MEA-003** (P1, M) Measurements on a model reference persistent names, so they survive rebuilds and update their values; a measurement whose entity disappeared is flagged.
 - **FR-MEA-004** (P1, M) The section tool (up to 3 planes, caps, hatching, drag arrows) works during feature editing and in the sketcher (section at sketch plane).
 - **FR-MEA-005** (P5, S) Analyses: draft analysis (colour by draft angle against a pull direction), zebra stripes, curvature map, thickness analysis (ray-based), undercut detection.
@@ -1645,7 +1645,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-080 | Preferences dialog with a Modelling page | Settings live in the Display menu; no Modelling page | Not built |
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
-| FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
+| FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
 | FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
 **Sketcher (section 8)**
