@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.320.0] - 2026-11-09
+
+### Added
+- Slot centre marks in drawings (FR-DRW-023): a straight slot seen end-on gets a centreline along it, 2 mm past both ends, and a centre line across each rounded end.
+
+### Fixed
+- The rounded ends of a slot were marked as full circles, because their arcs on the top and bottom faces added up to 360°.
+
 ## [1.313.0] - 2026-11-09
 
 ### Added
@@ -1833,7 +1841,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.313.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.320.0...HEAD
+[1.320.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.320.0
 [1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0
 [1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
 [1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
