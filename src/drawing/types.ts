@@ -107,7 +107,8 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3; com?: true };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
-export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string;
+/** A dimension tolerance; "none" turns the drawing's default tolerance (`DraftStyle.tol`/`atol`) off for one dimension. */
+export interface Tol { t: "sym" | "dev" | "limit" | "fit" | "none"; up?: number; lo?: number; fit?: string;
   /** Fit display: the code (default), its ISO 286 deviations, or both; a hole/shaft pair always shows the code. */
   show?: "code" | "limits" | "both" }
 
@@ -264,7 +265,9 @@ export interface DrawingDoc {
 
 /** Annotation text height (mm), arrowhead (filled, open, dot or oblique tick) and ISO 128 line group (thick line width, mm). */
 /** `lin`/`ang`: decimals of linear and angular dimensions that set none themselves (absent = up to 2, trailing zeros dropped). */
-export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | "dot" | "tick"; lines?: 0.25 | 0.35 | 0.5 | 0.7; lin?: number; ang?: number }
+export interface DraftStyle { text?: 2.5 | 3.5 | 5; arrow?: "filled" | "open" | "dot" | "tick"; lines?: 0.25 | 0.35 | 0.5 | 0.7; lin?: number; ang?: number;
+  /** Default symmetric tolerance (±) of dimensions with none of their own: linear in mm, angular in degrees. */
+  tol?: number; atol?: number }
 
 /** Model facts for the title block. */
 export interface ModelInfo { title: string; number?: string; revision?: string; author?: string; material?: string; mass?: number; box: [V3, V3] }

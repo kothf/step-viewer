@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.362.0] - 2026-11-09
+
+### Added
+- Default tolerance in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Default tolerance (±) and Default angle tolerance (±°) apply to every dimension without a tolerance of its own. A dimension's Tolerance row then reads Document, and None turns the default off for that dimension.
+- Centre marks on spheres (FR-DRW-023): a whole sphere (a ball end, a knob) gets a centre cross from any side, unless a circle seen end-on already marks that centre.
+
 ## [1.355.0] - 2026-11-09
 
 ### Added
@@ -2131,7 +2137,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.355.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.362.0...HEAD
+[1.362.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.362.0
 [1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
 [1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
