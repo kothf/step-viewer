@@ -450,7 +450,10 @@ function clearModelView() {
   renderProps();
   $("#empty").hidden = false;
 }
+/** The camera a document tab was parked with, applied by its first show (FR-DOC-003). */
+let tabView: ReturnType<Viewer["getView"]> | null = null;
 docs = new DocTabs({
+  view: () => ($("#empty").hidden && viewer.parts.length ? viewer.getView() : null),
   park(kind) {
     if (kind === "part") return modeller.park();
     if (kind === "asm") return asm.park();
@@ -460,6 +463,7 @@ docs = new DocTabs({
     return src;
   },
   async resume(tab: DocTab) {
+    tabView = tab.kind === "drawing" ? null : ((tab.view as typeof tabView) ?? null);
     if (tab.kind === "part") modeller.resume(tab.state as PartTab);
     else if (tab.kind === "asm") asm.resume(tab.state as AsmTab);
     else if (tab.kind === "drawing") await drawing.resume(tab.state as DrawingTab);
@@ -468,6 +472,8 @@ docs = new DocTabs({
       modeller.close();
       asm.close();
       await openBuffer(src.data.slice(0), src.name);
+      if (tabView && viewer.parts.length) viewer.setView(tabView, false);
+      tabView = null;
     }
   },
   close(kind) {
@@ -882,6 +888,8 @@ function showModelled(parts: PartData[], tree: TreeNode, name: string, first: bo
   renderProps();
   updateHint();
   if (first && parts.length) viewer.viewFrom(new THREE.Vector3(1, -1, 0.8), false);
+  // A document coming back from a parked tab is shown as it was left.
+  if (first && parts.length && tabView) { viewer.setView(tabView, false); tabView = null; }
   if (lastMassRun || mp.open) runMass();
   for (const f of partListeners) f();
 }
@@ -895,6 +903,7 @@ function showModelStats() {
 function resetForNewModel() {
   setTool("select");
   section.clear();
+  syncSectionHud();
   renderSections();
   stopDrag();
   hl.com.visible = false;
@@ -2127,11 +2136,13 @@ const sessionViews = new Map<string, NamedView[]>();
   hud.setAttribute("aria-label", t("View"));
   hud.hidden = true;
   hud.innerHTML = `<div class="seg" role="group"><button type="button" data-hud="area" title="${t("Zoom to area")}" aria-label="${t("Zoom to area")}">⬚</button>`
-    + `<button type="button" data-hud="prev" title="${t("Previous view (Alt+Z)")}" aria-label="${t("Previous view (Alt+Z)")}">↶</button></div>`;
+    + `<button type="button" data-hud="prev" title="${t("Previous view (Alt+Z)")}" aria-label="${t("Previous view (Alt+Z)")}">↶</button>`
+    + `<button type="button" data-hud="section" aria-pressed="false" title="${t("Section view")}" aria-label="${t("Section view")}">◫</button></div>`;
+  hud.querySelector('[data-hud="section"]')!.addEventListener("click", () => toggleSectionView());
   hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
   hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
   $("#viewport").append(hud);
-  const moved = ["#views", "#projection", "#display-mode"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
+  const moved = ["#views", "#projection", "#display-mode", "#display-btn"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
   const sync = () => {
     const app = $("#app"), on = (app.classList.contains("model") || app.classList.contains("asm")) && !app.classList.contains("gerber");
     if (on === !hud.hidden) return;
@@ -2142,7 +2153,7 @@ const sessionViews = new Map<string, NamedView[]>();
   new MutationObserver(sync).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
   sync();
   onLangChange(() => {
-    for (const [k, label] of [["area", "Zoom to area"], ["prev", "Previous view (Alt+Z)"]] as const) {
+    for (const [k, label] of [["area", "Zoom to area"], ["prev", "Previous view (Alt+Z)"], ["section", "Section view"]] as const) {
       const b = hud.querySelector<HTMLElement>(`[data-hud="${k}"]`)!;
       b.title = t(label); b.setAttribute("aria-label", t(label));
     }
@@ -2334,6 +2345,27 @@ snapper.sectionSource = () => section.profiles();
 section.onDragging = on => { dragging = on; };
 section.onChange = () => updateSectionReadouts();
 
+/** The heads-up Section view button is pressed while a section plane cuts the model. */
+function syncSectionHud() {
+  const hb = document.querySelector<HTMLElement>('#hud [data-hud="section"]');
+  if (!hb) return;
+  const on = section.planes.some(sp => sp.enabled && sp.label !== "Sketch");
+  hb.setAttribute("aria-pressed", String(on));
+  hb.classList.toggle("on", on);
+}
+/** Heads-up Section view (FR-UI-022): turns every section plane off or on again; with none it cuts at the selected flat face, else through the middle on the front plane. */
+function toggleSectionView() {
+  if (!viewer.parts.length) return;
+  const ps = section.planes.filter(sp => sp.label !== "Sketch");
+  if (!ps.length) {
+    const e = state.selection;
+    addSection(e && e.kind === "face" && e.face?.type === "plane" ? "face" : "y");
+  } else {
+    const on = !ps.some(sp => sp.enabled);
+    for (const sp of ps) section.setEnabled(sp, on);
+    renderSections();
+  }
+}
 function addSection(kind: string) {
   if (!viewer.parts.length) return;
   if (state.tool === "sectionFace") setTool("select");
@@ -2418,6 +2450,7 @@ const unitFactor = unitMm;
 
 let sectionCount = 0;
 function renderSections() {
+  syncSectionHud();
   // A new plane (from the strip, a face, the result card or three points) brings up the Section page.
   if (section.planes.length > sectionCount) showPage("section");
   sectionCount = section.planes.length;
@@ -2449,7 +2482,7 @@ function renderSections() {
     const q = <T extends HTMLElement>(sel: string) => el.querySelector(sel) as T;
     const chk = q<HTMLInputElement>('input[type="checkbox"]'), range = q<HTMLInputElement>('[data-k="range"]'), num = q<HTMLInputElement>('[data-k="off"]');
     const step = q<HTMLInputElement>('[data-k="step"]'), az = q<HTMLInputElement>('[data-k="az"]'), elv = q<HTMLInputElement>('[data-k="el"]');
-    chk.addEventListener("change", () => { section.setEnabled(sp, chk.checked); updateSectionDeps(); });
+    chk.addEventListener("change", () => { section.setEnabled(sp, chk.checked); updateSectionDeps(); syncSectionHud(); });
     range.addEventListener("input", () => { section.setOffset(sp, parseFloat(range.value)); num.value = (sp.offset / f).toFixed(4); });
     num.addEventListener("change", () => { const v = parseFloat(num.value) * f; if (isFinite(v)) { section.setOffset(sp, v); range.value = String(v); } });
     const nudge = (k: number) => {
