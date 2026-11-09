@@ -2429,6 +2429,9 @@ try {
     // 1.319: a measured value dragged from the readout into a feature's numeric box (FR-MEA-002).
     await mp.evaluate(() => window.__sv.modeller.editFeature("x"));
     await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    // Let the edit's preview rebuild land first: reloading the view drops a live measurement, which hid the readout mid-drag on CI.
+    await idle();
+    await mp.waitForTimeout(300);
     const vdPick = await mp.evaluate(() => {
       const { viewer, handlePick } = window.__sv;
       const p = viewer.parts.find(q => q.data.edges.some(e => Math.abs(Math.hypot(...e.end.map((v, i) => v - e.start[i])) - 40) < 1e-6));
