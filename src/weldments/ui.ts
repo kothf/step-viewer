@@ -327,9 +327,12 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + help(t("Click two flat faces that meet at a corner, such as a beam and a post.")))
         + group(t("Profile"), sel("wshape", t("Shape"), [["tri", t("Triangular")], ["poly", t("Polygonal")]], f.shape)
           + numField("d1", t("Length along face 1"), f.d1, "length") + numField("d2", t("Length along face 2"), f.d2, "length")
-          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length") : "")
+          + (f.shape === "poly" ? numField("d3", t("End width"), f.d3 ?? { v: 10 }, "length")
+            + sel("wpolyEnd", t("Other end"), [["same", t("Same width")], ["d4", t("Its own width")], ["angle", t("By profile angle")]], f.polyAngle ? "angle" : f.d4 ? "d4" : "same")
+            + (f.polyAngle ? numField("polyAngle", t("Profile angle"), f.polyAngle, "angle") : f.d4 ? numField("d4", t("End width at face 2"), f.d4, "length") : "") : "")
           + numField("thickness", t("Thickness"), f.thickness, "length")
-          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", t("Distance"), f.chamfer, "length") : ""))
+          + chk("wChamfer", !!f.chamfer, t("Chamfer the inner corner")) + (f.chamfer ? numField("chamfer", f.chamfer2 ? t("Distance along face 1") : t("Distance"), f.chamfer, "length")
+            + chk("wChamfer2", !!f.chamfer2, t("Different distance along face 2")) + (f.chamfer2 ? numField("chamfer2", t("Distance along face 2"), f.chamfer2, "length") : "") : ""))
         + group(t("Location"), sel("wloc", t("Location"), [["mid", t("Mid point")], ["start", t("Start")], ["end", t("End")]], f.loc)
           + (f.loc !== "mid" ? sel("wgside", t("Thickness"), [["in", t("Inner side")], ["both", t("Both sides")], ["out", t("Outer side")]], f.side ?? "in") : "")
           + chk("wgOffset", !!f.offset, t("Offset")) + (f.offset ? numField("offset", t("Offset"), f.offset, "length") : "")
@@ -421,11 +424,19 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wCapCorner") return () => { if (val === "fillet") f.fillet = true; else delete f.fillet; };
   }
   if (f.type === "gusset") {
-    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else delete f.d3; };
+    if (k === "wshape") return () => { f.shape = val as "tri" | "poly"; if (f.shape === "poly") f.d3 ??= { v: Math.round(Math.min(f.d1.v, f.d2.v) / 4) || 5 }; else { delete f.d3; delete f.d4; delete f.polyAngle; } };
+    if (k === "wpolyEnd") return () => {
+      delete f.d4; delete f.polyAngle;
+      const d3 = f.d3?.v ?? 10;
+      if (val === "d4") f.d4 = { v: d3 };
+      // Starts at the angle the symmetric profile has, so nothing jumps.
+      else if (val === "angle") f.polyAngle = { v: Math.atan2(Math.max(f.d2.v - d3, 1e-6), Math.max(f.d1.v - d3, 1e-6)) };
+    };
+    if (k === "wChamfer2") return () => { if (val) f.chamfer2 = { v: f.chamfer?.v ?? 5 }; else delete f.chamfer2; };
     if (k === "wloc") return () => { f.loc = val as GussetFeature["loc"]; if (f.loc === "mid") delete f.side; };
     if (k === "wgside") return () => { if (val === "in") delete f.side; else f.side = val as "both" | "out"; };
     if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
-    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
+    if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else { delete f.chamfer; delete f.chamfer2; } };
   }
   if (f.type === "weldbead" && k === "wEqual") return () => { if (val) delete f.size2; else f.size2 = { v: f.size.v * 1.5 }; };
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
