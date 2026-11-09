@@ -384,6 +384,10 @@ details > :last-child { margin-bottom: 12px; }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
 .st-kernel { color: var(--muted); white-space: nowrap; }
+/* Smart measure's prompt lives here, SolidWorks style, never over the model. */
+.st-hint { color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.st-hint b { color: var(--text); font-weight: 600; }
+#app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
 .st-units { border: 1px solid transparent; background: none; color: var(--text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; min-height: 20px; }
 .st-units:hover, .st-units[aria-expanded="true"] { border-color: var(--line); background: var(--panel-2); }
 .st-units-menu { gap: 2px; min-width: 180px; }
