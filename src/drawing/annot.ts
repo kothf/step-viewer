@@ -3,7 +3,7 @@
 // changes they find their edges again and measure them anew (AT-P5-3). Drawn as sheet primitives
 // in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
-import { viewAxes, type MCyl, type MEdge, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import { viewAxes, type MCyl, type MEdge, type MHole, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
@@ -217,7 +217,7 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
 }
 
 /** Hole callout lines (ISO style) for a round edge: from the hole feature at that place, else from the cylinder. */
-export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
+export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
   const f = (v: number) => fmtNum(v, undefined, ctx.dec);
   const c = e.c, ax = e.ax, r = e.r ?? 0;
   if (c && ax) {
@@ -238,7 +238,15 @@ export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
       return lines;
     }
   }
-  // No hole feature: the cylinder's diameter, and its depth unless it goes right through the part.
+  // No hole feature: read the hole from the geometry (count, counterbore, countersink, depth or THRU).
+  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f);
+  if (g) {
+    const words = (h: GeoHole) => h.lines.map(s => s.replace(/ THRU$/, ` ${ctx.label("THRU")}`));
+    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
+    const lines = words(g);
+    if (n > 1) lines[0] = `${n}× ${lines[0]}`;
+    return lines;
+  }
   let line = `Ø${f(2 * r)}`;
   const cyl = c && ax && ctx.topo?.cyls.find(y => Math.abs(y.r - r) < 1e-6 && Math.abs(Math.abs(dot3(y.ax, ax)) - 1) < 1e-6 && (() => { const w = sub3(c, y.o), al = dot3(w, y.ax); return Math.hypot(w[0] - y.ax[0] * al, w[1] - y.ax[1] * al, w[2] - y.ax[2] * al) < 1e-3; })());
   if (cyl && ctx.box) {
@@ -247,6 +255,53 @@ export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
     line += depth >= span - 1e-3 ? ` ${ctx.label("THRU")}` : ` ↧${f(depth)}`;
   }
   return [line];
+}
+
+/** A hole read from the geometry: callout lines (English THRU), a key for counting equal ones, the way into the material. */
+export interface GeoHole { lines: string[]; key: string; dir: V3; free: boolean }
+
+/** The geometric hole that a round edge (centre, axis, radius) belongs to. */
+export function stackAt(c: V3, ax: V3, r: number, topo: Topo | null): MHole | null {
+  for (const h of topo?.holes ?? []) {
+    if (Math.abs(Math.abs(dot3(h.ax, ax)) - 1) > 1e-6) continue;
+    const w = sub3(c, h.o), v = dot3(w, h.ax);
+    if (Math.hypot(w[0] - h.ax[0] * v, w[1] - h.ax[1] * v, w[2] - h.ax[2] * v) > 1e-3) continue;
+    if (h.segs.some(s => v > s.v0 - 1e-6 && v < s.v1 + 1e-6 && (Math.abs(s.r0 - r) < 1e-6 || Math.abs(s.r1 - r) < 1e-6))) return h;
+  }
+  return null;
+}
+
+/**
+ * Callout of a hole made of cylinders and cones (ISO style, as SolidWorks writes it): the drill Ø with its depth from
+ * the entry face or THRU, then ⌴ counterbore Ø and depth or ⌵ countersink Ø × angle. The entry is the open end (for a
+ * through hole, the wider one). Null when the hole has no cylinder to call the drill or no open end.
+ */
+export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined)): GeoHole | null {
+  const [o0, o1] = h.open;
+  if (!o0 && !o1) return null;
+  const s = h.segs, first = s[0], last = s[s.length - 1];
+  const fromStart = o0 && (!o1 || first.r0 >= last.r1 - 1e-6);
+  const e0 = fromStart ? first.v0 : last.v1;
+  const W = (fromStart ? s : [...s].reverse()).map(g => fromStart
+    ? { k: g.k, a: g.v0 - e0, b: g.v1 - e0, ra: g.r0, rb: g.r1 }
+    : { k: g.k, a: e0 - g.v1, b: e0 - g.v0, ra: g.r1, rb: g.r0 });
+  let i = 0, extra = "";
+  if (W[0].k === "cone" && W[0].ra > W[0].rb + 1e-6 && W[1]?.k === "cyl") {
+    extra = `⌵Ø${f(2 * W[0].ra)} × ${f(Math.round(2 * Math.atan((W[0].ra - W[0].rb) / (W[0].b - W[0].a)) * 180 / Math.PI * 100) / 100)}°`;
+    i = 1;
+  } else if (W[0].k === "cyl" && W[1]?.k === "cyl" && W[1].ra < W[0].ra - 1e-6) {
+    extra = `⌴Ø${f(2 * W[0].ra)} ↧${f(W[0].b - W[0].a)}`;
+    i = 1;
+  }
+  const d = W[i];
+  if (!d || d.k !== "cyl") return null;
+  const thru = o0 && o1;
+  const lines = [`Ø${f(2 * d.ra)} ${thru ? "THRU" : `↧${f(d.b)}`}`];
+  if (extra) lines.push(extra);
+  // The rest past the drill (a drill point) is part of the key, so a flat-bottomed hole is not counted with a pointed one.
+  const rest = W.slice(i + 1).map(g => `${g.k}:${f(g.b - g.a)}:${f(g.ra)}:${f(g.rb)}`).join(",");
+  const dir: V3 = fromStart ? h.ax : [-h.ax[0], -h.ax[1], -h.ax[2]];
+  return { lines, key: `${lines.join("|")}|${rest}`, dir, free: thru && !extra };
 }
 
 // ---------- drawing ----------
@@ -491,7 +546,7 @@ export function holeRows(a: HoleTableAnnot, P: (p: V3) => P2, ctx: AnnotCtx): { 
   for (const ref of a.holes) {
     const e = refEdge(ref, ctx.topo);
     if (!e || e.t !== "c" || !e.c || !e.r) { missing = true; continue; }
-    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx)[0] ?? "" });
+    hs.push({ c: P(e.c), r: e.r, size: holeText(e, ctx, false)[0] ?? "" });
   }
   const o0 = o ?? [0, 0];
   const sizes = [...new Map(hs.map(h => [h.size, h.r])).entries()].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([s]) => s);

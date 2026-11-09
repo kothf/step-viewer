@@ -741,6 +741,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #asm-tree .ft-tools { display: inline-flex; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
+/* FR-HIS-013: hidden items have an outlined icon; parents of an absorbed sketch fold it with a twisty. */
+.ft-row.hid > .ft-ico { color: transparent; -webkit-text-stroke: 1px var(--muted); }
+.ft-tools .ft-eye svg { display: block; margin: auto; }
+.ft-tools .ft-eye.off { color: var(--muted); }
+.ft-twist.icon { width: 14px; height: 18px; min-width: 0; padding: 0; margin-left: -4px; border: 0; background: none; font-size: 10px; color: var(--muted); flex: none; }
+.ft-twist.icon:hover { color: var(--text); }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 /* FR-UI-003: with a command open the panel fills the Features tab and the tree flies out over the view. */
@@ -1004,6 +1010,35 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .ana-ramp { height: 10px; border-radius: 3px; border: 1px solid var(--line); }
 .ana-scale { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--muted); }
 .ana-note { margin: 0; color: var(--muted); font-size: 11px; }
+
+/* Mass properties panel (FR-MAT-002, Evaluate ▸ Mass properties) */
+.mp-panel {
+  position: absolute; left: 12px; top: 12px; z-index: 6; width: 380px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow);
+  padding: 8px 10px 10px; font-size: 12px; display: grid; gap: 6px; align-content: start;
+}
+.mp-panel[hidden] { display: none; }
+.mp-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mp-head h2 { margin: 0; font-size: 13px; }
+.mp-panel h3 { margin: 4px 0 0; font-size: 11px; font-weight: 600; color: var(--muted); }
+.mp-opts { display: grid; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.mp-opts .chk { display: flex; align-items: center; gap: 6px; }
+.mp-scope { margin: 0; font-weight: 600; }
+.mp-kv { margin: 0; }
+.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 8px; font: 11px var(--mono); }
+.mp-princ { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 2px 8px; font: 11px var(--mono); }
+.mp-panel i { font-style: normal; color: var(--muted); }
+.mp-c, .mp-princ span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-note { margin: 0; color: var(--muted); font-size: 11px; }
+.mp-axes [aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.mp-type { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.mp-axn { display: flex; align-items: center; gap: 6px; }
+.mp-axn input { flex: 1; min-width: 0; }
+.mp-axg { display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)) 24px; gap: 3px 4px; align-items: center; }
+.mp-axg input { width: 100%; min-width: 0; }
+.mp-warn { color: var(--warn-text); }
+.mp-ovr { color: var(--muted); }
+@media (max-width: 767px) { .mp-panel { left: 8px; right: 8px; top: auto; bottom: 8px; width: auto; max-height: 60%; } }
 /* Vault geometry compare and check-in with references (1.80.0) */
 .v-geo3d { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-height: 120px; }
 .v-geo3d canvas { display: block; max-width: 100%; height: auto; }
@@ -1120,8 +1155,10 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .cm-quick .mc-b { flex-direction: row; gap: 4px; min-width: 0; padding: 2px 6px; }
 .cm-quick .mc-fly .mc-b { padding-right: 3px; }
 .cm-quick .mc-sep { margin: 2px; align-self: stretch; }
-.cm.cm-icons .mc-l, .cm.cm-icons #tools .tb-lbl { display: none; }
-.cm.cm-icons .mc-b, .cm.cm-icons #cm #tools button { min-width: 34px; }
+.cm.cm-icons .mc-l, .cm.cm-icons #tools .tb-lbl, .cm.cm-icons #mp-tools .tb-lbl { display: none; }
+.cm.cm-icons .mc-b, .cm.cm-icons #cm #tools button, .cm.cm-icons #cm #mp-tools button { min-width: 34px; }
+#cm #mp-tools { margin-left: 4px; padding-left: 4px; border-left: 1px solid var(--line); align-self: stretch; }
+#cm #mp-tools button { flex-direction: column; gap: 1px; height: auto; min-height: 38px; min-width: 46px; padding: 3px 5px; font-size: 11px; }
 .right .rp-tabs { display: flex; flex-wrap: nowrap; gap: 1px; padding: 4px 6px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .right .rp-tabs button { font-size: 12px; padding: 0 6px; }
 .right .rp-tabs button.on .tb-lbl { position: static; width: auto; height: auto; clip: auto; clip-path: none; }

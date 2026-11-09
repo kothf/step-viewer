@@ -450,7 +450,15 @@ export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: nu
 /** A cone, torus or surface of revolution: its axis like a cylinder's, extent along it from `o`, angle swept (FR-DRW-023 centrelines). */
 export interface MRev { k: "cone" | "torus" | "rev"; o: V3; ax: V3; v0: number; v1: number; sp: number; f?: string }
 /** `com`: the shape's centre of mass (uniform density), for a drawing's centre of mass point; absent for sheets. */
-export interface Topo { edges: MEdge[]; cyls: MCyl[]; revs?: MRev[]; com?: V3 }
+export interface Topo { edges: MEdge[]; cyls: MCyl[]; revs?: MRev[]; com?: V3; holes?: MHole[] }
+/** One piece of a hole: a cylinder (r0 = r1) or a cone, from v0 to v1 along the hole's axis. */
+export interface MHoleSeg { k: "cyl" | "cone"; v0: number; v1: number; r0: number; r1: number }
+/**
+ * A hole read from the geometry (FR-DRW-022: callouts without a hole feature, e.g. STEP files): coaxial cylinders and
+ * cones with material outside that follow on from each other, sorted along `ax` from `o`; `open` says whether air lies
+ * just past the first and the last piece (both = a through hole).
+ */
+export interface MHole { o: V3; ax: V3; segs: MHoleSeg[]; open: [boolean, boolean]; f?: string }
 
 /** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
 export function topology(oc: any, shape: any, names?: string[]): Topo {
@@ -490,7 +498,9 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     edges.push(me);
     byIndex.push(me);
   }
-  const cyls: MCyl[] = [], revs: MRev[] = [];
+  const cyls: MCyl[] = [], revs: MRev[] = [], bores: Bore[] = [];
+  // Material outside a cylinder or cone: its face normal points at the axis (a direct frame's natural normal points away).
+  const inward = (f: any, ax3: any) => (f.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED) === ax3.Direct();
   for (let i = 1; i <= fmap.Extent(); i++) {
     const f = oc.TopoDS.Face_1(fmap.FindKey(i));
     let sa: any;
@@ -510,6 +520,10 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
         for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
       }
       const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
+      if (v1 > v0 && st === S.GeomAbs_Cone) {
+        const cn = sa.Cone(), R = cn.RefRadius(), ta = Math.tan(cn.SemiAngle());
+        if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, r0: R + v0 * ta, r1: R + v1 * ta, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+      }
       if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
       continue;
     }
@@ -524,8 +538,12 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     }
     const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
     if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+    if (v1 > v0 && inward(f, ax3)) bores.push({ o, ax, k: "cyl", v0, v1, r0: r, r1: r, sp, f: names?.[i - 1] ?? `f${i - 1}` });
   }
   emap.delete(); fmap.delete();
+  const holes = holeStacks(bores, p => {
+    try { return new oc.BRepClass3d_SolidClassifier_3(shape, new oc.gp_Pnt_3(p[0], p[1], p[2]), 1e-7).State() === oc.TopAbs_State.TopAbs_OUT; } catch { return false; }
+  });
   let com: V3 | undefined;
   try {
     const g = new oc.GProp_GProps_1();
@@ -533,7 +551,54 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     if (Math.abs(g.Mass()) > 1e-9) { const c = g.CentreOfMass(); com = [c.X(), c.Y(), c.Z()]; }
     g.delete();
   } catch { /* no volume */ }
-  return com ? { edges, cyls, revs, com } : { edges, cyls, revs };
+  const out: Topo = { edges, cyls, revs };
+  if (com) out.com = com;
+  if (holes.length) out.holes = holes;
+  return out;
+}
+
+/** A cylinder or cone face with material outside, before it is put into a hole. */
+export type Bore = MHoleSeg & { o: V3; ax: V3; sp: number; f?: string };
+
+/**
+ * Hole stacks from bore faces: faces on one axis line (split halves of one surface summed) that follow on from each
+ * other along it; only whole holes (every piece goes all the way round). `out(p)` says whether a point is in the air.
+ */
+export function holeStacks(bores: Bore[], out: (p: V3) => boolean): MHole[] {
+  const lines: { o: V3; ax: V3; f?: string; segs: (MHoleSeg & { sp: number })[] }[] = [];
+  for (const b of bores) {
+    let L = lines.find(l => Math.abs(Math.abs(dot(l.ax, b.ax)) - 1) < 1e-6 && (() => {
+      const w: V3 = [b.o[0] - l.o[0], b.o[1] - l.o[1], b.o[2] - l.o[2]], al = dot(w, l.ax);
+      return Math.hypot(w[0] - l.ax[0] * al, w[1] - l.ax[1] * al, w[2] - l.ax[2] * al) < 1e-4;
+    })());
+    if (!L) lines.push(L = { o: b.o, ax: b.ax, f: b.f, segs: [] });
+    // Express the piece along the line's axis: shift by the origins' offset, flip when the axes are opposite.
+    const sh = dot([b.o[0] - L.o[0], b.o[1] - L.o[1], b.o[2] - L.o[2]], L.ax), sg = dot(b.ax, L.ax) > 0 ? 1 : -1;
+    let v0 = sh + sg * b.v0, v1 = sh + sg * b.v1, r0 = b.r0, r1 = b.r1;
+    if (v0 > v1) { [v0, v1] = [v1, v0]; [r0, r1] = [r1, r0]; }
+    const same = L.segs.find(s => s.k === b.k && Math.abs(s.v0 - v0) < 1e-6 && Math.abs(s.v1 - v1) < 1e-6 && Math.abs(s.r0 - r0) < 1e-6 && Math.abs(s.r1 - r1) < 1e-6);
+    if (same) same.sp += b.sp; else L.segs.push({ k: b.k, v0, v1, r0, r1, sp: b.sp });
+  }
+  const holes: MHole[] = [];
+  for (const L of lines) {
+    const segs = L.segs.sort((a, b) => a.v0 - b.v0);
+    let run: typeof segs = [], end = -Infinity;
+    const flush = () => {
+      if (run.length && run.every(s => s.sp >= 2 * Math.PI - 1e-3)) {
+        const a = run[0].v0, b = end, d = Math.max(1e-3, (b - a) * 1e-3);
+        const at = (v: number): V3 => [L.o[0] + L.ax[0] * v, L.o[1] + L.ax[1] * v, L.o[2] + L.ax[2] * v];
+        holes.push({ o: L.o, ax: L.ax, segs: run.map(({ k, v0, v1, r0, r1 }) => ({ k, v0, v1, r0, r1 })), open: [out(at(a - d)), out(at(b + d))], ...(L.f ? { f: L.f } : {}) });
+      }
+      run = [];
+    };
+    for (const s of segs) {
+      if (run.length && s.v0 > end + 1e-6) flush();
+      if (!run.length) end = -Infinity;
+      run.push(s); end = Math.max(end, s.v1);
+    }
+    flush();
+  }
+  return holes;
 }
 
 // ---------- geometry compare (FR-PDM-050) ----------

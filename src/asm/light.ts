@@ -4,6 +4,7 @@
 import type { EdgeInfo, FaceInfo, PartData } from "../topology";
 import type { V3 } from "../model/types";
 import type { Tf } from "./types";
+import { rotateSym } from "../tools/inertia";
 
 const P = (t: Tf, p: V3): V3 => [t[0] * p[0] + t[1] * p[1] + t[2] * p[2] + t[3], t[4] * p[0] + t[5] * p[1] + t[6] * p[2] + t[7], t[8] * p[0] + t[9] * p[1] + t[10] * p[2] + t[11]];
 const D = (t: Tf, d: V3): V3 => [t[0] * d[0] + t[1] * d[1] + t[2] * d[2], t[4] * d[0] + t[5] * d[1] + t[6] * d[2], t[8] * d[0] + t[9] * d[1] + t[10] * d[2]];
@@ -42,5 +43,5 @@ export function transformPart(d: PartData, t: Tf, name = d.name): PartData {
   const lo: V3 = [Infinity, Infinity, Infinity], hi: V3 = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < positions.length; i += 3) for (let k = 0; k < 3; k++) { const v = positions[i + k]; if (v < lo[k]) lo[k] = v; if (v > hi[k]) hi[k] = v; }
   if (!positions.length) { lo.fill(0); hi.fill(0); }
-  return { ...d, name, positions, normals, edgeSegs, faces, edges, com: P(t, d.com), bboxMin: lo, bboxMax: hi, colors: d.colors ? d.colors.slice() : null };
+  return { ...d, name, positions, normals, edgeSegs, faces, edges, com: P(t, d.com), ...(d.inertia ? { inertia: rotateSym(d.inertia, [[t[0], t[1], t[2]], [t[4], t[5], t[6]], [t[8], t[9], t[10]]]) } : {}), bboxMin: lo, bboxMax: hi, colors: d.colors ? d.colors.slice() : null };
 }
