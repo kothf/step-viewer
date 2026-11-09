@@ -160,6 +160,20 @@ export interface SmCrossFeature {
   flip?: boolean;
 }
 
+/**
+ * Vent: openings cut through a flat face, from one sketch on it. The largest closed loop is the boundary; lines with a
+ * free end (ending on the boundary or in the open) are ribs and closed circles inside are spars, both left as material
+ * of their width. The flat pattern shows the openings like any cut.
+ */
+export interface SmVentFeature {
+  id: string; type: "smvent"; name: string; suppressed?: boolean;
+  sketch: string;
+  /** Rib width. */
+  rib: Num;
+  /** Spar width. */
+  spar: Num;
+}
+
 /** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
  * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
 export interface SmLoftFeature {
@@ -177,8 +191,8 @@ export interface SmLoftFeature {
   facets?: number;
 }
 
-export type SheetFeature = SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+export type SheetFeature = SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);

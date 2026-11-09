@@ -11,6 +11,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Unequal leg fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' **Equal leg lengths** box: untick it to give the bead a **Leg on set 1** and a **Leg on set 2** of their own, for a fillet weld that runs further up a tube than along the plate, say. The weld symbol shows both legs (◺ z6×8), and the cut list groups such welds by both legs.
 
+## [1.314.0] - 2026-11-09
+
+### Added
+
+- **Vent (FR-FT-120)**: Sheet Metal → Vent cuts ventilation openings through a flat face of the sheet from one sketch on it, like SolidWorks' Vent. The largest closed loop is the boundary; lines that end on it are ribs and circles inside it are spars, both kept as material of the width you set (Rib width, Spar width). The openings show in the flattened part and its DXF like any other cut.
+
+## [1.313.0] - 2026-11-09
+
+### Added
+- Bolt circles in drawings (FR-DRW-023): holes of one size evenly spaced on a circle (a full or partial circular pattern, or the corners of a square) get a centre-line circle, or an arc over the holes, with a radial mark on each hole and a cross on the pattern centre, in place of separate crosses. Bolt circles in the view panel turns them off.
+
 ## [1.312.0] - 2026-11-09
 
 ### Added
@@ -1835,7 +1846,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.315.0...HEAD
-[1.315.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.315.0
+[1.315.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.315.0
+[1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0
+[1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0
 [1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
 [1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
 [1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0

@@ -4,8 +4,8 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, crossBreak, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature } from "./types";
+import { apply, applyDir, baseFlange, crossBreak, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import type { SheetFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -41,6 +41,12 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   if (f.type === "smflat") {
     const flat = flatBody(api, sm, f.id, body);
     return { body: flat.body, sm: flat.edges ? { ...sm, flatEdges: flat.edges } : sm };
+  }
+  if (f.type === "smvent") {
+    const sk = doc.features.find(x => x.id === f.sketch);
+    if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the vent boundary.");
+    if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    return { body: ventCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
   }
   let res: { state: SheetState; ops: SheetOp[] };
   if (f.type === "smtab") {
@@ -400,4 +406,41 @@ function topEdges(api: SheetApi, flat: Named, R: Mat, T: number): FlatEdge[] {
     }
   }
   return out;
+}
+
+/**
+ * Vent (FR-FT-120): the boundary's prism through the sheet, less a strip of rib width along each rib and a ring of
+ * spar width on each spar, is cut from the body. The flat pattern picks the openings up like any other cut.
+ */
+function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, sk: SketchFeature, fr: Frame): Named {
+  const rib = f.rib.v, spar = f.spar.v;
+  if (!(rib > 0) || !(spar > 0)) throw new SheetError("E-SM-VENTW", "Rib and spar widths must be more than 0.");
+  const lay = ventLayout(sk);
+  const w = (p: V2): V3 => [fr.o[0] + fr.x[0] * p[0] + fr.y[0] * p[1], fr.o[1] + fr.x[1] * p[0] + fr.y[1] * p[1], fr.o[2] + fr.x[2] * p[0] + fr.y[2] * p[1]];
+  ventPanel(st, loopPolygon(lay.boundary, 8).map(w));
+  // A slab a little thicker than the sheet on both sides of the sketch plane, so either face works.
+  const h = st.T * 1.02;
+  const base: Frame = { ...fr, o: [fr.o[0] - fr.n[0] * h, fr.o[1] - fr.n[1] * h, fr.o[2] - fr.n[2] * h] };
+  const dz: V3 = [fr.n[0] * 2 * h, fr.n[1] * 2 * h, fr.n[2] * 2 * h];
+  const ccw = (l: Seg[]): Seg[] => polyArea(loopPolygon(l)) >= 0 ? l : [...l].reverse().map(x => x.kind === "line" ? { ...x, a: x.b, b: x.a } : x.kind === "arc" ? { ...x, a: x.b, b: x.a, ccw: !x.ccw } : x);
+  const named = (shape: any, tag: string): Named => { const faces = api.sub(shape, "FACE"); return { shape, faces, names: faces.map((_x, i) => `${f.id}:${tag}${i}`) }; };
+  let tool = named(prism(api, faceOf(api, ccw(lay.boundary), [], base), dz), "v");
+  lay.ribs.forEach((rb, i) => {
+    const l = Math.hypot(rb.b[0] - rb.a[0], rb.b[1] - rb.a[1]);
+    if (!(l > 0)) return;
+    const e: V2 = [(rb.b[0] - rb.a[0]) / l, (rb.b[1] - rb.a[1]) / l], n: V2 = [-e[1] * rib / 2, e[0] * rib / 2];
+    // Run past both ends so the strip crosses the boundary.
+    const a: V2 = [rb.a[0] - e[0] * rib, rb.a[1] - e[1] * rib], b: V2 = [rb.b[0] + e[0] * rib, rb.b[1] + e[1] * rib];
+    const pts: V2[] = [[a[0] - n[0], a[1] - n[1]], [b[0] - n[0], b[1] - n[1]], [b[0] + n[0], b[1] + n[1]], [a[0] + n[0], a[1] + n[1]]];
+    const segs: Seg[] = pts.map((p, k) => ({ ent: `r${k}`, kind: "line", a: p, b: pts[(k + 1) % 4] }));
+    tool = api.bool("cut", tool, named(prism(api, faceOf(api, segs, [], base), dz), `r${i}_`), f.id);
+  });
+  lay.spars.forEach((sp, i) => {
+    const ro = sp.r + spar / 2, ri = sp.r - spar / 2;
+    const disc = (r: number, tag: string) => named(prism(api, faceOf(api, [{ ent: tag, kind: "circle", c: sp.c, r }], [], base), dz), `${tag}${i}_`);
+    let ring = disc(ro, "s");
+    if (ri > 1e-9) ring = api.bool("cut", ring, disc(ri, "si"), f.id);
+    tool = api.bool("cut", tool, ring, f.id);
+  });
+  return api.bool("cut", body, tool, f.id);
 }

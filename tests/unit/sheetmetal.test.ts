@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -502,4 +502,26 @@ test("sheet metal: cross break marks a flat face corner to corner (FR-FT-120)", 
   // A side face or a bad angle fails.
   assert.equal(m.evaluate(doc([s, base(), cb({ faces: [{ name: "b:p0:sl1" }] })])).statuses.find(x => x.id === "x")!.ok, false);
   assert.equal(m.evaluate(doc([s, base(), cb({ angle: { v: Math.PI / 2 } })])).statuses.find(x => x.id === "x")!.ok, false);
+});
+
+test("sheet metal: vent cuts the boundary less ribs and spars (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  // Boundary 60 × 30, one rib across it at x = 50 (ends on the boundary's sides), one spar circle r 8 at (30, 25).
+  const v = rect("v", 20, 10, 80, 40);
+  v.ents.push({ id: "vr1", t: "point", x: 50, y: 10 }, { id: "vr2", t: "point", x: 50, y: 40 }, { id: "vr", t: "line", a: "vr1", b: "vr2" },
+    { id: "vc0", t: "point", x: 30, y: 25 }, { id: "vc", t: "circle", c: "vc0", r: 8 });
+  const vent = (over: Partial<SmVentFeature> = {}): SmVentFeature => ({ id: "x", type: "smvent", name: "Vent1", sketch: "v", rib: { v: 2 }, spar: { v: 2 }, ...over });
+  const r = run(doc([s, base(), v, vent()]));
+  const open = 60 * 30 - 2 * 30 - Math.PI * (9 * 9 - 7 * 7);
+  close(r.props.volume, (100 * 50 - open) * 2, 1e-6);
+  // Flattened: the same openings.
+  close(run(doc([s, base(), v, vent(), flat])).props.volume, (100 * 50 - open) * 2, 1e-6);
+  // A spar that is not a circle, and a sketch off the sheet, fail.
+  const off: SketchFeature = { ...rect("w", 20, 10, 80, 40), plane: { std: "XZ" } };
+  assert.equal(m.evaluate(doc([s, base(), off, vent({ sketch: "w" })])).statuses.find(x => x.id === "x")!.ok, false);
+  const sq = rect("v", 20, 10, 80, 40);
+  sq.ents.push(...rect("q", 30, 20, 35, 25).ents);
+  assert.equal(m.evaluate(doc([s, base(), sq, vent()])).statuses.find(x => x.id === "x")!.ok, false);
 });
