@@ -4297,6 +4297,9 @@ try {
     an = await annots();
     check(tx.includes("Ø16 THRU") && tx.includes("BREAK SHARP EDGES") && an.some(a => a.t === "hole") && an.some(a => a.t === "note" && !a.view),
       `drawing: hole callout from the model (Ø16 THRU) and a note on the sheet (${tx.filter(s => /THRU|BREAK/.test(s)).join(" / ")})`);
+    // The worker reads holes from the geometry too (FR-DRW-022): the Ø16 cut is a one-piece stack open at both ends.
+    const geoHoles = await dp.evaluate(() => window.__sv.drw.holes());
+    check(geoHoles.some(h => h.segs === 1 && h.open[0] && h.open[1]), `drawing: holes read from the geometry (${JSON.stringify(geoHoles)})`);
     // Property link in a note (FR-DRW-023): $PRP:"Scale" shows the sheet scale.
     dp.once("dialog", d => d.accept('SCALE $PRP:"Scale"'));
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="note"]');

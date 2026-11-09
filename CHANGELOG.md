@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.349.0] - 2026-11-09
+
+### Added
+- Hole callouts read from the geometry (FR-DRW-022): on a model with no Hole feature (a STEP file, a cut extrude), a hole callout now counts the holes of that size entered from the same side ("4× Ø6.6 THRU"), and adds the counterbore (⌴Ø11 ↧6.4) or countersink (⌵Ø13.44 × 90°) found from the coaxial cylinders and cones. The depth is measured from the entry face to the end of the drill, without its point; THRU now means open at both ends rather than as long as the part. Hole tables list each hole without the count.
+
 ## [1.341.0] - 2026-11-09
 
 ### Added
@@ -2036,7 +2041,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.341.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.349.0...HEAD
+[1.349.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.349.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
 [1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
