@@ -937,7 +937,7 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   });
   // Cylinders, cones and tori seen from the side: one centreline per axis over all the faces on it. A cone or torus
   // counts when it goes all round (a taper, a countersink, a groove); a cylinder when its pieces of one radius do.
-  const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
+  const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number>; half: Map<string, number> }>();
   for (const y of [...topo.cyls, ...(topo.revs ?? []).filter(q => q.k !== "sphere").map(q => ({ ...q, r: NaN, rk: `${q.k}:${q.o.map(x => x.toFixed(4))}` }))] as (MCyl & { rk?: string })[]) {
     if (Math.abs(dot3(y.ax, n)) > 1e-6) continue;
     const a3 = (t: number): V3 => [y.o[0] + y.ax[0] * t, y.o[1] + y.ax[1] * t, y.o[2] + y.ax[2] * t];
@@ -946,15 +946,17 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     if (d[0] < -1e-9 || (Math.abs(d[0]) < 1e-9 && d[1] < 0)) d = [-d[0], -d[1]];
     const off = p0[0] * -d[1] + p0[1] * d[0];
     const key = `${Math.atan2(d[1], d[0]).toFixed(5)},${off.toFixed(4)}`;
-    const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map() };
+    const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map(), half: new Map() };
     const t = (p: P2) => (p[0] - g.a[0]) * g.d[0] + (p[1] - g.a[1]) * g.d[1];
     g.t0 = Math.min(g.t0, t(p0), t(p1)); g.t1 = Math.max(g.t1, t(p0), t(p1));
     const rk = y.rk ?? y.r.toFixed(4);
     g.sp.set(rk, (g.sp.get(rk) ?? 0) + y.sp);
+    // A slot's end seen from the side: half a cylinder with material outside, keyed by where it sits along the axis.
+    if (y.in && !y.rk) { const hk = `${rk}|${Math.min(t(p0), t(p1)).toFixed(3)}`; g.half.set(hk, (g.half.get(hk) ?? 0) + y.sp); }
     axes.set(key, g);
   }
   for (const g of axes.values()) {
-    if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3)) continue;
+    if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3) && ![...g.half.values()].some(s => Math.abs(s - Math.PI) < 1e-3)) continue;
     const A = add2(g.a, g.d, g.t0 - ext), B = add2(g.a, g.d, g.t1 + ext);
     segs.push({ k: "l", c: 0, p: [A[0], A[1], B[0], B[1]] });
   }
