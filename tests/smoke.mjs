@@ -5864,10 +5864,10 @@ try {
     const ptsEnd = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").end);
     await setP("textarea[data-p=pts]", "1, 0\n0, 5");
     const ptsBad = await mp.evaluate(() => document.querySelector("#motion textarea[data-p=pts]").getAttribute("aria-invalid"));
-    // Cubic spline through 0, 90°, 0 at 0, 0.5, 1 s: 0.6875 × 90° at 0.25 s (linear would give 45°).
-    await setP("textarea[data-p=pts]", "0, 0\n0.5, 90\n1, 0");
+    // Cubic spline through 0, 90°, 0 at 0, 0.6, 1.2 s: 0.6875 × 90° at 0.3 s, a whole frame (linear would give 45°).
+    await setP("textarea[data-p=pts]", "0, 0\n0.6, 90\n1.2, 0");
     await setP("select[data-p=fit]", "cubic");
-    await mp.evaluate(() => window.__sv.motion.seek(0.25));
+    await mp.evaluate(() => window.__sv.motion.seek(0.3));
     const ptsCubic = await pos();
     const ptsFit = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").fit);
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
