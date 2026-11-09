@@ -47,6 +47,7 @@ import { ellOf, ellParam, ellPts, ellSweep } from "../sketch/ellipse";
 import { entBezier } from "../sketch/conic";
 import { bezPts } from "../sketch/spline";
 import { SketchEditor, REL_NAME, relName, trimNum, type SkTool } from "../sketch/editor";
+import { SNAP_KINDS, parseSnaps, type SnapKind } from "../sketch/snaps";
 import { ORIGIN, repairs, solve } from "../sketch/solver";
 import { sketchPath, sketchProfile, textPath } from "../sketch/profile";
 import { SEL_FILTER } from "../tools/Snapper";
@@ -767,7 +768,8 @@ export class ModelController {
       },
       renamedDim: (from, to) => this.store!.change("Rename dimension", d => renameEverywhere(d, from, to)),
     }, sk, this.frameOf(sk));
-    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; editor.autoRels = localStorage.getItem("mc:autoRels") !== "0"; editor.showRels = localStorage.getItem("mc:skRels") !== "0"; editor.slotDims = localStorage.getItem("mc:slotDims") !== "0"; } catch { /* private mode */ }
+    try { editor.modelSnap = localStorage.getItem("mc:modelSnap") !== "0"; editor.autoRels = localStorage.getItem("mc:autoRels") !== "0"; editor.showRels = localStorage.getItem("mc:skRels") !== "0"; editor.slotDims = localStorage.getItem("mc:slotDims") !== "0"; editor.snaps = parseSnaps(localStorage.getItem("mc:skSnaps")); } catch { /* private mode */ }
+    editor.onQuickSnap = () => this.renderQuick();
     this.mode = { kind: "sketch", id, editor, entry, isNew };
     document.getElementById("app")!.classList.add("sketching");
     this.renderAll();
@@ -2168,9 +2170,24 @@ export class ModelController {
     if (m.kind !== "sketch" || m.editor.pattern) return;
     const rows = m.editor.contextMenu(e);
     if (!rows) return;
+    // Quick snaps (FR-SK-046) while a drawing tool runs: a second menu picks the snap for the next point.
+    if (m.editor.drawing) {
+      if (rows.length && rows.at(-1) !== null) rows.push(null);
+      rows.push([t("Quick snaps") + " ▸", () => this.quickSnapMenu(e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus())]);
+    }
     if (rows.length && rows.at(-1) !== null) rows.push(null);
     rows.push([t("Exit sketch"), () => this.ok(), "✓"], [t("Discard"), () => void this.cancel(), "✕"]);
     this.showMenu(rows, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+  }
+
+  /** The quick snap menu (FR-SK-046): one snap type for the next point; the active one first offers Clear. */
+  private quickSnapMenu(x: number, y: number, back: () => void) {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const ed = m.editor;
+    const rows: ([string, () => void, string?] | null)[] = SNAP_KINDS.map(([k, label]) => [t(label), () => ed.setQuickSnap(k), ed.quickSnap === k ? "✓" : undefined] as [string, () => void, string?]);
+    if (ed.quickSnap) rows.push(null, [t("Clear quick snap"), () => ed.setQuickSnap(null), "✕"]);
+    this.showMenu(rows, x, y, back);
   }
 
   /** World box of the selected sketch items while sketching (Zoom to selection), else null. */
@@ -3672,14 +3689,26 @@ export class ModelController {
     q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
       + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
       + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
+      + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) : "")
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
+    q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
+    });
     q.querySelector<HTMLElement>('[data-fly="save"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.showMenu([[t("Save as…"), () => void this.save(true)], [t("Snapshots…"), () => void this.showSnapshots()]], r.left - 40, r.bottom + 4,
         () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="save"]')?.focus());
     });
+  }
+
+  /** The quick snap button in the quick access bar while sketching (FR-SK-046); shows the active snap. */
+  private quickSnapButton(ed: SketchEditor): string {
+    const on = ed.quickSnap ? SNAP_KINDS.find(k => k[0] === ed.quickSnap)![1] : null;
+    const title = t("Quick snaps: pick one snap type for the next point");
+    return `<div class="mc-sep"></div><button class="mc-b mc-qsnap${on ? " on" : ""}" data-fly="qsnap" aria-haspopup="menu" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}><span class="mc-i" aria-hidden="true">⌖</span><span class="mc-l">${esc(on ? t(on) : t("Quick snaps"))} ▾</span></button>`;
   }
 
   private wasSketch = false;
@@ -5645,6 +5674,7 @@ export class ModelController {
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Relation glyphs next to the entities; hover one to see what it ties, click to select it."))}"><input type="checkbox" data-a="showrels"${ed.showRels ? " checked" : ""} />${esc(t("Show relations"))}</label>`
+      + `<details class="pm-snaps"><summary>${esc(t("Snaps"))}</summary><div class="pm-snapgrid">${SNAP_KINDS.map(([k, label]) => `<label class="chk pm-chk"><input type="checkbox" data-snap="${k}"${ed.snaps.has(k) ? " checked" : ""} />${esc(t(label))}</label>`).join("")}</div></details>`
       + `<div class="pm-sec"><h4>${esc(t("Selected"))}: ${nSel}</h4>`
       + (nSel ? `<div class="pm-rels">${rels.map(r => `<button class="btn small" data-rel="${r}">${esc(t(REL_NAME[r]))}</button>`).join("")}</div>`
         + `<div class="pm-rels"><button class="btn small" data-a="cons">${esc(t("Construction"))}</button>${ed.canMerge() ? `<button class="btn small" data-a="merge" title="${esc(t("Merge the two points into one"))}">${esc(t("Merge points"))}</button>` : ""}<button class="btn small danger" data-a="del">${esc(t("Delete"))}</button></div>`
@@ -5680,6 +5710,11 @@ export class ModelController {
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
+    pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
+      const k = i.dataset.snap as SnapKind;
+      if (i.checked) ed.snaps.add(k); else ed.snaps.delete(k);
+      try { localStorage.setItem("mc:skSnaps", JSON.stringify([...ed.snaps])); } catch { /* private mode */ }
+    }));
     pm.querySelector<HTMLInputElement>("[data-a=modelsnap]")?.addEventListener("change", e => { ed.modelSnap = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:modelSnap", ed.modelSnap ? "1" : "0"); } catch { /* private mode */ } });
     pm.querySelector<HTMLInputElement>("[data-a=dimname]")?.addEventListener("change", e => {
       const inp = e.target as HTMLInputElement;

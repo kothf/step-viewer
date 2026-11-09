@@ -5,11 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.291.0] - 2026-11-09
+## [1.296.0] - 2026-11-09
 
 ### Added
 
 - **Swept Flange (FR-FT-120)**: Sheet Metal → Swept Flange runs a sketched profile of lines and tangent arcs along the clicked edges of the sheet, like SolidWorks' Swept Flange. Each arc becomes a bend of its own radius (the profile is the outside of the first bend, so an arc on the outside of a bend gives an inner radius of the arc minus the thickness), sharp corners use the bend radius, and flanges on edges meeting at a corner are mitred as in Miter Flange. The flat pattern unrolls every bend.
+
+## [1.290.0] - 2026-11-09
+
+### Added
+
+- **Quick snaps (FR-SK-046)**: while drawing in a sketch, pick one snap type for the next point only: End point, Midpoint, Centre point, Quadrant point, Intersection, Tangent, Perpendicular, Parallel, Nearest or Horizontal/vertical. Pick it from the Quick snaps button in the quick access bar or from the right-click menu (Quick snaps ▸). Only that snap works, in a wider radius, and it keeps its relation: a midpoint or crossing gets a midpoint or intersection relation, and a tangent or perpendicular line gets that relation to the curve. The quick snap clears once the point is placed; Esc clears it sooner.
+- **Snap preferences**: the sketch panel's Snaps section turns each snap type on or off for automatic snapping, and the choice is remembered. Midpoints, quadrants and intersections can now snap automatically too; they start off.
+
 
 ## [1.286.0] - 2026-11-09
 
@@ -1728,8 +1736,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.291.0...HEAD
-[1.291.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.291.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.296.0...HEAD
+[1.296.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.296.0
+[1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
 [1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
 [1.282.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.282.0
