@@ -100,8 +100,10 @@ export interface Mate {
   max?: number;
   /** Gear: turns of b per turn of a; screw: travel per turn (mm). */
   ratio?: number;
-  /** Gear and screw: a's and b's transforms when the mate was made (their motion is measured from there). */
+  /** Gear, screw and a concentric with `lockRot`: a's and b's transforms when the mate was made (their motion is measured from there). */
   t0?: [Tf, Tf];
+  /** Concentric: b may not turn about the shared axis relative to a (SolidWorks' Lock rotation). */
+  lockRot?: boolean;
   /** Lock only: hold just the orientation ("rot") or just the travel along `along` (in a's coordinates, "slide"); motion study motors use these. */
   keep?: "rot" | "slide";
   along?: V3;
