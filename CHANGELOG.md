@@ -11,6 +11,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Swept Flange (FR-FT-120)**: Sheet Metal → Swept Flange runs a sketched profile of lines and tangent arcs along the clicked edges of the sheet, like SolidWorks' Swept Flange. Each arc becomes a bend of its own radius (the profile is the outside of the first bend, so an arc on the outside of a bend gives an inner radius of the arc minus the thickness), sharp corners use the bend radius, and flanges on edges meeting at a corner are mitred as in Miter Flange. The flat pattern unrolls every bend.
 
+## [1.295.0] - 2026-11-09
+
+### Added
+
+- **Cut list item material (FR-FT-121).** Each item in the weldment Cut List dialog can have its own material, as in SolidWorks: its mass, the total and the CSV (new Material column) follow that material's density. Items left on Part material use the part's material, as before.
+
+
 ## [1.290.0] - 2026-11-09
 
 ### Added
@@ -1737,7 +1744,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.296.0...HEAD
-[1.296.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.296.0
+[1.296.0]: https://github.com/kothf/step-viewer/compare/v1.295.0...v1.296.0
+[1.295.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.295.0
 [1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
 [1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
