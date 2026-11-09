@@ -1277,13 +1277,17 @@ function setTool(t: Tool) {
 
 function updateHint() {
   const h = $("#tool-hint");
+  const st = $("#st-hint");
+  // The default tool's prompt sits in the status bar so it never covers the model; the banner is for
+  // tools the user picked on purpose (they count picks and end with Esc).
   if (state.tool === "select") {
-    h.hidden = !viewer.parts.length;
-    h.innerHTML = state.selection && !state.livePair
-      ? `<b>${t("Smart measure")}</b> · ${t("click a second point, edge or face to measure between them")} · <span class="muted">${t("Esc to clear")}</span>`
-      : `<b>${t("Smart measure")}</b> · ${t("click a point, edge or face; a second click measures between them")}`;
+    h.hidden = true;
+    st.innerHTML = !viewer.parts.length ? "" : state.selection && !state.livePair
+      ? `<b>${t("Smart measure")}</b>: ${t("click a second point, edge or face to measure between them")} · ${t("Esc to clear")}`
+      : `<b>${t("Smart measure")}</b>: ${t("click a point, edge or face; a second click measures between them")}`;
     return;
   }
+  st.innerHTML = "";
   if (state.tool === "sectionFace") {
     h.hidden = false;
     h.innerHTML = `<b>${t("Section")}</b> · ${t("click a flat face to cut there, or a cylinder to cut through its axis")} · <span class="muted">${t("Esc to cancel")}</span>`;
