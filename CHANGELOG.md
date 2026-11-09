@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.348.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Normal Cut (FR-FT-120): SolidWorks' Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
+- Sheet Metal → Convert to Sheet Metal (FR-FT-120): turn a solid into a sheet metal part, as SolidWorks' Convert to Sheet Metal. Click the face that stays fixed, then the straight edges of it to bend along; each face across a bend edge becomes a flange as long and at the angle the solid has, with the thickness inside the solid, so the part keeps its outside size. Edges between converted faces are ripped and mitred (Rip gap). Holes and shaped ends of the converted faces carry over, in the flat pattern too. It starts a sheet metal part like a base flange.
+- Corner Relief options (FR-FT-120): an Obround relief (rounded as far as it goes, keeping the clearance round the face's own corner) and Add fillet corners with a radius for rectangular reliefs; both follow into the flat pattern.
+- Sheet Metal Gusset options (FR-FT-120): a different profile length on the second face, and several gussets along the bend, spaced centre to centre about the position.
+- Sheet Metal → Insert Bends (FR-FT-120): turn a thin-walled solid (a shelled box, a bent section) into sheet metal, as SolidWorks' Insert Bends. Click an outside face to stay fixed; its sharp edges to other flat walls become bends of the given radius, the thickness is the walls' own, and corners between walls are ripped. Holes in the walls carry over.
+
 ## [1.346.0] - 2026-11-09
 
 ### Changed
@@ -2067,7 +2077,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.346.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.348.0...HEAD
+[1.348.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.348.0
 [1.346.0]: https://github.com/kothf/step-viewer/compare/v1.344.0...v1.346.0
 [1.344.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.344.0
 [1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0

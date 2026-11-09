@@ -391,6 +391,30 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
   return { state: st, ops };
 }
 
+/**
+ * Convert to Sheet Metal: a flange on each bend edge of the fixed plate, each with its own length (to the outer virtual
+ * sharp) and angle, material inside so the outer faces stay where the solid's were; flanges meeting at a corner are
+ * mitred `gap` apart (the rip). Panels `<fid>:p<i + 1>`, bends `<fid>:b<i>`.
+ */
+export function convertFlanges(prev: SheetState, items: { faces: [string, string]; length: number; angle: number }[], fid: string, gap: number): { state: SheetState; ops: SheetOp[] } {
+  const st = clone(prev);
+  const r = st.R;
+  const corners = flangeCorners(st, items.map(x => x.faces));
+  const ops: SheetOp[] = [];
+  items.forEach((it, i) => {
+    if (!(it.angle > 1e-6 && it.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
+    const d = outerSetback(st.T, it.angle, r);
+    const s = it.length - d;
+    const E = 2 * (s + d + bendAllowance(st, it.angle, r) + 2 * st.T);
+    ops.push(...addFlange(st, it.faces, {
+      angle: it.angle, r, s, d, off0: 0, off1: 0, flip: false,
+      ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
+    }, `${fid}:p${i + 1}`, `${fid}:b${i}`));
+  });
+  for (const [i, j] of corners) mitre(st, `${fid}:p${i + 1}`, `${fid}:p${j + 1}`, gap);
+  return { state: st, ops };
+}
+
 /** Pairs [i, j] of picked edges where edge i ends where edge j starts on the same face. */
 function flangeCorners(st: SheetState, picks: [string, string][]): [number, number][] {
   const found = picks.map(f => { try { const r = findEdge(st, f); return { panel: r.panel.id, seg: r.panel.outer[r.index] }; } catch { return null; } });
@@ -1712,13 +1736,44 @@ export function reliefCorners(st: SheetState): ReliefCorner[] {
 }
 
 /** A corner relief's outline in flat coordinates, counter-clockwise; `w` = clearance (rectangle, circle) or tear radius. */
-export function reliefLoop(c: ReliefCorner, kind: ReliefKind, w: number): Seg[] {
+export function reliefLoop(c: ReliefCorner, kind: ReliefKind, w: number, round = 0): Seg[] {
   const P = (u: number, v: number): V2 => p2(c.c0, p2(s2(c.oa, u), s2(c.ob, v)));
   if (kind === "tear") return [{ ent: "relief", kind: "circle", c: c.c0, r: w }];
   if (kind === "circle") return [{ ent: "relief", kind: "circle", c: P(c.baA / 2, c.baB / 2), r: Math.hypot(c.baA, c.baB) / 2 + w }];
   let pts = [P(-w, -w), P(c.baA + w, -w), P(c.baA + w, c.baB + w), P(-w, c.baB + w)];
   if (polyArea(pts) < 0) pts = pts.reverse();
+  // Obround: rounded as far as it goes (half its narrower side), but for the face's own corner, which keeps the clearance
+  // w round it (so it is still cut); rectangular: rounded by `round`.
+  if (kind === "obround") {
+    const inner = P(-w, -w);
+    return filletLoop(pts, pts.map(q => d2(q, inner) < 1e-9 * (1 + w) ? w : Infinity), "relief");
+  }
+  if (round > 1e-9) return filletLoop(pts, round, "relief");
   return pts.map((a, i) => line(`relief${i}`, a, pts[(i + 1) % 4]));
+}
+
+/** A convex counter-clockwise polygon with each corner rounded by r (or r[i]; less where the sides are too short), as lines and arcs. */
+export function filletLoop(pts: V2[], r: number | number[], ent: string): Seg[] {
+  const n = pts.length;
+  const len = pts.map((p, i) => d2(p, pts[(i + 1) % n]));
+  const ends = pts.map((q, i) => {
+    const p = pts[(i + n - 1) % n], s = pts[(i + 1) % n];
+    const u: V2 = s2([p[0] - q[0], p[1] - q[1]], 1 / d2(p, q)), v: V2 = s2([s[0] - q[0], s[1] - q[1]], 1 / d2(s, q));
+    const th = Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1])));
+    // Half of each side at most, so neighbouring roundings meet but don't cross.
+    const tmax = Math.min(len[(i + n - 1) % n], len[i]) / 2;
+    const ri = Array.isArray(r) ? r[i] : r;
+    const t = Math.min(ri / Math.tan(th / 2), tmax), rr = t * Math.tan(th / 2);
+    const bis = s2(p2(u, v), 1 / Math.hypot(u[0] + v[0], u[1] + v[1]));
+    return { a: p2(q, s2(u, t)), b: p2(q, s2(v, t)), c: p2(q, s2(bis, rr / Math.sin(th / 2))), r: rr };
+  });
+  const out: Seg[] = [];
+  ends.forEach((e, i) => {
+    out.push({ ent: `${ent}a${i}`, kind: "arc", c: e.c, r: e.r, a: e.a, b: e.b, ccw: true });
+    const nx = ends[(i + 1) % n];
+    if (d2(e.b, nx.a) > 1e-9) out.push(line(`${ent}${i}`, e.b, nx.a));
+  });
+  return out;
 }
 
 /** Corner relief: the outlines to cut at the picked corners (or at all of them). */
@@ -1730,7 +1785,9 @@ export function cornerRelief(st: SheetState, f: SmReliefFeature): { corners: Rel
   if (!corners.length) throw new SheetError("E-SM-CORNERGONE", "The picked corners are gone.");
   const w = f.size ? f.size.v : (f.ratio ?? 0.5) * st.T;
   if (!(w >= 0) || (f.kind === "tear" && !(w > 1e-6))) throw new SheetError("E-SM-RELIEFSIZE", "The relief size must be more than 0.");
-  return { corners, loops: corners.map(c => reliefLoop(c, f.kind, w)) };
+  const round = f.kind === "rect" && f.round ? f.round.v : 0;
+  if (!(round >= 0)) throw new SheetError("E-SM-RELIEFSIZE", "The relief size must be more than 0.");
+  return { corners, loops: corners.map(c => reliefLoop(c, f.kind, w, round)) };
 }
 
 const rot3 = (v: V3, k: V3, a: number): V3 => {
@@ -1744,13 +1801,13 @@ const rot3 = (v: V3, k: V3, a: number): V3 => {
  * the bend, the inside faces meet at the virtual sharp V; the rib is the triangle V, V + d·(along A), V + d·(along B),
  * and the groove is bounded by the outside faces and the rib's chord moved T towards V, T narrower each side.
  */
-export function gussetGeom(st: SheetState, f: SmGussetFeature): GussetMark {
+export function gussetGeom(st: SheetState, f: SmGussetFeature, shift = 0): GussetMark {
   const b = st.bends.find(x => x.id === f.bend);
   if (!b) throw new SheetError("E-SM-GUSSETBEND", "Pick a bend for the gusset.");
   const T = st.T, th = b.angle;
   if (!(th > 0.05 && th < Math.PI - 0.05)) throw new SheetError("E-SM-GUSSETANGLE", "A gusset needs a bend between 3° and 177°.");
   const l = d2(b.a0, b.a1), e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l], o: V2 = [e[1], -e[0]];
-  const d = f.depth.v, w = f.width.v, at = f.at ? f.at.v : l / 2;
+  const d = f.depth.v, d2b = f.depth2 ? f.depth2.v : d, w = f.width.v, at = (f.at ? f.at.v : l / 2) + shift;
   if (!(w > 2 * T + 1e-6)) throw new SheetError("E-SM-GUSSETWIDTH", "The gusset must be wider than twice the thickness.");
   if (!(at - w / 2 >= -1e-9 && at + w / 2 <= l + 1e-9)) throw new SheetError("E-SM-GUSSETPOS", "The gusset must lie within the bend's length.");
   const e3 = applyDir(b.M, [e[0], e[1], 0]), o3 = applyDir(b.M, [o[0], o[1], 0]);
@@ -1761,14 +1818,14 @@ export function gussetGeom(st: SheetState, f: SmGussetFeature): GussetMark {
   const tb = rot3(o3, ua, th);
   const set = b.r * Math.tan(th / 2);
   const V: V3 = [S0[0] + o3[0] * set, S0[1] + o3[1] * set, S0[2] + o3[2] * set];
-  if (!(d > set + 1e-6)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
+  if (!(Math.min(d, d2b) > set + 1e-6)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
   // 2D frame at V: X along face A away from the bend, Y so face B runs at φ = π − θ.
   const X: V3 = [-o3[0], -o3[1], -o3[2]], phi = Math.PI - th;
   const sp = Math.sin(phi), cp = Math.cos(phi);
   const Y: V3 = [(tb[0] - cp * X[0]) / sp, (tb[1] - cp * X[1]) / sp, (tb[2] - cp * X[2]) / sp];
   const to3 = (q: V2, shift = 0): V3 => [V[0] + q[0] * X[0] + q[1] * Y[0] + e3[0] * shift, V[1] + q[0] * X[1] + q[1] * Y[1] + e3[1] * shift, V[2] + q[0] * X[2] + q[1] * Y[2] + e3[2] * shift];
   const dA: V2 = [1, 0], dB: V2 = [cp, sp];
-  const PA = s2(dA, d), PB = s2(dB, d);
+  const PA = s2(dA, d), PB = s2(dB, d2b);
   // Chord normal towards V, and the lines bounding the groove.
   let nc: V2 = [PB[1] - PA[1], -(PB[0] - PA[0])];
   const ln = Math.hypot(...nc); nc = s2(nc, 1 / ln);
@@ -1787,8 +1844,12 @@ export function gussetGeom(st: SheetState, f: SmGussetFeature): GussetMark {
 }
 
 /** Adds a gusset to the sheet state. */
-export function gussetSheet(st: SheetState, f: SmGussetFeature): { state: SheetState; mark: GussetMark } {
+export function gussetSheet(st: SheetState, f: SmGussetFeature): { state: SheetState; marks: GussetMark[] } {
   if (st.faceted) throw new SheetError("E-SM-GUSSETLOFT", "A lofted bend's folds take no gussets.");
-  const mark = gussetGeom(st, f);
-  return { state: { ...st, gussets: [...(st.gussets ?? []), mark] }, mark };
+  const n = f.count ?? 1;
+  if (!(Number.isInteger(n) && n >= 1 && n <= 50)) throw new SheetError("E-SM-GUSSETCOUNT", "Use a whole number of gussets from 1 to 50.");
+  const sp = n > 1 ? f.spacing?.v ?? 0 : 0;
+  if (n > 1 && !(sp >= f.width.v - 1e-9)) throw new SheetError("E-SM-GUSSETSPACE", "The gussets' spacing must be at least their width.");
+  const marks = Array.from({ length: n }, (_x, i) => gussetGeom(st, f, (i - (n - 1) / 2) * sp));
+  return { state: { ...st, gussets: [...(st.gussets ?? []), ...marks] }, marks };
 }
