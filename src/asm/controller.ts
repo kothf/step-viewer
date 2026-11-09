@@ -2214,9 +2214,12 @@ export class AsmController {
   /** The status text: the state with the assembly's free degrees of freedom, and the selected component's. */
   private defText() {
     const st = this.defState(), s = this.solved;
-    if (st !== "Under defined" || !s) return t(st);
-    const sel = this.comp(this.selected), one = sel && !sel.fixed && s.dof[sel.id] !== undefined ? ` · ${t("{name}: {n} DOF", { name: sel.name, n: s.dof[sel.id] })}` : "";
-    return t("Under defined, {n} DOF", { n: s.free }) + one;
+    if (st !== "Under defined") return t(st);
+    // No mates to solve: every floating component keeps its 6 freedoms.
+    const loose = this.doc!.components.filter(c => !c.fixed && !c.suppressed);
+    const dofOf = (id: string) => s ? s.dof[id] : 6;
+    const sel = this.comp(this.selected), one = sel && !sel.fixed && !sel.suppressed && dofOf(sel.id) !== undefined ? ` · ${t("{name}: {n} DOF", { name: sel.name, n: dofOf(sel.id) })}` : "";
+    return t("Under defined, {n} DOF", { n: s ? s.free : 6 * loose.length }) + one;
   }
 
   private defState() {
