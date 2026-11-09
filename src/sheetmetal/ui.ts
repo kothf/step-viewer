@@ -5,11 +5,11 @@
 import { t } from "../i18n";
 import type { EdgeRef, FaceRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
-import { flatSize, panelOfFace, ventLayout, type SheetState } from "./sheet";
+import { flatSize, panelOfFace, reliefCorners, ventLayout, type SheetState } from "./sheet";
 import { loopPolygon } from "../sketch/profile";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmCrossFeature, type SmVentFeature, type SmFormFeature, type SmUnfoldFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmReliefFeature, type SmCrossFeature, type SmVentFeature, type SmFormFeature, type SmUnfoldFeature, type FormTool, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
-export type SmTool = "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
@@ -24,6 +24,7 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smjog", t("Jog"), t("Jog: two opposite bends along a sketched line that offset the rest of the face")],
   ["smcorner", t("Break Corner"), t("Break corner: chamfer or round outside corners of the sheet through its thickness")],
   ["smclosed", t("Closed Corner"), t("Closed corner: run flange ends on to meet the neighbouring flange, overlapping or underlapping it")],
+  ["smrelief", t("Corner Relief"), t("Corner relief: cut a rectangular, circular or tear relief where two bends meet at a corner, in the model and the flat pattern")],
   ["smcross", t("Cross Break"), t("Cross break: mark a flat face with crossed lines, the shallow stiffening break from corner to corner")],
   ["smvent", t("Vent"), t("Vent: cut openings in a flat face from one sketch, a closed boundary with ribs (lines) and spars (circles) left as material")],
   ["smform", t("Forming Tool"), t("Forming tool: press a dimple, rib, louver or extruded hole into a flat face; click the face to place each one")],
@@ -34,8 +35,8 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Lofted-Bend", "Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Cross-Break", "Vent", "Form-Tool", "Unfold", "Fold", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smloft: "⏢", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smcross: "⨯", smvent: "▦", smform: "◉", smunfold: "⤢", smfold: "⤡", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
+export const SM_BASES = ["Lofted-Bend", "Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Corner-Relief", "Cross-Break", "Vent", "Form-Tool", "Unfold", "Fold", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smloft: "⏢", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smrelief: "◳", smcross: "⨯", smvent: "▦", smform: "◉", smunfold: "⤢", smfold: "⤡", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
@@ -49,6 +50,7 @@ export const SM_ICONS: Record<string, string> = {
   smjog: S('<path d="M1.5 11h5l3-5h5"/><path d="M1.5 13h5.6l3-5h4.4"/>'),
   smcorner: S('<path d="M2 13h7l5-5V3"/><path d="M9 13l5-5" stroke-dasharray="1.6 1.4"/><path d="M9 13V8h5"/>'),
   smclosed: S('<path d="M3 3v10h10"/><path d="M5.5 3v7.5H13" stroke-dasharray="1.6 1.4"/><path d="M3 13l2.5-2.5"/>'),
+  smrelief: S('<path d="M2 13h7V9h4V3"/><path d="M9 13v-4h4" stroke-dasharray="1.6 1.4"/><circle cx="11" cy="11" r="2.4"/>'),
   smcross: S('<path d="M2 4h12v8H2z"/><path d="M2 4l12 8M14 4 2 12" stroke-dasharray="1.6 1.4"/>'),
   smvent: S('<rect x="2" y="3" width="12" height="10" rx="1"/><path d="M5 6h6M5 8h6M5 10h6"/>'),
   smform: S('<path d="M1.5 11h4a2.5 2.5 0 0 0 5 0h4"/><path d="M5.5 11 7 7h2l1.5 4" stroke-dasharray="1.6 1.4"/>'),
@@ -92,7 +94,7 @@ const loftChain = (s: SketchFeature) => { const p = sketchPath(s); return !p.err
 const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
 
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
+export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
   const base = c.doc.features.find(f => f.type === "smbase" || f.type === "smloft");
   if (type === "smloft") {
     if (base) return t("This part already has a base flange.");
@@ -168,6 +170,11 @@ export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbe
       pts = [[(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]];
     }
     return { id: c.id, type: "smform", name: c.name("smform"), face: face ?? { name: "" }, ...formSizes("dimple", c.sheet?.T ?? 1), pts } satisfies SmFormFeature;
+  }
+  if (type === "smrelief") {
+    // Every two-bend corner until corners are picked (SolidWorks: Collect all corners).
+    if (c.sheet && !c.sheet.faceted && !reliefCorners(c.sheet).length) return t("The sheet has no corners where two bends meet.");
+    return { id: c.id, type: "smrelief", name: c.name("smrelief"), corners: [], kind: "rect" } satisfies SmReliefFeature;
   }
   if (type === "smcross") return { id: c.id, type: "smcross", name: c.name("smcross"), faces: c.face && /:p\d+:(top|bot)$/.test(c.face.name) ? [c.face] : [], radius: { v: 0.5 }, angle: { v: Math.PI / 180 } } satisfies SmCrossFeature;
   if (type === "smclosed") return { id: c.id, type: "smclosed", name: c.name("smclosed"), faces: c.face && /:p\d+:(?!top$|bot$)[^:]+$/.test(c.face.name) ? [c.face] : [], kind: "overlap" } satisfies SmClosedFeature;
@@ -312,6 +319,23 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + help(t("The corner is cut in the outline of the flat face, so the flat pattern shows it too."))),
     };
   }
+  if (f.type === "smrelief") {
+    const all = k.sheet && !k.sheet.faceted ? reliefCorners(k.sheet) : [];
+    const rows = all.map((c, i) => `<label class="chk pm-chk"><input type="checkbox" data-sm="rc:${esc(c.key)}"${!f.corners.length || f.corners.includes(c.key) ? " checked" : ""} />${esc(t("Corner {n}", { n: i + 1 }))}</label>`).join("");
+    const ratio = !f.size;
+    return {
+      title: t("Corner Relief"),
+      body: group(t("Corners"), `<p class="pm-count" data-sm-corners>${esc(f.corners.length ? t("{n} corner|{n} corners", { n: f.corners.length }) : t("All corners ({n})", { n: all.length }))}</p>` + rows
+        + (f.corners.length ? `<button class="btn small" data-sm="clear">${esc(t("Collect all corners"))}</button>` : "")
+        + help(t("Corners where two bends meet on one face. Click near a corner in the view to pick it.")))
+        + group(t("Relief type"), sel("kind", t("Type"), [["rect", t("Rectangular")], ["circle", t("Circular")], ["tear", t("Tear")]], f.kind)
+          + `<label class="chk pm-chk"><input type="checkbox" data-sm="useRatio"${ratio ? " checked" : ""} />${esc(t("Use relief ratio"))}</label>`
+          + (ratio ? `<label class="pm-field"><span>${esc(t("Relief ratio"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="rratio" value="${esc(String(f.ratio ?? 0.5))}" spellcheck="false" /></span></label>`
+            : numField("size", f.kind === "tear" ? t("Radius") : t("Clearance"), f.size!, "length"))
+          + help(f.kind === "tear" ? t("A round tear at the inside corner; with the ratio its radius is the ratio × thickness.")
+            : t("Rectangular: over both bend zones, the clearance past them. Circular: centred where the bend centre lines cross. With the ratio the clearance is the ratio × thickness."))),
+    };
+  }
   if (f.type === "smclosed") {
     return {
       title: t("Closed Corner"),
@@ -432,6 +456,7 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         if (key === "clear" && (f.type === "smclosed" || f.type === "smcross")) upd(() => { f.faces = []; }, true);
         if (key === "clear" && f.type === "smform") upd(() => { f.pts = []; }, true);
         if (key === "clear" && (f.type === "smunfold" || f.type === "smfold")) upd(() => { f.bends = []; }, true);
+        if (key === "clear" && f.type === "smrelief") upd(() => { f.corners = []; }, true);
         if (key === "fclear" && f.type === "smunfold") upd(() => { delete f.face; }, true);
         if (key.startsWith("rm:") && f.type === "smform") upd(() => { f.pts.splice(Number(key.slice(3)), 1); }, true);
       });
@@ -492,6 +517,23 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
           if (!Number.isFinite(v)) { el.setAttribute("aria-invalid", "true"); toastBad(t("Not a number")); return; }
           el.removeAttribute("aria-invalid");
           upd(() => { const p = f.pts[Number(m[2])]; if (p) p[m[1] === "x" ? 0 : 1] = v; });
+        }
+        return;
+      }
+      if (f.type === "smrelief") {
+        if (key === "kind") upd(() => { f.kind = val === "circle" ? "circle" : val === "tear" ? "tear" : "rect"; }, true);
+        if (key === "useRatio") upd(() => { if (val) delete f.size; else f.size = { v: +((f.ratio ?? 0.5) * T).toFixed(3) }; }, true);
+        if (key === "rratio") {
+          const v = Number(String(val).replace(",", "."));
+          if (!Number.isFinite(v) || !(v > 0 && v <= 10)) { el.setAttribute("aria-invalid", "true"); toastBad(t("The value must be more than 0.")); return; }
+          el.removeAttribute("aria-invalid");
+          upd(() => { if (v === 0.5) delete f.ratio; else f.ratio = v; });
+        }
+        if (key.startsWith("rc:")) {
+          const keys = [...pm.querySelectorAll<HTMLInputElement>('[data-sm^="rc:"]')];
+          // Ticked boxes are the corners; all of them ticked (or none) means every corner.
+          const on = keys.filter(x => x.checked).map(x => x.dataset.sm!.slice(3));
+          upd(() => { f.corners = on.length === keys.length ? [] : on; }, true);
         }
         return;
       }
