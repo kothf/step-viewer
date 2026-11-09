@@ -7,7 +7,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { Viewer, type DisplayMode, type Part } from "./viewer/Viewer";
 import { NavCube } from "./viewer/NavCube";
 import { DocTabs, type DocTab } from "./docTabs";
-import { journalDrop } from "./model/file";
+import { journalDrop, packPart, PART_EXT } from "./model/file";
 import type { PartTab } from "./model/controller";
 import type { AsmTab } from "./asm/controller";
 import type { DrawingTab } from "./drawing/workspace";
@@ -49,6 +49,9 @@ import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
+import { FileMenu, type LiveKind, type PackDoc } from "./fileMenu";
+import { recentAdd } from "./recent";
+import { packAsm, ASM_EXT } from "./asm/file";
 import { bindValueDrops, dragValue } from "./valueDrop";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -83,6 +86,7 @@ applyThemeToViewer();
 let docs: DocTabs | undefined;
 const modeller = new ModelController({
   viewer,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
   vp: vpEl,
   show: (data, name, first) => showPartModel(data, name, first),
   faceAt: (x, y) => {
@@ -140,6 +144,7 @@ const modeller = new ModelController({
 // Assemblies (FRS 10): components placed by the kernel, shown as one viewer part each.
 const asm = new AsmController({
   viewer,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
   vp: vpEl,
   show: (parts, tree, first) => showModelled(parts, tree, tree.name, first),
   partAt: (x, y) => {
@@ -363,6 +368,8 @@ bindGerberPanel(gerber, {
 const partListeners: (() => void)[] = [];
 const drawing = new DrawingWorkspace({
   appVersion: __APP_VERSION__,
+  saved: (name, bytes) => void recentAdd([{ name, data: bytes }]),
+  fileMenu: btn => fileMenu.toggle(btn),
   occtBase: new URL("occt/", document.baseURI).href,
   async currentModel() {
     const live = modeller.store?.doc;
@@ -531,6 +538,11 @@ const is3dName = (n: string) => /\.(step|stp|p21|iges|igs|brep|stl|obj|3mf|sldpr
 /** Opens dropped or chosen files: one 3D model, a SolidWorks assembly with its parts, or any number of PCB layers / zips. */
 async function openFiles(files: File[]) {
   if (!files.length) return;
+  // File ▸ recent documents: the main file first (a drawing, part or assembly, else the biggest 3D model).
+  {
+    const main = files.find(f => isDrawingName(f.name) || modeller.isPartName(f.name) || asm.isAsmName(f.name)) ?? files.filter(f => is3dName(f.name)).sort((a, b) => b.size - a.size)[0] ?? files[0];
+    void recentAdd([main, ...files.filter(f => f !== main)].map(f => ({ name: f.name, data: f })));
+  }
   const drawingFile = files.find(f => isDrawingName(f.name));
   if (drawingFile) return drawing.openFile(drawingFile);
   const partFile = files.find(f => modeller.isPartName(f.name));
@@ -2472,6 +2484,120 @@ $("#report").addEventListener("click", e => busy(e.currentTarget as HTMLElement,
 $("#step-export").addEventListener("click", e => busy(e.currentTarget as HTMLElement, exportStep));
 $("#m-pdf").addEventListener("click", e => busy(e.currentTarget as HTMLElement, report));
 
+// ---------- File menu (FR-UI-010) ----------
+/** Prints the 3D view as it is shown (File ▸ Print, Ctrl+P). */
+function print3d() {
+  if (!viewer.parts.length) { toast(t("Nothing to print yet.")); return; }
+  const url = snapshot(viewer, annotations, { scale: 2, transparent: false, background: "#ffffff" }).toDataURL("image/png");
+  const fr = document.createElement("iframe");
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  fr.setAttribute("aria-hidden", "true");
+  document.body.appendChild(fr);
+  const d = fr.contentDocument!;
+  const title = (docState[0] || baseName()).replace(/\s*•$/, "");
+  d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/[&<>]/g, "")}</title><style>@page{margin:10mm}html,body{margin:0}img{display:block;max-width:100%;max-height:100vh;margin:auto;object-fit:contain}</style></head><body><img src="${url}" alt=""></body></html>`);
+  d.close();
+  const img = d.querySelector("img")!;
+  const go = () => { try { fr.contentWindow!.focus(); fr.contentWindow!.print(); } finally { setTimeout(() => fr.remove(), 60_000); } };
+  if (img.complete) setTimeout(go, 50); else img.onload = () => setTimeout(go, 50);
+}
+const appGen = `MöbiusCAD ${__APP_VERSION__}`;
+const plainLabel = (s: string) => s.replace(/\s*•$/, "");
+/** Saves the live document (File ▸ Save / Save as). A model file has no document of ours: Save as keeps a copy of it. */
+async function saveLive(as: boolean) {
+  const k = fileMenuLive();
+  if (k === "drawing") await drawing.save();
+  else if (k === "part") await modeller.save(as);
+  else if (k === "asm") await asm.save(as);
+  else if (k === "model" && modelSrc && as) download(new Blob([modelSrc.data]), modelSrc.name);
+}
+function fileMenuLive(): LiveKind {
+  if (drawing.open) return "drawing";
+  if (isPcbMode()) return "pcb";
+  const k = docs?.active?.kind;
+  if (k && k !== "drawing") return k;
+  return modeller.active ? "part" : asm.active ? "asm" : viewer.parts.length ? "model" : null;
+}
+const fileMenu = new FileMenu({
+  live: fileMenuLive,
+  docCount: () => docs?.tabs.length ?? 0,
+  dirtyCount: () => docs?.dirtyTabs().length ?? 0,
+  open: () => { warmKernel(); openPicker(); },
+  openFiles: fs => void openFiles(fs),
+  newPart: () => $("#new-part").click(),
+  newAsm: () => $("#new-asm").click(),
+  newDrawing: () => $("#new-drawing").click(),
+  get asmFromPart() { return modeller.active && !drawing.open ? () => $("#new-asm-part").click() : null; },
+  async close() { const a = docs?.active; if (a) await docs!.close(a.id); },
+  async closeAll() {
+    if (!docs) return true;
+    for (const tab of [...docs.tabs].reverse()) { await docs.close(tab.id); if (docs.tabs.includes(tab)) return false; }
+    return true;
+  },
+  save: as => saveLive(as),
+  async saveAll() {
+    if (!docs) return;
+    const todo = docs.dirtyTabs().filter(x => x.kind !== "model");
+    if (!todo.length) { toast(t("Nothing to save: every document is saved.")); return; }
+    const start = docs.active;
+    for (const tab of todo) {
+      if (tab.state != null) await docs.activate(tab.id);
+      else if (tab.kind === "drawing" ? !drawing.open : drawing.open && docs.active?.kind === "drawing") await docs.activate(tab.id);
+      await saveLive(false);
+    }
+    if (start && docs.active !== start && docs.tabs.includes(start)) await docs.activate(start.id);
+  },
+  packDocs() {
+    if (!docs) return [];
+    return docs.tabs.map((tab): PackDoc => {
+      const live = tab.state == null, label = plainLabel(tab.label);
+      if (tab.kind === "part") {
+        const st = tab.state as PartTab | null;
+        return { label, kind: "part", live, async files() {
+          const doc = st ? st.store.doc : modeller.store!.doc;
+          const data = st ? await packPart(doc, appGen) : (await modeller.partBytes())!;
+          return [{ name: (st ? st.fileName : plainLabel(modeller.partName)) || `${doc.name}${PART_EXT}`, data }];
+        } };
+      }
+      if (tab.kind === "asm") {
+        const st = tab.state as AsmTab | null;
+        const doc = () => (st ? st.doc : asm.doc!);
+        return {
+          label, kind: "asm", live,
+          async files() { return [{ name: (st ? st.fileName : asm.title) || `${doc().name}${ASM_EXT}`, data: await packAsm(doc(), appGen) }]; },
+          async parts() {
+            return Promise.all(Object.values(doc().parts).map(async p => p.asm
+              ? { name: `${p.asm.name || p.name}${ASM_EXT}`, data: await packAsm(p.asm, appGen) }
+              : { name: /\.mcadprt$/i.test(p.file) ? p.file : `${p.doc.name || p.name}${PART_EXT}`, data: await packPart(p.doc, appGen) }));
+          },
+        };
+      }
+      if (tab.kind === "drawing") {
+        const st = tab.state as DrawingTab | null;
+        return { label, kind: "drawing", live, async files() { const r = await drawing.packed(st ?? undefined); return r ? [r] : []; } };
+      }
+      const src = (tab.state as { name: string; data: ArrayBuffer } | null) ?? modelSrc;
+      return { label, kind: "model", live, async files() { return src ? [{ name: src.name, data: new Uint8Array(src.data.slice(0)) }] : []; } };
+    });
+  },
+  download: (b, n) => download(b, n),
+  exportDoc() {
+    if (drawing.open) { drawing.openExportMenu(); return; }
+    $("#rt-export").click();
+  },
+  print() {
+    if (drawing.open) void drawing.exportAs("print");
+    else print3d();
+  },
+  properties() {
+    if (drawing.open) drawing.sheetProperties();
+    else if (fileMenuLive() === "part") modeller.editProps();
+    else $("#rt-props").click();
+  },
+});
+$("#file-btn").addEventListener("click", e => fileMenu.toggle(e.currentTarget as HTMLElement));
+
 // ---------- keyboard ----------
 window.addEventListener("keydown", e => {
   if (drawing.open) return;
@@ -2480,7 +2606,6 @@ window.addEventListener("keydown", e => {
   // Keyboard users: let Enter / Space press the focused control, and keep keys inside dialogs and sheets.
   if ((e.key === "Enter" || e.key === " ") && t.matches("button, summary, a, [role=treeitem], [role=tab]")) return;
   if (t.closest("dialog") || ($("#app").dataset.sheet && t.closest(".sheet"))) return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") { e.preventDefault(); $<HTMLInputElement>("#file-input").click(); return; }
   // Standard views Ctrl+1..7 and Normal to Ctrl+8 (FR-UI-030/031).
   if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[1-8]$/.test(e.key) && viewer.parts.length + (modeller.active ? 1 : 0) > 0 && !isPcbMode()) {
     e.preventDefault();

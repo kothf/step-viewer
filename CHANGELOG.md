@@ -5,6 +5,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.327.0] - 2026-11-09
+
+### Added
+- **File menu like SolidWorks (FR-UI-010)**: the blue Open file button is now **File ▾**, and drawings have the same button. It has New part / assembly / drawing, Make assembly from part, Open (Ctrl+O), Close (Ctrl+Alt+W), Close all, Save (Ctrl+S), Save as (Ctrl+Shift+S; for a STEP or mesh model it saves a copy of the file), Save all (Ctrl+Alt+S), Pack and Go, Export, Print (Ctrl+P: the drawing, or the 3D view as shown), Properties, the recent documents and Exit. Commands that don't apply are greyed out.
+- **Pack and Go**: the chosen open documents in one .zip, with each assembly's parts as separate files under `parts/` if you like.
+- **Recent documents**: the last 8 files you opened or saved are listed at the bottom of the File menu (numbered, so 1–8 open them from the keyboard) and open again without the file picker.
+
+### Changed
+- The New part button and its ▾ arrow are as tall as the File button, with a bigger arrow.
+
 ## [1.326.0] - 2026-11-09
 
 ### Added
@@ -1916,7 +1926,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.326.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.327.0...HEAD
+[1.327.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.327.0
 [1.326.0]: https://github.com/kothf/step-viewer/compare/v1.325.0...v1.326.0
 [1.325.0]: https://github.com/kothf/step-viewer/compare/v1.324.0...v1.325.0
 [1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0

@@ -1109,7 +1109,7 @@ try {
 
     await pg.goto(boardUrl);
     await waitBoard();
-    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("[data-open] .open-long").textContent }));
+    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("#file-btn .file-lbl").textContent }));
     // First-use tip on the first board, with Got it / Turn off.
     const tip1 = await pg.evaluate(() => { const h = document.querySelector("#hint"); return { shown: !h.hidden, text: h.textContent, btns: h.querySelectorAll("button").length }; });
     await pg.click("#hint [data-h=ok]");
@@ -1117,11 +1117,11 @@ try {
     await pg.waitForTimeout(100);
     const ru = await pg.evaluate(() => ({
       lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, label: document.querySelector("#lang-btn").getAttribute("aria-label"),
-      open: document.querySelector("[data-open] .open-long").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
+      open: document.querySelector("#file-btn .file-lbl").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
       layer: document.querySelector("#g-layers .g-name b")?.textContent, stats: document.querySelector("#g-stats .k")?.textContent, doc: document.querySelector("#doc-status").getAttribute("aria-label"),
     }));
-    check(en.lang === "en" && en.btn === "EN" && en.open === "Open file" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
-    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Открыть файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
+    check(en.lang === "en" && en.btn === "EN" && en.open === "File" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
+    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
       `i18n: RU switches header, panels, layer names and stats at once (${JSON.stringify(ru)})`);
     // Results and the empty measurement list in Russian, then a scan for anything left in English.
     await pg.evaluate(() => {
@@ -10141,6 +10141,69 @@ try {
     check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
     check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
+  // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await fp.goto(`${origin}/index.html?debug&nokernel`);
+    await fp.waitForFunction(() => window.__sv);
+    const menu = () => fp.evaluate(() => {
+      const m = document.querySelector("#file-menu");
+      return { shown: !!m && !m.hidden, items: m ? [...m.querySelectorAll("button[data-f]")].map(b => [b.dataset.f, b.disabled, b.querySelector(".fm-k")?.textContent ?? ""]) : [], focus: document.activeElement?.dataset?.f ?? document.activeElement?.id, expanded: document.querySelector("#file-btn").getAttribute("aria-expanded") };
+    });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+    const m0 = await menu();
+    const it0 = Object.fromEntries(m0.items.map(([id, off, k]) => [id, { off, k }]));
+    check(m0.shown && m0.expanded === "true" && m0.focus === "new-part" && it0.open && !it0.open.off && it0.open.k === "Ctrl+O" && it0.save.off && it0["save-as"].off && it0.close.off && it0.print.off && !it0.exit.off && it0.pack && it0.props && it0["save-all"].k === "Ctrl+Alt+S",
+      `File menu: opens under the File button with New/Open/Close/Save/Save as/Save all/Pack and Go/Export/Print/Properties/Exit, document commands off with nothing open (${JSON.stringify(m0)})`);
+    await fp.keyboard.press("ArrowDown");
+    const f1 = await menu();
+    await fp.keyboard.press("Escape");
+    const m1 = await menu();
+    check(f1.focus === "new-asm" && !m1.shown && m1.focus === "file-btn" && m1.expanded === "false", `File menu: arrow keys move, Esc shuts it and focus returns to File (${JSON.stringify([f1.focus, m1])})`);
+    await fp.setInputFiles("#file-input", join(fixtures, "rounded-cube/rounded-cube.step"));
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => document.querySelector("#file-menu [data-f='recent:0']"));
+    const m2 = await menu();
+    const it2 = Object.fromEntries(m2.items.map(([id, off]) => [id, off]));
+    const recentName = await fp.$eval("#file-menu [data-f='recent:0']", b => b.textContent);
+    check(!it2["save-as"] && !it2.close && !it2.print && !it2.export && it2.save && /rounded-cube\.step/.test(recentName), `File menu: an open model enables Save as (a copy), Close, Print and Export and is listed under recent documents (${JSON.stringify([m2.items, recentName])})`);
+    await fp.keyboard.press("Escape");
+    // Ctrl+Alt+N: a new part in its own tab.
+    await fp.keyboard.press("Control+Alt+KeyN");
+    await fp.waitForFunction(() => window.__sv.modeller.active, null, { timeout: 30000 });
+    const tabs = await fp.$$eval("#doc-tabs .dt", d => d.length);
+    check(tabs === 2, `File menu: Ctrl+Alt+N makes a new part beside the open model (${tabs} tabs)`);
+    // Pack and Go: both documents in one zip.
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=pack]");
+    await fp.waitForSelector("#pack-dlg[open]");
+    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
+    const zbytes = await readFile(await dl.path());
+    const ztext = zbytes.toString("latin1");
+    check(boxes === 2 && /\.zip$/.test(dl.suggestedFilename()) && ztext.startsWith("PK") && ztext.includes("rounded-cube.step") && /\.mcadprt/.test(ztext), `File menu: Pack and Go lists the open documents and saves them into one .zip (${boxes} boxes, ${dl.suggestedFilename()}, ${zbytes.length} bytes)`);
+    // Ctrl+Alt+W closes the new part; File ▸ Close all closes the model.
+    await fp.keyboard.press("Control+Alt+KeyW");
+    await fp.waitForFunction(() => !window.__sv.modeller.active && document.querySelectorAll("#doc-tabs .dt").length === 1, null, { timeout: 30000 });
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=close-all]");
+    await fp.waitForFunction(() => !document.querySelectorAll("#doc-tabs .dt").length && !window.__sv.viewer.parts.length, null, { timeout: 30000 });
+    check(true, "File menu: Ctrl+Alt+W closes the part, Close all closes the rest");
+    // A recent document opens again from the menu.
+    await fp.click("#file-btn");
+    await fp.waitForSelector("#file-menu [data-f='recent:0']");
+    await fp.click("#file-menu [data-f='recent:0']");
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    check(true, "File menu: a recent document opens again from the list");
+    await ctx.close();
   }
 } catch (err) {
   console.error(err);

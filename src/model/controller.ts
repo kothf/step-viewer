@@ -74,6 +74,8 @@ type DragArrow = { obj: THREE.Group; pick: THREE.Mesh; base: THREE.Vector3; dir:
 
 export interface ModelHost {
   viewer: Viewer;
+  /** A part was saved to a file (File ▸ recent documents). */
+  saved?(name: string, bytes: Uint8Array): void;
   vp: HTMLElement;
   /** Shows the part's body (null: no body yet) with the viewer pipeline; `first` resets the view and tools. */
   show(data: PartData | null, name: string, first: boolean): void;
@@ -1550,6 +1552,7 @@ export class ModelController {
     journalDrop(this.doc.id);
     // Automatic snapshot of every save outside a vault (FR-STO-005).
     void snapshotSave(this.doc.id, bytes);
+    this.host.saved?.(this.fileName, bytes);
     toast(t("Saved {name}", { name: this.fileName }), "success");
   }
 
