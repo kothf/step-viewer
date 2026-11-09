@@ -150,6 +150,7 @@ export class AsmController {
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     this.bindDom();
     host.viewer.scene.add(this.overlay);
+    this.bindTabHide();
     onLangChange(() => { delete $("#asm-pm").dataset.id; if (this.doc) this.renderAll(); });
   }
 
@@ -248,6 +249,8 @@ export class AsmController {
 
   close() {
     if (!this.doc) return;
+    for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost);
+    this.ghostGroup.visible = false;
     this.motion?.close();
     this.doc = null;
     this.drag = null;
@@ -2041,7 +2044,83 @@ export class AsmController {
     this.change(d => { const c = d.components.find(x => x.id === id); if (!c || !d.parts[c.part]?.asm) return; if (on) c.flexible = true; else { delete c.flexible; delete c.subTfs; } });
   }
   setFixed(id: string, fixed: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (fixed) c.fixed = true; else delete c.fixed; } }); }
-  setHidden(id: string, hidden: boolean) { this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } }); }
+  /**
+   * Hide/show under the cursor (FR-UI-105): Tab hides the component under the cursor, Shift+Tab shows a hidden one
+   * there, holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one. Hidden components are not
+   * shown, so each keeps a ghost of the meshes it had when it was hidden.
+   */
+  private ghostGroup = new THREE.Group();
+  private tabPointer: { x: number; y: number; in: boolean } = { x: 0, y: 0, in: false };
+
+  private bindTabHide() {
+    const v = this.host.viewer, cv = v.renderer.domElement;
+    this.ghostGroup.visible = false;
+    v.scene.add(this.ghostGroup);
+    cv.addEventListener("pointermove", e => { this.tabPointer = { x: e.clientX, y: e.clientY, in: true }; });
+    cv.addEventListener("pointerleave", () => { this.tabPointer.in = false; });
+    const showGhosts = (on: boolean) => { if (this.ghostGroup.visible !== on) { this.ghostGroup.visible = on; v.invalidate(); } };
+    window.addEventListener("keydown", e => {
+      if (e.key !== "Tab" || e.altKey || !this.doc || this.picking || this.moving || !this.tabPointer.in) return;
+      const tg = e.target as HTMLElement;
+      if (!(tg === document.body || tg === document.documentElement || tg === cv || tg.id === "viewport")) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey) return;
+      e.preventDefault(); e.stopPropagation();
+      if (mod) { showGhosts(true); return; }
+      const { x, y } = this.tabPointer;
+      if (e.shiftKey) {
+        const id = this.ghostAt(x, y);
+        if (id) this.setHidden(id, false); else toast(t("No hidden component under the cursor."));
+        return;
+      }
+      const hit = this.host.partAt(x, y), id = hit ? topOf(this.shownIds[hit.idx] ?? "") : "";
+      if (id && this.comp(id)) this.setHidden(id, true);
+    }, true);
+    window.addEventListener("keyup", e => { if (e.key === "Tab" || e.key === "Control" || e.key === "Shift" || e.key === "Meta") showGhosts(false); });
+    window.addEventListener("blur", () => showGhosts(false));
+    window.addEventListener("pointerdown", e => {
+      if (!this.ghostGroup.visible || e.button !== 0 || e.target !== cv) return;
+      const id = this.ghostAt(e.clientX, e.clientY);
+      if (!id) return;
+      e.preventDefault(); e.stopPropagation();
+      this.setHidden(id, false);
+    }, true);
+  }
+
+  /** Keeps see-through copies of the shown meshes of top-level component `id`. */
+  private keepGhost(id: string) {
+    this.dropGhost(id);
+    const parts = this.host.viewer.parts;
+    this.shownIds.forEach((sid, i) => {
+      const p = parts[i];
+      if (topOf(sid) !== id || !p) return;
+      p.mesh.updateMatrixWorld(true);
+      const g = p.mesh.geometry.clone();
+      g.applyMatrix4(p.mesh.matrixWorld);
+      const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x8c99a6, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+      m.userData.ghost = id;
+      m.renderOrder = 2300;
+      this.ghostGroup.add(m);
+    });
+  }
+
+  private dropGhost(id: string) {
+    for (const o of [...this.ghostGroup.children]) if (o.userData.ghost === id) { this.ghostGroup.remove(o); const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+  }
+
+  /** The still-hidden component whose ghost is under a screen point. */
+  private ghostAt(x: number, y: number): string | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const live = this.ghostGroup.children.filter(o => this.comp(o.userData.ghost)?.hidden);
+    return (rc.intersectObjects(live, false)[0]?.object.userData.ghost as string | undefined) ?? null;
+  }
+
+  setHidden(id: string, hidden: boolean) {
+    if (hidden) this.keepGhost(id);
+    this.change(d => { const c = d.components.find(x => x.id === id); if (c) { if (hidden) c.hidden = true; else delete c.hidden; } });
+  }
 
   async deleteComponent(id: string) {
     const c = this.comp(id);

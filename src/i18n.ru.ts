@@ -3425,6 +3425,15 @@ export const RU: Record<string, string> = {
   "Horizontal axis": "Горизонтальную ось",
   "The profile's axis points along the line, square to each segment, for every group; the rotation angle turns it from there.": "Ось профиля направлена вдоль отрезка перпендикулярно каждому сегменту, для всех групп; угол поворота отсчитывается от этого положения.",
   "The alignment line is missing: pick another one.": "Отрезок выравнивания не найден: выберите другой.",
+  "As set for the member": "Как задано для элемента",
+  "Corner {corner}: click to change its treatment": "Угол {corner}: щёлкните, чтобы изменить его обработку",
+  "A corner set here keeps its own treatment when the one above changes. The callouts at the corners in the view set them too.": "Угол, заданный здесь, сохраняет свою обработку при изменении общей. Выноски у углов в окне тоже задают её.",
+  "Sketch point {n}": "Точка эскиза {n}",
+  "Locate profile": "Указать положение профиля",
+  "Click a point of the profile in the view: it moves onto the path.": "Щёлкните точку профиля в окне: она переместится на траекторию.",
+  "Locate profile: {point}": "Положение профиля: {point}",
+  "A closed sketch: its largest region is the profile. The sketch origin sits on the path, or any point of the sketch picked under Profile position.": "Замкнутый эскиз: его наибольшая область — профиль. На траектории лежит начало эскиза или любая точка эскиза, выбранная в поле «Положение профиля».",
+  "The profile point the member is located by is gone: pick another profile position.": "Точка профиля, по которой расположен элемент, не найдена: выберите другое положение профиля.",
   "Only structural member bodies can be trimmed: pick a face of a member.": "Обрезать можно только тела элементов конструкции: выберите грань элемента.",
   "Path segments": "Сегменты траектории",
   "Pick the boundary: a flat face or a body.": "Выберите границу: плоскую грань или тело.",
@@ -4124,4 +4133,31 @@ export const RU: Record<string, string> = {
   "The sketch X axis follows the new plane": "Ось X эскиза взята от новой плоскости",
   "The end condition went back to Blind": "Граничное условие сброшено на «На заданное расстояние»",
   "The start went back to the sketch plane": "Начало сброшено на плоскость эскиза",
+  // FR-HIS-012/013: rollback commands, rolled-back notice, tree housekeeping
+  "Roll to previous": "Откатить к предыдущему",
+  "The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown": "Деталь откачена: {n} элемент не показан|Деталь откачена: {n} элемента не показаны|Деталь откачена: {n} элементов не показаны",
+  "Expand": "Развернуть",
+  // FR-UI-108: undo inside a command
+  "Nothing to undo in this command.": "В этой команде отменять нечего.",
+  "Nothing to redo in this command.": "В этой команде повторять нечего.",
+  // FR-UI-116: units in the status bar
+  "Units and decimals: click to change": "Единицы и знаки после запятой: щёлкните, чтобы изменить",
+  "Millimetres (mm)": "Миллиметры (мм)",
+  "Centimetres (cm)": "Сантиметры (см)",
+  "Metres (m)": "Метры (м)",
+  "Inches (in)": "Дюймы (in)",
+  "Feet (ft)": "Футы (ft)",
+  // FR-UI-112: command tooltips
+  "Unavailable: {why}": "Недоступно: {why}",
+  "Finish or cancel the command first.": "Сначала завершите или отмените команду.",
+  "Nothing to redo.": "Повторять нечего.",
+  "Undo in this command (Ctrl+Z)": "Отменить в этой команде (Ctrl+Z)",
+  "Redo in this command (Ctrl+Y)": "Повторить в этой команде (Ctrl+Y)",
+  // FR-UI-105: hide/show under the cursor
+  "No hidden body under the cursor.": "Под курсором нет скрытого тела.",
+  "No hidden component under the cursor.": "Под курсором нет скрытого компонента.",
+  // FR-SEL-009: selection breadcrumbs
+  "Selection breadcrumbs": "Цепочка выбора",
+  // FR-UI-110: value callouts
+  "Click to type the value": "Щёлкните, чтобы ввести значение",
 };

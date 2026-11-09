@@ -384,6 +384,19 @@ details > :last-child { margin-bottom: 12px; }
 .snaps { display: flex; gap: 8px; align-items: center; color: var(--muted); }
 .st-snap { color: var(--warn-text); font-weight: 600; min-width: 70px; }
 .st-kernel { color: var(--muted); white-space: nowrap; }
+/* Smart measure's prompt lives here, SolidWorks style, never over the model. */
+.st-hint { color: var(--muted); min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.st-hint b { color: var(--text); font-weight: 600; }
+#app.sketching .st-hint, #app.mc-cmd .st-hint { display: none; }
+.st-units { border: 1px solid transparent; background: none; color: var(--text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; min-height: 20px; }
+.st-units:hover, .st-units[aria-expanded="true"] { border-color: var(--line); background: var(--panel-2); }
+.st-units-menu { gap: 2px; min-width: 180px; }
+.st-units-menu .menu-h:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.st-units-menu button { text-align: left; border: 0; background: none; color: var(--text); font: inherit; padding: 4px 8px; border-radius: 5px; cursor: pointer; min-height: 24px; }
+.st-units-menu button:hover, .st-units-menu button:focus-visible { background: var(--panel-2); }
+.st-units-menu button[aria-checked="true"] { color: var(--accent-text); font-weight: 600; }
+.st-units-menu button[aria-checked="true"]::before { content: "✓ "; }
+.st-dec { display: flex; flex-wrap: wrap; gap: 2px; }
 .st-kernel[data-state="ready"]::before, .st-kernel[data-state="partial"]::before { content: "●"; color: var(--ok, #2f9e44); margin-right: 4px; }
 .st-kernel[data-state="loading"]::before { content: "◌"; margin-right: 4px; }
 
@@ -741,6 +754,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #asm-tree .ft-tools { display: inline-flex; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
+/* FR-HIS-013: hidden items have an outlined icon; parents of an absorbed sketch fold it with a twisty. */
+.ft-row.hid > .ft-ico { color: transparent; -webkit-text-stroke: 1px var(--muted); }
+.ft-tools .ft-eye svg { display: block; margin: auto; }
+.ft-tools .ft-eye.off { color: var(--muted); }
+.ft-twist.icon { width: 14px; height: 18px; min-width: 0; padding: 0; margin-left: -4px; border: 0; background: none; font-size: 10px; color: var(--muted); flex: none; }
+.ft-twist.icon:hover { color: var(--text); }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 /* FR-UI-003: with a command open the panel fills the Features tab and the tree flies out over the view. */
@@ -875,6 +894,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 :root[data-theme="dark"] .mc-callout { background: #3a3110; color: #ffe08a; }
 .mc-callout.wld-sym { border-color: #495057; background: #fff; color: #212529; font-variant-numeric: tabular-nums; }
 :root[data-theme="dark"] .mc-callout.wld-sym { background: #212529; color: #f1f3f5; border-color: #adb5bd; }
+.mc-callout.wld-corner { border-color: #c2255c; background: #fff0f6; color: #a61e4d; }
+.mc-callout.wld-corner.own { font-weight: 600; border-width: 2px; }
+.mc-handle.wld-pierce { transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid #c2255c; background: #fff; }
+.mc-handle.wld-pierce:hover, .mc-handle.wld-pierce:focus-visible { background: #f06595; }
+.mc-handle.wld-pierce.cur { background: #c2255c; }
+:root[data-theme="dark"] .mc-callout.wld-corner { background: #3b1027; color: #faa2c1; border-color: #f06595; }
 .sk-cursor { position: absolute; pointer-events: none; transform: translate(14px, 10px); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font: 600 11px var(--mono); padding: 0 4px; color: var(--text); white-space: nowrap; }
 /* Equations panel (FR-PAR-001/005) */
 .eq-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
@@ -1211,3 +1236,35 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 #prefs-dlg .prefs-legend, #prefs-dlg .prefs-mouse { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 #prefs-dlg .prefs-mouse { list-style: disc; padding-left: 20px; }
 #prefs-dlg .prefs-sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); }
+
+/* Command tooltips (FR-UI-112): label, shortcut, description, why a button is unavailable. */
+.cm-tip { position: fixed; z-index: 1300; max-width: 300px; padding: 6px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; box-shadow: var(--shadow); font-size: 12px; pointer-events: none; }
+.cm-tip-h { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.cm-tip kbd { font: 11px/1.4 var(--mono, ui-monospace, monospace); padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--text); white-space: nowrap; }
+.cm-tip-d { margin-top: 2px; color: var(--muted); }
+.cm-tip-w { margin-top: 3px; color: var(--warn-text); }
+
+/* Colour-coded selection boxes (FR-SEL-011): the box's colour on its left edge and on the tag naming it in the view. */
+.pm-box[data-boxc], .pm-count[data-boxc] { box-shadow: inset 4px 0 0 var(--box-c); padding-left: 10px; }
+.mc-boxtag { position: absolute; pointer-events: none; padding: 1px 6px; border: 1px solid var(--box-c); border-left-width: 4px; border-radius: 4px; background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; }
+:root[data-theme="dark"] .mc-boxtag { background: var(--panel); color: var(--text); }
+
+/* Magnifying glass (FR-SEL-010) */
+.mag-lens, .mag-ring { position: fixed; width: 240px; height: 240px; border-radius: 50%; pointer-events: none; z-index: 40; }
+.mag-lens { background: var(--bg); }
+.mag-ring { box-sizing: border-box; border: 2px solid var(--accent, #1971c2); box-shadow: 0 2px 12px rgb(0 0 0 / 0.35); }
+.mag-ring::after { content: attr(data-f); position: absolute; right: 22px; bottom: 14px; font: 600 11px/1 system-ui, sans-serif; padding: 2px 5px; border-radius: 4px; background: var(--panel, #fff); color: var(--text); }
+
+/* Selection breadcrumbs (FR-SEL-009) */
+.mc-crumbs { pointer-events: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: 100%; padding: 3px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); font-size: 12px; }
+.mc-crumb { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 0; border-radius: 5px; background: none; color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.mc-crumb.here { cursor: default; color: var(--muted); }
+.mc-crumb[data-id]:hover, .mc-crumb[data-id]:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
+.mc-crumb-sep { color: var(--muted); }
+.mc-crumbs.at-cursor, .mc-confirm.at-cursor { position: fixed; right: auto; z-index: 30; max-width: 60vw; }
+
+/* Value callouts (FR-UI-110): the label button plus an optional ⇄ in one pill */
+.mc-vcall { position: absolute; display: inline-flex; gap: 2px; padding: 0; border: 0; background: none; pointer-events: auto; }
+.mc-vcall > .mc-handle { position: static; transform: none; border-color: #e0a800; background: #fff8db; color: #5c4400; }
+:root[data-theme="dark"] .mc-vcall > .mc-handle { background: #3a3110; color: #ffe08a; }
+:root[data-theme="dark"] .mc-vcall { background: none; }

@@ -1205,9 +1205,9 @@ try {
       document.querySelector("#display-menu").hidden = false;
     });
     await pg.waitForTimeout(200);
-    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#tool-hint").textContent }));
+    const model = await pg.evaluate(() => ({ lang: document.documentElement.lang, tree: document.querySelector("#t-tree").textContent, card: document.querySelector("#readout .ttl span")?.textContent, list: document.querySelector("#m-list .m-item .t")?.textContent, hint: document.querySelector("#st-hint").textContent, banner: !document.querySelector("#tool-hint").hidden }));
     const leftModel = await untranslated();
-    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint), `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
+    check(model.lang === "ru" && model.tree === "Дерево модели" && !/[A-Za-z]{3}/.test(model.card ?? "x") && /\d\. [А-Яа-я]/.test(model.list ?? "") && /Умное измерение/.test(model.hint) && !model.banner, `i18n: language kept after reload; model view, result card and list in Russian (${JSON.stringify(model)})`);
     check(leftModel.length === 0, `i18n: no English left in the model view${leftModel.length ? ": " + leftModel.slice(0, 6).join(" | ") : ""}`);
     for (const lang of ["ru", "en"]) {
       for (const w of [1024, 1280, 1440]) {
@@ -2553,6 +2553,256 @@ try {
     const cpUndo = await mp.evaluate(() => window.__sv.model.store.undoLabel);
     check(cpV.n === cpN.n + 2 && /^extrude,Extrude\d+,10$/.test(cpV.ex.join()) && cpV.sk.join() === "true,YZ,true" && near(cpV.vol - cpN.vol, 4000, 1e-3) && !cpV.bad && cpV.sel && cpDrop.type === "sketch" && cpDrop.face && cpUndo === "Paste",
       `model 1.342: Ctrl+C on an extrude and Ctrl+V on the Right plane paste it with a copy of its sketch (+4000 mm³); Ctrl+drop of a sketch row on a face pastes it there (${JSON.stringify([cpN, cpV, cpDrop, cpUndo])})`);
+    // 1.350: tree housekeeping (FR-HIS-013): the eye button hides the Top plane (outlined icon), Shift+C folds absorbed sketches, ▸ unfolds.
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkEye = await mp.evaluate(() => ({ hidden: window.__sv.model.store.doc.stdHidden, hid: document.querySelector('#mc-tree .ft-row[data-id="std:XY"]').classList.contains("hid"), stroke: getComputedStyle(document.querySelector('#mc-tree .ft-row[data-id="std:XY"] .ft-ico')).webkitTextStrokeWidth, sketchEye: !!document.querySelector('#mc-tree .ft-row[data-id="cps"] [data-a="eye"]'), extrudeEye: !!document.querySelector('#mc-tree .ft-row[data-id="cpe"] [data-a="eye"]') }));
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkShown = await mp.evaluate(() => window.__sv.model.store.doc.stdHidden ?? null);
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Shift+C");
+    const hkFold = await mp.evaluate(() => ({ cps: !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'), exp: document.querySelector('#mc-tree .ft-row[data-id="cpe"]')?.getAttribute("aria-expanded") }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"] [data-a="twist"]');
+    const hkOpen = await mp.evaluate(() => !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'));
+    check(hkEye.hidden?.join() === "XY" && hkEye.hid && hkEye.stroke === "1px" && hkEye.sketchEye && !hkEye.extrudeEye && hkShown === null && !hkFold.cps && hkFold.exp === "false" && hkOpen,
+      `model 1.350: the eye button hides and shows the Top plane (outlined icon while hidden), Shift+C folds the extrude's sketch and ▸ unfolds it (${JSON.stringify([hkEye, hkShown, hkFold, hkOpen])})`);
+    // FR-HIS-012 / AT-UX-14: Roll back to here from the tree menu, reopen rolled back with the notice, Roll to end, Roll to previous.
+    const rbN = await mp.evaluate(() => window.__sv.model.store.doc.features.length);
+    const rbAt = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-2).id);
+    await mp.click(`#mc-tree .ft-row[data-id="${rbAt}"]`, { button: "right" });
+    const rbMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll back to here")');
+    await idle();
+    const rbDoc = await mp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.model.store.doc)));
+    await mp.evaluate(d => { const m = window.__sv.modeller; m.store.markSaved(); m.load(d, "rolled.mcadprt", null); }, rbDoc);
+    await idle();
+    const rbOpen = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: document.querySelector("#mc-rolled span")?.textContent, rolled: document.querySelectorAll("#mc-tree .ft-row.rolled").length }));
+    await mp.click("#mc-rolled button");
+    await idle();
+    const rbEnd = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: !!document.querySelector("#mc-rolled") }));
+    await mp.click("#mc-tree .ft-rollback", { button: "right" });
+    const rbBarMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll to previous")');
+    await idle();
+    const rbPrev = await mp.evaluate(() => window.__sv.model.store.doc.rollback);
+    await mp.evaluate(() => window.__sv.modeller.setRollback(null));
+    await idle();
+    check(rbMenu.includes("Roll back to here") && rbOpen.rb === rbN - 2 && rbOpen.note === "The part is rolled back: 2 features are not shown" && rbOpen.rolled >= 1 && rbEnd.rb === null && !rbEnd.note && rbBarMenu.join("|") === "Roll to previous" && rbPrev === rbN - 2,
+      `model 1.350: Roll back to here, reopened rolled back with the notice, Roll to end from it, then Roll to previous from the bar menu (${JSON.stringify([rbMenu, rbOpen, rbEnd, rbBarMenu, rbPrev])})`);
+    // 1.351: undo inside a command (FR-UI-108): Ctrl+Z / Ctrl+Y step the open extrude's depth back and forth; the document stack is untouched.
+    const ucLabel = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    await mp.fill('#mc-pm input[data-num="depth"]', "15");
+    await mp.$eval('#mc-pm input[data-num="depth"]', el => { el.dispatchEvent(new Event("change", { bubbles: true })); el.blur(); });
+    await idle();
+    const ucSet = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const ucUndo = await mp.evaluate(() => ({ kind: window.__sv.modeller.mode.kind, v: window.__sv.modeller.mode.draft?.depth?.v, box: document.querySelector('#mc-pm input[data-num="depth"]')?.value, label: window.__sv.model.store.undoLabel }));
+    await mp.keyboard.press("Control+y");
+    await idle();
+    const ucRedo = await mp.evaluate(() => window.__sv.modeller.mode.draft?.depth?.v);
+    await mp.keyboard.press("Control+z");
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ucDoc = await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "cpe").depth.v);
+    check(ucSet === 15 && ucUndo.kind === "feature" && ucUndo.v === 10 && /^10/.test(ucUndo.box) && ucUndo.label === ucLabel && ucRedo === 15 && ucDoc === 10,
+      `model 1.351: Ctrl+Z in the open extrude puts the depth back to 10 without leaving it or touching the document's undo, Ctrl+Y brings 15 back (${JSON.stringify([ucLabel, ucSet, ucUndo, ucRedo, ucDoc])})`);
+    // FR-UI-112: command tooltips: label, shortcut key and description; a disabled button says why.
+    await mp.click("#cm-t-features");
+    await mp.hover('#mc-tools [data-c="fillet"]');
+    await mp.waitForSelector("#cm-tip", { timeout: 3000 }).catch(() => {});
+    const ttFillet = await mp.evaluate(() => ({ h: document.querySelector("#cm-tip .cm-tip-h")?.textContent, d: document.querySelector("#cm-tip .cm-tip-d")?.textContent, title: document.querySelector('#mc-tools [data-c="fillet"]').getAttribute("title") }));
+    await mp.mouse.move(5, 5);
+    await mp.hover('#mc-quick [data-c="filter"]');
+    await mp.waitForSelector("#cm-tip kbd", { timeout: 3000 }).catch(() => {});
+    const ttKey = await mp.evaluate(() => document.querySelector("#cm-tip kbd")?.textContent);
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.editFeature("cpe"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    await idle();
+    const udBox = await mp.evaluate(() => { const r = document.querySelector('#mc-quick [data-c="undo"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await mp.mouse.move(udBox[0], udBox[1]);
+    await mp.waitForSelector("#cm-tip .cm-tip-w", { timeout: 3000 }).catch(() => {});
+    const ttWhy = await mp.evaluate(() => ({ dis: document.querySelector('#mc-quick [data-c="undo"]').disabled, w: document.querySelector("#cm-tip .cm-tip-w")?.textContent }));
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
+    const ttGone = await mp.evaluate(() => ({ tip: !!document.querySelector("#cm-tip"), title: document.querySelector('#mc-tools [data-c="fillet"]')?.getAttribute("title") }));
+    check(ttFillet.h === "Fillet" && ttFillet.d === "Round edges" && ttFillet.title === null && ttKey === "F5" && ttWhy.dis && ttWhy.w === "Unavailable: Nothing to undo in this command." && !ttGone.tip && ttGone.title === "Round edges",
+      `model 1.351: command tooltips show the label, the description and the shortcut key, and a disabled Undo in a command says why (${JSON.stringify([ttFillet, ttKey, ttWhy, ttGone])})`);
+    // FR-UI-116: units in the status bar: inches for the part as one undo step, Ctrl+Z goes back to mm.
+    await mp.click("#st-units");
+    const unMenu = await mp.evaluate(() => [...document.querySelectorAll("#st-units-menu [data-u]")].map(b => b.dataset.u).join());
+    await mp.click('#st-units-menu [data-u="in"]');
+    await idle();
+    const unIn = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent, sel: document.querySelector("#units").value, undo: window.__sv.model.store.undoLabel, menu: !!document.querySelector("#st-units-menu") }));
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.keyboard.press("Control+z");
+    await idle();
+    const unBack = await mp.evaluate(() => ({ doc: window.__sv.model.store.doc.units.length, btn: document.querySelector("#st-units").textContent }));
+    check(unMenu === "mm,cm,m,in,ft" && unIn.doc === "in" && /^in /.test(unIn.btn) && unIn.sel === "in" && unIn.undo === "Units: in" && !unIn.menu && unBack.doc === "mm" && /^mm /.test(unBack.btn),
+      `model 1.351: the status bar unit button sets the part's units to inches as one undo step; Ctrl+Z goes back to mm (${JSON.stringify([unMenu, unIn, unBack])})`);
+    // FR-UI-105: Tab hides the body under the cursor, Shift+Tab shows it again, Ctrl+Shift+Tab held + click shows it too.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const thAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(thAt[0] + 1, thAt[1] + 1);
+    await mp.mouse.move(thAt[0], thAt[1]);
+    const thKey = await mp.evaluate(([x, y]) => window.__sv.modeller.bodyAt(x, y), thAt);
+    const thBodies = await mp.evaluate(() => window.__sv.model.last().bodies.length);
+    await mp.keyboard.press("Tab");
+    await idle();
+    const thHid = await mp.evaluate(k => ({ hidden: !!window.__sv.model.store.doc.bodies?.[k]?.hidden, undo: window.__sv.model.store.undoLabel, focus: document.activeElement === document.body }), thKey);
+    await mp.keyboard.press("Shift+Tab");
+    await idle();
+    const thShown = await mp.evaluate(k => !window.__sv.model.store.doc.bodies?.[k]?.hidden, thKey);
+    await mp.keyboard.press("Tab");
+    await idle();
+    await mp.keyboard.down("Control"); await mp.keyboard.down("Shift"); await mp.keyboard.down("Tab");
+    const thGhost = await mp.evaluate(() => window.__sv.modeller.ghostGroup.visible);
+    await mp.mouse.click(thAt[0], thAt[1]);
+    await mp.keyboard.up("Tab"); await mp.keyboard.up("Shift"); await mp.keyboard.up("Control");
+    await idle();
+    const thClick = await mp.evaluate(k => ({ shown: !window.__sv.model.store.doc.bodies?.[k]?.hidden, ghosts: window.__sv.modeller.ghostGroup.visible }), thKey);
+    check(thBodies >= 2 && thKey && thHid.hidden && thHid.undo === "Hide body" && thHid.focus && thShown && thGhost && thClick.shown && !thClick.ghosts,
+      `model 1.351: Tab hides the body under the cursor (one undo step), Shift+Tab shows it, holding Ctrl+Shift+Tab draws it see-through and a click shows it (${JSON.stringify([thBodies, thKey, thHid, thShown, thGhost, thClick])})`);
+    // 1.351 (FR-SEL-011): colour-coded selection boxes: Draft's neutral plane and faces boxes get their own colours, the picked faces are drawn in the faces box's colour with a tag naming it.
+    await mp.evaluate(() => window.__sv.modeller.command("draft"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="faces"]');
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      const side = names.find(n => n.startsWith("cpe:") && /side|:l\d|s\d/.test(n)) ?? names.find(n => n.startsWith("cpe:"));
+      d.plane = { std: "XY" }; d.faces = [{ name: side }]; m.focus = "faces"; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx = await mp.evaluate(() => {
+      const c = sel => getComputedStyle(document.querySelector(sel)).getPropertyValue("--box-c").trim();
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="faces"]');
+      return { plane: c('#mc-pm .pm-box[data-focus="nplane"]'), faces: c('#mc-pm .pm-box[data-focus="faces"]'), mesh: window.__sv.modeller.decor.children.some(o => o.userData.boxPick === "faces"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
+      `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.354 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
+    await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
+    const flow = await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, open = m.mode.focus === (d.features.length ? "dir" : "seeds");
+      d.features = []; delete d.dir; m.mode.focus = "dir"; d.dir = { axis: "x" }; m.draftChanged();
+      const after = m.mode.focus;
+      const sel = document.querySelector('#mc-pm .pm-box.focus')?.dataset.focus;
+      const edit = m.openFocus({ type: "csys", id: "c", name: "c", origin: { point: "p" } }, undefined);
+      const keep = m.openFocus({ type: "draft", id: "d", name: "d", plane: { std: "XY" }, faces: [] }, "faces");
+      return { open, after, sel, edit, keep };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(flow.open && flow.after === "seeds" && flow.sel === "seeds" && flow.edit === "cz" && flow.keep === "faces",
+      `model 1.354: selection boxes hand focus on by themselves (${JSON.stringify(flow)})`);
+    // 1.354 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
+    // reach the view at the magnified point, G or Esc closes it.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("g");
+      await mp.waitForSelector(".mag-lens");
+      await mp.waitForTimeout(150);
+      const lens = await mp.evaluate(() => {
+        const c = document.querySelector(".mag-lens"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) lit++;
+        return { lit, f: document.querySelector(".mag-ring").dataset.f };
+      });
+      await mp.mouse.wheel(0, -100);
+      await mp.waitForTimeout(50);
+      const f2 = await mp.evaluate(() => document.querySelector(".mag-ring").dataset.f);
+      const probe = mp.evaluate(() => new Promise(res => window.__sv.viewer.renderer.domElement.addEventListener("pointermove", e => res({ x: e.clientX, y: e.clientY }), { once: true })));
+      await mp.mouse.move(vb.x + 50, vb.y);
+      const moved = await probe;
+      await mp.keyboard.press("Escape");
+      const closed = await mp.evaluate(() => !document.querySelector(".mag-lens"));
+      const fac = Number(f2.slice(1));
+      check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
+        `model 1.354: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
+    }
+    // 1.354 (FR-SEL-009): a pick shows breadcrumbs (face → feature → sketch → body → part); hovering a crumb lights it up,
+    // a click selects its tree row, Shift+D brings the crumbs to the cursor, Esc hides them.
+    {
+      const vb = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; });
+      await mp.evaluate(() => { const m = window.__sv.modeller; m.selected = null; m.renderTree(); m.drawDecor(); });
+      await mp.mouse.click(vb.x, vb.y);
+      await mp.waitForSelector("#mc-crumbs", { timeout: 5000 }).catch(() => {});
+      const crumbs = await mp.evaluate(() => [...document.querySelectorAll("#mc-crumbs .mc-crumb")].map(b => b.dataset.id ?? "·" + b.textContent));
+      const feat = crumbs.find(c => c !== "part" && !c.startsWith("·") && !c.startsWith("body:"));
+      let hov = null, picked = null;
+      if (feat) {
+        await mp.hover(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        hov = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+        await mp.click(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        picked = await mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: document.querySelector("#mc-tree .ft-row.sel")?.dataset.id }));
+      }
+      await mp.mouse.move(vb.x - 40, vb.y + 30);
+      await mp.keyboard.press("Shift+D");
+      const near = await mp.evaluate(p => { const r = document.querySelector("#mc-crumbs")?.getBoundingClientRect(); return r && { at: document.querySelector("#mc-crumbs").classList.contains("at-cursor"), dx: Math.round(r.left - p.x), dy: Math.round(r.top - p.y), w: Math.round(r.width) }; }, { x: vb.x - 40, y: vb.y + 30 });
+      await mp.keyboard.press("Escape");
+      const gone = await mp.evaluate(() => !document.querySelector("#mc-crumbs"));
+      check(crumbs[0]?.startsWith("·") && feat && crumbs.some(c => c.startsWith("body:")) && crumbs.at(-1) === "part" && hov > 0 && picked?.sel === feat && picked.row === feat
+        && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
+        `model 1.354: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
+    }
+    // 1.354 (FR-UI-110): value callouts: Shell's thickness shows on the model; a click opens the Modify box and the typed value goes to the panel and the feature.
+    {
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.waitForSelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle', { timeout: 8000 }).catch(() => {});
+      const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
+      if (before) {
+        await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
+        await mp.waitForSelector(".mod-box input");
+        await mp.fill(".mod-box input", "2.5");
+        await mp.keyboard.press("Enter");
+        await idle();
+      }
+      const after = await mp.evaluate(() => ({ v: window.__sv.modeller.mode.draft.thickness?.v, inp: document.querySelector('#mc-pm input[data-num="thickness"]')?.value, call: document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent, box: !!document.querySelector(".mod-box") }));
+      await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+      await idle();
+      check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
+        `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
+    // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.click(pvAt[0], pvAt[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvScreen = () => mp.evaluate(() => { const v = window.__sv.viewer; if (!v.pivot) return null; const r = v.renderer.domElement.getBoundingClientRect(), s = v.pivot.clone().project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    const pvSet = await mp.evaluate(() => { const v = window.__sv.viewer; return v.pivot && { p: v.pivot.toArray().map(x => Math.round(x)), mark: !!v.scene.children.find(o => o.userData.pivot), q: v.camera.quaternion.toArray() }; });
+    const pv0 = await pvScreen();
+    const cvBox = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width * 0.3, r.top + r.height * 0.7]; });
+    await mp.mouse.move(cvBox[0], cvBox[1]);
+    await mp.mouse.down();
+    for (let k = 1; k <= 8; k++) await mp.mouse.move(cvBox[0] + k * 15, cvBox[1] - k * 6);
+    await mp.mouse.up();
+    await mp.waitForTimeout(800);
+    const pv1 = await pvScreen();
+    const pvTurned = await mp.evaluate(q => { const a = window.__sv.viewer.camera.quaternion.toArray(); return Math.abs(a.reduce((s, x, i) => s + x * q[i], 0)) < 0.9999; }, pvSet?.q ?? [0, 0, 0, 1]);
+    const cvCorner = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.right - 60, r.bottom - 60]; });
+    await mp.mouse.click(cvCorner[0], cvCorner[1], { button: "middle" });
+    await mp.waitForTimeout(100);
+    const pvGone = await mp.evaluate(() => ({ pivot: window.__sv.viewer.pivot, mark: !!window.__sv.viewer.scene.children.find(o => o.userData.pivot) }));
+    check(pvSet && Math.hypot(pvSet.p[0] - 210, pvSet.p[1] - 210) < 15 && pvSet.mark && pvTurned && pv0 && pv1 && Math.hypot(pv1[0] - pv0[0], pv1[1] - pv0[1]) < 1.5 && pvGone.pivot === null && !pvGone.mark,
+      `model 1.351: a middle click sets the rotation centre with a marker, orbiting turns about it (it stays put on screen), a middle click on empty space clears it (${JSON.stringify([pvSet, pv0, pv1, pvTurned, pvGone])})`);
     await ctx.close();
   }
 
@@ -5429,6 +5679,25 @@ try {
     const hid = await mp.evaluate(() => window.__sv.asm.props?.volume);
     await mp.keyboard.press("ControlOrMeta+z");
     await shown(3);
+    // 1.351 (FR-UI-105): Tab over the cube hides it, Shift+Tab over the same place shows it again.
+    const tabAt = await mp.evaluate(() => {
+      const a = window.__sv.asm, v = window.__sv.viewer, id = a.doc.components[2].id, i = a.shownIds.findIndex(s => s === id);
+      const m = v.parts[i].mesh; m.geometry.computeBoundingBox();
+      const c = m.geometry.boundingBox.getCenter(new (v.camera.position.constructor)()).applyMatrix4(m.matrixWorld).project(v.camera);
+      const r = v.renderer.domElement.getBoundingClientRect();
+      return { id, x: r.left + ((c.x + 1) / 2) * r.width, y: r.top + ((1 - c.y) / 2) * r.height };
+    });
+    await mp.evaluate(() => document.activeElement?.blur());
+    await mp.mouse.move(tabAt.x + 1, tabAt.y);
+    await mp.mouse.move(tabAt.x, tabAt.y);
+    await mp.keyboard.press("Tab");
+    await shown(2);
+    // (The cube's box centre may sit behind another component: whichever is under the cursor goes.)
+    const tabHid = await mp.evaluate(() => window.__sv.asm.doc.components.filter(c => c.hidden).map(c => c.id));
+    await mp.keyboard.press("Shift+Tab");
+    await shown(3);
+    const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
+    check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
@@ -9129,6 +9398,37 @@ try {
     await settle();
     const co = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "member"); return { corners: f.corners, gap: f.gap?.v, rows: (l.cutList ?? []).filter(c => c.desc === "SHS 50x50x4").map(c => [c.qty, c.length, c.angle1, c.angle2]) }; });
     check(nCorners === 4 && Object.keys(co.corners ?? {}).length === 1 && co.gap === 2 && JSON.stringify(co.rows) === "[[1,648.6,0,45],[1,647.2,45,45],[1,447.2,45,45],[1,396.6,0,45]]", `weldments: per-corner treatment and weld gap (${JSON.stringify({ nCorners, co })})`);
+    // Corner callouts in the view: one per corner, the one set above in bold; a click offers that corner's treatments.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "member").id));
+    await settle();
+    const cc0 = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-corner")].map(e => [e.classList.contains("own"), e.textContent]));
+    await mp.click("#mc-layer .wld-corner:not(.own) >> nth=0");
+    const ccMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:has-text("End butt 2")');
+    await settle();
+    const cc1 = await mp.evaluate(() => ({ corners: Object.values(window.__sv.model.mode().draft.corners ?? {}), own: document.querySelectorAll("#mc-layer .wld-corner.own").length, panel: [...document.querySelectorAll('#mc-pm select[data-k^="wcorner:"]')].map(e => e.value).sort() }));
+    await mp.click("#mc-cancel");
+    await settle();
+    check(cc0.length === 4 && cc0.filter(x => x[0]).length === 1 && ccMenu.length === 5 && /As set/.test(ccMenu[0]) && JSON.stringify(cc1.corners.sort()) === '["butt1","butt2"]' && cc1.own === 2 && JSON.stringify(cc1.panel) === '["","","butt1","butt2"]',
+      `weldments: corner callouts in the view (${JSON.stringify({ cc0, ccMenu, cc1 })})`);
+    // Locate profile: a point of the profile sketch on the path.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("m3"));
+    await settle();
+    const lpOpts = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="anchor"] option')].filter(o => o.value.startsWith("p:")).map(o => o.textContent));
+    // Located in the view: Locate profile shows the profile's points at the path start; a click on one moves it onto the path.
+    await mp.click('#mc-pm button[data-focus="wlocate"]');
+    await settle();
+    await mp.waitForTimeout(800); // the view zooms to the profile
+    const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
+    await settle();
+    const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));
+    await mp.click("#mc-ok");
+    await settle();
+    const lp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), anchor: window.__sv.model.store.doc.features.find(f => f.id === "m3").anchor, prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]) }; });
+    check(lpOpts.length === 4 && lpOpts[2] === "Sketch point 3" && JSON.stringify(lpDots) === '["p:q1*","p:q2","p:q3","p:q4","t","l","c","r","b"]' && lpAfter.anchor === "p:q3" && lpAfter.dots === 0 && lpAfter.sel === "p:q3" && !lp.bad && lp.anchor === "p:q3" && JSON.stringify(lp.prof) === "[[1,300]]", `weldments: Locate profile on a sketch point (${JSON.stringify({ lpOpts, lpDots, lpAfter, lp })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });

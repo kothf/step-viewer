@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { cutList, type WeldHost } from "../../src/weldments/kernel";
+import { cutList, pierceSpots, type WeldHost } from "../../src/weldments/kernel";
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { MemberFeature } from "../../src/weldments/types";
@@ -387,6 +387,22 @@ test("custom profile from a sketch: holes, arcs, sketch origin on the path (FR-F
   const rc = run(m, doc([pr, path, { ...mem, anchor: "c" }]));
   const cc = m.props(rc.body!).com;
   near(cc[1] + 1, 1); near(cc[2] + 1, 1);
+  // Locate profile: the far corner point of the sketch on the path, in group 1 and in a group.
+  const rp = run(m, doc([pr, path, { ...mem, anchor: "p:prp2" }]));
+  const cp = m.props(rp.body!).com;
+  near(cp[1], -20); near(cp[2], -10);
+  const rg = run(m, doc([pr, path, { ...mem, groups: [{ ents: [path.ents.find(e => e.t === "line")!.id], anchor: "p:hc" }] }]));
+  const cg = m.props(rg.body!).com;
+  near(cg[1] + 1, 1); near(cg[2] + 1, 1);
+  // Locate profile in the view: the sketch's points (one shared with a box corner listed once), the origin, then the anchors left.
+  const sp = pierceSpots({ ...mem, anchor: "p:prp2" }, path.ents.find(e => e.t === "line")!.id, doc([pr, path]), rp.frames);
+  assert.deepEqual(sp.map(x => x.key), ["p:prp0", "p:prp1", "p:prp2", "p:prp3", "p:hc", "t", "l", "r", "b"]);
+  const at = Object.fromEntries(sp.map(x => [x.key, x.at]));
+  assert.deepEqual(at["p:prp2"].map(v => Math.round(v * 1e6) / 1e6), [0, 0, 0]);
+  near(at["p:prp0"][1], -40); near(at["p:prp0"][2], -20);
+  // A point that is gone: the member says so.
+  const gone = m.evaluate(doc([pr, path, { ...mem, anchor: "p:nope" }]));
+  assert.equal(gone.statuses.find(x => x.id === "m")?.ok, false);
   // A D-shape: a line and a half circle stay exact.
   const d: SketchFeature = { id: "d", type: "sketch", name: "D", plane: { std: "XY" }, rels: [], dims: [], ents: [
     { id: "p0", t: "point", x: 40, y: 0 }, { id: "p1", t: "point", x: 0, y: 0 }, { id: "pc", t: "point", x: 20, y: 0 },

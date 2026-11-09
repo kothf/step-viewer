@@ -1,6 +1,7 @@
 // View navigation habits of mechanical CAD (FRS 13.13, FR-UI-101..104): arrow keys turn and pan the view,
 // Z / Shift+Z zoom, Alt+Z goes back to the previous view, a double middle click fits, Zoom to area draws a box,
 // Zoom to selection frames what is picked, and Space opens the orientation picker at the cursor.
+import { Magnifier } from "./Magnifier";
 import * as THREE from "three";
 import type { Viewer } from "./Viewer";
 import { t } from "../i18n";
@@ -15,6 +16,8 @@ export interface NavHost {
   normalTo(): void;
   /** World box of the current selection, or null when nothing is picked. */
   selectionBox(): THREE.Box3 | null;
+  /** The model point under the screen point (a vertex, an edge or a face), for the rotation centre (FR-UI-100). */
+  pointAt?(x: number, y: number): THREE.Vector3 | null;
 }
 
 /** Degrees per arrow press, and the pan step as a fraction of the view height. */
@@ -26,12 +29,15 @@ export interface Navigation {
   previousView(): void;
   openPicker(at?: { x: number; y: number }): void;
   closePicker(): void;
+  /** The magnifying glass (FR-SEL-010). */
+  magnifier: Magnifier;
 }
 
 export function bindNavigation(host: NavHost): Navigation {
   const { viewer } = host;
   const canvas = viewer.renderer.domElement;
   const pointer = { x: -1, y: -1 };
+  const magnifier = new Magnifier(viewer);
   window.addEventListener("pointermove", e => { pointer.x = e.clientX; pointer.y = e.clientY; }, { passive: true });
 
   // The keys act when nothing that takes keys has focus: the page itself or the view.
@@ -119,6 +125,18 @@ export function bindNavigation(host: NavHost): Navigation {
     lastMiddle = { t: now, x: e.clientX, y: e.clientY };
   });
 
+  // ---------- rotation centre (FR-UI-100): a middle click without a drag ----------
+  let midDown: { x: number; y: number; t: number } | null = null;
+  canvas.addEventListener("pointerdown", e => { midDown = e.button === 1 && host.active() ? { x: e.clientX, y: e.clientY, t: performance.now() } : null; });
+  window.addEventListener("pointerup", e => {
+    const d = midDown;
+    midDown = null;
+    if (!d || e.button !== 1 || performance.now() - d.t > 500 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const p = host.pointAt?.(e.clientX, e.clientY) ?? null;
+    if (!p && !viewer.pivot) return;
+    viewer.setPivot(p);
+  });
+
   // ---------- orientation picker (Space) ----------
   let picker: HTMLElement | null = null;
   let back: HTMLElement | null = null;
@@ -195,8 +213,16 @@ export function bindNavigation(host: NavHost): Navigation {
     if (e.altKey && (k === "z" || k === "Z" || e.code === "KeyZ")) { stop(); previousView(); return; }
     if (e.altKey) return;
     if (e.code === "KeyZ") { stop(); viewer.zoomView(e.shiftKey ? ZOOM : 1 / ZOOM); return; }
+    if (e.code === "KeyG" && !e.shiftKey && !e.repeat) {
+      stop();
+      if (magnifier.open) { magnifier.close(); return; }
+      const r = canvas.getBoundingClientRect();
+      const on = pointer.x >= r.left && pointer.x <= r.right && pointer.y >= r.top && pointer.y <= r.bottom;
+      magnifier.show(on ? pointer.x : (r.left + r.right) / 2, on ? pointer.y : (r.top + r.bottom) / 2);
+      return;
+    }
     if (k === " " && !e.repeat) { stop(); openPicker(); }
   });
 
-  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker };
+  return { zoomToSelection, startZoomArea, previousView, openPicker, closePicker, magnifier };
 }

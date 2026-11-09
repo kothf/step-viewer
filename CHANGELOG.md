@@ -11,6 +11,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Thread callouts from geometry (FR-DRW-022): a hole read from the shape with a cosmetic thread on it now adds the thread line ("M6-6H ↧10", or the drill depth or THRU when the thread runs the full length), so a tapped hole cut without the Hole wizard reads like one made with it, and equal tapped holes are counted together.
 - Default decimals in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Linear decimals and Angle decimals set the precision of every dimension that has none of its own; Auto keeps the old behaviour (up to two, trailing zeros dropped).
 
+## [1.354.0] - 2026-11-09
+
+### Added
+
+- **Magnifying glass (FR-SEL-010)**: press G over the view for a round inset showing the area round the cursor magnified 4× (the wheel inside it changes the factor from 2× to 16×). Hovering, snapping and clicks inside the lens act on the magnified point, so small edges and vertices are easy to pick. G or Esc closes it; Esc does not leave the command that is open.
+- **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
+- **Selection breadcrumbs (FR-SEL-009)**: after picking a face or an edge of a part, a bar at the top left of the view shows the chain up to the part (face or edge → feature → its sketch → body → part; a picked plane → part). Hovering a crumb lights it up in the view, a click selects it as in the Features tree, a right-click opens its tree menu. Shift+D brings the breadcrumbs, or the ✓/✕ corner while a command is open, to the cursor (D stays the distance tool); Esc hides them.
+- **Value callouts (FR-UI-110)**: while a feature panel is open, its main values (thickness, distance, offset, angle, spacing, instances, pitch, height…) show in small labels on the model by the feature's result, as in SolidWorks. A click opens the Modify box; the value goes through the panel field, so the panel and the callout always agree, and a ⇄ beside the first callout reverses the direction when the feature has one. Extrude, revolve, fillet, chamfer, end caps, gussets and flanges keep their drag handles and callouts.
+
+## [1.353.0] - 2026-11-09
+
+### Changed
+
+- **Smart measure's hint no longer covers the model**: the "Smart measure: click a point, edge or face…" prompt moved from the banner over the top of the view into the status bar, as SolidWorks shows its prompts. Tools you pick on purpose (Distance, Angle, Section…) still show their pick count banner.
+
+## [1.352.0] - 2026-11-09
+
+### Added
+
+- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path, for group 1 and for each group. **Locate profile** beside it zooms to the start of the path and shows the profile's points there (sketch points and the box's anchors); click one and the profile moves so that point lies on the path, as in SolidWorks.
+
+## [1.351.0] - 2026-11-09
+
+### Added
+
+- **Rotation centre (FR-UI-100)**: a middle click without a drag on a vertex, an edge or a face sets the point the view turns about, as in SolidWorks, with a small blue marker; a middle click on empty space goes back to the view centre. Opening another model clears it. An edge gives the clicked point on it (the view still orbits with Z up, so it does not turn about the edge's line).
+- **Undo inside a command (FR-UI-108)**: while a feature panel is open, Ctrl+Z / Ctrl+Y and the Undo / Redo buttons step through the panel's own changes (picks, values, options, the box in focus) without leaving it. The document's undo list is not touched until ✓.
+- **Units in the status bar (FR-UI-116)**: the unit and decimals show at the right of the status bar; a click picks millimetres, centimetres, metres, inches or feet and the decimals. With a part open the unit is the part's own, saved with it and changed as one undo step (values stay stored in mm), and opening a part shows its unit. Mass still shows in g/kg.
+- **Command tooltips (FR-UI-112)**: hovering a command bar button (or focusing it from the keyboard) shows its name, its shortcut key and a one-line description; a disabled button says why (Undo in a command with nothing to undo, Undo while a command runs elsewhere). Inside a feature command the Undo and Redo buttons step the panel's own changes.
+- **Hide and show under the cursor (FR-UI-105)**: with the pointer over the view, Tab hides the body (in a part) or the component (in an assembly) under it, Shift+Tab shows a hidden one under it again, and holding Ctrl+Shift+Tab draws the hidden ones see-through so a click shows one, as in SolidWorks. Each is one undo step. Items hidden from the tree work the same way once hidden in this session.
+- **Colour-coded selection boxes (FR-SEL-011)**: the selection boxes of a feature panel each have their own colour (orange, blue, green, purple), shown on the box's left edge; the picks of each box are drawn in the view in its colour, with a small tag naming the box ("Faces to draft", "Neutral plane", "Face set 1"…) when a panel has several. Fillet and chamfer edges, face fillet and full round face sets, draft, shell, delete/move/offset/replace face and split line use it.
+
+## [1.350.0] - 2026-11-09
+
+### Added
+
+- **Rollback commands (FR-HIS-012)**: the Features tree's right-click menu has Roll back to here, Roll to previous (back to where the rollback bar was before its last move), Roll forward past this and Roll to end, and right-clicking the rollback bar gives Roll to previous and Roll to end. A part saved rolled back reopens rolled back with a notice above the tree, "The part is rolled back: N features are not shown", and a Roll to end button (AT-UX-14).
+- **Tree housekeeping (FR-HIS-013)**: Shift+C folds the whole Features tree (folders, Solid Bodies, the cut list and the sketches under their extrudes and revolves; the ▸ beside a feature or ←/→ unfold it again). Hovering a sketch, plane, axis, point, coordinate system, curve or body row shows an eye button that hides or shows it, and hidden items have an outlined icon, as in SolidWorks.
+
+### Changed
+
+- The FRS gap tables (`docs/FRS-modelling.md`) now mark the habits and features built since 1.85.0 as done, with the release that brought each.
+
 ## [1.349.0] - 2026-11-09
 
 ### Added
@@ -2090,6 +2133,11 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.355.0...HEAD
 [1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
+[1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
+[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
+[1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0
+[1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
+[1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0
 [1.348.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.348.0
 [1.346.0]: https://github.com/kothf/step-viewer/compare/v1.344.0...v1.346.0
