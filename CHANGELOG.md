@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.280.0] - 2026-11-09
+
+### Added
+
+- **Centre of mass on drawings**: tick Centre of mass in a view's panel to mark the model's centre of mass with the quartered circle symbol, as SolidWorks' Center of Mass model item does. It follows the model when it changes, and Dimension picks it like a corner, so you can dimension from the centre of mass to an edge or another point. The symbol prints and exports with the sheet.
+
 ## [1.276.0] - 2026-11-09
 
 ### Added
@@ -1697,7 +1703,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.276.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.280.0...HEAD
+[1.280.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.280.0
 [1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0
 [1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
 [1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
