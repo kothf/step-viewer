@@ -11,6 +11,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Sheet Metal → Unfold and Fold (FR-FT-120): Unfold flattens the picked bends (or all of them) with a clicked flat face kept in place, so ordinary features can cut across them; Fold bends them back. Cuts made across a flat bend wrap onto the bend with lengths on the neutral surface kept, cuts in the panels move with them, and forms and other added material go with their panel. Other sheet metal features wait until the bends are folded back; a Flat-Pattern after an Unfold folds back first.
 
+## [1.327.0] - 2026-11-09
+
+### Added
+- **File menu like SolidWorks (FR-UI-010)**: the blue Open file button is now **File ▾**, and drawings have the same button. It has New part / assembly / drawing, Make assembly from part, Open (Ctrl+O), Close (Ctrl+Alt+W), Close all, Save (Ctrl+S), Save as (Ctrl+Shift+S; for a STEP or mesh model it saves a copy of the file), Save all (Ctrl+Alt+S), Pack and Go, Export, Print (Ctrl+P: the drawing, or the 3D view as shown), Properties, the recent documents and Exit. Commands that don't apply are greyed out.
+- **Pack and Go**: the chosen open documents in one .zip, with each assembly's parts as separate files under `parts/` if you like.
+- **Recent documents**: the last 8 files you opened or saved are listed at the bottom of the File menu (numbered, so 1–8 open them from the keyboard) and open again without the file picker.
+
+### Changed
+- The New part button and its ▾ arrow are as tall as the File button, with a bigger arrow.
+
+## [1.326.0] - 2026-11-09
+
+### Added
+- Arc slot centre marks in drawings (FR-DRW-023): an arc slot seen end-on gets a centre-line arc through its end centres, 2 mm past both ends, and a radial centre line across each rounded end.
+
+## [1.325.0] - 2026-11-09
+
+### Fixed
+
+- Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
+- Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
+- "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
+## [1.324.0] - 2026-11-09
+
+### Added
+
+- **Hover link between the Features tree and the view (FR-UI-061)**: point at a feature, body or cut list item in the Features tree and its faces light up see-through blue in the view; point at a face in the view and the tree marks the row of the feature that made it. It works while no command is open, as in SolidWorks.
+
+## [1.323.0] - 2026-11-09
+
+### Added
+
+- Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like the SolidWorks motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
+
+## [1.322.0] - 2026-11-09
+
+### Added
+
+- **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has SolidWorks' Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
+
 ## [1.321.0] - 2026-11-09
 
 ### Added
@@ -1893,7 +1933,13 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.328.0...HEAD
-[1.328.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.328.0
+[1.328.0]: https://github.com/kothf/step-viewer/compare/v1.327.0...v1.328.0
+[1.327.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.327.0
+[1.326.0]: https://github.com/kothf/step-viewer/compare/v1.325.0...v1.326.0
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.324.0...v1.325.0
+[1.324.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.324.0
+[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
+[1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0
 [1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
 [1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0

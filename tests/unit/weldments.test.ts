@@ -165,6 +165,12 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const capInt = run(m, doc([k, mem, tr, { ...cap, inset: { v: 1 }, dir: "internal" } as Feature]));
   assert.deepEqual(capInt.cut.filter(c => c.kind === "member").map(c => c.length), [500, 380]);
   assert.deepEqual(capInt.cut.find(c => c.kind === "plate")!.plate, [32, 32, 5]);
+  // Thickness ratio: the inset is a multiple of the wall (SHS 40x40x3: 0.5 → 1.5 mm, 1 → 3 mm, the tube's inner outline).
+  assert.deepEqual(run(m, doc([k, mem, tr, { ...cap, ratio: { v: 0.5 } } as Feature])).cut.find(c => c.kind === "plate")!.plate, [37, 37, 5]);
+  assert.deepEqual(run(m, doc([k, mem, tr, { ...cap, ratio: { v: 1 } } as Feature])).cut.find(c => c.kind === "plate")!.plate, [34, 34, 5]);
+  // A solid section's wall is 2 × area / perimeter (flat 50x10: 1000 / 120); internal caps ignore the ratio.
+  assert.deepEqual(run(m, doc([...fb, { ...cap, ratio: { v: 0.3 } } as Feature])).cut.find(c => c.kind === "plate")!.plate, [45, 5, 5]);
+  assert.deepEqual(run(m, doc([k, mem, tr, { ...cap, inset: { v: 1 }, dir: "internal", ratio: { v: 2 } } as Feature])).cut.find(c => c.kind === "plate")!.plate, [32, 32, 5]);
   // A flat bar has no inside.
   const bad = m.evaluate(doc([...fb, { ...capF, dir: "internal" } as Feature])).statuses.find(s => !s.ok);
   assert.match(String(bad?.message ?? JSON.stringify(bad)), /hollow profile/);

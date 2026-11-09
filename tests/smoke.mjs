@@ -1109,7 +1109,7 @@ try {
 
     await pg.goto(boardUrl);
     await waitBoard();
-    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("[data-open] .open-long").textContent }));
+    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("#file-btn .file-lbl").textContent }));
     // First-use tip on the first board, with Got it / Turn off.
     const tip1 = await pg.evaluate(() => { const h = document.querySelector("#hint"); return { shown: !h.hidden, text: h.textContent, btns: h.querySelectorAll("button").length }; });
     await pg.click("#hint [data-h=ok]");
@@ -1117,11 +1117,11 @@ try {
     await pg.waitForTimeout(100);
     const ru = await pg.evaluate(() => ({
       lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, label: document.querySelector("#lang-btn").getAttribute("aria-label"),
-      open: document.querySelector("[data-open] .open-long").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
+      open: document.querySelector("#file-btn .file-lbl").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
       layer: document.querySelector("#g-layers .g-name b")?.textContent, stats: document.querySelector("#g-stats .k")?.textContent, doc: document.querySelector("#doc-status").getAttribute("aria-label"),
     }));
-    check(en.lang === "en" && en.btn === "EN" && en.open === "Open file" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
-    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Открыть файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
+    check(en.lang === "en" && en.btn === "EN" && en.open === "File" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
+    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
       `i18n: RU switches header, panels, layer names and stats at once (${JSON.stringify(ru)})`);
     // Results and the empty measurement list in Russian, then a scan for anything left in English.
     await pg.evaluate(() => {
@@ -2447,6 +2447,18 @@ try {
     await idle();
     const vdDrop = { box: vdBox, depth: await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth) };
     check(vdPick?.drag && /^40\.0+ mm$/.test(vdPick.text) && vdDrop.depth.v === 40 && !vdDrop.depth.expr, `model 1.319: a measured 40 mm dragged from the readout sets the extrude depth to 40 (${JSON.stringify([vdPick, vdDrop])})`);
+    // 1.324: hover link (FR-UI-061): a tree row lights its feature's faces; a face marks its feature's row.
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => { window.__sv.modeller.selected = null; });
+    await mp.hover('#mc-tree .ft-row[data-id="x"]');
+    await mp.waitForTimeout(100);
+    const hvTree = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+    const hvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(20, -45, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.move(hvAt[0], hvAt[1]);
+    await mp.waitForTimeout(200);
+    const hvView = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#mc-tree .ft-row.hover")].map(r => r.dataset.id), lit: window.__sv.modeller.hoverGroup.children.length }));
+    await mp.mouse.move(5, 5);
+    check(hvTree === 1 && hvView.rows.join() === "x" && hvView.lit === 0, `model 1.324: hovering the Extrude1 row lights its faces, hovering its top face marks the row (${JSON.stringify([hvTree, hvView])})`);
     await ctx.close();
   }
 
@@ -3308,6 +3320,32 @@ try {
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
       return { mid: m && ax ? [m.x, m.y, P(ax.a).x, P(ax.b).x].map(v => Math.round(v * 1000) / 1000) : null, dims: sk.dims.map(d => `${d.t}:${d.val.v}`).join(","), ok: ed.info.status };
     });
+    // Fully define dimensions the slot from its centreline ends and arc centres, not the cap tangent points (exam bug 48).
+    const fdSlot = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk0 = ed.sk, n0 = sk0.dims.length;
+      ed.fullyDefine();
+      const sk = ed.sk, key = new Set(sk.ents.flatMap(e => e.t === "arc" || e.t === "circle" ? [e.c] : e.t === "line" && e.cons ? [e.a, e.b] : []));
+      const added = sk.dims.slice(n0).filter(d => (d.t === "hdistance" || d.t === "vdistance") && d.e[1] !== "q2");
+      return { n: added.length, onKey: added.filter(d => key.has(d.e[1])).length, dof: ed.info.dof };
+    });
+    // Relation glyphs sit beside their curves: points along each arc and line are the curve, not a glyph (exam bug 47).
+    const onGlyph = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => { const e = sk.ents.find(x => x.id === id); return [e.x, e.y]; };
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), w = ed.frame;
+      const scr = p => { const q = new v.camera.position.constructor(w.o[0] + w.x[0] * p[0] + w.y[0] * p[1], w.o[1] + w.x[1] * p[0] + w.y[1] * p[1], w.o[2] + w.x[2] * p[0] + w.y[2] * p[1]).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const ids = new Set(sk.rels.flatMap(x => x.e));
+      const mids = sk.ents.filter(e => ids.has(e.id) && (e.t === "line" || e.t === "arc")).flatMap(e => [0.15, 0.3, 0.5, 0.7, 0.85].map(u => {
+        if (e.t === "line") { const a = P(e.a), b = P(e.b); return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+        const c = P(e.c), a = P(e.a), b = P(e.b), rr = Math.hypot(a[0] - c[0], a[1] - c[1]), a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0; while (sw <= 0) sw += 2 * Math.PI;
+        return [c[0] + rr * Math.cos(a0 + sw * u), c[1] + rr * Math.sin(a0 + sw * u)];
+      }));
+      return { n: mids.length, hit: mids.map(scr).filter(([x, y]) => document.elementFromPoint(x, y)?.classList.contains("sk-rel")).length, glyphs: document.querySelectorAll(".sk-rel").length };
+    });
+    check(onGlyph.n > 4 && onGlyph.glyphs > 0 && onGlyph.hit === 0, `model 1.325: relation glyphs leave the curves clickable (${JSON.stringify(onGlyph)})`);
+    check(fdSlot.n > 0 && fdSlot.onKey === fdSlot.n && fdSlot.dof === 0, `model 1.325: Fully define dimensions slot centres, not tangent points (${JSON.stringify(fdSlot)})`);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(200);
     check(a3.arcs === 5 && a3.dims === 0 && a3.ok === "ok" && !a3.box && a3.off === false && a3.saved === "0", `model 1.144: 3-point arc slot with Add dimensions off (${JSON.stringify(a3)})`);
     check(cs.mid && cs.mid[0] === 15 && cs.mid[1] === 15 && cs.mid[2] === 0 && cs.mid[3] === 30 && cs.dims === "diameter:8,distance:30" && cs.ok === "ok",
       `model 1.144: Centerpoint straight slot stays centred on its first click as the length changes (${JSON.stringify(cs)})`);
@@ -5973,6 +6011,9 @@ try {
     await mp.evaluate(() => window.__sv.motion.seek(0.2));
     const segAt = await pos();
     const segRows = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").segs.map(r => r[2]).join(","));
+    // The motor graph: velocity in °/s, with a curve and the playhead.
+    await setP("select[data-p=mplot]", "vel");
+    const motorPlot = await mp.evaluate(() => { const svg = document.querySelector("#motion .mo-motor-plot svg"); return svg ? [svg.querySelector("text")?.textContent, !!svg.querySelector("polyline"), !!svg.querySelector(".mo-ph"), window.__sv.motion.motorPlot].join("|") : ""; });
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
     await setP("select[data-p=profile]", "expr");
     await setP("input[data-p=expr]", "180*t");
@@ -5980,7 +6021,7 @@ try {
     const exprAt = await pos();
     await setP("input[data-p=expr]", "sin(");
     const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, exprAt, exprBad };
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, motorPlot, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6330,13 +6371,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8679,6 +8720,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Use thickness ratio: 0.5 of the SHS 40x40x3 wall = 1.5 mm inset, so a 37 × 37 plate.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInset"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wRatio"]');
+    await settle();
+    const capRt = await mp.evaluate(() => ({ ratio: window.__sv.model.mode().draft?.ratio?.v, field: !!document.querySelector('#mc-pm input[data-num="ratio"]'), inset: !!document.querySelector('#mc-pm input[data-num="inset"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const capRp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(capRt.ratio === 0.5 && capRt.field && !capRt.inset && !capRp.bad && JSON.stringify(capRp.plate) === "[37,37,5]", `weldments: end cap thickness ratio (${JSON.stringify({ ...capRt, ...capRp })})`);
     // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
     const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
     const len0 = await memLen();
@@ -9901,6 +9956,45 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: arc slot centre marks (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // An 8 mm wide arc slot about (0, -10), centre radius 25 from 30° to 150°, through a 100 × 60 plate.
+    const A = (id, R, deg) => P(id, R * Math.cos(deg * Math.PI / 180), -10 + R * Math.sin(deg * Math.PI / 180));
+    const part = { schema: 1, kind: "part", id: "d_drwaslot", name: "ArcSlotted", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        A("o", 0, 0), A("c1", 25, 30), A("c2", 25, 150), A("o1", 29, 30), A("o2", 29, 150), A("i1", 21, 30), A("i2", 21, 150),
+        { id: "k1", t: "arc", c: "c1", a: "i1", b: "o1" }, { id: "k2", t: "arc", c: "c2", a: "o2", b: "i2" },
+        { id: "ao", t: "arc", c: "o", a: "o1", b: "o2" }, { id: "ai", t: "arc", c: "o", a: "i1", b: "i2" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "ArcSlotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre-line prims in model mm about the plate centre.
+    const am = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const pts = q => { const o = []; for (let i = 0; i + 1 < q.p.length; i += 2) o.push([U(q.p[i]), W(q.p[i + 1])]); return o; };
+      const near = q => pts(q).every(([x, y]) => Math.abs(x) < 40 && y > -12 && y < 25);
+      const prims = window.__sv.drw.prims().filter(q => q.layer === "CENTER" && (q.t === "l" || q.t === "p")).filter(near);
+      return { lines: prims.filter(q => q.t === "l").map(pts), arcs: prims.filter(q => q.t === "p").map(pts) };
+    });
+    const onR = am.arcs.length === 1 && am.arcs[0].every(([x, y]) => Math.abs(Math.hypot(x, y + 10) - 25) < 0.05);
+    const radial = am.lines.length === 2 && am.lines.every(([[x0, y0], [x1, y1]]) => Math.abs(Math.hypot(x1 - x0, y1 - y0) - 12) < 0.05 && Math.abs(Math.hypot((x0 + x1) / 2, (y0 + y1) / 2 + 10) - 25) < 0.05);
+    check(onR && radial, `drawing: arc slot centre-line arc and radial end lines, no crosses (${JSON.stringify(am).slice(0, 400)})`);
+    await ctx.close();
+  }
+
   // --- Drawings: weld symbol ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -10076,6 +10170,69 @@ try {
     check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
     check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
+  // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await fp.goto(`${origin}/index.html?debug&nokernel`);
+    await fp.waitForFunction(() => window.__sv);
+    const menu = () => fp.evaluate(() => {
+      const m = document.querySelector("#file-menu");
+      return { shown: !!m && !m.hidden, items: m ? [...m.querySelectorAll("button[data-f]")].map(b => [b.dataset.f, b.disabled, b.querySelector(".fm-k")?.textContent ?? ""]) : [], focus: document.activeElement?.dataset?.f ?? document.activeElement?.id, expanded: document.querySelector("#file-btn").getAttribute("aria-expanded") };
+    });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+    const m0 = await menu();
+    const it0 = Object.fromEntries(m0.items.map(([id, off, k]) => [id, { off, k }]));
+    check(m0.shown && m0.expanded === "true" && m0.focus === "new-part" && it0.open && !it0.open.off && it0.open.k === "Ctrl+O" && it0.save.off && it0["save-as"].off && it0.close.off && it0.print.off && !it0.exit.off && it0.pack && it0.props && it0["save-all"].k === "Ctrl+Alt+S",
+      `File menu: opens under the File button with New/Open/Close/Save/Save as/Save all/Pack and Go/Export/Print/Properties/Exit, document commands off with nothing open (${JSON.stringify(m0)})`);
+    await fp.keyboard.press("ArrowDown");
+    const f1 = await menu();
+    await fp.keyboard.press("Escape");
+    const m1 = await menu();
+    check(f1.focus === "new-asm" && !m1.shown && m1.focus === "file-btn" && m1.expanded === "false", `File menu: arrow keys move, Esc shuts it and focus returns to File (${JSON.stringify([f1.focus, m1])})`);
+    await fp.setInputFiles("#file-input", join(fixtures, "rounded-cube/rounded-cube.step"));
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => document.querySelector("#file-menu [data-f='recent:0']"));
+    const m2 = await menu();
+    const it2 = Object.fromEntries(m2.items.map(([id, off]) => [id, off]));
+    const recentName = await fp.$eval("#file-menu [data-f='recent:0']", b => b.textContent);
+    check(!it2["save-as"] && !it2.close && !it2.print && !it2.export && it2.save && /rounded-cube\.step/.test(recentName), `File menu: an open model enables Save as (a copy), Close, Print and Export and is listed under recent documents (${JSON.stringify([m2.items, recentName])})`);
+    await fp.keyboard.press("Escape");
+    // Ctrl+Alt+N: a new part in its own tab.
+    await fp.keyboard.press("Control+Alt+KeyN");
+    await fp.waitForFunction(() => window.__sv.modeller.active, null, { timeout: 30000 });
+    const tabs = await fp.$$eval("#doc-tabs .dt", d => d.length);
+    check(tabs === 2, `File menu: Ctrl+Alt+N makes a new part beside the open model (${tabs} tabs)`);
+    // Pack and Go: both documents in one zip.
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=pack]");
+    await fp.waitForSelector("#pack-dlg[open]");
+    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
+    const zbytes = await readFile(await dl.path());
+    const ztext = zbytes.toString("latin1");
+    check(boxes === 2 && /\.zip$/.test(dl.suggestedFilename()) && ztext.startsWith("PK") && ztext.includes("rounded-cube.step") && /\.mcadprt/.test(ztext), `File menu: Pack and Go lists the open documents and saves them into one .zip (${boxes} boxes, ${dl.suggestedFilename()}, ${zbytes.length} bytes)`);
+    // Ctrl+Alt+W closes the new part; File ▸ Close all closes the model.
+    await fp.keyboard.press("Control+Alt+KeyW");
+    await fp.waitForFunction(() => !window.__sv.modeller.active && document.querySelectorAll("#doc-tabs .dt").length === 1, null, { timeout: 30000 });
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=close-all]");
+    await fp.waitForFunction(() => !document.querySelectorAll("#doc-tabs .dt").length && !window.__sv.viewer.parts.length, null, { timeout: 30000 });
+    check(true, "File menu: Ctrl+Alt+W closes the part, Close all closes the rest");
+    // A recent document opens again from the menu.
+    await fp.click("#file-btn");
+    await fp.waitForSelector("#file-menu [data-f='recent:0']");
+    await fp.click("#file-menu [data-f='recent:0']");
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    check(true, "File menu: a recent document opens again from the list");
+    await ctx.close();
   }
 } catch (err) {
   console.error(err);
