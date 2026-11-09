@@ -60,7 +60,7 @@ import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
-import { capDir } from "../weldments/types";
+import { capDir, splitSubs } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
@@ -1390,6 +1390,42 @@ export class ModelController {
   }
   removeFromFolder(id: string) { this.store?.change("Remove from folder", d => { for (const g of d.folders ?? []) g.ids = g.ids.filter(x => x !== id); }); }
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
+  /** The cut list as shown: the last rebuild's items split by sub-weldment (`splitSubs`); tree rows `cut:<i>` index it. */
+  cutItems() { return splitSubs(this.last?.cutList ?? [], this.doc.subWelds); }
+  /** The bodies a cut list row, body row or sub-weldment row stands for (only bodies the cut list knows). */
+  private cutBodies(id: string): string[] {
+    const known = new Set((this.last?.cutList ?? []).flatMap(c => c.bodies));
+    if (id.startsWith("cut:")) return this.cutItems()[+id.slice(4)]?.bodies ?? [];
+    if (id.startsWith("body:")) return known.has(id.slice(5)) ? [id.slice(5)] : [];
+    if (id.startsWith("wsub:")) return this.doc.subWelds?.find(x => x.id === id.slice(5))?.bodies.filter(b => known.has(b)) ?? [];
+    return [];
+  }
+  /**
+   * Moves bodies into a sub-weldment (SolidWorks' Create Sub-weldment): `sub` null makes a new one, "" takes them out of
+   * every one. One undo step; sub-weldments left empty by a move stay until dissolved.
+   */
+  moveToSub(bodies: string[], sub: string | null) {
+    if (!this.store || !bodies.length) return;
+    let made = "";
+    this.store.change(sub === null ? "Create sub-weldment" : sub ? "Add to sub-weldment" : "Remove from sub-weldment", d => {
+      const all = (d.subWelds ?? []).map(x => ({ ...x, bodies: x.bodies.filter(b => !bodies.includes(b)) }));
+      if (sub === null) {
+        let n = 1;
+        while (all.some(g => g.name === `Sub-weldment${n}`)) n++;
+        made = uid("sw");
+        all.push({ id: made, name: `Sub-weldment${n}`, bodies: [...bodies] });
+      } else if (sub) all.find(x => x.id === sub)?.bodies.push(...bodies);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+    if (made) { this.selected = `wsub:${made}`; this.closedFolders.delete("cutlist"); this.renderTree(); }
+  }
+  /** Dissolve sub-weldment: its items go back to the top of the cut list. */
+  dissolveSub(id: string) {
+    this.store?.change("Dissolve sub-weldment", d => {
+      const all = (d.subWelds ?? []).filter(x => x.id !== id);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+  }
   /** Fillet/chamfer picking adds the tangent chain of an edge (FR-SEL-005). */
   private tangentProp = true;
   /** Folders collapsed in the tree (view state, not saved). */
@@ -1522,6 +1558,11 @@ export class ModelController {
 
   rename(id: string, name: string) {
     if (id.startsWith("body:")) { const key = id.slice(5), v = name.trim(); if (v && v !== this.bodyName(key)) this.setBody(key, { name: v }); return; }
+    if (id.startsWith("wsub:")) {
+      const g = this.doc.subWelds?.find(x => `wsub:${x.id}` === id), v = name.trim();
+      if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.subWelds!.find(x => x.id === g.id)!.name = v; });
+      return;
+    }
     if (id.startsWith("folder:")) {
       const g = this.doc.folders?.find(x => `folder:${x.id}` === id), v = name.trim();
       if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.folders!.find(x => x.id === g.id)!.name = v; });
@@ -4324,7 +4365,7 @@ export class ModelController {
     if (!part || !names) return null;
     const pre = `${id}:`;
     // A body or a cut list item selected in the tree lights up its bodies' faces.
-    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
+    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") || id.startsWith("wsub:") ? this.cutBodies(id) : null;
     const inBody = keys ? bodyFaces(this.last?.bodies ?? [], keys) : null;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
@@ -5281,7 +5322,7 @@ export class ModelController {
     }
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
-    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
+    html += cutListRows(this.cutItems(), !this.closedFolders.has("cutlist"), row, this.doc.cutProps, this.doc.subWelds);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -5474,7 +5515,7 @@ export class ModelController {
         if (id === "equations") { this.editEquations(); return; }
         if (id === "folder:bodies" || id === "folder:cutlist") return;
         if (id.startsWith("cut:")) { this.cutList(); return; }
-        if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
+        if (id.startsWith("folder:") || id.startsWith("body:") || id.startsWith("wsub:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -5490,7 +5531,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
-        else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
+        else if ((id.startsWith("folder:") || id.startsWith("wsub:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();
@@ -5563,7 +5604,20 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => this.cutList()]);
+    if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
+    // Sub-weldments (SolidWorks): a cut list item or a weldment body goes into a new or an existing one.
+    const wb = this.cutBodies(id);
+    if (wb.length && !id.startsWith("wsub:")) {
+      const subs = this.doc.subWelds ?? [];
+      const inSub = subs.filter(x => wb.some(b => x.bodies.includes(b)));
+      items.push([t("Create sub-weldment"), () => this.moveToSub(wb, null)]);
+      for (const x of subs) if (!(inSub.length === 1 && inSub[0] === x)) items.push([t("Add to {name}", { name: x.name }), () => this.moveToSub(wb, x.id)]);
+      if (inSub.length) items.push([t("Remove from sub-weldment"), () => this.moveToSub(wb, "")]);
+    }
+    if (id.startsWith("wsub:")) {
+      items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Dissolve sub-weldment"), () => this.dissolveSub(id.slice(5))]);
+    }
     if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
@@ -5719,13 +5773,14 @@ export class ModelController {
   startRename(id: string) {
     const folder = id.startsWith("folder:") ? this.doc.folders?.find(g => `folder:${g.id}` === id) : undefined;
     const body = id.startsWith("body:") ? id.slice(5) : null;
+    const sw = id.startsWith("wsub:") ? this.doc.subWelds?.find(x => `wsub:${x.id}` === id) : undefined;
     const f = this.store?.feature(id);
     const row = $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`);
     const name = row?.querySelector<HTMLElement>(".ft-name");
-    if ((!f && !folder && !body) || !row || !name) return;
+    if ((!f && !folder && !body && !sw) || !row || !name) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
-    inp.value = folder ? folder.name : body ? this.bodyName(body) : featureLabel(f!.name);
+    inp.value = folder ? folder.name : sw ? sw.name : body ? this.bodyName(body) : featureLabel(f!.name);
     inp.setAttribute("aria-label", t("New name"));
     inp.setAttribute("translate", "no");
     name.replaceWith(inp);
@@ -7549,7 +7604,7 @@ export class ModelController {
   /** The part's mass property override (FR-MAT-004), if any. */
   /** The weldment Cut List dialog; typed item properties go into `PartDoc.cutProps` as one undo step each. */
   cutList() {
-    showCutList(this.last?.cutList, this.doc, (key, p) => this.store?.change("Cut list properties", d => {
+    showCutList(this.cutItems(), this.doc, (key, p) => this.store?.change("Cut list properties", d => {
       const all = { ...(d.cutProps ?? {}) };
       if (Object.keys(p).length) all[key] = p; else delete all[key];
       if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;

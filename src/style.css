@@ -1250,6 +1250,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-box[data-boxc], .pm-count[data-boxc] { box-shadow: inset 4px 0 0 var(--box-c); padding-left: 10px; }
 .mc-boxtag { position: absolute; pointer-events: none; padding: 1px 6px; border: 1px solid var(--box-c); border-left-width: 4px; border-radius: 4px; background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; }
 :root[data-theme="dark"] .mc-boxtag { background: var(--panel); color: var(--text); }
+/* Sub-weldment folders in the cut list (tree) and their heading rows in the Cut list dialog. */
+.ft-row.wld-sub .ft-ico { color: var(--accent, #4dabf7); }
+#wld-cut tr.wld-subrow th { text-align: left; padding-top: 8px; border-bottom: 1px solid var(--line, #ccc); }
 
 /* Magnifying glass (FR-SEL-010) */
 .mag-lens, .mag-ring { position: fixed; width: 240px; height: 240px; border-radius: 50%; pointer-events: none; z-index: 40; }
