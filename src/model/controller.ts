@@ -924,6 +924,14 @@ export class ModelController {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const cut = type === "cut";
       draft = { id, type: "extrude", name: nextName(d, "extrude", cut), sketch: pick.id, op: cut ? "cut" : "boss", end: cut && this.last?.data ? "through" : "blind", depth: { v: 10 } } satisfies ExtrudeFeature;
+      // A cut goes against the sketch normal, which suits a sketch on a face. From a plane beside the part that may
+      // point away from it and cut nothing: when the whole body lies on the normal's side, start reversed (exam #24).
+      if (cut && this.last?.data && this.host.viewer.parts.length) {
+        const fr = this.frameOf(pick), b = this.host.viewer.computeBounds(), tol = 1e-6 * Math.max(1, b.getSize(new THREE.Vector3()).length());
+        let lo = Infinity;
+        for (let i = 0; i < 8; i++) lo = Math.min(lo, ((i & 1 ? b.max.x : b.min.x) - fr.o[0]) * fr.n[0] + ((i & 2 ? b.max.y : b.min.y) - fr.o[1]) * fr.n[1] + ((i & 4 ? b.max.z : b.min.z) - fr.o[2]) * fr.n[2]);
+        if (lo > -tol && !b.isEmpty()) (draft as ExtrudeFeature).flip = true;
+      }
     } else if (type === "revolve") {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const lines = pick.ents.filter(e => e.t === "line");
@@ -1073,6 +1081,24 @@ export class ModelController {
     this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
+    if (draft.type === "extrude" || draft.type === "revolve") {
+      // The cursor starts in Depth (or Angle), so a typed size goes there (SolidWorks; exam #7).
+      const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth], input[data-num=angle]");
+      if (inp) { inp.focus(); inp.select(); }
+      // Seen straight on, an extrude shows no depth: turn to the three-quarter view on the sketch's side (exam #8).
+      const sk = draft.type === "extrude" ? this.store.feature(draft.sketch) : undefined;
+      if (sk?.type === "sketch" && getPref("rotateToSketch")) {
+        const n = new THREE.Vector3(...this.frameOf(sk).n), v = this.host.viewer, look = v.camera.position.clone().sub(v.controls.target).normalize();
+        if (Math.abs(look.dot(n)) > 0.985) {
+          let best = new THREE.Vector3(1, -1, 0.8), top = -Infinity;
+          for (const z of [0.8, -0.8]) for (const [x, y] of [[1, -1], [-1, -1], [1, 1], [-1, 1]]) {
+            const c = new THREE.Vector3(x, y, z), d = c.clone().normalize().dot(n) * Math.sign(look.dot(n) || 1);
+            if (d > top + 1e-9) { top = d; best = c; }
+          }
+          v.viewFrom(best);
+        }
+      }
+    }
     void this.rebuild();
   }
 
