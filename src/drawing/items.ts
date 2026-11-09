@@ -30,7 +30,7 @@ export interface HoleInfo { id: string; pts: V3[]; n: V3; f: HoleFeature }
  * A cosmetic thread (FR-DRW-017): the round edge it starts at (centre, axis, radius), the diameter of its
  * thin line (internal: major, external: minor) and its length (null: up to the end of the cylinder).
  */
-export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean }
+export interface ThreadInfo { id: string; c: V3; ax: V3; r: number; d: number; L: number | null; internal: boolean; size?: string }
 
 /** A sketch shown in the model, as 3D polylines for views that show sketches (FR-DRW-017). */
 export interface SketchInfo { id: string; name: string; lines: V3[][] }
@@ -116,7 +116,7 @@ export function modelItems(doc: PartDoc, frames: Record<string, Frame>, sketches
       holes.push({ id: f0.id, pts: f0.pts.map(([x, y]) => at(fr, x, y)), n: fr.n, f: f0 });
     } else if (f0.type === "thread" && !f0.modelled && f0.edge && edgeCircle) {
       const e = edgeCircle(f0.edge);
-      if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal });
+      if (e) threads.push({ id: f0.id, ...e, d: f0.diameter.v, L: f0.upToEnd ? null : f0.length.v, internal: !!f0.internal, ...(f0.size ? { size: f0.size } : {}) });
     }
   }
   return { items, holes, threads, sketches: shown };

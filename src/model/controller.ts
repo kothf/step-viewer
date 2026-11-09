@@ -61,7 +61,7 @@ import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
 import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
-import { capDir } from "../weldments/types";
+import { capDir, splitSubs } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
 import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature, type SmConvertFeature, type SmInsertFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
@@ -134,6 +134,9 @@ type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool"
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
+/** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
+const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
@@ -574,6 +577,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    document.getElementById("mc-crumbs")?.remove();
     this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
@@ -921,6 +925,14 @@ export class ModelController {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const cut = type === "cut";
       draft = { id, type: "extrude", name: nextName(d, "extrude", cut), sketch: pick.id, op: cut ? "cut" : "boss", end: cut && this.last?.data ? "through" : "blind", depth: { v: 10 } } satisfies ExtrudeFeature;
+      // A cut goes against the sketch normal, which suits a sketch on a face. From a plane beside the part that may
+      // point away from it and cut nothing: when the whole body lies on the normal's side, start reversed (exam #24).
+      if (cut && this.last?.data && this.host.viewer.parts.length) {
+        const fr = this.frameOf(pick), b = this.host.viewer.computeBounds(), tol = 1e-6 * Math.max(1, b.getSize(new THREE.Vector3()).length());
+        let lo = Infinity;
+        for (let i = 0; i < 8; i++) lo = Math.min(lo, ((i & 1 ? b.max.x : b.min.x) - fr.o[0]) * fr.n[0] + ((i & 2 ? b.max.y : b.min.y) - fr.o[1]) * fr.n[1] + ((i & 4 ? b.max.z : b.min.z) - fr.o[2]) * fr.n[2]);
+        if (lo > -tol && !b.isEmpty()) (draft as ExtrudeFeature).flip = true;
+      }
     } else if (type === "revolve") {
       if (!pick) { toast(t("Draw a sketch first."), true); return; }
       const lines = pick.ents.filter(e => e.t === "line");
@@ -1066,9 +1078,28 @@ export class ModelController {
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
       : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
-    this.mode = { kind: "feature", draft, index, isNew: true, focus };
+    this.mode = { kind: "feature", draft, index, isNew: true, focus: this.openFocus(draft, focus) };
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
+    if (draft.type === "extrude" || draft.type === "revolve") {
+      // The cursor starts in Depth (or Angle), so a typed size goes there (SolidWorks; exam #7).
+      const inp = $("#mc-pm").querySelector<HTMLInputElement>("input[data-num=depth], input[data-num=angle]");
+      if (inp) { inp.focus(); inp.select(); }
+      // Seen straight on, an extrude shows no depth: turn to the three-quarter view on the sketch's side (exam #8).
+      const sk = draft.type === "extrude" ? this.store.feature(draft.sketch) : undefined;
+      if (sk?.type === "sketch" && getPref("rotateToSketch")) {
+        const n = new THREE.Vector3(...this.frameOf(sk).n), v = this.host.viewer, look = v.camera.position.clone().sub(v.controls.target).normalize();
+        if (Math.abs(look.dot(n)) > 0.985) {
+          let best = new THREE.Vector3(1, -1, 0.8), top = -Infinity;
+          for (const z of [0.8, -0.8]) for (const [x, y] of [[1, -1], [-1, -1], [1, 1], [-1, 1]]) {
+            const c = new THREE.Vector3(x, y, z), d = c.clone().normalize().dot(n) * Math.sign(look.dot(n) || 1);
+            if (d > top + 1e-9) { top = d; best = c; }
+          }
+          v.viewFrom(best);
+        }
+      }
+    }
     void this.rebuild();
   }
 
@@ -1112,7 +1143,10 @@ export class ModelController {
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     if (f.type === "sketch") { void this.editSketch(id); return; }
     this.exitMode(false);
-    this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false };
+    const draft = structuredClone(f);
+    this.mode = { kind: "feature", draft, index: i, isNew: false, focus: this.openFocus(draft, undefined) };
+    if (!this.mode.focus) delete this.mode.focus;
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -1357,6 +1391,42 @@ export class ModelController {
   }
   removeFromFolder(id: string) { this.store?.change("Remove from folder", d => { for (const g of d.folders ?? []) g.ids = g.ids.filter(x => x !== id); }); }
   deleteFolder(fid: string) { this.store?.change("Delete folder", d => { d.folders = (d.folders ?? []).filter(g => g.id !== fid); }); }
+  /** The cut list as shown: the last rebuild's items split by sub-weldment (`splitSubs`); tree rows `cut:<i>` index it. */
+  cutItems() { return splitSubs(this.last?.cutList ?? [], this.doc.subWelds); }
+  /** The bodies a cut list row, body row or sub-weldment row stands for (only bodies the cut list knows). */
+  private cutBodies(id: string): string[] {
+    const known = new Set((this.last?.cutList ?? []).flatMap(c => c.bodies));
+    if (id.startsWith("cut:")) return this.cutItems()[+id.slice(4)]?.bodies ?? [];
+    if (id.startsWith("body:")) return known.has(id.slice(5)) ? [id.slice(5)] : [];
+    if (id.startsWith("wsub:")) return this.doc.subWelds?.find(x => x.id === id.slice(5))?.bodies.filter(b => known.has(b)) ?? [];
+    return [];
+  }
+  /**
+   * Moves bodies into a sub-weldment (SolidWorks' Create Sub-weldment): `sub` null makes a new one, "" takes them out of
+   * every one. One undo step; sub-weldments left empty by a move stay until dissolved.
+   */
+  moveToSub(bodies: string[], sub: string | null) {
+    if (!this.store || !bodies.length) return;
+    let made = "";
+    this.store.change(sub === null ? "Create sub-weldment" : sub ? "Add to sub-weldment" : "Remove from sub-weldment", d => {
+      const all = (d.subWelds ?? []).map(x => ({ ...x, bodies: x.bodies.filter(b => !bodies.includes(b)) }));
+      if (sub === null) {
+        let n = 1;
+        while (all.some(g => g.name === `Sub-weldment${n}`)) n++;
+        made = uid("sw");
+        all.push({ id: made, name: `Sub-weldment${n}`, bodies: [...bodies] });
+      } else if (sub) all.find(x => x.id === sub)?.bodies.push(...bodies);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+    if (made) { this.selected = `wsub:${made}`; this.closedFolders.delete("cutlist"); this.renderTree(); }
+  }
+  /** Dissolve sub-weldment: its items go back to the top of the cut list. */
+  dissolveSub(id: string) {
+    this.store?.change("Dissolve sub-weldment", d => {
+      const all = (d.subWelds ?? []).filter(x => x.id !== id);
+      if (all.length) d.subWelds = all; else delete d.subWelds;
+    });
+  }
   /** Fillet/chamfer picking adds the tangent chain of an edge (FR-SEL-005). */
   private tangentProp = true;
   /** Folders collapsed in the tree (view state, not saved). */
@@ -1489,6 +1559,11 @@ export class ModelController {
 
   rename(id: string, name: string) {
     if (id.startsWith("body:")) { const key = id.slice(5), v = name.trim(); if (v && v !== this.bodyName(key)) this.setBody(key, { name: v }); return; }
+    if (id.startsWith("wsub:")) {
+      const g = this.doc.subWelds?.find(x => `wsub:${x.id}` === id), v = name.trim();
+      if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.subWelds!.find(x => x.id === g.id)!.name = v; });
+      return;
+    }
     if (id.startsWith("folder:")) {
       const g = this.doc.folders?.find(x => `folder:${x.id}` === id), v = name.trim();
       if (g && v && v !== g.name) this.store!.change(`Rename ${g.name}`, d => { d.folders!.find(x => x.id === g.id)!.name = v; });
@@ -2125,6 +2200,11 @@ export class ModelController {
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
+    // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).
+    if (k === "escape" && document.querySelector(".mag-lens")) return;
+    // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
+    if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
+    if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
     const m = this.mode;
@@ -2251,7 +2331,52 @@ export class ModelController {
       changed: () => this.draftChanged(),
     };
   }
-  private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+  private draftChanged() { this.flowFocus(); this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+
+  /**
+   * FR-UI-109: the required selection boxes of a panel in order. `one` = the box is done with one item (a plane, an
+   * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
+   */
+  private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
+    const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
+    switch (d.type) {
+      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!d.axis, one: true }] : [])];
+      case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
+      case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
+      case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
+      case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
+      case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
+      case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
+      case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : [])];
+      default: return [];
+    }
+  }
+  private flowWas = new WeakMap<object, string>();
+  /** Moves focus to the next empty required box when the focused one-item box has just been filled (FR-UI-109). */
+  private flowFocus() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const flow = this.boxFlow(m.draft);
+    const key = flow.filter(b => b.filled).map(b => b.focus).join(",");
+    const was = this.flowWas.get(m);
+    this.flowWas.set(m, key);
+    if (was == null) return;
+    const i = flow.findIndex(b => b.focus === m.focus);
+    if (i < 0 || !flow[i].one || !flow[i].filled || was.split(",").includes(flow[i].focus)) return;
+    const next = flow.slice(i + 1).find(b => !b.filled) ?? flow.slice(0, i).find(b => !b.filled);
+    if (next) m.focus = next.focus;
+  }
+  /** The box a panel opens on (FR-UI-109): the given one, unless it is a filled one-item box, then the first empty required box. */
+  private openFocus(d: Feature, focus: Focus | undefined): Focus | undefined {
+    const flow = this.boxFlow(d);
+    const cur = flow.find(b => b.focus === focus);
+    if (focus && (!cur || !cur.filled || !cur.one)) return focus;
+    return flow.find(b => !b.filled)?.focus ?? focus;
+  }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
   /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
@@ -2384,7 +2509,8 @@ export class ModelController {
   private pickConvert(e: PointerEvent, f: SmConvertFeature | SmInsertFeature) {
     const ed = f.type === "smconvert" && f.face.name ? this.host.edgeAt(e.clientX, e.clientY)?.edge : undefined;
     const ref = ed && ed.type === "line" ? this.edgeRefs([ed])[0] : undefined;
-    if (f.type === "smconvert" && ref && ref.faces.includes(f.face.name)) {
+    // An edge of the fixed face, or a wall's far edge (it shares a face with a picked edge): a further wall.
+    if (f.type === "smconvert" && ref && (ref.faces.includes(f.face.name) || f.edges.some(x => x.faces.some(n => n !== f.face.name && ref.faces.includes(n))))) {
       const key = (r: EdgeRef) => [...r.faces].sort().join("|");
       const i = f.edges.findIndex(x => key(x) === key(ref));
       if (i >= 0) f.edges.splice(i, 1); else f.edges.push(ref);
@@ -3430,7 +3556,83 @@ export class ModelController {
     this.drawArrow();
     this.drawFeatureFaces();
     this.drawBoxPicks();
+    this.drawValueCallouts();
     this.host.viewer.invalidate();
+  }
+
+  /**
+   * Value callouts (FR-UI-110): the main values of the open feature (thickness, angle, distance, spacing, count…)
+   * in small labels on the model by its result, as in SolidWorks. A click opens the Modify box; the value goes
+   * through the panel's own field, so both stay in step. A ⇄ beside the first one reverses the direction.
+   * Features with drag handles or their own callouts (extrude, revolve, fillet, chamfer, end cap, gusset, flange) keep those.
+   */
+  private drawValueCallouts() {
+    const layer = document.getElementById("mc-layer");
+    layer?.querySelectorAll(".mc-vcall").forEach(x => x.remove());
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    if (m.kind !== "feature" || !layer || !pm || !this.last) return;
+    const f = m.draft;
+    if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
+    if (!fields.length) return;
+    const at = this.calloutPoint(f);
+    if (!at) return;
+    const flip = pm.querySelector<HTMLInputElement>('input[type=checkbox][data-k="flip"]');
+    fields.forEach((inp, row) => {
+      const lab = inp.closest(".pm-field")?.querySelector("span")?.textContent ?? "";
+      const unit = inp.parentElement?.querySelector(".muted")?.textContent ?? "";
+      const key = inp.dataset.num ?? inp.dataset.int!;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-vcall";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = key;
+      const b = document.createElement("button");
+      b.className = "mc-handle";
+      b.title = t("Click to type the value");
+      b.textContent = `${lab}: ${inp.value}${unit === "°" ? "°" : unit ? ` ${unit}` : ""}`;
+      b.addEventListener("click", () => {
+        const r = b.getBoundingClientRect();
+        new ModifyBox({
+          at: { x: r.right, y: r.top + r.height / 2 }, title: lab, value: inp.value,
+          step: inp.dataset.int ? 1 : stepFor(inp.dataset.q === "angle" ? "angle" : "length", units.current),
+          accept: text => {
+            inp.value = text;
+            inp.dispatchEvent(new Event("change"));
+            return inp.getAttribute("aria-invalid") !== "true";
+          },
+          cancel: () => {},
+        });
+      });
+      el.append(b);
+      if (row === 0 && flip) {
+        const fb = document.createElement("button");
+        fb.className = "mc-handle mc-vflip";
+        fb.textContent = "⇄";
+        fb.title = t("Reverse direction");
+        fb.setAttribute("aria-label", t("Reverse direction"));
+        fb.addEventListener("click", () => { flip.click(); });
+        el.append(fb);
+      }
+      layer.append(el);
+    });
+    this.placeCallouts();
+  }
+
+  /** Where a feature's value callouts sit: the middle of its own faces in the last rebuild, else of the faces it picked. */
+  private calloutPoint(f: Feature): V3 | null {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return null;
+    const pre = `${f.id}:`, own: number[] = [];
+    names.forEach((n, i) => { if (n?.startsWith(pre)) own.push(i); });
+    if (!own.length) {
+      const refs = ((f as { faces?: FaceRef[] }).faces ?? []);
+      for (const r of refs) { const i = names.indexOf(r.name); if (i >= 0) own.push(i); }
+    }
+    if (!own.length) return null;
+    const c = [0, 0, 0];
+    for (const i of own) { const fc = data.faces[i]; if (!fc) continue; c[0] += fc.center[0]; c[1] += fc.center[1]; c[2] += fc.center[2]; }
+    return [c[0] / own.length, c[1] / own.length, c[2] / own.length];
   }
 
   /**
@@ -4164,7 +4366,7 @@ export class ModelController {
     if (!part || !names) return null;
     const pre = `${id}:`;
     // A body or a cut list item selected in the tree lights up its bodies' faces.
-    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
+    const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") || id.startsWith("wsub:") ? this.cutBodies(id) : null;
     const inBody = keys ? bodyFaces(this.last?.bodies ?? [], keys) : null;
     const geo = part.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position"), idx = geo.getIndex();
@@ -4351,7 +4553,7 @@ export class ModelController {
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
-      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24 + 28 * Number(el.dataset.row ?? 0)}px`;
     });
   }
 
@@ -4539,6 +4741,8 @@ export class ModelController {
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
     $("#mc-confirm").hidden = m.kind === "none";
+    if (m.kind !== "none") document.getElementById("mc-crumbs")?.remove();
+    if (m.kind !== this.crumbMode) { this.crumbMode = m.kind; this.crumbAt = null; this.placeCrumbs(); }
     $("#mc-ok").title = m.kind === "sketch" ? t("Exit sketch (Enter)") : t("OK (Enter)");
     $("#mc-ok").setAttribute("aria-label", $("#mc-ok").title);
     const btn = (id: string, label: string, title: string, on = false, dis = false) =>
@@ -4761,6 +4965,93 @@ export class ModelController {
     });
   }
 
+  /** Where Shift+D put the breadcrumbs and the confirmation corner (FR-SEL-009); null = their usual places. */
+  private crumbAt: { x: number; y: number } | null = null;
+  private crumbMode = "none";
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009): after a pick, the chain from the picked face or edge up to the part (face →
+   * feature → sketch → body → part) at the top left of the view. Hovering a crumb lights it up, a click selects it as
+   * in the tree, a right-click opens its tree menu.
+   */
+  private showCrumbs(pick: { edge?: EdgeInfo; faceId?: number; plane?: PlaneRef } | null) {
+    const list: { id: string; icon: string; label: string }[] = [];
+    if (this.mode.kind === "none" && this.store && this.last && pick) {
+      const fid = pick.edge ? pick.edge.faces[0] : pick.faceId;
+      if (fid != null) {
+        list.push({ id: "", icon: pick.edge ? "╱" : "▱", label: pick.edge ? t("Edge") : t("Face") });
+        const f = this.store.feature(this.last.faceNames[fid]?.split(":")[0] ?? "");
+        if (f) {
+          list.push({ id: f.id, icon: f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type] ?? "•", label: featureLabel(f.name) });
+          const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+          if (sk) list.push({ id: sk.id, icon: ICONS.sketch, label: featureLabel(sk.name) });
+        }
+        let at = 0;
+        for (const b of this.last.bodies ?? []) {
+          const n = b.faces ?? 0;
+          if (fid >= at && fid < at + n) { list.push({ id: `body:${b.key}`, icon: "▣", label: this.bodyName(b.key) }); break; }
+          at += n;
+        }
+      } else if (pick.plane && ("std" in pick.plane || "plane" in pick.plane)) {
+        list.push({ id: "std" in pick.plane ? `std:${pick.plane.std}` : pick.plane.plane, icon: ICONS.plane, label: this.refLabel(pick.plane) });
+      }
+      if (list.length) list.push({ id: "part", icon: ICONS.part, label: this.displayName() });
+    }
+    let el = document.getElementById("mc-crumbs");
+    if (!list.length) { el?.remove(); if (this.mode.kind === "none") this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "mc-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#mc-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + `<button class="mc-crumb${c.id ? "" : " here"}"${c.id ? ` data-id="${esc(c.id)}"` : ` aria-current="true"`} translate="no"><span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}</button>`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("pointerenter", () => this.setHover(id, "tree"));
+      b.addEventListener("pointerleave", () => { if (this.hoverId === id) this.setHover(null, "tree"); });
+      b.addEventListener("click", () => this.selectRow(id));
+      b.addEventListener("contextmenu", e => { e.preventDefault(); this.selectRow(id); this.openMenu(id, e.clientX, e.clientY); });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects a Features tree row as a click on it would (opening folded folders on the way). */
+  private selectRow(id: string) {
+    this.setHover(null, "tree");
+    this.selected = id;
+    if (id.startsWith("body:")) this.closedFolders.delete("bodies");
+    this.renderTree();
+    this.drawDecor();
+    document.querySelector(`#mc-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Shift+D: the breadcrumbs and the confirmation corner come to the cursor (FR-SEL-009). */
+  private crumbsToCursor() {
+    if (!this.pointer) return;
+    this.crumbAt = { ...this.pointer };
+    this.placeCrumbs();
+  }
+
+  private placeCrumbs() {
+    const vr = this.host.vp.getBoundingClientRect(), at = this.crumbAt;
+    for (const el of [document.getElementById("mc-crumbs"), document.getElementById("mc-confirm")]) {
+      if (!el) continue;
+      el.classList.toggle("at-cursor", !!at);
+      if (!at) { el.style.left = el.style.top = ""; continue; }
+      const crumbs = el.id === "mc-crumbs", w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+      // The crumbs sit just below-right of the cursor, the corner just above-right, both kept inside the view.
+      const x = Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4));
+      const y = Math.max(vr.top + 4, Math.min(at.y + (crumbs ? 16 : -h - 12), vr.bottom - h - 4));
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+    }
+  }
+
+
   /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
   showShortcutBar() {
     const m = this.mode;
@@ -4830,6 +5121,7 @@ export class ModelController {
         items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
       }
     }
+    this.showCrumbs(this.ctxPick);
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
     if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
@@ -5031,7 +5323,7 @@ export class ModelController {
     }
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
-    html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
+    html += cutListRows(this.cutItems(), !this.closedFolders.has("cutlist"), row, this.doc.cutProps, this.doc.subWelds);
     html += `</div>`;
     const end = d.rollback ?? d.features.length;
     // A sketch used by exactly one later feature is shown under it (absorbed, FR-HIS-008).
@@ -5224,7 +5516,7 @@ export class ModelController {
         if (id === "equations") { this.editEquations(); return; }
         if (id === "folder:bodies" || id === "folder:cutlist") return;
         if (id.startsWith("cut:")) { this.cutList(); return; }
-        if (id.startsWith("folder:") || id.startsWith("body:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
+        if (id.startsWith("folder:") || id.startsWith("body:") || id.startsWith("wsub:")) { if (id.startsWith("folder:")) this.toggleFolder(id.slice(7)); this.startRename(id); return; }
         if (this.store!.feature(id)) this.editFeature(id);
       });
       r.addEventListener("contextmenu", e => { e.preventDefault(); this.selected = id; this.renderTree(); this.drawDecor(); this.openMenu(id, e.clientX, e.clientY); });
@@ -5240,7 +5532,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
-        else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
+        else if ((id.startsWith("folder:") || id.startsWith("wsub:")) && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
           e.preventDefault();
@@ -5313,7 +5605,20 @@ export class ModelController {
       if (this.doc.bodies?.[key]?.color) items.push([t("Reset colour"), () => this.setBody(key, { color: undefined })]);
       items.push([t("Delete body"), () => this.deleteBody(key)]);
     }
-    if (id === "folder:cutlist" || id.startsWith("cut:")) items.push([t("Cut List…"), () => this.cutList()]);
+    if (id === "folder:cutlist" || id.startsWith("cut:") || id.startsWith("wsub:")) items.push([t("Cut List…"), () => this.cutList()]);
+    // Sub-weldments (SolidWorks): a cut list item or a weldment body goes into a new or an existing one.
+    const wb = this.cutBodies(id);
+    if (wb.length && !id.startsWith("wsub:")) {
+      const subs = this.doc.subWelds ?? [];
+      const inSub = subs.filter(x => wb.some(b => x.bodies.includes(b)));
+      items.push([t("Create sub-weldment"), () => this.moveToSub(wb, null)]);
+      for (const x of subs) if (!(inSub.length === 1 && inSub[0] === x)) items.push([t("Add to {name}", { name: x.name }), () => this.moveToSub(wb, x.id)]);
+      if (inSub.length) items.push([t("Remove from sub-weldment"), () => this.moveToSub(wb, "")]);
+    }
+    if (id.startsWith("wsub:")) {
+      items.push([t("Rename"), () => this.startRename(id)]);
+      items.push([t("Dissolve sub-weldment"), () => this.dissolveSub(id.slice(5))]);
+    }
     if (id.startsWith("folder:") && id !== "folder:bodies" && id !== "folder:cutlist") {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
@@ -5469,13 +5774,14 @@ export class ModelController {
   startRename(id: string) {
     const folder = id.startsWith("folder:") ? this.doc.folders?.find(g => `folder:${g.id}` === id) : undefined;
     const body = id.startsWith("body:") ? id.slice(5) : null;
+    const sw = id.startsWith("wsub:") ? this.doc.subWelds?.find(x => `wsub:${x.id}` === id) : undefined;
     const f = this.store?.feature(id);
     const row = $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`);
     const name = row?.querySelector<HTMLElement>(".ft-name");
-    if ((!f && !folder && !body) || !row || !name) return;
+    if ((!f && !folder && !body && !sw) || !row || !name) return;
     const inp = document.createElement("input");
     inp.className = "ft-ren";
-    inp.value = folder ? folder.name : body ? this.bodyName(body) : featureLabel(f!.name);
+    inp.value = folder ? folder.name : sw ? sw.name : body ? this.bodyName(body) : featureLabel(f!.name);
     inp.setAttribute("aria-label", t("New name"));
     inp.setAttribute("translate", "no");
     name.replaceWith(inp);
@@ -5506,7 +5812,7 @@ export class ModelController {
     pm.hidden = false;
     this.noteDraft();
     // Selection box colours (FR-SEL-011) once the panel's markup is in.
-    queueMicrotask(() => this.tintBoxes());
+    queueMicrotask(() => { this.tintBoxes(); this.drawValueCallouts(); });
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;
@@ -7298,7 +7604,7 @@ export class ModelController {
   /** The part's mass property override (FR-MAT-004), if any. */
   /** The weldment Cut List dialog; typed item properties go into `PartDoc.cutProps` as one undo step each. */
   cutList() {
-    showCutList(this.last?.cutList, this.doc, (key, p) => this.store?.change("Cut list properties", d => {
+    showCutList(this.cutItems(), this.doc, (key, p) => this.store?.change("Cut list properties", d => {
       const all = { ...(d.cutProps ?? {}) };
       if (Object.keys(p).length) all[key] = p; else delete all[key];
       if (Object.keys(all).length) d.cutProps = all; else delete d.cutProps;

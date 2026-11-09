@@ -323,6 +323,10 @@ export interface SmGussetFeature {
   /** Several ribs (default 1), `spacing` apart centre to centre, centred on `at` (or the middle). */
   count?: number;
   spacing?: Num;
+  /** Rib profile across its width: flat (default) or rounded (a full half round). */
+  tip?: "flat" | "round";
+  /** Flat tip: radius of the rib's outside edges along the chord (absent = sharp). */
+  fillet?: Num;
 }
 
 export type SheetFeature = SmInsertFeature | SmConvertFeature | SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;

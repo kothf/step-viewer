@@ -182,12 +182,44 @@ export interface CutItem {
   volume: number;
   /** Body keys of the items (Bodies folder). */
   bodies: string[];
+  /** The sub-weldment (`PartDoc.subWelds` id) the item's bodies sit in; set by `splitSubs`, never by the kernel. */
+  sub?: string;
 }
 
 /** A cut list item's key in `PartDoc.cutProps`: what makes items alike (kind, description, length, end angles, plate size). */
 export function cutKey(c: CutItem): string {
   const r = (v: number | undefined) => v == null ? "" : String(Math.round(v * 10) / 10);
   return [c.kind, c.desc, r(c.length), r(c.angle1), r(c.angle2), (c.plate ?? []).map(r).join("x")].join("|") + (c.inter ? `|${c.inter.join("/")}` : "");
+}
+
+export interface SubWeld { id: string; name: string; bodies: string[] }
+
+/**
+ * The cut list as shown (SolidWorks' sub-weldment folders): items whose bodies sit in different sub-weldments are split,
+ * the quantity following the body count (a bead's volume and length share out by its bodies). Items outside every sub-weldment
+ * come first, then each sub-weldment's in `subs` order; `cutKey` ignores `sub`, so item properties stay shared.
+ */
+export function splitSubs(items: CutItem[], subs: SubWeld[] | undefined): CutItem[] {
+  if (!subs?.length) return items;
+  const owner = new Map<string, string>();
+  for (const s of subs) for (const b of s.bodies) if (!owner.has(b)) owner.set(b, s.id);
+  const groups = new Map<string, CutItem[]>([["", []], ...subs.map(s => [s.id, []] as [string, CutItem[]])]);
+  for (const c of items) {
+    const by = new Map<string, string[]>();
+    for (const b of c.bodies) { const k = owner.get(b) ?? ""; by.set(k, [...(by.get(k) ?? []), b]); }
+    if (!c.bodies.length) by.set("", []);
+    for (const [k, bs] of by) {
+      const part: CutItem = { ...c, bodies: bs };
+      if (by.size > 1) {
+        // A bead row sums its bodies: volume and length share out by body count.
+        if (c.kind === "bead") { const f = bs.length / c.bodies.length; part.volume = c.volume * f; if (c.length != null) part.length = Math.round(c.length * f * 10) / 10; }
+        else part.qty = bs.length;
+      }
+      if (k) part.sub = k; else delete part.sub;
+      groups.get(k)!.push(part);
+    }
+  }
+  return [...groups.values()].flat();
 }
 
 /** The key of a corner in `MemberFeature.corners`: the meeting segments' ids, sorted, joined with "+". */

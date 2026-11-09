@@ -1084,3 +1084,21 @@ test("hole callouts read from the geometry: count, counterbore, countersink, bli
   const flip = geoHole({ ...topo.holes!.find(h => h.segs.length === 2 && h.segs.some(s => Math.abs(s.r0 - 5.5) < 1e-6))!, ax: [0, 0, 1] });
   assert.ok(flip && /⌴Ø11/.test(flip.lines[1]));
 });
+
+test("hole callout adds a cosmetic thread; drafting style sets default decimals (FR-DRW-022, FR-DRW-025)", async () => {
+  const { geoHole, dimText, useStyle } = await import("../../src/drawing/annot");
+  const hole = { o: [30, -15, 20] as V3, ax: [0, 0, -1] as V3, segs: [{ k: "cyl" as const, v0: 0, v1: 12, r0: 2.5, r1: 2.5 }, { k: "cone" as const, v0: 12, v1: 13.5, r0: 2.5, r1: 0 }], open: [true, false] as [boolean, boolean] };
+  const th = { id: "t", c: [30, -15, 20] as V3, ax: [0, 0, 1] as V3, r: 2.5, d: 6, L: 10, internal: true, size: "M6" };
+  assert.deepEqual(geoHole(hole, undefined, [th])!.lines, ["Ø5 ↧12", "M6-6H ↧10"]);
+  assert.deepEqual(geoHole(hole, undefined, [{ ...th, size: undefined, L: null }])!.lines, ["Ø5 ↧12", "M6-6H ↧12"], "full length: the drill depth");
+  assert.deepEqual(geoHole(hole, undefined, [{ ...th, c: [0, 0, 20] }])!.lines, ["Ø5 ↧12"], "a thread elsewhere is not this hole's");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const ang = { ...lin, k: "ang" as const };
+  try {
+    useStyle({ lin: 2, ang: 1 });
+    assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100.00");
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ",").main, "30,0°");
+    assert.equal(dimText({ ...lin, prec: 0 }, { k: "h", pts: [], value: 12.34 }, ".").main, "12", "a dimension's own precision wins");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
+});

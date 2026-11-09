@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.359.0] - 2026-11-09
+## [1.366.0] - 2026-11-10
 
 ### Added
 
@@ -17,6 +17,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Changed
 
 - The part's material is no longer a drop-down; its density can still be typed over under the button.
+
+## [1.363.0] - 2026-11-10
+
+### Changed
+
+- Extrude and Revolve open with the cursor in Depth (or Angle), so a typed size goes straight there.
+- Extrude seen straight down the sketch's normal turns to a three-quarter view on the sketch's side, so the depth and its arrow can be seen.
+- Cut on a sketch beside the part (a reference plane under it): when the whole part lies on the sketch normal's side, the cut starts reversed, towards the part, instead of cutting nothing.
+- A new empty part's Properties page says to start a sketch on a plane, not "Open a model to begin."
+- The right panel's page tabs show every name when they fit; when they don't, only the open page keeps its name and the others show their icon with a tooltip (the names ran into the next tab).
+
+### Fixed
+
+- Coincident mate between two flat faces: the first guess is face to face; when that cannot be solved and the aligned one can (a part that cannot turn over, such as a die block on a pin), the panel takes Aligned instead of refusing the mate. A choice made in the panel stays.
+- Screw mates: moving the nut (a distance mate, a drag) now turns the screw. The solver measured axis offsets × the assembly size, which made its damping swamp the screw's gentle turn, so a handwheel driving a fork could not move; offsets are now in mm, the screw keeps its turn count within a step, and the damping adapts (Levenberg–Marquardt).
+- Overall size of a modelled part is taken from the exact geometry (a Ø15 cylinder read 14.995 × 14.998 from its mesh).
+
+## [1.357.0] - 2026-11-09
+
+### Added
+
+- **Sub-weldments in the cut list (FR-FT-121)**: right-click a cut list item or a weldment body in the Features tree and pick **Create sub-weldment** to list that part of the weldment on its own, as SolidWorks does. The sub-weldment is a folder in the Cut list with its items under it; rename it with a double-click or F2, add more items or bodies to it with **Add to Sub-weldment1** (or take them out with **Remove from sub-weldment**), and **Dissolve sub-weldment** puts its items back. An item whose bodies sit in different places is split, each part with its own quantity (a weld bead's length and mass share out by its bodies); item properties typed in the Cut List dialog stay shared. Clicking a sub-weldment highlights its bodies, the Cut List dialog heads each one's rows with its name, and the CSV gets a Sub-weldment column.
+
+## [1.356.0] - 2026-11-09
+
+### Added
+- Insert Bends and Convert to Sheet Metal follow walls that don't touch the fixed face (FR-FT-120): Insert Bends finds the next wall across each wall's far edge (a hat section's brims, a Z section's flanges) and bends it too, the right way round; Convert to Sheet Metal does the same for each wall far edge you pick, so a box can become a C channel with lips.
+- Corner Relief at return flanges and three-bend corners (FR-FT-120): a flange off a flange's end (a return) now makes a corner with that flange's bend, and where it meets a two-bend corner the relief covers all three bend zones. The panel names three-bend corners.
+- Sheet Metal Gusset tip shapes (FR-FT-120): a Rounded tip (a half round across the rib's width) or a flat tip with filleted edges; the groove follows, and the flat pattern still leaves the gusset out.
+
+## [1.355.0] - 2026-11-09
+
+### Added
+- Thread callouts from geometry (FR-DRW-022): a hole read from the shape with a cosmetic thread on it now adds the thread line ("M6-6H ↧10", or the drill depth or THRU when the thread runs the full length), so a tapped hole cut without the Hole wizard reads like one made with it, and equal tapped holes are counted together.
+- Default decimals in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Linear decimals and Angle decimals set the precision of every dimension that has none of its own; Auto keeps the old behaviour (up to two, trailing zeros dropped).
+
+## [1.354.0] - 2026-11-09
+
+### Added
+
+- **Magnifying glass (FR-SEL-010)**: press G over the view for a round inset showing the area round the cursor magnified 4× (the wheel inside it changes the factor from 2× to 16×). Hovering, snapping and clicks inside the lens act on the magnified point, so small edges and vertices are easy to pick. G or Esc closes it; Esc does not leave the command that is open.
+- **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
+- **Selection breadcrumbs (FR-SEL-009)**: after picking a face or an edge of a part, a bar at the top left of the view shows the chain up to the part (face or edge → feature → its sketch → body → part; a picked plane → part). Hovering a crumb lights it up in the view, a click selects it as in the Features tree, a right-click opens its tree menu. Shift+D brings the breadcrumbs, or the ✓/✕ corner while a command is open, to the cursor (D stays the distance tool); Esc hides them.
+- **Value callouts (FR-UI-110)**: while a feature panel is open, its main values (thickness, distance, offset, angle, spacing, instances, pitch, height…) show in small labels on the model by the feature's result, as in SolidWorks. A click opens the Modify box; the value goes through the panel field, so the panel and the callout always agree, and a ⇄ beside the first callout reverses the direction when the feature has one. Extrude, revolve, fillet, chamfer, end caps, gussets and flanges keep their drag handles and callouts.
+
+## [1.353.0] - 2026-11-09
+
+### Changed
+
+- **Smart measure's hint no longer covers the model**: the "Smart measure: click a point, edge or face…" prompt moved from the banner over the top of the view into the status bar, as SolidWorks shows its prompts. Tools you pick on purpose (Distance, Angle, Section…) still show their pick count banner.
 
 ## [1.352.0] - 2026-11-09
 
@@ -2123,8 +2173,14 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.359.0...HEAD
-[1.359.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.359.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.366.0...HEAD
+[1.366.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.366.0
+[1.363.0]: https://github.com/kothf/step-viewer/compare/v1.357.0...v1.363.0
+[1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
+[1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
+[1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
+[1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
+[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
 [1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0
 [1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
 [1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0

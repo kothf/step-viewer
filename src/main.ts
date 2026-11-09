@@ -1137,9 +1137,21 @@ function kv(rows: [string, string][]) {
   return `<div class="kv">${rows.map(([k, v]) => `<span class="k">${esc(t(k))}</span><span class="v" translate="no">${v}</span>`).join("")}</div>`;
 }
 
+/** Overall size: a modelled part's exact box when every body shows, else the shown meshes' box (exam #12). */
+function overallSize(): THREE.Vector3 {
+  const box = modeller.active && viewer.parts.every(p => p.visible) ? modeller.bodyProps()?.box : undefined;
+  if (box) return new THREE.Vector3(box[1][0] - box[0][0], box[1][1] - box[0][1], box[1][2] - box[0][2]);
+  return viewer.computeBounds().getSize(new THREE.Vector3());
+}
+
 function renderProps() {
   const el = $("#props");
-  if (!viewer.parts.length) { el.innerHTML = `<p class="muted">${t("Open a model to begin.")}</p>`; return; }
+  if (!viewer.parts.length) {
+    // A new part has nothing to show yet: say how to start, not "open a model" (exam #11).
+    const part = $("#app").classList.contains("model");
+    el.innerHTML = `<p class="muted">${t(part ? "This part is empty. Start a sketch on a plane to begin." : "Open a model to begin.")}</p>`;
+    return;
+  }
   const e = state.selection;
   let html = "";
   if (e) {
@@ -1195,7 +1207,7 @@ function renderProps() {
     html += `<h3 translate="no">${esc(state.fileName)}</h3>`;
     const rows: [string, string][] = [];
     const m = state.meta;
-    const b = viewer.computeBounds(), s = b.getSize(new THREE.Vector3());
+    const s = overallSize();
     rows.push(["Parts", String(viewer.parts.length)], ["Overall size", `${fmtLen(s.x, false)} × ${fmtLen(s.y, false)} × ${fmtLen(s.z)}`]);
     if (m) {
       rows.push(["Protocol", esc(m.protocol)], ["Schema", esc(m.schema)]);
@@ -1278,13 +1290,17 @@ function setTool(t: Tool) {
 
 function updateHint() {
   const h = $("#tool-hint");
+  const st = $("#st-hint");
+  // The default tool's prompt sits in the status bar so it never covers the model; the banner is for
+  // tools the user picked on purpose (they count picks and end with Esc).
   if (state.tool === "select") {
-    h.hidden = !viewer.parts.length;
-    h.innerHTML = state.selection && !state.livePair
-      ? `<b>${t("Smart measure")}</b> · ${t("click a second point, edge or face to measure between them")} · <span class="muted">${t("Esc to clear")}</span>`
-      : `<b>${t("Smart measure")}</b> · ${t("click a point, edge or face; a second click measures between them")}`;
+    h.hidden = true;
+    st.innerHTML = !viewer.parts.length ? "" : state.selection && !state.livePair
+      ? `<b>${t("Smart measure")}</b>: ${t("click a second point, edge or face to measure between them")} · ${t("Esc to clear")}`
+      : `<b>${t("Smart measure")}</b>: ${t("click a point, edge or face; a second click measures between them")}`;
     return;
   }
+  st.innerHTML = "";
   if (state.tool === "sectionFace") {
     h.hidden = false;
     h.innerHTML = `<b>${t("Section")}</b> · ${t("click a flat face to cut there, or a cylinder to cut through its axis")} · <span class="muted">${t("Esc to cancel")}</span>`;
@@ -1303,9 +1319,17 @@ $$("#tools button").forEach(b => b.addEventListener("click", () => setTool(b.dat
 // (FR-UI-118), so nothing sits below the fold. The header's panel button hides and shows the panel.
 const rpTabs = $("#rp-tabs");
 rpTabs.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach(b => b.addEventListener("click", () => panels.show("right"), true));
+/** The page tabs show their names while all five fit; else only the open page's (the rest keep icon + tooltip). */
+function fitRpTabs() {
+  rpTabs.classList.toggle("rp-icons", false);
+  if (rpTabs.scrollWidth > rpTabs.clientWidth + 1) rpTabs.classList.toggle("rp-icons", true);
+}
 const showPage = bindTabs(rpTabs, tab => {
   $$(".rp").forEach(s => s.classList.toggle("on", s.id === `rp-${tab}`));
+  fitRpTabs();
 });
+new ResizeObserver(fitRpTabs).observe(rpTabs);
+onLangChange(fitRpTabs);
 // The Section button works like CAD: press it, then click the face to cut on.
 $("#rt-section").addEventListener("click", () => {
   const open = $("#rp-section").classList.contains("on") && !$("#app").classList.contains("no-right");
@@ -2748,7 +2772,7 @@ $$("[data-export]").forEach(b => b.addEventListener("click", async () => {
 function report() {
   if (!viewer.parts.length) return;
   if (!lastMass.length) runMass();
-  const s = viewer.computeBounds().getSize(new THREE.Vector3());
+  const s = overallSize();
   const m = state.meta;
   const meta: [string, string][] = [
     ["File", state.fileName], ["Parts", String(viewer.parts.length)],
