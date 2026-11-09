@@ -1215,7 +1215,7 @@ export class AsmController {
   }
 
   private size() { return Math.max(10, this.host.viewer.parts.length ? this.host.viewer.modelSize : 100); }
-  private solveDoc(doc0: AsmDoc, extra: Mate[] = [], start0?: Record<string, Tf>) {
+  private solveDoc(doc0: AsmDoc, extra: Mate[] = [], start0?: Record<string, Tf>, dof = true) {
     // Flexible sub-assemblies (FR-ASM-006) put their own components and mates into the solve.
     const doc = solveView(doc0);
     let start = start0;
@@ -1227,7 +1227,7 @@ export class AsmController {
         for (const x of doc.components) if (x.id.startsWith(`${c.id}/`) && !start[x.id]) start[x.id] = compose(move, x.tf);
       }
     }
-    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size() });
+    return solve({ doc, extra, start, geo: (part, face) => this.geo.get(part)?.get(face) ?? null, centre: part => this.centres.get(part) ?? [0, 0, 0], size: this.size(), dof });
   }
 
   /** Solves a changed document's mates into its transforms; when they conflict nothing moves. */
@@ -2094,7 +2094,7 @@ export class AsmController {
         tfs[d.id] = compose(translation([delta.x, delta.y, delta.z]), c.tf);
         // A mated component moves only where its mates let it (FR-MATE-001): solved from the dragged position.
         if (!d.mated) return tfs;
-        const r = this.solveDoc(doc, [], tfs);
+        const r = this.solveDoc(doc, [], tfs, false);
         // On an axis (concentric, hinge, screw) it may turn instead, as a wheel does in SolidWorks: the grabbed
         // point turned towards the pointer about that axis, solved too; the one that follows the pointer better wins.
         const ax = d.axis;
@@ -2105,7 +2105,7 @@ export class AsmController {
         if (v0.lengthSq() < 1e-12 || v1.lengthSq() < 1e-12) return r.ok ? r.tfs : null;
         const ang = Math.atan2(u.dot(v0.clone().cross(v1)), v0.dot(v1));
         const turned = { ...tfs, [d.id]: compose(rotation(ax.o, ax.u, ang), c.tf) };
-        const rr = this.solveDoc(doc, [], turned);
+        const rr = this.solveDoc(doc, [], turned, false);
         if (!rr.ok) return r.ok ? r.tfs : null;
         if (!r.ok) return rr.tfs;
         const grab = applyPoint(invert(c.tf), [d.start.x, d.start.y, d.start.z]);
@@ -2593,7 +2593,7 @@ export class AsmController {
     if (!doc) return { ok: false, tfs: {}, bad: [] };
     if (!needsSolve(doc) && !extra.length) return { ok: true, tfs: start ?? this.restTfs(), bad: [] };
     const d: AsmDoc = { ...doc, mates: (doc.mates ?? []).map(m => (m.id in values ? { ...m, value: values[m.id] } : m)) };
-    const r = this.solveDoc(d, extra, start);
+    const r = this.solveDoc(d, extra, start, false);
     return { ok: r.ok, tfs: r.ok ? r.tfs : { ...(start ?? this.restTfs()) }, bad: [...r.bad, ...r.missing] };
   }
 
