@@ -1097,11 +1097,11 @@ An audit of SolidWorks' basic, everyday behaviours against this FRS and MöbiusC
 
 **Sketch interaction**
 
-- **FR-SK-043** (P1, M) **Drag to merge**: dragging an end point onto another point, the origin or a curve adds the coincident relation (or merges the points, FR-SK-051) with the coincident glyph shown while hovering the target; holding Ctrl while releasing suppresses it (FR-SK-052). *Done in 1.257.0.*
-- **FR-SK-044** (P1, M) **Copy by drag**: Ctrl+drag of selected sketch entities copies them (relations between the copies kept, relations to the rest dropped); *Done in 1.257.0.*
+- **FR-SK-043** (P1, M) **Drag to merge**: dragging an end point onto another point, the origin or a curve adds the coincident relation (or merges the points, FR-SK-051) with the coincident glyph shown while hovering the target; holding Ctrl while releasing suppresses it (FR-SK-052). *Done in 1.262.0.*
+- **FR-SK-044** (P1, M) **Copy by drag**: Ctrl+drag of selected sketch entities copies them (relations between the copies kept, relations to the rest dropped); *Done in 1.262.0.*
 - **FR-SK-045** (P1, M) **Sketch context menu** (right-click without movement): End chain (while drawing), Select chain, Construction on/off, the relations valid for the selection (FR-SK-054), Fully define…, Delete, Zoom to selection, Exit sketch, Discard. A right-click with the line tool ends the chain like a double click.
 - **FR-SK-046** (P1, S) **Quick snaps**: a menu (heads-up bar while sketching and the sketch context menu) picks one snap type for the next point only (end point, midpoint, centre, quadrant, intersection, tangent, perpendicular, parallel, nearest, horizontal/vertical); Preferences turn each inference type on or off permanently.
-- **FR-SK-047** (P1, M) The status bar shows the cursor position in sketch coordinates (x, y in document units) while sketching, next to the sketch status (FR-UI-050). *Done in 1.257.0.*
+- **FR-SK-047** (P1, M) The status bar shows the cursor position in sketch coordinates (x, y in document units) while sketching, next to the sketch status (FR-UI-050). *Done in 1.262.0.*
 
 **Tree and history**
 

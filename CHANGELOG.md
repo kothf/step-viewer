@@ -5,13 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.257.0] - 2026-11-08
+## [1.262.0] - 2026-11-08
 
 ### Added
 
 - **Drag to merge (FR-SK-043)**: dragging a sketch point onto another point or the origin joins them with a coincident relation, and onto a curve adds On curve; the glyph by the cursor shows which while you hover the target. Hold Ctrl while releasing to drop the point without a relation.
 - **Copy by drag (FR-SK-044)**: Ctrl+drag of selected sketch entities makes copies. Relations and dimensions among the copied entities are copied too; relations to the rest of the sketch are not. A Ctrl+click without moving still deselects.
 - **Cursor position while sketching (FR-SK-047)**: the status bar shows the cursor's x, y in sketch coordinates and document units next to the sketch status.
+
+## [1.259.0] - 2026-11-08
+
+### Added
+
+- **Miter flange (FR-FT-120)**: Sheet Metal → **Miter Flange** runs an open profile of lines, sketched on a plane square to an edge and starting at it, along the edges clicked in the view. Each line of the profile becomes a bend and a flat flange, with lengths to the virtual sharps on the profile's side, and flanges on edges that meet at a corner of the face are mitred at every level with the corner gap between them, as in SolidWorks. The flat pattern unfolds them like any other flange.
 
 ## [1.256.0] - 2026-11-08
 
@@ -1650,8 +1656,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.257.0...HEAD
-[1.257.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.257.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.262.0...HEAD
+[1.262.0]: https://github.com/kothf/step-viewer/compare/v1.259.0...v1.262.0
+[1.259.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.259.0
 [1.256.0]: https://github.com/kothf/step-viewer/compare/v1.253.0...v1.256.0
 [1.253.0]: https://github.com/kothf/step-viewer/compare/v1.252.0...v1.253.0
 [1.252.0]: https://github.com/kothf/step-viewer/compare/v1.251.0...v1.252.0

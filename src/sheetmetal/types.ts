@@ -91,6 +91,18 @@ export interface SmClosedFeature {
   gap?: Num;
 }
 
+/** Miter flange: an open profile of lines, sketched on a plane square to an edge and starting at it, run
+ * along the picked edges; flanges on edges meeting at a corner are mitred. */
+export interface SmMiterFeature {
+  id: string; type: "smmiter"; name: string; suppressed?: boolean;
+  /** Open chain of lines; one end at the first edge. Lengths are to the virtual sharps on the profile's side. */
+  sketch: string;
+  edges: EdgeRef[];
+  radius?: Num;
+  /** The gap left between the mitred flanges at a corner (default 0.1 mm). */
+  gap?: Num;
+}
+
 /** Flat pattern: the folded sheet unfolded onto the plane of its first face. */
 export interface SmFlatFeature {
   id: string; type: "smflat"; name: string; suppressed?: boolean;
@@ -134,8 +146,8 @@ export interface SmTabFeature {
   sketch: string;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smflat"]);
+export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */
