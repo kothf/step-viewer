@@ -1109,7 +1109,7 @@ try {
 
     await pg.goto(boardUrl);
     await waitBoard();
-    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("[data-open] .open-long").textContent }));
+    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("#file-btn .file-lbl").textContent }));
     // First-use tip on the first board, with Got it / Turn off.
     const tip1 = await pg.evaluate(() => { const h = document.querySelector("#hint"); return { shown: !h.hidden, text: h.textContent, btns: h.querySelectorAll("button").length }; });
     await pg.click("#hint [data-h=ok]");
@@ -1117,11 +1117,11 @@ try {
     await pg.waitForTimeout(100);
     const ru = await pg.evaluate(() => ({
       lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, label: document.querySelector("#lang-btn").getAttribute("aria-label"),
-      open: document.querySelector("[data-open] .open-long").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
+      open: document.querySelector("#file-btn .file-lbl").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
       layer: document.querySelector("#g-layers .g-name b")?.textContent, stats: document.querySelector("#g-stats .k")?.textContent, doc: document.querySelector("#doc-status").getAttribute("aria-label"),
     }));
-    check(en.lang === "en" && en.btn === "EN" && en.open === "Open file" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
-    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Открыть файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
+    check(en.lang === "en" && en.btn === "EN" && en.open === "File" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
+    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
       `i18n: RU switches header, panels, layer names and stats at once (${JSON.stringify(ru)})`);
     // Results and the empty measurement list in Russian, then a scan for anything left in English.
     await pg.evaluate(() => {
@@ -9270,6 +9270,35 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Unfold: a flange on the back edge; click the plate's top face as the fixed face, ✓ with all bends: the sheet lies flat.
+    // (The flat volume differs a little from the folded one unless K = 0.5.) Fold, ✓: back as it was.
+    await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "uf", type: "smflange", name: "Edge-Flange6", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l3`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const ufBox = () => mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    const uf0 = await ufBox();
+    await smMenu("Unfold");
+    const [ufx, ufy] = await scr([50, 20, T]);
+    await mp.mouse.click(ufx, ufy);
+    await settle();
+    const uf1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, bends: d?.bends?.length, all: document.querySelector("#mc-pm [data-sm-bends]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const uf2 = await ufBox();
+    await smMenu("Fold");
+    await mp.click("#mc-ok");
+    await settle();
+    const uf3 = await ufBox();
+    check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
+      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
+      `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -10168,6 +10197,69 @@ try {
     check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
     check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
+  // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await fp.goto(`${origin}/index.html?debug&nokernel`);
+    await fp.waitForFunction(() => window.__sv);
+    const menu = () => fp.evaluate(() => {
+      const m = document.querySelector("#file-menu");
+      return { shown: !!m && !m.hidden, items: m ? [...m.querySelectorAll("button[data-f]")].map(b => [b.dataset.f, b.disabled, b.querySelector(".fm-k")?.textContent ?? ""]) : [], focus: document.activeElement?.dataset?.f ?? document.activeElement?.id, expanded: document.querySelector("#file-btn").getAttribute("aria-expanded") };
+    });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+    const m0 = await menu();
+    const it0 = Object.fromEntries(m0.items.map(([id, off, k]) => [id, { off, k }]));
+    check(m0.shown && m0.expanded === "true" && m0.focus === "new-part" && it0.open && !it0.open.off && it0.open.k === "Ctrl+O" && it0.save.off && it0["save-as"].off && it0.close.off && it0.print.off && !it0.exit.off && it0.pack && it0.props && it0["save-all"].k === "Ctrl+Alt+S",
+      `File menu: opens under the File button with New/Open/Close/Save/Save as/Save all/Pack and Go/Export/Print/Properties/Exit, document commands off with nothing open (${JSON.stringify(m0)})`);
+    await fp.keyboard.press("ArrowDown");
+    const f1 = await menu();
+    await fp.keyboard.press("Escape");
+    const m1 = await menu();
+    check(f1.focus === "new-asm" && !m1.shown && m1.focus === "file-btn" && m1.expanded === "false", `File menu: arrow keys move, Esc shuts it and focus returns to File (${JSON.stringify([f1.focus, m1])})`);
+    await fp.setInputFiles("#file-input", join(fixtures, "rounded-cube/rounded-cube.step"));
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => document.querySelector("#file-menu [data-f='recent:0']"));
+    const m2 = await menu();
+    const it2 = Object.fromEntries(m2.items.map(([id, off]) => [id, off]));
+    const recentName = await fp.$eval("#file-menu [data-f='recent:0']", b => b.textContent);
+    check(!it2["save-as"] && !it2.close && !it2.print && !it2.export && it2.save && /rounded-cube\.step/.test(recentName), `File menu: an open model enables Save as (a copy), Close, Print and Export and is listed under recent documents (${JSON.stringify([m2.items, recentName])})`);
+    await fp.keyboard.press("Escape");
+    // Ctrl+Alt+N: a new part in its own tab.
+    await fp.keyboard.press("Control+Alt+KeyN");
+    await fp.waitForFunction(() => window.__sv.modeller.active, null, { timeout: 30000 });
+    const tabs = await fp.$$eval("#doc-tabs .dt", d => d.length);
+    check(tabs === 2, `File menu: Ctrl+Alt+N makes a new part beside the open model (${tabs} tabs)`);
+    // Pack and Go: both documents in one zip.
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=pack]");
+    await fp.waitForSelector("#pack-dlg[open]");
+    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
+    const zbytes = await readFile(await dl.path());
+    const ztext = zbytes.toString("latin1");
+    check(boxes === 2 && /\.zip$/.test(dl.suggestedFilename()) && ztext.startsWith("PK") && ztext.includes("rounded-cube.step") && /\.mcadprt/.test(ztext), `File menu: Pack and Go lists the open documents and saves them into one .zip (${boxes} boxes, ${dl.suggestedFilename()}, ${zbytes.length} bytes)`);
+    // Ctrl+Alt+W closes the new part; File ▸ Close all closes the model.
+    await fp.keyboard.press("Control+Alt+KeyW");
+    await fp.waitForFunction(() => !window.__sv.modeller.active && document.querySelectorAll("#doc-tabs .dt").length === 1, null, { timeout: 30000 });
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=close-all]");
+    await fp.waitForFunction(() => !document.querySelectorAll("#doc-tabs .dt").length && !window.__sv.viewer.parts.length, null, { timeout: 30000 });
+    check(true, "File menu: Ctrl+Alt+W closes the part, Close all closes the rest");
+    // A recent document opens again from the menu.
+    await fp.click("#file-btn");
+    await fp.waitForSelector("#file-menu [data-f='recent:0']");
+    await fp.click("#file-menu [data-f='recent:0']");
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    check(true, "File menu: a recent document opens again from the list");
+    await ctx.close();
   }
 } catch (err) {
   console.error(err);

@@ -364,7 +364,11 @@ ${table([
 ])}
 <h4>Everywhere</h4>
 ${table([
+  ["File ▾", "New, Open, Close, Save, Save as, Save all, Pack and Go, Export, Print, Properties, recent documents, Exit"],
   ["Ctrl+O", "Open files"],
+  ["Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S", "Save / save as / save all"],
+  ["Ctrl+Alt+N / Ctrl+Alt+W", "New part / close the document"],
+  ["Ctrl+P", "Print the drawing or the 3D view"],
   ["Ctrl+[ / Ctrl+]", "Hide or show the left / right panel (⌘ on macOS)"],
   ["F1 / ?", "This help"],
   ["Tab , Shift+Tab , Enter , Space", "Move between controls and press them"],
@@ -648,7 +652,11 @@ ${table([
 ])}
 <h4>Везде</h4>
 ${table([
+  ["Файл ▾", "Создать, открыть, закрыть, сохранить, сохранить как, сохранить все, упаковать, экспорт, печать, свойства, последние документы, выход"],
   ["Ctrl+O", "Открыть файлы"],
+  ["Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S", "Сохранить / сохранить как / сохранить все"],
+  ["Ctrl+Alt+N / Ctrl+Alt+W", "Новая деталь / закрыть документ"],
+  ["Ctrl+P", "Печать чертежа или 3D-вида"],
   ["Ctrl+[ / Ctrl+]", "Скрыть или показать левую / правую панель (⌘ на macOS)"],
   ["F1 / ?", "Эта справка"],
   ["Tab , Shift+Tab , Enter , Пробел", "Переход между элементами и нажатие"],

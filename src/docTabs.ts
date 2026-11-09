@@ -77,6 +77,9 @@ export class DocTabs {
     });
   }
 
+  /** Tabs with unsaved changes (File ▸ Save all). */
+  dirtyTabs() { return this.tabs.filter(x => this.host.dirty(x)); }
+
   /** The live 3D document's tab (the active one, or the one under a drawing). */
   private get live3d() { return this.active?.kind === "drawing" ? this.under : this.active; }
 
