@@ -2328,6 +2328,47 @@ try {
       `model 1.298: Fully define sketch adds H/V relations, a diameter and origin dimensions until DOF 0, one undo step (${fd0}, ${JSON.stringify(fd1)}, ${fd2})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // 1.303: sketch grid (FR-SK-041): Show grid draws it; Snap to grid at 10 mm puts free line ends on grid nodes.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "gr", type: "sketch", name: "SketchGR", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("gr"));
+    await mp.waitForTimeout(800);
+    const setGridUi = (a, v) => mp.evaluate(([a, v]) => { const i = document.querySelector(`#mc-pm [data-a=${a}]`); if (!i) return; if (i.type === "checkbox") i.checked = v; else i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, [a, v]);
+    await setGridUi("grid", true);
+    await mp.waitForTimeout(200);
+    const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
+    await setGridUi("gridsnap", true);
+    await setGridUi("gridstep", "10");
+    await tool("line");
+    await click([21.5, 8.7]);
+    await click([48.6, 31.2]);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(150);
+    const grid1 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, ln = sk.ents.find(e => e.t === "line"), P = id => sk.ents.find(e => e.id === id); return { ui: { show: ed.grid, snap: ed.gridSnap, step: ed.gridSpacing }, a: ln && [P(ln.a).x, P(ln.a).y], b: ln && [P(ln.b).x, P(ln.b).y], ls: localStorage.getItem("mc:skGridStep") }; });
+    await setGridUi("gridsnap", false);
+    await setGridUi("grid", false);
+    await mp.waitForTimeout(200);
+    const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
+    // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
+    const mmpx = await mp.evaluate(() => window.__sv.model.editor().px([50, 30]));
+    await tool("point");
+    await hover([50, 30]);
+    await hover([70, 31]);
+    const alAt = [83.7, 30 + 3 * mmpx];
+    await hover(alAt);
+    const alHover = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return { n, lines: window.__sv.model.editor().aligned.length }; });
+    await click(alAt);
+    const alPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, pt = sk.ents.filter(e => e.t === "point").at(-1); return { x: pt.x, y: pt.y, rels: sk.rels.length }; });
+    await tool("select");
+    await mp.waitForTimeout(100);
+    const alGone = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return n; });
+    check(alHover.n === 1 && alHover.lines === 1 && near(alPt.y, 30, 1e-9) && near(alPt.x, 83.7, 0.2) && alGone === 0,
+      `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
+    check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
+      `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a2", 0, -60), P("b2", 40, -60), P("c2", 40, -30), P("d2", 0, -30), { id: "m1", t: "line", a: "a2", b: "b2" }, { id: "m2", t: "line", a: "b2", b: "c2" }, { id: "m3", t: "line", a: "c2", b: "d2" }, { id: "m4", t: "line", a: "d2", b: "a2" }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }, { id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [20, -45, 10] } }, rels: [], dims: [], ents: [] }); }); });
     await idle();

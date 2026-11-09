@@ -1116,3 +1116,5 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-snaps { margin: 4px 0 6px; }
 .pm-snaps > summary { cursor: pointer; font-size: 12px; }
 .pm-snapgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.pm-grid .pm-field { grid-column: 1 / -1; margin: 2px 0; }
+.pm-grid .pm-field input { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: inherit; }
