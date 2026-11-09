@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { FaceRef, Feature, Frame, PartDoc, PlaneRef, V2, V3 } from "../model/types";
 import { FeatureError, type Named } from "../kernel/model";
-import { anchorPoint, loopSegs, outline, profileName, profileShape, type Anchor, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
+import { ANCHORS, anchorPoint, loopSegs, outline, profileName, profileShape, type Anchor, type Loop, type LoopSeg, type ProfileShape } from "./profiles";
 import { sketchShape } from "./custom";
 import type { Pierce, CutItem, EndCapFeature, GussetFeature, MemberFeature, TrimExtendFeature, WeldBeadFeature, WeldSegRef, WeldFeature } from "./types";
 import { capDir, cornerKey } from "./types";
@@ -166,6 +166,28 @@ function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: s
   };
   const R = Math.max(...outline(shape.outer, 8).map(q => Math.hypot(...p2(q))));
   return { u, v, w: seg.wa, p2, R, shape };
+}
+
+/**
+ * Locate profile: the points a member's profile can sit on the path by (box anchors; a sketch profile's origin and
+ * points), where they are now at the start of segment `ent`, world mm. Points that coincide are listed once (a
+ * sketch point before an anchor), the others in `also`. Empty when the member can't be placed.
+ */
+export function pierceSpots(f: MemberFeature, ent: string, doc: PartDoc, frames: Record<string, Frame>): { key: Pierce; at: V3; also: Pierce[] }[] {
+  const ref = f.segs.find(s => s.ent === ent);
+  if (!ref) return [];
+  try {
+    const seg = segOf(ref, doc, frames), shape = memberShape(f, doc);
+    const pl = placement(f, seg, ref, doc, frames, shape);
+    const keys: Pierce[] = [...(f.profile === "sketch" ? [...Object.keys(shape.points ?? {}).map((id): Pierce => `p:${id}`), "o" as Pierce] : []), ...ANCHORS];
+    const out: { key: Pierce; at: V3; q: V2; also: Pierce[] }[] = [];
+    for (const key of keys) {
+      const q = pierceOf(shape, key);
+      const same = out.find(o => Math.hypot(o.q[0] - q[0], o.q[1] - q[1]) < 1e-6);
+      if (same) same.also.push(key); else out.push({ key, q, at: at3(pl, seg.a, q), also: [] });
+    }
+    return out.map(({ key, at, also }) => ({ key, at, also }));
+  } catch { return []; }
 }
 
 const at3 = (pl: Placement, o: V3, q: V2): V3 => add(add(o, mul(pl.u, pl.p2(q)[0])), mul(pl.v, pl.p2(q)[1]));

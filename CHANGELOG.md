@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path (SolidWorks' Locate profile), for group 1 and for each group.
+- **Corner callouts and Locate profile for structural members (FR-FT-121)**: while a Structural Member is open, each corner where its segments meet shows a callout in the view with its treatment (End miter, End butt 1, End butt 2 or None), as SolidWorks' corner spheres do. Click one to pick a treatment for that corner alone, or *As set for the member*; a corner with its own treatment is shown in bold, and the Corners group in the panel follows. **Profile position** of a custom (sketch) profile now also lists every point of the profile sketch, so any of them can sit on the path, for group 1 and for each group. **Locate profile** beside it zooms to the start of the path and shows the profile's points there (sketch points and the box's anchors); click one and the profile moves so that point lies on the path, as in SolidWorks.
 
 ## [1.343.0] - 2026-11-09
 

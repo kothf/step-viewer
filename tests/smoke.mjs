@@ -9046,12 +9046,18 @@ try {
     await mp.evaluate(() => window.__sv.modeller.editFeature("m3"));
     await settle();
     const lpOpts = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="anchor"] option')].filter(o => o.value.startsWith("p:")).map(o => o.textContent));
-    await mp.selectOption('#mc-pm select[data-k="anchor"]', "p:q3");
+    // Located in the view: Locate profile shows the profile's points at the path start; a click on one moves it onto the path.
+    await mp.click('#mc-pm button[data-focus="wlocate"]');
     await settle();
+    await mp.waitForTimeout(800); // the view zooms to the profile
+    const lpDots = await mp.evaluate(() => [...document.querySelectorAll("#mc-layer .wld-pierce")].map(e => e.dataset.pierce + (e.classList.contains("cur") ? "*" : "")));
+    await mp.click('#mc-layer .wld-pierce[data-pierce="p:q3"]');
+    await settle();
+    const lpAfter = await mp.evaluate(() => ({ anchor: window.__sv.model.mode().draft.anchor, dots: document.querySelectorAll("#mc-layer .wld-pierce").length, sel: document.querySelector('#mc-pm select[data-k="anchor"]').value }));
     await mp.click("#mc-ok");
     await settle();
     const lp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), anchor: window.__sv.model.store.doc.features.find(f => f.id === "m3").anchor, prof: (l.cutList ?? []).filter(c => c.desc === "Profile").map(c => [c.qty, c.length]) }; });
-    check(lpOpts.length === 4 && lpOpts[2] === "Sketch point 3" && !lp.bad && lp.anchor === "p:q3" && JSON.stringify(lp.prof) === "[[1,300]]", `weldments: Locate profile on a sketch point (${JSON.stringify({ lpOpts, lp })})`);
+    check(lpOpts.length === 4 && lpOpts[2] === "Sketch point 3" && JSON.stringify(lpDots) === '["p:q1*","p:q2","p:q3","p:q4","t","l","c","r","b"]' && lpAfter.anchor === "p:q3" && lpAfter.dots === 0 && lpAfter.sel === "p:q3" && !lp.bad && lp.anchor === "p:q3" && JSON.stringify(lp.prof) === "[[1,300]]", `weldments: Locate profile on a sketch point (${JSON.stringify({ lpOpts, lpDots, lpAfter, lp })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
     // A post on a plate: a gusset with two leg arrows, and a bead all round the tube from one picked side (tangent propagation).

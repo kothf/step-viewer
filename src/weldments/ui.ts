@@ -11,7 +11,7 @@ import { ANCHORS, PROFILE_TYPES, profileSizes, type Anchor, type ProfileType } f
 import { sketchProfile } from "../sketch/profile";
 import type { CutItem, Pierce, EndCapFeature, GussetFeature, MemberFeature, MemberGroup, TrimExtendFeature, WeldBeadFeature, WeldFeature, WeldSegRef } from "./types";
 import { capDir, cornerKey, cutKey } from "./types";
-import { segOf } from "./kernel";
+import { pierceSpots, segOf } from "./kernel";
 
 export type WeldTool = "member" | "trimext" | "endcap" | "gusset" | "weldbead";
 export const WELD_TOOL_SET: ReadonlySet<string> = new Set(["member", "trimext", "endcap", "gusset", "weldbead"]);
@@ -152,6 +152,19 @@ function profilePoints(ctx: WeldCtx, f: MemberFeature): [string, string][] {
   return sk.ents.filter(e => e.t === "point").map((e, i): [string, string] => [`p:${e.id}`, t("Sketch point {n}", { n: i + 1 })]);
 }
 
+/** Locate profile in the view: the profile points of a group's first segment (gi 0 = group 1), labelled, with the one in use. */
+export function locateSpots(ctx: WeldCtx, f: MemberFeature, gi: number): { key: Pierce; at: V3; label: string; cur: boolean }[] {
+  const groups = f.groups ?? [];
+  const ent = gi ? groups[gi - 1]?.ents[0] : f.segs.find(s => !groups.some(g => g.ents.includes(s.ent)))?.ent;
+  if (!ent) return [];
+  const pts = new Map(profilePoints(ctx, f));
+  const cur = (gi ? groups[gi - 1].anchor : f.anchor) ?? (f.profile === "sketch" ? "o" : "c");
+  return pierceSpots(f, ent, ctx.doc, ctx.last?.frames ?? {}).map(({ key, at, also }) => ({
+    key, at, cur: key === cur || also.includes(cur),
+    label: key === "o" ? t("Sketch origin") : key.startsWith("p:") ? pts.get(key) ?? key : t(ANCHOR_LABEL[key as Anchor]),
+  }));
+}
+
 /** 2D sketches with a closed region (custom member profiles), before the edited feature; not the path sketch. */
 function profileSketches(ctx: WeldCtx, path?: string): SketchFeature[] {
   return ctx.before.filter((x): x is SketchFeature => x.type === "sketch" && x.id !== path && !x.suppressed && sketchProfile(x).faces.length > 0);
@@ -227,9 +240,15 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
     const segList = lines.map(ent => `<div class="wseg-row"><label class="chk pm-chk"><input type="checkbox" data-wseg="${esc(ent)}"${on.has(ent) ? " checked" : ""} />${esc(segLabel(sk!, ent))}</label>${on.has(ent) ? gSel(ent) : ""}</div>`).join("");
     const anchorOpts: [string, string][] = [...(f.profile === "sketch" ? [["o", t("Sketch origin")] as [string, string]] : []), ...ANCHORS.map((a): [string, string] => [a, t(ANCHOR_LABEL[a])]), ...profilePoints(ctx, f)];
     const defAnchor = f.profile === "sketch" ? "o" : "c";
+    // Locate profile: points of the profile drawn at the start of the group's first segment, a click puts one on the path.
+    const locate = (gi: number) => {
+      const fo = gi ? `wlocate:${gi}` : "wlocate";
+      return `<button class="btn small${focus === fo ? " focus" : ""}" data-focus="${focus === fo ? "" : fo}" aria-pressed="${focus === fo}">${esc(t("Locate profile"))}</button>`
+        + (focus === fo ? help(t("Click a point of the profile in the view: it moves onto the path.")) : "");
+    };
     const groupBoxes = groups.map((g, i) => group(t("Group {n}", { n: i + 2 }),
       `<p class="pm-count">${esc(g.ents.map(e => segLabel(sk!, e)).join(", "))}</p>`
-      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor)
+      + sel(`wganchor:${i}`, t("Profile position"), anchorOpts, g.anchor ?? defAnchor) + locate(i + 1)
       + numField(`groups.${i}.angle`, t("Rotation angle"), g.angle ?? { v: 0 }, "angle")
       + chk(`wgmirror:${i}`, g.mirror, t("Mirror profile")))).join("");
     return {
@@ -250,7 +269,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + (f.segs.length > 1 && (f.corner === "miter" || Object.values(f.corners ?? {}).includes("miter")) ? chk("wMergeMiter", !!f.mergeMiter, t("Merge miter trimmed bodies"))
             + (f.mergeMiter && (f.gap?.v ?? 0) > 0 ? help(t("Mitred bodies with a weld gap don't touch, so they stay apart.")) : "") : "")
           + (groups.length ? `<p class="pm-count">${esc(t("Group {n}", { n: 1 }))}</p>` : "")
-          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
+          + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor) + locate(0)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
           + chk("mirror", f.mirror, t("Mirror profile"))
           + sel("walign", t("Alignment"), [["", t("None")], ...alignOpts(ctx)], f.align ? `${f.align.sketch}|${f.align.ent}` : "")
@@ -497,7 +516,11 @@ function pickSegment(ctx: WeldCtx, e: PointerEvent, f: MemberFeature) {
 
 /** A click in the view while a weldment feature is open. Returns the new focus (or the old one). */
 export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: string | undefined): string | undefined {
-  if (f.type === "member") { pickSegment(ctx, e, f); return focus; }
+  if (f.type === "member") {
+    if (focus?.startsWith("wlocate")) { toast(t("Click a point of the profile in the view: it moves onto the path.")); return focus; }
+    pickSegment(ctx, e, f);
+    return focus;
+  }
   const hit = ctx.faceAt(e.clientX, e.clientY);
   const fr = hit ? ctx.faceRef(hit.faceId) : null;
   if (!hit || !fr || fr.name.startsWith(`${f.id}:`)) { toast(t("Pick a face.")); return focus; }
