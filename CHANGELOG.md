@@ -5,6 +5,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.339.0] - 2026-11-09
+
+### Added
+
+- Angle mates are signed: a new angle mate turns about the direction its two faces make when it is made, so +30° and −30° are different positions and a negative angle can be typed.
+- Assembly Undo and Redo tips name the step ("Undo: Move pin<1>", "Undo: Add Coincident2").
+- The Delete key deletes the mate, component, pattern, exploded view or feature selected in the assembly tree.
+
+### Changed
+
+- Mate: when a new mate cannot be solved from where the parts stand, the solver tries again with the component turned about its own axes (90°, 180°, 270°), so a mate made half a turn away no longer reads as over-defined. When it still fails, the message says the parts may be too far apart; adding a mate takes down that error.
+- Distance mate between flat faces: Aligned / Anti-aligned now picks the side the second face faces, and a negative distance flips the dimension.
+- Move component: Enter applies a box and goes on to the next one; on the last box it closes the panel.
+- Inserted components go into the view, right of its middle, instead of in a line beside the model; they are numbered by their file name, so the first insert of a file is <1>.
+- Save as names the part after its file, so the title, the document tab (without the unsaved mark) and Insert component's list of open documents show that name.
+
+### Fixed
+
+- Save snapshots: a snapshot cut short by closing the page (an empty file) is no longer listed, so Restore no longer fails on it.
+- Tree context menus near the bottom of the window open upwards and stay inside it.
+- Components fixed or locked inside a closed linkage no longer show 1 DOF from round-off.
+- Undo after Move edits shows the restored pose in the Move panel (typed angles of the undone pose are dropped).
+
 ## [1.338.0] - 2026-11-09
 
 ### Added
@@ -2002,7 +2025,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.338.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.339.0...HEAD
+[1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
 [1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
 [1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
 [1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0

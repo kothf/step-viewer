@@ -1542,7 +1542,7 @@ export class ModelController {
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    const bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -1554,19 +1554,30 @@ export class ModelController {
       return;
     }
     if (as && this.vault) this.setVault(null);
-    const blob = new Blob([bytes], { type: "application/zip" });
+    let blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
+    // The part takes the name of the file it is saved as, as in SolidWorks (exam #69): its tab, its title and
+    // Insert component's list of open documents then show that name, not "Part1".
+    const named = async (file: string) => {
+      const base = file.replace(/\.[^.]+$/, "");
+      if (!base || base === this.doc.name) return;
+      this.store!.amend(d => { d.name = base; });
+      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+      blob = new Blob([bytes], { type: "application/zip" });
+    };
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
     try {
       if (w.showSaveFilePicker) {
         if (!this.handle || as) {
           this.handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: "MöbiusCAD part", accept: { "application/zip": [PART_EXT] } }] });
         }
+        await named(this.handle.name);
         const out = await (this.handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
         await out.write(blob);
         await out.close();
         this.fileName = this.handle.name;
       } else {
+        await named(suggested);
         downloadBlob(blob, suggested);
         this.fileName = suggested;
       }
@@ -1580,6 +1591,9 @@ export class ModelController {
     // Automatic snapshot of every save outside a vault (FR-STO-005).
     void snapshotSave(this.doc.id, bytes);
     this.host.saved?.(this.fileName, bytes);
+    // The title and the document tab drop the unsaved mark and show the file's name.
+    this.host.setDoc(this.docLabel());
+    this.renderTree?.();
     toast(t("Saved {name}", { name: this.fileName }), "success");
   }
 
