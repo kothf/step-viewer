@@ -8530,14 +8530,14 @@ try {
     await settle();
     // The wider library: an unequal angle, an HEB beam and a square bar build and name their cut list items.
     const lib = [];
-    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"]]) {
+    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"], ["upe", "120", "UPE 120"], ["ipn", "140", "IPN 140"], ["hem", "120", "HEM 120"]]) {
       await mp.evaluate(([type, size]) => window.__sv.model.store.change("Profile", d => { const m = d.features.find(f => f.type === "member"); m.profile = type; m.size = size; }), [type, size]);
       await settle();
       lib.push(await mp.evaluate(name => { const l = window.__sv.model.last(); return { name, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), found: (l.cutList ?? []).some(c => c.kind === "member" && c.desc === name) }; }, name));
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
     }
-    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB and square bar profiles (${JSON.stringify(lib)})`);
+    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB, square bar, UPE, IPN and HEM profiles (${JSON.stringify(lib)})`);
     // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
@@ -8795,7 +8795,7 @@ try {
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|HEB|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|UPE|IPE|IPN|HEA|HEB|HEM|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
