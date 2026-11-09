@@ -926,6 +926,7 @@ export interface FeatureStatus { id: string; ok: boolean; code?: string; message
 
 /** Mass properties of the body for density 1 (mm units): volume, area, centre of mass, principal moments (mm⁵) and axes. */
 /** `bodies`: how many solid bodies the part has (FRS 9.10). */
-export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number }
+/** `box` = exact bounding box corners of the solids (min, max), where the kernel gives one. */
+export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number; box?: [V3, V3] }
 
 export const SCHEMA = 1;

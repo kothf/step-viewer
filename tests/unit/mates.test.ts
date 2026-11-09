@@ -394,3 +394,36 @@ test("an angle mate made with a turning direction is signed; a plane distance ke
     assert.ok(Math.abs(nz - (align === "aligned" ? 1 : -1)) < 1e-6 && Math.abs(z - 9) < 1e-5, `${align}: n ${nz}, z ${z}`);
   }
 });
+
+test("a screw mate turns its shaft when the nut is moved by a distance (exam #75)", () => {
+  // A shaft that can only spin in the plate's hole, a nut on it that can only slide: pitch 0.5 mm per turn.
+  const all: Record<string, Record<string, Geo>> = { ...geos, nut: { bore: { k: "axis", p: [0, 0, 0], d: [0, 0, 1], r: 3 }, face: { k: "plane", p: [0, 0, 0], n: [0, 0, 1] }, flat: { k: "plane", p: [5, 0, 0], n: [1, 0, 0] } } };
+  const g = (part: string, face: string) => all[part]?.[face] ?? null;
+  const base = doc([conc, coin]);
+  const d: AsmDoc = {
+    ...base,
+    parts: { ...base.parts, nut: { name: "nut", file: "nut.mcadprt", doc: stub } },
+    components: [...base.components, { id: "n", name: "nut<1>", part: "nut", tf: translation([21, 9, 40]) }],
+    mates: [conc, coin,
+      { id: "m3", name: "Concentric2", type: "concentric", a: { comp: "q", face: "shank" }, b: { comp: "n", face: "bore" } },
+      { id: "m4", name: "Parallel1", type: "parallel", a: { comp: "p", face: "side" }, b: { comp: "n", face: "flat" } }],
+  };
+  const r0 = solve({ doc: d, geo: g, size: 500 });
+  assert.ok(r0.ok, JSON.stringify(r0.bad));
+  d.components[1].tf = r0.tfs.q;
+  d.components[2].tf = r0.tfs.n;
+  const z0 = applyPoint(r0.tfs.n, [0, 0, 0])[2] - 5, x0 = applyDir(r0.tfs.q, [1, 0, 0]);
+  const screw: Mate = { id: "m5", name: "Screw1", type: "screw", a: { comp: "q", face: "shank" }, b: { comp: "n", face: "bore" }, ratio: 0.5, t0: [r0.tfs.q, r0.tfs.n] };
+  for (const move of [0.03, 0.31, 3.1]) {
+    const dist: Mate = { id: "m6", name: "Distance1", type: "distance", a: { comp: "p", face: "top" }, b: { comp: "n", face: "face" }, value: Math.abs(z0 + move), flip: z0 + move < 0, align: "aligned" };
+    const r = solve({ doc: { ...d, mates: [...d.mates!, screw, dist] }, geo: g, size: 500 });
+    assert.ok(r.ok, `${move}: ${JSON.stringify(r.bad)}`);
+    assert.ok(Math.abs(applyPoint(r.tfs.n, [0, 0, 0])[2] - 5 - (z0 + move)) < 1e-4, `nut at ${applyPoint(r.tfs.n, [0, 0, 0])}`);
+    // The shaft stayed in its hole and turned move / pitch turns (either way round).
+    const at = applyPoint(r.tfs.q, [0, 0, 10]);
+    assert.ok(Math.abs(at[0] - 20) < 1e-4 && Math.abs(at[1] - 10) < 1e-4 && Math.abs(at[2] - 5) < 1e-4, String(at));
+    const x = applyDir(r.tfs.q, [1, 0, 0]), turned = Math.acos(Math.max(-1, Math.min(1, x[0] * x0[0] + x[1] * x0[1] + x[2] * x0[2])));
+    const want = Math.abs(((move / 0.5) * 2 * Math.PI + Math.PI) % (2 * Math.PI) - Math.PI);
+    assert.ok(Math.abs(turned - want) < 1e-3, `${move}: turned ${turned}, expected ${want}`);
+  }
+});
