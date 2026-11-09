@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.333.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Corner Relief (FR-FT-120): cuts a relief where two bends meet at a corner of one face, as SolidWorks' Corner Relief for two-bend corners. Rectangular covers both bend zones with a clearance past them, Circular is centred where the bend centre lines cross, Tear is a small round at the inside corner; the size is the relief ratio × thickness or a typed value. Every corner is relieved until some are picked, by ticking them in the panel or clicking near them in the view. The relief comes off the panels and is wrapped onto the bends, so the flat pattern and its DXF show it too.
+
 ## [1.332.0] - 2026-11-09
 
 ### Added
@@ -1964,7 +1970,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.332.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.333.0...HEAD
+[1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0
 [1.332.0]: https://github.com/kothf/step-viewer/compare/v1.331.0...v1.332.0
 [1.331.0]: https://github.com/kothf/step-viewer/compare/v1.330.0...v1.331.0
 [1.330.0]: https://github.com/kothf/step-viewer/compare/v1.329.0...v1.330.0

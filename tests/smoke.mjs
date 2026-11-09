@@ -9389,6 +9389,29 @@ try {
     check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
       && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
       `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
+    // Corner Relief: one flange feature on the front and right edges (one mitred corner); the panel lists it, a click on the
+    // plate near that corner picks it, Circular, ✓: material comes off at the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "cr", type: "smflange", name: "Edge-Flange9", edges: ["l1", "l2"].map(e => ({ faces: [`${b.id}:p0:top`, `${b.id}:p0:${e}`] })), length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const crv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Corner Relief");
+    const cr0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, all: document.querySelector("#mc-pm [data-sm-corners]")?.textContent, rows: document.querySelectorAll('#mc-pm input[data-sm^="rc:"]').length }));
+    const [crx, cry] = await scr([92, 8, T]);
+    await mp.mouse.click(crx, cry);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "circle");
+    await settle();
+    const cr1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { corners: d?.corners, kind: d?.kind }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const cr2 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(cr0.title === "Corner Relief" && cr0.all === "All corners (1)" && cr0.rows === 1 && cr1.corners?.length === 1 && /^cr:b0\+cr:b1$/.test(cr1.corners[0]) && cr1.kind === "circle"
+      && !cr2.bad && cr2.v < crv0 - 10 * T,
+      `sheet metal: Corner Relief lists the two-bend corner, picks it on a click and cuts a circular relief (${JSON.stringify({ cr0, cr1, cr2, crv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
