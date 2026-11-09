@@ -5,6 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.344.0] - 2026-11-09
+
+### Added
+
+- **Evaluate ▸ Mass properties**, like SolidWorks' Mass Properties: a panel beside the view with mass, volume, surface area, centre of mass, the principal axes and principal moments of inertia at the centre of mass (drawn in the view as red, green and blue lines through the centre of mass), the moments and products of inertia at the centre of mass aligned with the output coordinate system (Lxx…) and at its origin (Ixx…), in kg·mm² or g·mm² (following the display unit). Products use positive notation (Lxy = ∫xy dm). It follows the selection, visibility, units and coordinate system while open; **Include hidden bodies**, **Recalculate** and **Copy to clipboard** (FR-MAT-002).
+- Your own output axes: **Pick axes** and click a flat face, straight edge, circle, cylinder or point, or **Type axes…** with an origin and the X and Z directions; a part's coordinate system features and the active CSYS are listed too, and the chosen axes are drawn while the panel is open.
+- Moments of inertia for every model, not only modelled parts: exact from the B-rep (OpenCASCADE) once the kernel has read the file, from the mesh until then and for STL/OBJ/3MF. Assemblies add their components with each part's own material (the density field for parts without one), like the BOM. The Mass tab and the PDF report list the principal moments and axes and the moments at the centre of mass and at the origin.
+
+### Changed
+
+- A mass override on a modelled part scales the moments of inertia with the mass, as SolidWorks does.
+- Multibody modelled parts get exact volume and centre of mass too (only single solids did).
+
 ## [1.343.0] - 2026-11-09
 
 ### Added
@@ -2048,7 +2061,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.343.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.344.0...HEAD
+[1.344.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.344.0
 [1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0
 [1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
