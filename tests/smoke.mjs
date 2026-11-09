@@ -3238,10 +3238,10 @@ try {
       };
     });
     let r = await read();
-    // kg·mm² (mass ≥ 1 kg): Lxx = m(b² + h²)/12 = 483.3333, Ixx = Lxx + m(25² + 10²) = 1933.3333, Ixy = m·50·25 = 2500.
+    // kg·mm² (mass ≥ 1 kg; one decimal from 1000 up): Lxx = m(b² + h²)/12 = 483.3333, Ixx = Lxx + m(25² + 10²) = 1933.3333, Ixy = m·50·25 = 2500.
     check(r.btn === "true" && r.axes && /2\.0000 kg/.test(r.text) && /kg·mm²/.test(r.text) && r.com.join() === "50,25,10"
-      && near(r.L[0], 483.3333, 1e-3) && near(r.L[1], 1733.3333, 1e-3) && near(r.L[2], 2083.3333, 1e-3) && r.L[3] === 0
-      && near(r.I[0], 1933.3333, 1e-3) && near(r.I[3], 2500, 1e-3) && near(r.I[4], 500, 1e-3) && near(r.I[5], 1000, 1e-3)
+      && near(r.L[0], 483.3333, 0.06) && near(r.L[1], 1733.3333, 0.06) && near(r.L[2], 2083.3333, 0.06) && r.L[3] === 0
+      && near(r.I[0], 1933.3333, 0.06) && near(r.I[3], 2500, 0.06) && near(r.I[4], 500, 0.06) && near(r.I[5], 1000, 0.06)
       && /^Ix = \(1\.0000, 0\.0000, 0\.0000\)/.test(r.P[0]) && /Px = 483\.3333/.test(r.P[1]),
       `mass 1.344: Evaluate ▸ Mass properties lists CoM, principal, Lxx… and Ixx… of a 2 kg block (${JSON.stringify({ com: r.com, L: r.L, I: r.I, P: r.P.slice(0, 2) })})`);
     // Own axes, typed: origin at the centre of mass, X along world Y → Ixx is the world-Y moment and the centre is at 0.
@@ -3251,7 +3251,7 @@ try {
     await mp.click("#mp-panel [data-mp=addaxes]");
     r = await read();
     const markOn = await mp.evaluate(() => window.__sv.viewer.scene.children.some(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9));
-    check(r.frame === "u:0" && /Mine/.test(r.text) && r.com.every(v => Math.abs(v) < 1e-9) && near(r.I[0], 1733.3333, 1e-3) && near(r.I[1], 483.3333, 1e-3) && markOn,
+    check(r.frame === "u:0" && /Mine/.test(r.text) && r.com.every(v => Math.abs(v) < 1e-9) && near(r.I[0], 1733.3333, 0.06) && near(r.I[1], 483.3333, 0.06) && markOn,
       `mass 1.344: typed own axes become the output coordinate system (${JSON.stringify({ frame: r.frame, com: r.com, I: r.I.slice(0, 2), markOn })})`);
     // Own axes, picked: Pick axes, then a click on the top face puts Z up at its centre; the part stays unselected.
     await mp.click("#mp-panel [data-mp=pick]");
