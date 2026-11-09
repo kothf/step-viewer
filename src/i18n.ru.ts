@@ -3155,6 +3155,8 @@ export const RU: Record<string, string> = {
   "Show weld symbol": "Показывать обозначение шва",
   "Weld all around": "Шов по замкнутому контуру",
   "Merge arc segment bodies": "Объединять тела с дугами",
+  "Merge miter trimmed bodies": "Объединять тела, обрезанные на ус",
+  "Mitred bodies with a weld gap don't touch, so they stay apart.": "Тела на ус с зазором под сварку не касаются, поэтому остаются отдельными.",
   "Field weld": "Монтажный шов",
   "Weld symbol: click to edit the bead": "Обозначение шва: щелчок открывает шов для правки",
   "Weld length": "Длина шва",

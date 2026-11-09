@@ -186,6 +186,8 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
           + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
           + (sk?.type === "sketch" && f.segs.some(r => sk.ents.find(e => e.id === r.ent)?.t === "arc") ? chk("wMergeArcs", !!f.mergeArcs, t("Merge arc segment bodies")) : "")
+          + (f.segs.length > 1 && (f.corner === "miter" || Object.values(f.corners ?? {}).includes("miter")) ? chk("wMergeMiter", !!f.mergeMiter, t("Merge miter trimmed bodies"))
+            + (f.mergeMiter && (f.gap?.v ?? 0) > 0 ? help(t("Mitred bodies with a weld gap don't touch, so they stay apart.")) : "") : "")
           + (groups.length ? `<p class="pm-count">${esc(t("Group {n}", { n: 1 }))}</p>` : "")
           + sel("anchor", t("Profile position"), anchorOpts, f.anchor ?? defAnchor)
           + numField("angle", t("Rotation angle"), f.angle ?? { v: 0 }, "angle")
@@ -292,6 +294,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     };
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
     if (k === "wMergeArcs") return () => { if (val) f.mergeArcs = true; else delete f.mergeArcs; };
+    if (k === "wMergeMiter") return () => { if (val) f.mergeMiter = true; else delete f.mergeMiter; };
     if (k === "wdesc") return () => { const s = String(val).trim(); if (s) f.desc = s; else delete f.desc; };
     if (k === "anchor") return () => { if (val === (f.profile === "sketch" ? "o" : "c")) delete f.anchor; else f.anchor = val as Anchor; };
     if (k.startsWith("wgroup:")) return () => {

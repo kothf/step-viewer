@@ -42,6 +42,8 @@ export interface MemberFeature {
   groups?: MemberGroup[];
   /** Merge arc segment bodies: an arc and the segments that run on tangent from it become one body (one cut list item, bent length). */
   mergeArcs?: boolean;
+  /** Merge miter trimmed bodies: segments meeting at a mitred corner (no weld gap) become one body. */
+  mergeMiter?: boolean;
 }
 
 /** A group of a Structural Member's segments placed with its own profile settings. */

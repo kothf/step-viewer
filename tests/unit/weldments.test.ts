@@ -62,6 +62,14 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   // Faces carry the member, segment and role.
   assert.ok(r.body!.names.includes("m:sl0:start") && r.body!.names.includes("m:sl0:end") && r.body!.names.some(n => n.startsWith("m:sl0:side:")));
 
+  // Merge miter trimmed bodies: the four mitred tubes become one body, listed once with the four lengths added up.
+  const rm = run(m, doc([sk, { ...mem, mergeMiter: true }]));
+  assert.equal(rm.info.length, 1);
+  near(rm.volume, A * 2000, 2e-4);
+  assert.deepEqual(rm.cut.map(c => [c.qty, c.length, c.angle1, c.angle2]), [[1, 2160, 0, 0]]);
+  assert.ok(rm.body!.names.some(n => n.startsWith("m:sl2:side:")) && !rm.body!.names.includes("m:sl0:start"));
+  // With a weld gap the mitred ends don't touch: four bodies again.
+  assert.equal(run(m, doc([sk, { ...mem, mergeMiter: true, gap: { v: 2 } }])).info.length, 4);
   // A 2 mm weld gap at every mitre: each end moves back 1 mm square to the mitre plane (√2 along the member).
   const rg = run(m, doc([sk, { ...mem, gap: { v: 2 } }]));
   near(rg.volume, A * (2000 - 8 * Math.SQRT2), 2e-4);
@@ -75,6 +83,9 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   const butt: MemberFeature = { ...mem, id: "b", segs: lines(open), corner: "butt1" };
   const rb = run(m, doc([open, butt]));
   assert.deepEqual(rb.cut.map(c => [c.length, c.qty, c.angle1, c.angle2]), [[520, 1, 0, 0], [280, 1, 0, 0]]);
+  // Merged only at mitres: a butted corner keeps its two bodies; mitred, the L is one body with square free ends.
+  assert.equal(run(m, doc([open, { ...butt, mergeMiter: true }])).info.length, 2);
+  assert.deepEqual(run(m, doc([open, { ...butt, corner: "miter", mergeMiter: true }])).cut.map(c => [c.qty, c.length, c.angle1, c.angle2]), [[1, 840, 0, 0]]);
   const rb2 = run(m, doc([open, { ...butt, corner: "butt2" }]));
   assert.deepEqual(rb2.cut.map(c => c.length), [480, 320]);
   // A gap: the butted member stops 3 mm short of the one running through.

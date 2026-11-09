@@ -344,22 +344,31 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
     const piece = pieceNear(h, body, segMid(s));
     return s.arc ? unify(h, piece) : piece;
   });
-  return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...(f.mergeArcs ? mergeTangent(h, f, segs, items, tol) : items)]);
+  // Merge miter trimmed bodies: the two ends of a mitred corner touch only without a weld gap.
+  const mitred = f.mergeMiter && gap <= 1e-9 ? ends.map(es => es.map(e => e.kind === "miter")) : null;
+  const merged = f.mergeArcs || mitred ? mergeBodies(h, f, segs, items, tol, !!f.mergeArcs, mitred) : items;
+  return h.compoundOf([...(prev ? h.bodyList(prev) : []), ...merged]);
 }
 
-/** Merge arc segment bodies: segments that meet end to end and run on tangent, one of them an arc, are fused into one body. */
-function mergeTangent(h: WeldHost, f: MemberFeature, segs: PathSeg[], items: Named[], tol: number): Named[] {
+/**
+ * Merged member bodies: segments that meet alone end to end are fused into one body where they run on tangent,
+ * one of them an arc (Merge arc segment bodies), or where their corner is mitred (Merge miter trimmed bodies).
+ */
+function mergeBodies(h: WeldHost, f: MemberFeature, segs: PathSeg[], items: Named[], tol: number, arcs: boolean, mitred: boolean[][] | null): Named[] {
   const root = segs.map((_s, i) => i);
   const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
   const ends = (i: number) => [{ p: segs[i].a, out: mul(segs[i].wa, -1) }, { p: segs[i].b, out: segs[i].wb }];
   segs.forEach((s, i) => segs.forEach((t, j) => {
-    if (j <= i || (!s.arc && !t.arc)) return;
-    for (const ei of ends(i)) for (const ej of ends(j)) {
-      if (d3(ei.p, ej.p) >= tol || dot(ei.out, ej.out) > -1 + 1e-6) continue;
+    if (j <= i) return;
+    ends(i).forEach((ei, ki) => ends(j).forEach((ej, kj) => {
+      if (d3(ei.p, ej.p) >= tol) return;
+      const tangent = arcs && (!!s.arc || !!t.arc) && dot(ei.out, ej.out) <= -1 + 1e-6;
+      const mitre = !!mitred?.[i][ki] && !!mitred[j][kj];
+      if (!tangent && !mitre) return;
       // Only where the two meet alone: a third member at the point keeps them apart.
-      if (segs.some((_u, k) => k !== i && k !== j && ends(k).some(e => d3(e.p, ei.p) < tol))) continue;
+      if (segs.some((_u, k) => k !== i && k !== j && ends(k).some(e => d3(e.p, ei.p) < tol))) return;
       root[find(j)] = find(i);
-    }
+    }));
   }));
   const groups = new Map<number, number[]>();
   segs.forEach((_s, i) => { const r = find(i); groups.set(r, [...(groups.get(r) ?? []), i]); });
@@ -367,7 +376,9 @@ function mergeTangent(h: WeldHost, f: MemberFeature, segs: PathSeg[], items: Nam
     if (g.length === 1) return items[g[0]];
     let body = items[g[0]];
     for (const k of g.slice(1)) body = bool(h, "fuse", body, items[k], f.id);
-    return unify(h, pieceNear(h, body, segMid(segs[g[0]])));
+    const piece = pieceNear(h, body, segMid(segs[g[0]]));
+    // Straight mitred pieces keep their faces (the mitre plane splits the sides); arcs are unified as before.
+    return g.some(k => segs[k].arc) ? unify(h, piece) : piece;
   });
 }
 

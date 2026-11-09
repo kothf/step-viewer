@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.305.0] - 2026-11-09
+
+### Added
+
+- **Merge miter trimmed bodies (FR-FT-121).** Structural Member adds **Merge miter trimmed bodies**, as in SolidWorks: the members at each mitred corner are fused into one body, so a welded frame of four mitred tubes is one body, listed once in the cut list with the lengths of its segments added up. With a weld gap the mitred ends don't touch and stay separate bodies. The box shows when a corner of the member is mitred.
+
 ## [1.300.0] - 2026-11-09
 
 ### Added
@@ -1760,7 +1766,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.300.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.305.0...HEAD
+[1.305.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.305.0
 [1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0
 [1.298.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.298.0
 [1.297.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.297.0
