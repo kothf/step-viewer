@@ -2183,6 +2183,7 @@ export const RU: Record<string, string> = {
   "Annotate": "Обозначения",
   "Centre marks and centrelines": "Центровые метки и осевые линии",
   "Bolt circles": "Окружности центров отверстий",
+  "Hole rows": "Ряды отверстий",
   "Click a second edge or point, or click where the dimension goes. Esc ends.": "Щёлкните второе ребро или точку либо место для размера. Esc — выход.",
   "Click an edge, a circle or a point of a view. Esc ends.": "Щёлкните ребро, окружность или точку вида. Esc — выход.",
   "Click the edge of a hole.": "Щёлкните кромку отверстия.",
@@ -4007,4 +4008,6 @@ export const RU: Record<string, string> = {
   "That document is no longer in the recent list.": "Этого документа больше нет в списке последних.",
   "Title, part number, material and other properties of the document": "Название, обозначение, материал и другие свойства документа",
   "Zip file name": "Имя файла .zip",
+  "Show the feature tree": "Показать дерево конструирования",
+  "Fold the feature tree": "Свернуть дерево конструирования",
 };

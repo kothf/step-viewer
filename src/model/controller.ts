@@ -421,6 +421,7 @@ export class ModelController {
       if (this.store && (changed.includes("quality") || changed.includes("verify"))) void this.rebuild();
     });
     onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
+    matchMedia("(max-width: 767px)").addEventListener("change", () => this.syncFlyTree());
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
       this.sizeArrow();
@@ -551,6 +552,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
     this.vault = null;
@@ -4010,6 +4012,48 @@ export class ModelController {
 
   private wasSketch = false;
   private inBar = false;
+  private wasCmd = false;
+  /** The fly-out tree is folded to its title row, as SolidWorks shows it, until opened (kept per browser). */
+  private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") !== "1"; } catch { return true; } })();
+
+  /**
+   * Fly-out tree (FR-UI-003, SolidWorks' fly-out FeatureManager): while a panel is open it fills the Features tab,
+   * and the tree itself moves to the top left of the view, so planes and features can still be picked from it.
+   * The same `#mc-tree` element moves, so its rows, listeners and selectors stay as they are. Phones keep it in the panel.
+   */
+  private syncFlyTree() {
+    const tree = document.getElementById("mc-tree"), tab = document.getElementById("tab-features");
+    if (!tree || !tab) return;
+    const fly0 = document.getElementById("mc-treefly");
+    const on = !!this.store && this.mode.kind !== "none" && !$("#mc-bar").hidden && !matchMedia("(max-width: 767px)").matches;
+    tab.classList.toggle("pm-full", on);
+    if (!on) {
+      if (fly0) { document.getElementById("ft-search")?.after(tree); fly0.remove(); }
+      tree.hidden = false;
+      return;
+    }
+    let fly = fly0;
+    if (!fly) {
+      fly = document.createElement("div");
+      fly.id = "mc-treefly";
+      fly.className = "mc-treefly";
+      fly.innerHTML = `<button type="button" class="mc-treefly-h" data-a="fly"><span class="mc-treefly-tw" aria-hidden="true"></span><span class="mc-treefly-n" translate="no"></span></button>`;
+      fly.querySelector("[data-a=fly]")!.addEventListener("click", () => {
+        this.flyClosed = !this.flyClosed;
+        try { localStorage.setItem("mc:flyTree", this.flyClosed ? "0" : "1"); } catch { /* private mode */ }
+        this.syncFlyTree();
+      });
+      $("#mc-bar").append(fly);
+    }
+    if (tree.parentElement !== fly) fly.append(tree);
+    const h = fly.querySelector<HTMLElement>("[data-a=fly]")!;
+    h.setAttribute("aria-expanded", String(!this.flyClosed));
+    h.title = this.flyClosed ? t("Show the feature tree") : t("Fold the feature tree");
+    fly.querySelector(".mc-treefly-tw")!.textContent = this.flyClosed ? "▸" : "▾";
+    fly.querySelector(".mc-treefly-n")!.textContent = this.doc.name;
+    fly.classList.toggle("closed", this.flyClosed);
+    tree.hidden = this.flyClosed;
+  }
 
   private renderBar() {
     const bar = $("#mc-bar");
@@ -4024,6 +4068,9 @@ export class ModelController {
       this.inBar = false;
     }
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
+    // A command takes the left panel to the Feature tab (FR-UI-003), once as it starts.
+    if ((m.kind !== "none") !== this.wasCmd) { this.wasCmd = m.kind !== "none"; if (this.wasCmd) this.host.selectLeftTab("features"); }
+    this.syncFlyTree();
     this.syncSketchSection();
     if (m.kind !== "sketch") {
       $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
@@ -4577,6 +4624,8 @@ export class ModelController {
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
+    const flyName = document.querySelector("#mc-treefly .mc-treefly-n");
+    if (flyName) flyName.textContent = d.name;
     if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
     // Name filter (FR-HIS-011): feature rows whose name doesn't match hide; a folder stays while a member matches.
     const q = (document.getElementById("ft-search") as HTMLInputElement | null)?.value.trim().toLowerCase() ?? "";
