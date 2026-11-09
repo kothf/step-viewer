@@ -4210,6 +4210,7 @@ export const RU: Record<string, string> = {
   "A library material already has this name. Choose another name.": "В библиотеке уже есть материал с таким названием. Выберите другое.",
   "{name} (copy)": "{name} (копия)",
   "Delete the material “{name}” from My materials? Parts that use it keep their values.": "Удалить материал «{name}» из моих материалов? Детали, где он задан, сохранят его значения.",
+  "Checked against:": "Сверено с:",
   "Choose a material from the library": "Выбрать материал из библиотеки",
   // FR-SEL-009: selection breadcrumbs
   "Selection breadcrumbs": "Цепочка выбора",
