@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -1672,4 +1672,57 @@ export function unfoldBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[]
     const M = pl.mats[pl.a[b.id]] ?? b.M, [p, q] = bendLine(b);
     return { a: apply(M, [p[0], p[1], st.T]), b: apply(M, [q[0], q[1], st.T]), up: b.up };
   });
+}
+
+/** A corner where two bends starting on one face meet (Corner Relief): `c0` is where their start lines cross, `oa`/`ob`
+ * the directions each strip runs off its start line (each points away from the other bend's face side). */
+export interface ReliefCorner { key: string; a: string; b: string; c0: V2; oa: V2; ob: V2; baA: number; baB: number; /** The face's transform. */ M: Mat }
+
+/** Every two-bend corner of the sheet: bends on one face whose start lines cross near an end of both. */
+export function reliefCorners(st: SheetState): ReliefCorner[] {
+  const size = Math.max(1, ...st.panels.flatMap(p => p.outer.flatMap(s => s.kind === "line" || s.kind === "arc" ? [...s.a, ...s.b].map(Math.abs) : [])));
+  const out: ReliefCorner[] = [];
+  const unit = (b: Bend): V2 => { const l = d2(b.a0, b.a1); return [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l]; };
+  const cr = (u: V2, v: V2) => u[0] * v[1] - u[1] * v[0];
+  st.bends.forEach((A, i) => st.bends.forEach((B, j) => {
+    if (j <= i || !matEq(A.M, B.M, size * 1e-9)) return;
+    const ea = unit(A), eb = unit(B), den = cr(ea, eb);
+    if (Math.abs(den) < 0.05) return;
+    const w: V2 = [B.a0[0] - A.a0[0], B.a0[1] - A.a0[1]];
+    const s = cr(w, eb) / den, u = cr(w, ea) / den;
+    const la = d2(A.a0, A.a1), lb = d2(B.a0, B.a1);
+    // Close to an end of both lines: within the setbacks and bend zones a mitred corner leaves.
+    const D = 4 * (st.T + Math.max(A.r, B.r)) + Math.max(A.ba, B.ba);
+    const nearEnd = (t: number, l: number) => t > -D && t < l + D && Math.min(Math.abs(t), Math.abs(l - t)) <= D;
+    if (!nearEnd(s, la) || !nearEnd(u, lb)) return;
+    // Each line runs from the corner into the face; the other strip must run away from it.
+    const da: V2 = Math.abs(s) < Math.abs(la - s) ? ea : [-ea[0], -ea[1]], db: V2 = Math.abs(u) < Math.abs(lb - u) ? eb : [-eb[0], -eb[1]];
+    const oa: V2 = [ea[1], -ea[0]], ob: V2 = [eb[1], -eb[0]];
+    if (oa[0] * db[0] + oa[1] * db[1] >= 0 || ob[0] * da[0] + ob[1] * da[1] >= 0) return;
+    const [a, b] = A.id < B.id ? [A, B] : [B, A];
+    out.push({ key: `${a.id}+${b.id}`, a: a.id, b: b.id, c0: p2(A.a0, s2(ea, s)), oa: a === A ? oa : ob, ob: a === A ? ob : oa, baA: a.ba, baB: b.ba, M: A.M });
+  }));
+  return out;
+}
+
+/** A corner relief's outline in flat coordinates, counter-clockwise; `w` = clearance (rectangle, circle) or tear radius. */
+export function reliefLoop(c: ReliefCorner, kind: ReliefKind, w: number): Seg[] {
+  const P = (u: number, v: number): V2 => p2(c.c0, p2(s2(c.oa, u), s2(c.ob, v)));
+  if (kind === "tear") return [{ ent: "relief", kind: "circle", c: c.c0, r: w }];
+  if (kind === "circle") return [{ ent: "relief", kind: "circle", c: P(c.baA / 2, c.baB / 2), r: Math.hypot(c.baA, c.baB) / 2 + w }];
+  let pts = [P(-w, -w), P(c.baA + w, -w), P(c.baA + w, c.baB + w), P(-w, c.baB + w)];
+  if (polyArea(pts) < 0) pts = pts.reverse();
+  return pts.map((a, i) => line(`relief${i}`, a, pts[(i + 1) % 4]));
+}
+
+/** Corner relief: the outlines to cut at the picked corners (or at all of them). */
+export function cornerRelief(st: SheetState, f: SmReliefFeature): { corners: ReliefCorner[]; loops: Seg[][] } {
+  if (st.faceted) throw new SheetError("E-SM-RELIEFLOFT", "A lofted bend has no corners to relieve.");
+  const all = reliefCorners(st);
+  if (!all.length) throw new SheetError("E-SM-NOCORNER", "The sheet has no corners where two bends meet.");
+  const corners = f.corners.length ? all.filter(c => f.corners.includes(c.key)) : all;
+  if (!corners.length) throw new SheetError("E-SM-CORNERGONE", "The picked corners are gone.");
+  const w = f.size ? f.size.v : (f.ratio ?? 0.5) * st.T;
+  if (!(w >= 0) || (f.kind === "tear" && !(w > 1e-6))) throw new SheetError("E-SM-RELIEFSIZE", "The relief size must be more than 0.");
+  return { corners, loops: corners.map(c => reliefLoop(c, f.kind, w)) };
 }

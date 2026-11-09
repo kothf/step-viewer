@@ -64,6 +64,9 @@ export interface DrawingView {
   /** Bolt circles (FR-DRW-023): holes of one size evenly spaced on a circle get a centre-line circle (or arc) and radial
    * marks instead of crosses; false draws plain crosses. Only with `marks`. */
   bolts?: boolean;
+  /** Hole rows (FR-DRW-023): 3+ holes of one size evenly spaced on a line get one centreline through them; false
+   * draws plain crosses. Only with `marks`. */
+  rows?: boolean;
   /** Crop view (FR-DRW-015): only what lies inside this rectangle (view axes, model mm: [u0, v0, u1, v1]) is drawn. */
   crop?: [number, number, number, number];
   /** Break view (FR-DRW-015): bands between `a` and `b` along the view's u (vertical break lines) or v axis

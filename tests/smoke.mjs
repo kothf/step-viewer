@@ -108,6 +108,14 @@ const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
 const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
 if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
 const inShard = k => (k - 1) % shardN + 1 === shardI;
+// A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
+// (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
+async function treeClick(pg, sel, opts) {
+  const folded = await pg.evaluate(() => !!document.querySelector("#mc-treefly") && document.querySelector("#mc-tree").hidden);
+  if (folded) await pg.click("#mc-treefly .mc-treefly-h");
+  await pg.click(sel, opts);
+  if (folded && await pg.evaluate(() => !!document.querySelector("#mc-treefly") && !document.querySelector("#mc-tree").hidden)) await pg.click("#mc-treefly .mc-treefly-h");
+}
 /**
  * Runs a part command by its label from the command bar (FR-UI-010): looks through the part's tabs and
  * their flyouts, picks the tab, then the button or the flyout entry (exact label first, else one starting with it).
@@ -1834,7 +1842,7 @@ try {
     const exv = await last();
     check(handle && dragged > 18 && dragged < 32 && near(exv.v, area * dragged, 1e-3 * exv.v) && camOk, `model 1.19: dragging the extrude arrow sets the depth (${dragged} mm, ${exv.v.toFixed(1)} mm³ = area ${area.toFixed(2)} × depth)`);
     // Select it in the tree: the arrow edits it at once (one undo step).
-    await mp.click(`#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features[1].id)}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features[1].id)}"]`);
     await mp.waitForTimeout(200);
     const t2 = await toPage([0, 0, dragged + 0.5], false), f2 = await toPage([0, 0, dragged - 8], false);
     await mp.mouse.move(t2[0], t2[1]);
@@ -1856,12 +1864,12 @@ try {
     check(rb.rb === 1 && rb.v === 0 && rb.rolled === 1 && rb2 === null, `model 1.19: the rollback bar moves up a feature and back to the end (${JSON.stringify(rb)}, ${rb2})`);
     // Rename with F2, and the context menu.
     const exId = await mp.evaluate(() => window.__sv.model.store.doc.features[1].id);
-    await mp.click(`#mc-tree .ft-row[data-id="${exId}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${exId}"]`);
     await mp.keyboard.press("F2");
     await mp.fill("#mc-tree .ft-ren", "Hex body");
     await mp.keyboard.press("Enter");
     const ren = await mp.evaluate(() => window.__sv.model.store.doc.features[1].name);
-    await mp.click(`#mc-tree .ft-row[data-id="${exId}"]`, { button: "right" });
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${exId}"]`, { button: "right" });
     const menu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
     await mp.keyboard.press("Escape");
     const menuGone = await mp.evaluate(() => document.querySelector("#mc-menu").hidden);
@@ -1870,7 +1878,7 @@ try {
     const nested = await mp.evaluate(() => { const r = [...document.querySelectorAll("#mc-tree .ft-row[data-i]")]; return r.map(x => (x.classList.contains("child") ? ">" : "") + x.textContent.replace(/[●◌✕]/g, "").trim().slice(1)).join("|"); });
     check(/Hex body\|>Sketch1/.test(nested), `model 1.19: the extrude's sketch is shown under it (${nested})`);
     // Reference plane 40 mm above Top, then a Ø10 boss on it extruded up to the hexagon's top face.
-    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:XY"]');
     await mp.click('[data-c="plane"]');
     await mp.waitForSelector('#mc-pm input[data-num="offset"]');
     await mp.fill('#mc-pm input[data-num="offset"]', "40");
@@ -1883,7 +1891,7 @@ try {
     await idle();
     const pl = await mp.evaluate(() => { const f = window.__sv.model.store.doc.features.at(-1); return { type: f.type, o: window.__sv.model.last().frames[f.id]?.o, id: f.id }; });
     check(pl.type === "plane" && near(pl.o?.[2], 40, 1e-9), `model 1.19: Plane offset 40 mm from Top (${JSON.stringify(pl)})`);
-    await mp.click(`#mc-tree .ft-row[data-id="${pl.id}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${pl.id}"]`);
     await mp.click('[data-c="sketch"]');
     await idle();
     await mp.waitForTimeout(500);
@@ -2010,7 +2018,7 @@ try {
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Revolve", d => { d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("o", 0, 0), P("q", 0, 10), { id: "ax", t: "line", a: "o", b: "q", cons: true }, P("a", 10, 0), P("b", 20, 0), P("c", 20, 10), P("d", 10, 10), { id: "l1", t: "line", a: "a", b: "b" }, { id: "l2", t: "line", a: "b", b: "c" }, { id: "l3", t: "line", a: "c", b: "d" }, { id: "l4", t: "line", a: "d", b: "a" }] }, { id: "r", type: "revolve", name: "Revolve1", sketch: "s", op: "boss", axis: "ax", angle: { v: Math.PI / 2 } }); }); });
     await idle();
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0.2, 1, 0.6), false); v.fit(false); v.camera.zoom *= 0.6; v.camera.updateProjectionMatrix(); v.invalidate(); });
-    await mp.click('#mc-tree .ft-row[data-id="r"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="r"]');
     await mp.waitForTimeout(300);
     const st = await mp.evaluate(() => { const a = window.__sv.modeller.arrow; return a?.ang ? { head: a.ang.head.position.toArray(), c: a.ang.c.toArray(), u: a.ang.u.toArray(), r: a.ang.r.toArray(), label: document.querySelector("#mc-layer .mc-handle")?.textContent } : null; });
     // Drag the grip round the axis from 90° to 180° (Rodrigues rotation of the 0° radius).
@@ -2029,7 +2037,7 @@ try {
     await mp.evaluate(() => window.__sv.modeller.editFeature("r"));
     await mp.waitForSelector('#mc-pm select[data-k="rvEnd"]');
     await mp.selectOption('#mc-pm select[data-k="rvEnd"]', "upto");
-    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
     await mp.waitForFunction(() => window.__sv.model.mode().draft?.upTo, null, { timeout: 10000 });
     await idle();
     await mp.waitForTimeout(200);
@@ -2489,6 +2497,21 @@ try {
     const pfBack = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed }));
     check(pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
       `model 1.329: Preferences set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
+    // 1.335: fly-out tree (FR-UI-003): a command panel fills the Features tab, the tree flies out over the view and still picks planes.
+    await mp.click("#t-measures");
+    await mp.evaluate(() => window.__sv.modeller.command("plane"));
+    await mp.waitForSelector("#mc-treefly #mc-tree", { state: "attached" });
+    const ftOpen = await mp.evaluate(() => { const r = document.querySelector("#mc-treefly").getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return { tab: document.querySelector("#t-features").getAttribute("aria-selected"), full: document.querySelector("#tab-features").classList.contains("pm-full"), inView: r.left >= v.left && r.top >= v.top && r.left - v.left < 40, name: document.querySelector("#mc-treefly .mc-treefly-n").textContent, folded: document.querySelector("#mc-tree").hidden }; });
+    await mp.click("#mc-treefly .mc-treefly-h");
+    await mp.click('#mc-treefly .ft-row[data-id="std:YZ"]');
+    const ftBase = await mp.evaluate(() => window.__sv.modeller.mode.draft?.base);
+    await mp.click("#mc-treefly .mc-treefly-h");
+    const ftFold = await mp.evaluate(() => ({ hidden: document.querySelector("#mc-tree").hidden, exp: document.querySelector(".mc-treefly-h").getAttribute("aria-expanded"), ls: localStorage.getItem("mc:flyTree") }));
+    await mp.click("#mc-cancel");
+    await idle();
+    const ftBack = await mp.evaluate(() => ({ fly: !!document.querySelector("#mc-treefly"), parent: document.querySelector("#mc-tree").parentElement.id, prev: document.querySelector("#mc-tree").previousElementSibling?.id, shown: !document.querySelector("#mc-tree").hidden, full: document.querySelector("#tab-features").classList.contains("pm-full") }));
+    check(ftOpen.tab === "true" && ftOpen.full && ftOpen.inView && ftOpen.name && ftOpen.folded && ftBase?.std === "YZ" && ftFold.hidden && ftFold.exp === "false" && ftFold.ls === "0" && !ftBack.fly && ftBack.parent === "tab-features" && ftBack.prev === "ft-search" && ftBack.shown && !ftBack.full,
+      `model 1.335: a command panel fills the Features tab, the tree flies out folded over the view, opens, picks a plane and folds again; Cancel puts it back (${JSON.stringify([ftOpen, ftBase, ftFold, ftBack])})`);
     await ctx.close();
   }
 
@@ -2515,8 +2538,8 @@ try {
     const refMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
     await mp.click("#mc-menu button:nth-child(2)");
     await mp.selectOption('#mc-pm select[data-k="mode"]', "planes");
-    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
-    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:XY"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
     await idle();
     await mp.click("#mc-ok");
     await idle();
@@ -2537,12 +2560,12 @@ try {
     await mp.click('#mc-tools [data-fly="plane"]');
     await mp.click("#mc-menu button:nth-child(4)");
     const ids = await mp.evaluate(() => { const fs = window.__sv.model.store.doc.features; return { pt: fs.find(f => f.type === "point").id, ax: fs.find(f => f.type === "axis").id }; });
-    await mp.click(`#mc-tree .ft-row[data-id="${ids.pt}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${ids.pt}"]`);
     await idle();
     const topZ = await world([20, 10, 20]);
     await mp.mouse.click(topZ[0], topZ[1]);
     await idle();
-    await mp.click(`#mc-tree .ft-row[data-id="${ids.ax}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${ids.ax}"]`);
     await idle();
     await mp.click("#mc-ok");
     await idle();
@@ -2669,7 +2692,7 @@ try {
     const vol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
     const lastSt = () => mp.evaluate(() => { const r = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); const s = r.statuses.find(x => x.id === f.id); return `${f.type}:${s?.code ?? (s?.ok ? "ok" : "err")}`; });
     const hole = 16 * Math.PI * 20;
-    await mp.click('#mc-tree .ft-row[data-id="c20"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="c20"]');
     await mp.click('#mc-tools [data-fly="pattern"]');
     const patMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.click("#mc-menu button:nth-child(1)");
@@ -2689,7 +2712,7 @@ try {
     // Mirror the pattern about Right (YZ): three mirrored holes land on existing ones and are skipped with a warning.
     await mp.click('#mc-tools [data-fly="pattern"]');
     await mp.click("#mc-menu button:nth-child(3)");
-    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:YZ"]');
     await idle();
     await mp.click("#mc-ok");
     await idle();
@@ -2729,7 +2752,7 @@ try {
     check(holePanel.n === "2 holes" && holePanel.d === "5" && stHole === "hole:ok" && Math.abs(vNoShell - vHole - 2 * Math.PI * 6.25 * 20) < 1 && pts.every(p => Math.abs(Math.abs(p[0]) - 30) < 1.5 && Math.abs(p[1] - 15) < 1.5), `model 1.24: two tapped M6 holes clicked on the top face (${JSON.stringify(holePanel)}, ${(vNoShell - vHole).toFixed(1)}, ${stHole}, ${JSON.stringify(pts)})`);
     // 1.25: equations: a global variable drives Extrude1's depth; changing it in the panel rebuilds the part.
     await mp.keyboard.press("Escape");
-    await mp.click('#mc-tree .ft-row[data-id="equations"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="equations"]');
     await mp.click('#mc-pm [data-a="add"]');
     await mp.fill('#mc-pm .eq-row [data-e="name"]', "Height");
     await mp.press('#mc-pm .eq-row [data-e="name"]', "Enter");
@@ -2740,7 +2763,7 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Extrude1 depth", d => { d.features.find(f => f.name === "Extrude1").depth = { v: 20, expr: "Height" }; }));
     await idle();
     const vH20 = await vol();
-    await mp.click('#mc-tree .ft-row[data-id="equations"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="equations"]');
     const eqShown = await mp.evaluate(() => ({ val: document.querySelector("#mc-pm .eq-val")?.textContent, used: document.querySelector("#mc-pm .eq-used li")?.textContent }));
     await mp.fill('#mc-pm .eq-row [data-e="expr"]', "Height0 + 1");
     await mp.press('#mc-pm .eq-row [data-e="expr"]', "Enter");
@@ -2756,7 +2779,7 @@ try {
     // 1.26: draft 5° on the front face about Top (XY): a wedge 100 · ½ · 25 · 25·tan 5° comes off.
     await mp.keyboard.press("Escape");
     await mp.click('#mc-tools [data-c="draft"]');
-    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:XY"]');
     await idle();
     const front = await world([0, -30, 12]);
     await mp.mouse.click(front[0], front[1]);
@@ -2774,7 +2797,7 @@ try {
     const fid = n => mp.evaluate(n => window.__sv.model.store.doc.features.find(f => f.name === n).id, n);
     const order = () => mp.evaluate(() => window.__sv.model.store.doc.features.map(f => f.name).join(","));
     const drId = await fid("Draft1"), exId = await fid("Extrude1");
-    await mp.click(`#mc-tree .ft-row[data-id="${drId}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${drId}"]`);
     const relMarks = await mp.evaluate(() => [...document.querySelectorAll("#mc-tree .ft-row.ft-parent .ft-name")].map(e => e.textContent).join(","));
     await mp.focus(`#mc-tree .ft-row[data-id="${drId}"]`);
     await mp.keyboard.press("Alt+ArrowUp");
@@ -2786,7 +2809,7 @@ try {
     const refused = await mp.evaluate(() => [...document.querySelectorAll(".toast")].map(e => e.textContent).join(" | "));
     check(/Draft1,Hole1$/.test(ord1) && Math.abs(vMv - vDr) < 1 && ord2 === ord1 && /Draft1 can't come before Extrude1/.test(refused) && /Extrude1/.test(relMarks), `model 1.26: reorder with Alt+↑ works; a drag above the parent is refused (${ord1}, ${Math.round(vMv)}, ${refused}, marks ${relMarks})`);
     // 1.26: configurations: a second one with Height 15; switching back restores the 25 mm part.
-    await mp.click('#mc-tree .ft-row[data-id="configs"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="configs"]');
     await mp.click('#mc-pm [data-a="add"]');
     await idle();
     await mp.evaluate(() => window.__sv.model.store.change("Height 15", d => { d.vars[0].expr = "15"; }));
@@ -2804,7 +2827,7 @@ try {
     // 1.27: DXF into a sketch on Top (a gasket: bulge corners and two holes), a mirrored third hole, extruded 10 mm down.
     const vBeforeDxf = await vol();
     await mp.click('[data-c="sketch"]');
-    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:XY"]');
     await idle();
     const [dxfChooser] = await Promise.all([mp.waitForEvent("filechooser"), mp.click('#mc-tools [data-c="skdxf"]')]);
     await dxfChooser.setFiles(resolve("tests/fixtures/dxf/gasket.dxf"));
@@ -2877,7 +2900,7 @@ try {
     // 1.29: sketch patterns on Top: a Ø3 hole at (0,18) four times round the origin, one at (−35,−20) three times 10 mm apart in X; cut through all.
     const vBeforePat = await vol();
     await mp.click('[data-c="sketch"]');
-    await mp.click('#mc-tree .ft-row[data-id="std:XY"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="std:XY"]');
     await idle();
     await mp.evaluate(() => {
       const e = window.__sv.model.editor();
@@ -2945,15 +2968,15 @@ try {
     // 1.30: tree folders (FR-HIS-009) and the freeze bar (FR-HIS-024) from the context menu.
     const cutId = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-1).id);
     const menuPick = async (id, label) => {
-      await mp.click(`#mc-tree .ft-row[data-id="${id}"] .ft-name`, { button: "right" });
+      await treeClick(mp, `#mc-tree .ft-row[data-id="${id}"] .ft-name`, { button: "right" });
       await mp.locator("#mc-menu button", { hasText: label }).first().click();
       await idle();
     };
     await menuPick(cutId, "Add to new folder");
     const fold1 = await mp.evaluate(id => ({ name: document.querySelector("#mc-tree .ft-folder .ft-name")?.textContent, inside: document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`)?.classList.contains("infolder") }), cutId);
-    await mp.click("#mc-tree .ft-folder .ft-name");
+    await treeClick(mp, "#mc-tree .ft-folder .ft-name");
     const folded = await mp.evaluate(id => ({ gone: !document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`), exp: document.querySelector("#mc-tree .ft-folder")?.getAttribute("aria-expanded") }), cutId);
-    await mp.click("#mc-tree .ft-folder .ft-name");
+    await treeClick(mp, "#mc-tree .ft-folder .ft-name");
     const vFz0 = await vol();
     await menuPick(gid, "Freeze up to here");
     const fz = await mp.evaluate(id => ({ bar: !!document.querySelector("#mc-tree .ft-freeze"), frozen: document.querySelector(`#mc-tree .ft-row[data-id="${id}"]`)?.classList.contains("frozen"), after: window.__sv.model.store.doc.freezeAfter }), gid);
@@ -3650,7 +3673,7 @@ try {
     // An absorbed sketch is hidden; Show in the tree draws it over the body.
     const skLines = () => mp.evaluate(() => window.__sv.modeller.decor.children.filter(o => o.isLineSegments2 && [0x1d4ed8, 0x8ab4ff].includes(o.material.color.getHex())).length);
     const before = await skLines();
-    await mp.click('#mc-tree .ft-row[data-id="s"]', { button: "right" });
+    await treeClick(mp, '#mc-tree .ft-row[data-id="s"]', { button: "right" });
     const skMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent).join("|"));
     await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent === "Show")?.click());
     await idle();
@@ -5169,7 +5192,7 @@ try {
     const t0 = await mp.evaluate(() => ({ folder: document.querySelector('#mc-tree .ft-row[data-id="folder:bodies"] .ft-name')?.textContent, rows: [...document.querySelectorAll("#mc-tree .ft-body .ft-name")].map(e => e.textContent), faces: window.__sv.model.last().faceNames.length }));
     // Hide the cylinder from its row: it leaves the view, the mass properties keep it.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
-    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bhide"]');
     await settle();
     const hid = await mp.evaluate(() => ({ faces: window.__sv.model.last().faceNames, v: window.__sv.model.last().props.volume, cls: document.querySelector('#mc-tree .ft-row[data-id="body:e"]').className }));
     // Colour the box, rename it by double-click.
@@ -5184,7 +5207,7 @@ try {
     const nm = await mp.evaluate(() => [window.__sv.model.store.doc.bodies?.x?.name, document.querySelector('#mc-tree .ft-row[data-id="body:x"] .ft-name')?.textContent]);
     // Delete the cylinder: a Body-Delete/Keep feature, one body left.
     await mp.hover('#mc-tree .ft-row[data-id="body:e"]');
-    await mp.click('#mc-tree .ft-row[data-id="body:e"] [data-a="bdel"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="body:e"] [data-a="bdel"]');
     await settle();
     const del = await mp.evaluate(() => ({ n: window.__sv.model.last().bodies.length, f: window.__sv.model.store.doc.features.map(f => f.name).join(","), bad: window.__sv.model.last().statuses.filter(s => !s.ok).length }));
     check(t0.folder === "Solid Bodies (2)" && t0.rows.join() === "Extrude1,Extrude2" && t0.faces === 9 && hid.faces.length === 6 && !hid.faces.some(n => n.startsWith("e:")) && Math.abs(hid.v - (8000 + Math.PI * 250)) < 0.1 && / sup/.test(hid.cls)
@@ -6555,7 +6578,7 @@ try {
     await mp.waitForTimeout(150);
     await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
     // Return with a feature still selected (exam bug 40: its drag-arrow hook threw every frame and froze the assembly view).
-    await mp.click(`#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude").id)}"]`);
+    await treeClick(mp, `#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude").id)}"]`);
     const errs40 = errors.length;
     await mp.click("#mc-ret button");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
@@ -8781,7 +8804,7 @@ try {
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
     check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
-    await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
+    await treeClick(mp, '#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);
     const ct = await mp.evaluate(() => {
       const hl = window.__sv.modeller.decor.children.filter(o => o.isMesh && o.material?.opacity === 0.45);
@@ -9404,6 +9427,29 @@ try {
     check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
       && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
       `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
+    // Corner Relief: one flange feature on the front and right edges (one mitred corner); the panel lists it, a click on the
+    // plate near that corner picks it, Circular, ✓: material comes off at the corner.
+    await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "cr", type: "smflange", name: "Edge-Flange9", edges: ["l1", "l2"].map(e => ({ faces: [`${b.id}:p0:top`, `${b.id}:p0:${e}`] })), length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const crv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Corner Relief");
+    const cr0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, all: document.querySelector("#mc-pm [data-sm-corners]")?.textContent, rows: document.querySelectorAll('#mc-pm input[data-sm^="rc:"]').length }));
+    const [crx, cry] = await scr([92, 8, T]);
+    await mp.mouse.click(crx, cry);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "circle");
+    await settle();
+    const cr1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { corners: d?.corners, kind: d?.kind }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const cr2 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(cr0.title === "Corner Relief" && cr0.all === "All corners (1)" && cr0.rows === 1 && cr1.corners?.length === 1 && /^cr:b0\+cr:b1$/.test(cr1.corners[0]) && cr1.kind === "circle"
+      && !cr2.bad && cr2.v < crv0 - 10 * T,
+      `sheet metal: Corner Relief lists the two-bend corner, picks it on a click and cuts a circular relief (${JSON.stringify({ cr0, cr1, cr2, crv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -10124,6 +10170,41 @@ try {
     const onR = am.arcs.length === 1 && am.arcs[0].every(([x, y]) => Math.abs(Math.hypot(x, y + 10) - 25) < 0.05);
     const radial = am.lines.length === 2 && am.lines.every(([[x0, y0], [x1, y1]]) => Math.abs(Math.hypot(x1 - x0, y1 - y0) - 12) < 0.05 && Math.abs(Math.hypot((x0 + x1) / 2, (y0 + y1) / 2 + 10) - 25) < 0.05);
     check(onR && radial, `drawing: arc slot centre-line arc and radial end lines, no crosses (${JSON.stringify(am).slice(0, 400)})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: hole row centreline (FR-DRW-023) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // Four Ø8 holes 20 mm apart on y = 0 through a 100 × 60 plate.
+    const part = { schema: 1, kind: "part", id: "d_drwrow", name: "HoleRow", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        ...[-30, -10, 10, 30].flatMap((x, i) => [P(`h${i}`, x, 0), { id: `c${i}`, t: "circle", c: `h${i}`, r: 4 }])] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "HoleRow.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre lines in model mm about the plate centre, inside the plate.
+    const rowLines = () => dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => q.every(x => Math.abs(x) < 45));
+    });
+    const rl = await rowLines();
+    const long = rl.filter(q => Math.abs(q[1]) < 0.01 && Math.abs(q[3]) < 0.01).map(q => Math.abs(q[2] - q[0]));
+    const across = rl.filter(q => Math.abs(q[0] - q[2]) < 0.01 && Math.abs(Math.abs(q[3] - q[1]) - 12) < 0.05);
+    check(long.length === 1 && Math.abs(long[0] - 72) < 0.05 && across.length === 4 && rl.length === 5, `drawing: hole row gets one centreline and a line across each hole (${JSON.stringify(rl)})`);
     await ctx.close();
   }
 

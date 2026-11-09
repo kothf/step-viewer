@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
+import type { SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import { flatLoops, flatSize, bendAllowance, reliefCorners } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
@@ -618,4 +618,46 @@ test("sheet metal: unfold, cut across the bend, fold back (FR-FT-120)", async ()
   close(r.props.volume, fv, 1e-4);
   // (The box of the wrapped faces' B-spline edges is a little loose.)
   close(r.size[2], 30, 1e-3);
+});
+
+test("sheet metal: corner relief at two-bend corners (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const edges = (ids: string[]) => ids.map(e => ({ faces: ["b:p0:top", `b:p0:${e}`] as [string, string] }));
+  const fl = (ids: string[]): SmFlangeFeature => ({ id: "f", type: "smflange", name: "Edge-Flange1", edges: edges(ids), length: { v: 30 }, angle: { v: Math.PI / 2 } });
+  const rel = (over: Partial<SmReliefFeature> = {}): SmReliefFeature => ({ id: "r", type: "smrelief", name: "Corner-Relief1", corners: [], kind: "rect", ...over });
+  // Front (y = 0) and right (x = 100) flanges: one corner, where the start lines (4 inside the edges) cross.
+  const two = [s, base(), fl(["sl1", "sl2"])];
+  const r0 = run(doc(two));
+  const cs = reliefCorners(r0.sheet!);
+  assert.equal(cs.length, 1);
+  assert.equal(cs[0].key, "f:b0+f:b1");
+  close(cs[0].c0[0], 96, 1e-9); close(cs[0].c0[1], 4, 1e-9);
+  assert.equal(reliefCorners(run(doc([s, base(), fl(["sl1", "sl2", "sl3", "sl4"])])).sheet!).length, 4);
+  const inside = (r: { body: { shape: unknown } | null }, p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inside(r0, [95.5, 4.5, 1]));
+  const flat0 = run(doc([...two, flat])).props.volume;
+  for (const kind of ["rect", "circle", "tear"] as const) {
+    const r = run(doc([...two, rel({ kind })]));
+    assert.ok(r.props.volume < r0.props.volume - 1, `${kind} takes material away`);
+    assert.equal(inside(r, [95.5, 4.5, 1]), false, `${kind}: the face corner is cut`);
+    assert.ok(inside(r, [94, 6, 1]), `${kind}: the relief stays at the corner`);
+    const f = run(doc([...two, rel({ kind }), flat]));
+    // The flat pattern loses about as much (the two bends overlap a little at the folded corner).
+    const lost = flat0 - f.props.volume;
+    assert.ok(lost > 1);
+    close(lost, r0.props.volume - r.props.volume, 0.03);
+  }
+  // A bigger clearance takes more; a picked corner only that one.
+  const v1 = run(doc([...two, rel()])).props.volume, v3 = run(doc([...two, rel({ size: { v: 3 } })])).props.volume;
+  assert.ok(v3 < v1);
+  const four = [s, base(), fl(["sl1", "sl2", "sl3", "sl4"])];
+  const all = run(doc([...four, rel()])).props.volume, one = run(doc([...four, rel({ corners: ["f:b0+f:b1"] })])).props.volume;
+  close(run(doc(four)).props.volume - one, (run(doc(four)).props.volume - all) / 4, 1e-2);
+  // Errors: no corners; corners gone.
+  const bad = m.evaluate(doc([s, base(), fl(["sl1"]), rel()]));
+  assert.equal(bad.statuses.find(x => x.id === "r")?.code, "E-SM-NOCORNER");
+  const gone = m.evaluate(doc([...two, rel({ corners: ["x+y"] })]));
+  assert.equal(gone.statuses.find(x => x.id === "r")?.code, "E-SM-CORNERGONE");
 });
