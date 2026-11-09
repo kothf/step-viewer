@@ -11,6 +11,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Unequal leg fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' **Equal leg lengths** box: untick it to give the bead a **Leg on set 1** and a **Leg on set 2** of their own, for a fillet weld that runs further up a tube than along the plate, say. The weld symbol shows both legs (◺ z6×8), and the cut list groups such welds by both legs.
 
+## [1.312.0] - 2026-11-09
+
+### Added
+
+- Motion studies: a **Data points** motor chooses how its rows are joined, like SolidWorks: **Linear** (as before), **Cubic spline** (a smooth curve through every row) or **Akima** (smooth too, but it keeps flat runs flat next to a step instead of overshooting) (FR-FT-122).
+
+## [1.311.0] - 2026-11-09
+
+### Fixed
+
+- Return to assembly after Open part froze the 3D view when a part feature was still selected: the part's drag-arrow hook ran on every frame without its document and threw. A failing frame hook can no longer stop the view from drawing.
+- Centrepoint arc slot: an end click on an existing sketch point now uses that point (it made a new point 0.0004 mm away with no relation).
+- Esc in a sketch with nothing left to clear no longer offers to discard a changed sketch (a stray Esc then Enter lost the work); it says how to keep or discard the changes. An unchanged sketch still closes on Esc.
+- The sketch origin can be selected with a click (for Midpoint, Coincident or a dimension to it); a drag from it still box-selects.
+
+## [1.310.0] - 2026-11-09
+
+### Added
+
+- **Sketch toggles on the quick access bar (FR-UI-055)**: while sketching, the quick access bar has Grid, Snap to grid and Inferences (automatic relations) buttons next to Quick snaps, so they can be switched without opening the sketch panel. They stay in step with the panel's check boxes and are remembered; turning Snap to grid on also shows the grid.
+
 ## [1.309.0] - 2026-11-09
 
 ### Added
@@ -1814,7 +1835,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.315.0...HEAD
-[1.315.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.315.0
+[1.315.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.315.0
+[1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
+[1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
+[1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
 [1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0

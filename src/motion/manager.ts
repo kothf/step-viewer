@@ -14,7 +14,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, parsePoints, playTime, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, parsePoints, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -38,6 +38,7 @@ type KeyRef = { track: string; t: number };
 const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
+const FITS: [PointsFit, string][] = [["linear", "Linear"], ["cubic", "Cubic spline"], ["akima", "Akima"]];
 const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["expr", "Expression"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
@@ -1124,6 +1125,7 @@ export class MotionManager {
             ? field(rot ? t("Angle") : t("Distance"), "dist", fmt(rot ? (tr.dist ?? 0) / DEG : tr.dist ?? 0), rot ? "°" : "mm")
             : tr.profile === "points"
               ? `<label class="mo-f mo-pts"><span>${esc(t("Data points"))}</span><textarea data-p="pts" rows="4" spellcheck="false" aria-label="${esc(t("Time (s) and value per line"))}" title="${esc(t("One row per line: time after the motor start (s), then the value ({u})", { u: rot ? "°" : "mm" }))}">${esc((tr.pts ?? []).map(([a, b]) => `${fmt(a)}, ${fmt(rot ? b / DEG : b)}`).join("\n"))}</textarea></label>`
+                + `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="fit">${FITS.map(([k, l]) => `<option value="${k}"${(tr.fit ?? "linear") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
               : tr.profile === "expr"
                 ? `<label class="mo-f"><span>${esc(t("Expression"))}</span><input type="text" data-p="expr" class="mo-expr" spellcheck="false" translate="no" value="${esc(tr.expr ?? "")}" title="${esc(t("Displacement ({u}) as a formula in t, the seconds after the motor start; sin and cos take radians", { u: rot ? "°" : "mm" }))}" /><span class="muted">${esc(rot ? "°" : "mm")}</span></label>`
                 : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
@@ -1449,7 +1451,7 @@ export class MotionManager {
       });
       this.render(); this.showAt(this.time); return;
     }
-    const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
+    const numeric = !["interp", "fit", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
     this.edit(st => {
@@ -1464,6 +1466,7 @@ export class MotionManager {
           if (tr.profile === "expr" && !tr.expr) tr.expr = rot ? "90*sin(2*pi*t)" : "10*sin(2*pi*t)";
           if (tr.profile === "points" && !tr.pts) tr.pts = [[0, 0], [Math.max(0.1, (tr.end - tr.start) / 2), rot ? Math.PI : 10], [Math.max(0.2, tr.end - tr.start), 0]];
         }
+        else if (p === "fit") { if (raw === "cubic" || raw === "akima") tr.fit = raw; else delete tr.fit; }
         else if (p === "dist") tr.dist = rot ? v * DEG : v;
         else if (p === "flip") tr.flip = (el as HTMLInputElement).checked || undefined;
         else if (p === "speed") tr.speed = v;
