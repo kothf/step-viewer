@@ -255,3 +255,15 @@ export function plotSvg(values: number[], fps: number, time: number, unit: strin
     + `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke" />`
     + `<line x1="${hx}" x2="${hx}" y1="${T}" y2="${H - B}" class="mo-ph" /></svg>`;
 }
+
+/** A plot made by `plotSvg` as a stand-alone SVG file: own size, white background, inline styles, no playhead, title on top. */
+export function plotFile(svg: string, title: string): string {
+  const m = /^<svg class="mo-plot" viewBox="0 0 (\d+) (\d+)"[^>]*>([\s\S]*)<\/svg>$/.exec(svg.trim());
+  if (!m) return svg;
+  const w = Number(m[1]), h = Number(m[2]), head = 12;
+  const body = m[3].replace(/<line [^>]*class="mo-ph"[^>]*\/>/g, "");
+  const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${w * 3}" height="${(h + head) * 3}" viewBox="0 ${-head} ${w} ${h + head}">`
+    + `<style>.mo-pg{stroke:#c8ccd2;stroke-width:0.4}.mo-pt{fill:#555;font:7px sans-serif}.mo-tt{fill:#222;font:bold 8px sans-serif}</style>`
+    + `<rect x="0" y="${-head}" width="${w}" height="${h + head}" fill="#fff"/><text x="2" y="-3" class="mo-tt">${esc(title)}</text>${body}</svg>\n`;
+}

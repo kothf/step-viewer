@@ -416,6 +416,7 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     plane = { p: fr.o, n: fr.n };
   }
   const bound = list[bi];
+  const gap = Math.max(0, f.gap?.v ?? 0);
   for (const ref of f.bodies) {
     const mo = memberOfFace(ref.name, doc);
     if (!mo) throw new FeatureError("E-WLD-TRIM", "Only structural member bodies can be trimmed: pick a face of a member.");
@@ -449,11 +450,24 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     }
     if (plane) {
       const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
-      body = bool(h, "cut", body, halfBox(h, plane.p, away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
-    } else body = bool(h, "cut", body, { ...bound, names: bound.names.map(() => nm) }, f.id);
+      body = bool(h, "cut", body, halfBox(h, sub(plane.p, mul(away, gap)), away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+    } else {
+      // A weld gap against a body: the boundary moved back along the member by the gap.
+      const tool = gap > 0 ? shifted(h, bound, mul(out, -gap)) : bound;
+      body = bool(h, "cut", body, { ...tool, names: bound.names.map(() => nm) }, f.id);
+    }
     list[i] = unify(h, pieceNear(h, body, mid));
   }
   return h.compoundOf(list);
+}
+
+/** A body moved by `d` (Moved keeps its faces in order, so the names still line up). */
+function shifted(h: WeldHost, b: Named, d: V3): Named {
+  const oc = h.oc;
+  const trsf = new oc.gp_Trsf_1();
+  trsf.SetTranslation_1(new oc.gp_Vec_4(d[0], d[1], d[2]));
+  const loc = new oc.TopLoc_Location_2(trsf);
+  return { shape: b.shape.Moved(loc, false), faces: b.faces.map(f => oc.TopoDS.Face_1(f.Moved(loc, false))), names: b.names };
 }
 
 /**
@@ -478,6 +492,7 @@ function endMitre(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named, 
   const r = sub(A.a, B.a), b = dot(A.w, B.w), d = dot(A.w, r), e2 = dot(B.w, r), den = 1 - b * b;
   if (den < 1e-9) throw bad("The members are parallel: an end miter needs members at an angle.");
   const butt = f.kind === "butt1" ? 0 : f.kind === "butt2" ? 1 : -1;
+  const gap = Math.max(0, f.gap?.v ?? 0);
   const ta = (b * e2 - d) / den, tb = (e2 - b * d) / den;
   const C = mul(add(add(A.a, mul(A.w, ta)), add(B.a, mul(B.w, tb))), 0.5);
   // Each member's end nearer C, and the direction out of that end.
@@ -495,13 +510,13 @@ function endMitre(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev: Named, 
     let body = list[i];
     const reach = Math.max(0, dot(sub(C, P), out)) + 4 * R;
     if (!f.noExtend) body = bool(h, "fuse", body, prism(h, pl, sub(P, mul(out, 1e-3)), add(P, mul(out, reach)), base), f.id);
-    let at = C, away = dot(out, n) > 0 ? n : mul(n, -1);
+    let away = dot(out, n) > 0 ? n : mul(n, -1), at = sub(C, mul(away, gap / 2));
     if (butt >= 0) {
       // Butt: one member stops at the other's near side (cut on that side's plane), the other runs on
       // to the first one's far side and is cut square.
       const o = ends[1 - k], q = unit(sub(out, mul(o.s.w, dot(out, o.s.w))));
       const ext = outline(o.pl.shape.outer, 8).map(p => { const v = o.pl.p2(p); return dot(add(mul(o.pl.u, v[0]), mul(o.pl.v, v[1])), q); });
-      if (k === butt) { at = add(C, mul(q, Math.min(...ext))); away = q; }
+      if (k === butt) { at = add(C, mul(q, Math.min(...ext) - gap)); away = q; }
       else { at = add(C, mul(out, Math.max(...ext) / Math.max(1e-6, dot(out, q)))); away = out; }
     }
     body = bool(h, "cut", body, halfBox(h, at, away, 4 * (s.L + reach + R * 10), nm), f.id);

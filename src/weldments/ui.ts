@@ -210,6 +210,7 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + group(t("Trimming boundary"), (f.kind === "face" ? sel("wplane", t("Plane"), planeOpts(ctx), planeKey(f)) : "")
           + (f.kind === "face" && f.plane ? "" : box("wbound", f.kind === "face" ? t("Face") : pair(f) ? t("Member") : t("Body"), f.boundary ? t("Picked") : t("None")))
           + chk("allowExt", !f.noExtend, t("Allow extension"))
+          + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
           + help(f.kind === "face" ? t("Click a flat face, or choose a plane: members are cut at that plane, or lengthened up to it.") : f.kind === "mitre" ? t("Click a face of the other member: both are lengthened to where their axes meet and cut on the plane halving the corner.") : f.kind === "butt1" ? t("Click a face of the other member: the first member stops at its side, the other runs on to the first one's far side.") : f.kind === "butt2" ? t("Click a face of the other member: it stops at the first member's side, the first runs on to its far side.") : t("Click any face of the body the members stop at."))),
     };
   }
@@ -304,6 +305,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wkind") return () => { f.kind = val as TrimExtendFeature["kind"]; delete f.boundary; delete f.plane; if (pair(f)) f.bodies = f.bodies.slice(0, 1); };
     if (k === "wplane") return () => { const v = String(val); if (!val) delete f.plane; else { f.plane = v.startsWith("std:") ? { std: v.slice(4) as "XY" | "XZ" | "YZ" } : { plane: v.slice(6) }; delete f.boundary; } };
     if (k === "allowExt") return () => { if (val) delete f.noExtend; else f.noExtend = true; };
+    if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
   }
   if (f.type === "endcap") {
     if (k === "wInset") return () => { f.inset = { v: val ? 2 : 0 }; };
