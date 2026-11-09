@@ -13,7 +13,7 @@ import type { V2 } from "../model/types";
 /** A rounded polygon, a circle, or (custom profiles from a sketch) lines and arcs as they are. */
 export type Loop = { pts: V2[]; r: number[] } | { circle: number; c: V2 } | { segs: LoopSeg[] };
 /** `origin`: where the sketch origin of a custom profile lies (the default pierce point). */
-export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number; origin?: V2 }
+export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number; origin?: V2; /** A profile sketch's points by id, in profile coordinates. */ points?: Record<string, V2> }
 
 export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "uangle" | "upn" | "upe" | "ipe" | "ipn" | "hea" | "heb" | "hem" | "flat" | "sqbar" | "bar";
 

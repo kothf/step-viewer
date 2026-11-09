@@ -53,5 +53,8 @@ export function sketchShape(sk: SketchFeature): ProfileShape | { error: string }
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const c: V2 = [(x0 + x1) / 2, (y0 + y1) / 2];
   const loop = (segs: LoopSeg[]): Loop => ({ segs: shift(segs, c) });
-  return { outer: loop(outer), holes: holes.map(loop), w: x1 - x0, h: y1 - y0, origin: [-c[0], -c[1]] };
+  // Every sketch point, for Locate profile (a point id as the pierce point).
+  const points: Record<string, V2> = {};
+  for (const e of sk.ents) if (e.t === "point") points[e.id] = [e.x - c[0], e.y - c[1]];
+  return { outer: loop(outer), holes: holes.map(loop), w: x1 - x0, h: y1 - y0, origin: [-c[0], -c[1]], points };
 }

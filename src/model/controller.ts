@@ -58,7 +58,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
@@ -3406,6 +3406,7 @@ export class ModelController {
     this.drawHoles();
     this.drawThreads();
     this.drawWeldSymbols();
+    this.drawCornerCallouts();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
       // The picked edges are drawn by drawBoxPicks in the Edges box's colour (FR-SEL-011).
@@ -3584,6 +3585,67 @@ export class ModelController {
       label.title = t("Weld symbol: click to edit the bead");
       label.dataset.at = JSON.stringify(fi.center);
       label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
+  /**
+   * Corner callouts of an open structural member (FR-FT-121, SolidWorks' corner spheres): the treatment at
+   * each corner where its segments meet; a click offers the treatments for that corner alone.
+   */
+  /** The Locate profile focus the view was last zoomed for (zoom once per start). */
+  private locateFit: string | null = null;
+  private drawCornerCallouts() {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.draft.type !== "member") { this.locateFit = null; return; }
+    const f = m.draft, ctx = this.weldCtx(m.index);
+    // Locate profile: the profile's points at the start of the group's first segment; a click puts that point on the path.
+    const fo = m.focus as string | undefined;
+    if (!fo?.startsWith("wlocate")) this.locateFit = null;
+    if (fo?.startsWith("wlocate")) {
+      const gi = fo === "wlocate" ? 0 : +fo.slice(8);
+      const spots = locateSpots(ctx, f, gi);
+      // Zoom to the profile once when locating starts, so its points are far enough apart to click.
+      if (this.locateFit !== fo && spots.length) {
+        this.locateFit = fo;
+        const b = new THREE.Box3();
+        for (const p of spots) b.expandByPoint(new THREE.Vector3(...p.at));
+        b.expandByScalar(Math.max(1, b.getSize(new THREE.Vector3()).length() / 2));
+        this.host.viewer.fit(true, b);
+      }
+      for (const p of spots) {
+        const dot = document.createElement("button");
+        dot.className = `mc-handle wld-pierce${p.cur ? " cur" : ""}`;
+        dot.dataset.pierce = p.key;
+        dot.dataset.at = JSON.stringify(p.at);
+        dot.title = p.label;
+        dot.setAttribute("aria-label", t("Locate profile: {point}", { point: p.label }));
+        dot.addEventListener("click", e => {
+          e.stopPropagation();
+          const fn = weldChange(f, gi ? `wganchor:${gi - 1}` : "anchor", p.key, ctx);
+          if (fn) { fn(); m.focus = undefined; this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        });
+        $("#mc-layer").appendChild(dot);
+      }
+    }
+    for (const c of cornerSpots(ctx, f)) {
+      const label = document.createElement("button");
+      label.className = `mc-handle mc-callout wld-corner${c.own ? " own" : ""}`;
+      label.dataset.corner = c.key;
+      label.dataset.at = JSON.stringify(c.at);
+      label.textContent = c.text;
+      label.title = t("Corner {corner}: click to change its treatment", { corner: c.label });
+      label.setAttribute("aria-haspopup", "menu");
+      label.addEventListener("pointerdown", e => e.stopPropagation());
+      label.addEventListener("click", e => {
+        e.stopPropagation();
+        const r = label.getBoundingClientRect();
+        this.showMenu(c.opts.map(([v, l]): [string, () => void] => [(v === c.cur ? "✓ " : "") + l, () => {
+          const fn = weldChange(f, `wcorner:${c.key}`, v, ctx);
+          if (fn) { fn(); this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        }]), r.left, r.bottom + 4, () => label.focus());
+      });
       $("#mc-layer").appendChild(label);
     }
     this.placeCallouts();
@@ -4276,6 +4338,11 @@ export class ModelController {
   private placeCallouts() {
     const v = this.host.viewer;
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-fdim").forEach(el => {
+      const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
+      el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
+    });
+    $("#mc-layer").querySelectorAll<HTMLElement>(".wld-pierce").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;

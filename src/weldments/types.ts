@@ -3,6 +3,12 @@
 import type { FaceRef, Num, PlaneRef } from "../model/types";
 import type { Anchor, ProfileType } from "./profiles";
 
+/**
+ * Where a member's profile sits on its path: a library anchor (box corners, edge middles, centre), "o" the
+ * profile sketch's origin, or `p:<point id>` any point of the profile sketch (SolidWorks' Locate profile).
+ */
+export type Pierce = Anchor | "o" | `p:${string}`;
+
 /** A path segment: a line of a 2D sketch or of a 3D sketch, by the sketch's id and the line's id. */
 export interface WeldSegRef { sketch: string; ent: string }
 
@@ -30,7 +36,7 @@ export interface MemberFeature {
   /** Cut list description in place of the profile's name. */
   desc?: string;
   /** Where the profile sits on the path; absent: its centre (a sketch profile: the sketch origin). */
-  anchor?: Anchor;
+  anchor?: Pierce;
   /** Rotation of the profile about the path. */
   angle?: Num;
   /** Mirror the profile left to right. */
@@ -57,7 +63,7 @@ export interface MemberFeature {
 /** A group of a Structural Member's segments placed with its own profile settings. */
 export interface MemberGroup {
   ents: string[];
-  anchor?: Anchor;
+  anchor?: Pierce;
   angle?: Num;
   mirror?: boolean;
 }
