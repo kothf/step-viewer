@@ -232,8 +232,28 @@ export interface SmLoftFeature {
   facets?: number;
 }
 
-export type SheetFeature = SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/** Corner relief kinds: a rectangle over both bends' corner zone, a circle centred on the bend centre lines, or a small
+ * round tear at the inside corner. */
+export type ReliefKind = "rect" | "circle" | "tear";
+
+/**
+ * Corner relief: cuts a relief where two bends meet at a corner of one face (SolidWorks' Corner Relief, two-bend
+ * corners). It is cut from the panels and bends in the flat pattern, so the bends lose their corner material and the
+ * flat pattern shows the relief.
+ */
+export interface SmReliefFeature {
+  id: string; type: "smrelief"; name: string; suppressed?: boolean;
+  /** Corners by key (`<bend>+<bend>`, the two bend ids sorted); empty = every corner of the sheet. */
+  corners: string[];
+  kind: ReliefKind;
+  /** Clearance past the bend zone (rectangle, circle) or tear radius; absent = `ratio` × thickness. */
+  size?: Num;
+  /** Relief ratio (default 0.5) used when `size` is absent. */
+  ratio?: number;
+}
+
+export type SheetFeature = SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smrelief", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
