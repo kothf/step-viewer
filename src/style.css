@@ -647,6 +647,10 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-sbar { position: fixed; z-index: 70; display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
 .mc-sbar button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); cursor: pointer; }
 .mc-sbar button:hover, .mc-sbar button:focus-visible { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); outline: none; }
+.drag-val { cursor: grab; }
+.drag-val:active { cursor: grabbing; }
+body.dragging-val input:is([type=text], [type=number]):not([disabled]):not([readonly]) { outline: 1px dashed var(--accent); outline-offset: 1px; }
+input.drop-val { outline: 2px solid var(--accent) !important; background: var(--accent-soft) !important; }
 /* Mouse gestures (FR-UI-024): the radial guide around the right-button press. */
 .mc-gesture { position: fixed; z-index: 75; width: 0; height: 0; pointer-events: none; }
 .mc-gesture-c { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: var(--panel); }
@@ -717,6 +721,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft { overflow: auto; flex: 1; padding: 6px 4px 12px; }
 .ft-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; cursor: pointer; user-select: none; min-height: 26px; }
 .ft-row:hover { background: var(--panel-2); }
+.ft-row.hover:not(.sel) { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
 .ft-row.sel { background: var(--accent-soft); color: var(--accent-text); }
 .ft-row.editing { outline: 1px dashed var(--accent); }
 .ft-row.sup .ft-name, .ft-row.rolled .ft-name { color: var(--muted); text-decoration: line-through; }

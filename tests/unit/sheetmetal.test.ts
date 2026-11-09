@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -524,4 +524,44 @@ test("sheet metal: vent cuts the boundary less ribs and spars (FR-FT-120)", asyn
   const sq = rect("v", 20, 10, 80, 40);
   sq.ents.push(...rect("q", 30, 20, 35, 25).ents);
   assert.equal(m.evaluate(doc([s, base(), sq, vent()])).statuses.find(x => x.id === "x")!.ok, false);
+});
+
+test("sheet metal: forming tools keep the thickness and stay out of the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const form = (over: Partial<SmFormFeature>): SmFormFeature => ({ id: "x", type: "smform", name: "Form-Tool1", face: { name: "b:p0:top" }, tool: "dimple", pts: [[25, 25]], size: { v: 20 }, width: { v: 10 }, height: { v: 6 }, ...over });
+  const plate = 100 * 50 * 2;
+  // Dimple Ø20 × 6, square walls: a cup of wall 2 (ring 10..8 × 4 high, cap 2) less the Ø16 hole through the sheet.
+  const d = run(doc([s, base(), form({})]));
+  close(d.props.volume, plate + 216 * Math.PI, 1e-5);
+  assert.equal(d.props.bodies, 1);
+  // Flattened, the form is left out.
+  close(run(doc([s, base(), form({}), flat])).props.volume, plate, 1e-6);
+  // Out of the bottom face: the same volume, the other way.
+  const dn = run(doc([s, base(), form({ face: { name: "b:p0:bot" } })]));
+  close(dn.props.volume, plate + 216 * Math.PI, 1e-5);
+  assert.ok(dn.min[2] < -5 && dn.min[2] + dn.size[2] <= 2 + 1e-3);
+  // Rib 30 × 10 × 4: 4 × (outer obround − inner obround 26 × 6).
+  close(run(doc([s, base(), form({ tool: "rib", pts: [[60, 25]], size: { v: 30 }, height: { v: 4 } })])).props.volume, plate + 4 * (80 + 16 * Math.PI), 1e-5);
+  // Extruded hole Ø10 × 4: collar 7..5, hole through; the flat pattern has the Ø6 pre-pierce hole.
+  const xh = form({ tool: "xhole", pts: [[85, 25]], size: { v: 10 }, height: { v: 4 } });
+  close(run(doc([s, base(), xh])).props.volume, plate + 46 * Math.PI, 1e-5);
+  const xf = run(doc([s, base(), xh, flat]));
+  close(xf.props.volume, plate - 18 * Math.PI, 1e-6);
+  const ents = flatDrawing(xf.sheet!).entities;
+  assert.ok(ents.some(e => e.layer === "FORM_TOOL" && e.kind === "circle" && Math.abs(e.r - 7) < 1e-9));
+  assert.ok(ents.some(e => e.layer === "OUTLINE" && e.kind === "circle" && Math.abs(e.r - 3) < 1e-6));
+  // Louver and a drafted dimple build; the flat pattern is the plain plate.
+  const lv = form({ tool: "louver", pts: [[50, 25]], size: { v: 30 }, width: { v: 12 }, height: { v: 5 } });
+  assert.ok(run(doc([s, base(), lv])).props.volume > plate);
+  close(run(doc([s, base(), lv, flat])).props.volume, plate, 1e-6);
+  const dd = form({ draft: { v: Math.PI / 12 }, pts: [[25, 25], [75, 25]] });
+  assert.ok(run(doc([s, base(), dd])).props.volume > plate);
+  close(run(doc([s, base(), dd, flat])).props.volume, plate, 1e-6);
+  // Off the face, too low, and no face fail.
+  const bad = (f: SmFormFeature) => assert.equal(m!.evaluate(doc([s, base(), f])).statuses.find(x => x.id === "x")!.ok, false);
+  bad(form({ pts: [[5, 25]] }));
+  bad(form({ height: { v: 1.5 } }));
+  bad(form({ face: { name: "b:p0:sl1" } }));
 });

@@ -1008,7 +1008,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 ### 13.6 Tree UI
 
 - **FR-UI-060** (P1, M) Tree rows: expand arrow, icon, name, state badge; keyboard navigation (arrows, Home/End, F2 rename, Del, Enter edit); drag to reorder (P2) with insertion line and refusal tooltip; rollback bar as a thick draggable line.
-- **FR-UI-061** (P1, M) Hovering a tree row highlights the feature in the view; hovering geometry highlights its tree row.
+- **FR-UI-061** (P1, M) Hovering a tree row highlights the feature in the view; hovering geometry highlights its tree row. *Done in 1.324.0: while no command is open, a hovered row lights its feature's (or body's) faces see-through blue, and a hovered face marks the row of the feature that made it.*
 - **FR-UI-062** (P1, M) Errors bubble up: a parent folder/feature shows the worst child state.
 - **FR-UI-063** (P1, S) Tree display options: show feature names / descriptions, flat vs nested sketches, dynamic reference visualisation (arrows to parents on hover, P2).
 
@@ -1040,7 +1040,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 ### 13.11 Measurement and evaluation integration
 
 - **FR-MEA-001** (P1, M) All existing measure tools (smart measure, distances, radius, angle, pitch, coordinates, bounding box) work on modelled parts and assemblies under the Evaluate tab and with the existing shortcuts when no sketch is active.
-- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box.
+- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box. *Done in 1.319.0: the result card's values (lengths, diameters, radii, angles) drag onto any text or number box; the box gets the number in its own unit, or number and unit as an expression, and applies as if typed. The sketch Modify box closes when focus leaves it, so a value goes there by click to copy and paste.*
 - **FR-MEA-003** (P1, M) Measurements on a model reference persistent names, so they survive rebuilds and update their values; a measurement whose entity disappeared is flagged.
 - **FR-MEA-004** (P1, M) The section tool (up to 3 planes, caps, hatching, drag arrows) works during feature editing and in the sketcher (section at sketch plane).
 - **FR-MEA-005** (P5, S) Analyses: draft analysis (colour by draft angle against a pull direction), zebra stripes, curvature map, thickness analysis (ray-based), undercut detection.
@@ -1613,7 +1613,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | New |
 | Quick snaps | FR-SK-046 | Yes (1.290.0) | Done |
 | Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | New |
-| Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | Selecting a row highlights its faces (FR-HIS-003); no hover link | Weaker |
+| Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | 1.324.0: both ways | Done |
 | Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
 | Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
 | Shift+C collapse, eye buttons in the tree | FR-HIS-013 | Folders collapse; sketch Show/Hide in the menu | New |
@@ -1640,12 +1640,12 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
-| FR-UI-043 | Panels remember the last options per feature type | Only hole favourites | Not built |
-| FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | Selecting a row highlights its faces; no hover link | Partly |
+| FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
+| FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |
 | FR-UI-080 | Preferences dialog with a Modelling page | Settings live in the Display menu; no Modelling page | Not built |
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
-| FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
+| FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
 | FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
 **Sketcher (section 8)**
@@ -1656,7 +1656,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.137.0 (sans/serif/mono, bold, italic, angle); along a curve in 1.142.0 | Done |
 | FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
-| FR-UI-052 | Typing a number while drawing opens the size box | No | Not built |
+| FR-UI-052 | Typing a number while drawing opens the size box | 1.121.0: typed sizes while drawing | Done |
 
 **Part features (section 9)**
 

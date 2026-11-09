@@ -905,7 +905,7 @@ test("bolt circles: evenly spaced holes on a circle get a centre-line circle and
   assert.equal(boltCircles(at(40, [0, 50, 120], 3)).length, 0, "gaps 50 and 70: not whole multiples");
   assert.equal(boltCircles(at(40, [0, 90, 180], 3).map((h, i) => ({ ...h, r: i ? 3 : 4 }))).length, 0, "holes of different sizes");
   // Drawn: the circle as one centre-line polyline, a radial line per hole, a cross on the bore; off = crosses.
-  const edges = six.map((h, i) => ({ k: `h${i}`, t: "c" as const, a: [0, 0, 0] as [number, number, number], b: [0, 0, 0] as [number, number, number], c: [h.c[0], h.c[1], 0] as [number, number, number], ax: [0, 0, 1] as [number, number, number], r: h.r, sp: 2 * Math.PI }));
+  const edges = six.map((h, i) => ({ k: `h${i}`, t: "c" as const, a: [0, 0, 0] as [number, number, number], b: [0, 0, 0] as [number, number, number], c: [h.c[0], h.c[1], 0] as [number, number, number], m: [h.c[0] + h.r, h.c[1], 0] as [number, number, number], ax: [0, 0, 1] as [number, number, number], r: h.r, sp: 2 * Math.PI }));
   const topo = { edges, cyls: [] };
   const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -50, 50, 50] as [number, number, number, number], ready: true };
   const top = projector(ORIENTS.top);
@@ -919,4 +919,75 @@ test("bolt circles: evenly spaced holes on a circle get a centre-line circle and
   const off = centreMarks({ id: "v", name: "v", orient: "top", x: 0, y: 0, bolts: false }, pl, topo as any, top.P, top.n);
   assert.equal(off.filter(p => p.t === "p").length, 0);
   assert.equal(off.length, 14);
+});
+
+test("slot centre marks: a centreline over a straight slot and a cross line at each end, no circle marks (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector, straightSlots } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const slot: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [
+    P("c1", -20, 0), P("c2", 20, 0), P("q1", -20, 5), P("q2", -20, -5), P("q3", 20, -5), P("q4", 20, 5),
+    { id: "a1", t: "arc", c: "c1", a: "q1", b: "q2" }, { id: "a2", t: "arc", c: "c2", a: "q3", b: "q4" },
+    { id: "l1", t: "line", a: "q2", b: "q3" }, { id: "l2", t: "line", a: "q4", b: "q1" }] };
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    slot, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }]);
+  const r = m.evaluate(d);
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const top = projector(ORIENTS.top);
+  const cm = centreMarks({ id: "t", name: "t", orient: "top", x: 0, y: 0 }, pl, topo, top.P, top.n);
+  const ls = cm.flatMap(p => p.t === "l" ? [p.p.map(x => Math.round(x * 1000) / 1000)] : []);
+  assert.equal(ls.length, 3, `one centreline and two end lines, no crosses on the slot ends: ${JSON.stringify(ls)}`);
+  const along = ls.find(q => Math.abs(q[1]) < 1e-6 && Math.abs(q[3]) < 1e-6)!;
+  assert.ok(along && Math.min(along[0], along[2]) === -27 && Math.max(along[0], along[2]) === 27, `centreline 2 mm past the ends: ${along}`);
+  const ends = ls.filter(q => Math.abs(q[0] - q[2]) < 1e-6).map(q => [q[0], Math.min(q[1], q[3]), Math.max(q[1], q[3])]).sort((a, b) => a[0] - b[0]);
+  assert.deepEqual(ends, [[-20, -7, 7], [20, -7, 7]]);
+  // Pure: half circles facing each other pair up; facing the same way or of another radius do not.
+  assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [-1, 0] }, { c: [10, 0], r: 3, m: [1, 0] }]).length, 1);
+  assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [1, 0] }, { c: [10, 0], r: 3, m: [-1, 0] }]).length, 0, "bulging towards each other");
+  assert.equal(straightSlots([{ c: [0, 0], r: 3, m: [-1, 0] }, { c: [10, 0], r: 4, m: [1, 0] }]).length, 0);
+});
+
+test("arc slot centre marks: a centre-line arc through the end centres and a radial line across each end (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector, arcSlots } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  // Arc slot about O = (0, -10): centre radius 25 from 30° to 150°, 8 mm wide.
+  const at = (id: string, R: number, deg: number): SkEnt => ({ id, t: "point", x: R * Math.cos(deg * Math.PI / 180), y: -10 + R * Math.sin(deg * Math.PI / 180) });
+  const slot: SketchFeature = { id: "s2", type: "sketch", name: "s2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: [
+    at("o", 0, 0), at("c1", 25, 30), at("c2", 25, 150), at("o1", 29, 30), at("o2", 29, 150), at("i1", 21, 30), at("i2", 21, 150),
+    { id: "k1", t: "arc", c: "c1", a: "i1", b: "o1" }, { id: "k2", t: "arc", c: "c2", a: "o2", b: "i2" },
+    { id: "ao", t: "arc", c: "o", a: "o1", b: "o2" }, { id: "ai", t: "arc", c: "o", a: "i1", b: "i2" }] };
+  const d = doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
+    slot, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }]);
+  const r = m.evaluate(d);
+  assert.ok(r.body, JSON.stringify(r.errors ?? r.warnings));
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  const top = projector(ORIENTS.top);
+  const cm = centreMarks({ id: "t", name: "t", orient: "top", x: 0, y: 0 }, pl, topo, top.P, top.n);
+  const ls = cm.filter(p => p.t === "l"), ps = cm.filter(p => p.t === "p");
+  assert.equal(ls.length, 2, `two radial end lines, no crosses: ${JSON.stringify(ls.map(p => p.p))}`);
+  assert.equal(ps.length, 1, "one centre-line arc");
+  const arc = ps[0].p as number[];
+  for (let i = 0; i < arc.length; i += 2) assert.ok(Math.abs(Math.hypot(arc[i], arc[i + 1] + 10) - 25) < 1e-6, "arc on R 25 about O");
+  const ang = (i: number) => Math.atan2(arc[i + 1] + 10, arc[i]) * 180 / Math.PI;
+  const span = [ang(0), ang(arc.length - 2)].sort((a, b) => a - b), past = (6 / 25) * 180 / Math.PI;
+  assert.ok(Math.abs(span[0] - (30 - past)) < 1e-3 && Math.abs(span[1] - (150 + past)) < 1e-3, `arc runs 2 mm past the end caps: ${span}`);
+  for (const l of ls) {
+    const [x0, y0, x1, y1] = l.p as number[], mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    assert.ok(Math.abs(Math.hypot(mx, my + 10) - 25) < 1e-4, "end line centred on an end centre");
+    assert.ok(Math.abs(Math.hypot(x1 - x0, y1 - y0) - 12) < 1e-4, "end line 2 mm past the slot width");
+    assert.ok(Math.abs((x1 - x0) * -(my + 10) + (y1 - y0) * mx) < 1e-3, "end line radial");
+  }
+  // Pure: the pairing needs a concentric arc of R ± r.
+  const halves = [{ c: [25, 0] as [number, number], r: 4, m: [0, -1] as [number, number] }, { c: [-25, 0] as [number, number], r: 4, m: [0, -1] as [number, number] }];
+  assert.equal(arcSlots(halves, [{ c: [0, 0], r: 29 }]).length, 1);
+  const one = arcSlots(halves, [{ c: [0, 0], r: 21 }])[0];
+  assert.ok(one && Math.abs(one.a0) < 1e-9 && Math.abs(one.a1 - Math.PI) < 1e-9 && Math.abs(one.R - 25) < 1e-9);
+  assert.equal(arcSlots(halves, []).length, 0, "two loose notches");
+  assert.equal(arcSlots([halves[0], { ...halves[1], m: [0, 1] }], [{ c: [0, 0], r: 29 }]).length, 0, "ends bulging the same way round");
 });
