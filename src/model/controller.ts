@@ -143,6 +143,8 @@ const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
   ["distance", "length", "Distance"], ["distance2", "length", "Distance"], ["thickness", "length", "Thickness"], ["depth", "length", "Depth"],
   ["offset", "length", "Offset"], ["spacing", "length", "Spacing"], ["count", "count", "Instances"], ["spacing2", "length", "Spacing"],
   ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
+/** Features with a `flip` the Modify box can reverse. */
+const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "draft", "lpattern"]);
 const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
@@ -4909,22 +4911,25 @@ export class ModelController {
       title = `${d.name}@${f.name}`;
     } else return;
     const value = num.expr ?? (q === "count" ? String(num.v) : trimNum(q === "angle" ? num.v * 180 / Math.PI : num.v * fu, 6));
-    // The document with the typed value, or an error.
+    const canFlip = FLIP_TYPES.has(f.type) && (key === "depth" || key === "distance" || key === "offset" || key === "angle" || key === "spacing");
+    let flipped = false;
+    // The document with the typed value (and the direction reversed, when asked), or an error.
     const docWith = (text: string): PartDoc | string | null => {
       let v: number;
       if (q === "count") {
         v = Number(text.trim());
         if (!Number.isInteger(v) || v < 1) return t("Enter a whole number of 1 or more.");
-        if (v === num.v) return null;
+        if (v === num.v && !flipped) return null;
       } else {
         try { v = q === "angle" ? evaluate(text, "angle", "deg", evalVars(this.doc, units.current).values) : evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
         catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
         if (!(v > 0)) return t("The value must be more than 0.");
       }
       const val: Num = q === "count" || isPlain(text) ? { v } : { v, expr: text.trim() };
-      if (q !== "count" && Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
+      if (!flipped && q !== "count" && Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
       const d = structuredClone(this.doc);
       const g = d.features.find(x => x.id === fid)!;
+      if (flipped) { const gf = g as { flip?: boolean }; if (gf.flip) delete gf.flip; else gf.flip = true; }
       if (fv) (g as unknown as Record<string, unknown>)[key] = q === "count" ? v : val;
       else if (g.type === "extrude") g.depth = val;
       else if (g.type === "sketch") {
@@ -4941,6 +4946,9 @@ export class ModelController {
       title,
       value,
       step: q === "count" ? 1 : stepFor(q, units.current),
+      incKey: q,
+      // Reverse direction (FR-UI-114) for features that have one: previewed with the value, kept by ✓.
+      ...(canFlip ? { reverse: () => { flipped = !flipped; } } : {}),
       preview: text => {
         const d = docWith(text);
         if (typeof d === "string") { toast(d, "error"); return; }

@@ -728,6 +728,11 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mod-b button:hover, .mod-spin button:hover { background: var(--accent-soft); }
 .mod-b .mod-ok { color: #1f7a35; font-weight: 700; }
 .mod-b .mod-x { color: var(--danger); }
+.mod-name, .mod-inc { height: 22px; padding: 0 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg, var(--panel)); color: var(--text); font: 12px var(--mono); }
+.mod-name { width: 64px; margin-right: 2px; font-weight: 600; }
+.mod-name[aria-invalid="true"] { border-color: var(--danger); }
+.mod-inc { width: 44px; height: 26px; margin-left: auto; text-align: right; }
+.mod-name:focus-visible, .mod-inc:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 :root[data-theme="dark"] .mod-b .mod-ok { color: #51cf66; }
 /* Feature dimensions shown on the model (FR-UI-114, FR-UI-115): a click opens the Modify box. */
 .mc-fdim { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; padding: 1px 6px; border: 1px solid #1d4ed8; border-radius: 4px; background: #eef3ff; color: #1d4ed8; font: 600 12px var(--mono); cursor: pointer; white-space: nowrap; }

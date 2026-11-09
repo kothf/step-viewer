@@ -3776,6 +3776,7 @@ export const RU: Record<string, string> = {
   "Increase": "Увеличить",
   "Decrease": "Уменьшить",
   "Rebuild with this value": "Перестроить с этим значением",
+  "Increment": "Шаг",
   "Rebuild": "Перестроить",
   "{name} has no dimensions to show on the model.": "У {name} нет размеров для показа на модели.",
   "{name}: click to change": "{name}: нажмите, чтобы изменить",

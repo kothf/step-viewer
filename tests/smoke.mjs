@@ -2770,8 +2770,8 @@ try {
       const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
       if (before) {
         await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
-        await mp.waitForSelector(".mod-box input");
-        await mp.fill(".mod-box input", "2.5");
+        await mp.waitForSelector(".mod-box .mod-in");
+        await mp.fill(".mod-box .mod-in", "2.5");
         await mp.keyboard.press("Enter");
         await idle();
       }
@@ -2840,8 +2840,8 @@ try {
         if (ival) {
           const nv = pick.q === "angle" ? "33" : String(Math.round(pick.v * 10) / 10 + 0.5);
           await mp.click(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`);
-          await mp.waitForSelector(".mod-box input");
-          await mp.fill(".mod-box input", nv);
+          await mp.waitForSelector(".mod-box .mod-in");
+          await mp.fill(".mod-box .mod-in", nv);
           await mp.keyboard.press("Enter");
           await idle();
           after = await mp.evaluate(p => ({ v: window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, undo: window.__sv.model.store.undoLabel, box: !!document.querySelector(".mod-box") }), pick);
@@ -3817,6 +3817,22 @@ try {
     await click([15, 15]); await click([25, 15]); await click([20, 18]);
     await modify("8");
     await modify("30");
+    // 1.360 (FR-UI-114, FR-SK-065): the Modify box title holds the dimension's name; a new name renames it, a taken one is refused.
+    {
+      const d0 = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); const d = ed.sk.dims.filter(x => !x.driven); ed.editDim(d[0].id); return { id: d[0].id, name: d[0].name, other: d[1]?.name }; });
+      await mp.waitForSelector(".mod-box .mod-name");
+      await mp.fill(".mod-box .mod-name", d0.other ?? "1bad");
+      await mp.press(".mod-box .mod-name", "Enter");
+      const refused = await mp.evaluate(() => ({ open: !!document.querySelector(".mod-box"), bad: document.querySelector(".mod-box .mod-name")?.getAttribute("aria-invalid") }));
+      await mp.fill(".mod-box .mod-name", "Width");
+      await mp.press(".mod-box .mod-name", "Enter");
+      await mp.waitForTimeout(150);
+      const named = await mp.evaluate(id => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === id)?.name, open: !!document.querySelector(".mod-box") }), d0.id);
+      check(refused.open && refused.bad === "true" && named.name === "Width" && !named.open,
+        `sketch 1.360: a name typed in the Modify box title renames the dimension; a taken name is refused (${JSON.stringify({ d0, refused, named })})`);
+      await mp.evaluate(() => window.__sv.model.editor().setTool("cslot"));
+      await mp.waitForTimeout(100);
+    }
     const cs = await mp.evaluate(() => {
       const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
@@ -10326,26 +10342,26 @@ try {
     // The depth in the Modify box: ✕ leaves it, ✓ (Enter) changes it as one undo step.
     const clickDim = async v => { const i = await dp.evaluate(v => [...document.querySelectorAll(".mc-fdim")].findIndex(b => b.textContent === v), v); await dp.click(`.mc-fdim >> nth=${i}`); };
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box input").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
-    await dp.fill(".mod-box input", "25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box .mod-in").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
+    await dp.fill(".mod-box .mod-in", "25");
     await dp.click(".mod-box [data-m=x]");
     await dp.waitForTimeout(100);
     const kept = await dp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v);
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "25");
-    await dp.press(".mod-box input", "Enter");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "25");
+    await dp.press(".mod-box .mod-in", "Enter");
     await dp.waitForTimeout(150);
     await idle();
     const after = await dp.evaluate(() => ({ depth: window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v, undo: window.__sv.model.store.undoLabel, labels: [...document.querySelectorAll(".mc-fdim")].map(b => b.textContent).sort().join() }));
-    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
+    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲⇄" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
       `modify: the Modify box changes a feature dimension (✕ keeps it, Enter takes it as one undo step) (${JSON.stringify({ box, kept, after })})`);
     // A sketch dimension: ⟲ rebuilds with the typed value, ✕ puts it back.
     const width = () => dp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return b.max.x - b.min.x; });
     await clickDim("60");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "80");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "80");
     await dp.click(".mod-box [data-m=rebuild]");
     await dp.waitForTimeout(300);
     await idle();
@@ -10355,6 +10371,27 @@ try {
     await idle();
     const back = await width();
     check(Math.abs(prev.size - 80) < 1e-6 && prev.stored === 60 && Math.abs(back - 60) < 1e-6, `modify: ⟲ rebuilds with the typed value and ✕ goes back (${JSON.stringify({ prev, back })})`);
+    // 1.360 (FR-UI-114): the increment field sets the spin step (kept for the next box); ⇄ reverses the extrude with the value.
+    await clickDim("25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-inc", "5");
+    await dp.press(".mod-box .mod-inc", "Enter");
+    await dp.press(".mod-box .mod-in", "ArrowUp");
+    const spun = await dp.evaluate(() => document.querySelector(".mod-box .mod-in").value);
+    await dp.click(".mod-box [data-m=rev]");
+    await dp.press(".mod-box .mod-in", "Enter");
+    await dp.waitForTimeout(150);
+    await idle();
+    const rev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    await clickDim("30");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const incKept = await dp.evaluate(() => document.querySelector(".mod-box .mod-inc").value);
+    await dp.click(".mod-box [data-m=x]");
+    await dp.evaluate(() => window.__sv.modeller.undo());
+    await idle();
+    const unrev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    check(spun === "30" && rev.depth === 30 && rev.flip && incKept === "5" && unrev.depth === 25 && !unrev.flip,
+      `modify 1.360: the increment field steps the value and is remembered; Reverse direction flips the extrude with the value as one undo step (${JSON.stringify({ spun, rev, incKept, unrev })})`);
     // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
     const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
     await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();
