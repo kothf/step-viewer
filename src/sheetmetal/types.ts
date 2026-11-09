@@ -147,8 +147,27 @@ export interface SmTabFeature {
   sketch: string;
 }
 
-export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
+ * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
+export interface SmLoftFeature {
+  id: string; type: "smloft"; name: string; suppressed?: boolean;
+  sketch1: string;
+  sketch2: string;
+  thickness: Num;
+  /** Default inside bend radius for later flanges. */
+  radius: Num;
+  /** K-factor (0..1): where the neutral surface lies across the thickness. */
+  k?: number;
+  /** Thickness on the other side of the profiles. */
+  reverse?: boolean;
+  /** Facets each arc of the profiles is split into (default 8). */
+  facets?: number;
+}
+
+export type SheetFeature = SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/** The feature that starts a sheet metal part: a base flange or a lofted bend. */
+export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */

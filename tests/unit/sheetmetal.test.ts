@@ -5,9 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
+import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
 
 const rect = (id: string, x0: number, y0: number, x1: number, y1: number): SketchFeature => {
@@ -424,4 +425,59 @@ test("sheet metal: cuts across a bend are unrolled in the flat pattern (FR-FT-12
   const r2 = run(doc([s, base(), fl, slot2, part, flat]));
   // The flat pattern loses what the folded part lost (the neutral surface keeps lengths).
   close(r2.props.volume, f2.props.volume, 2e-3);
+});
+
+test("sheet metal: lofted bend unfolds its facets exactly (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const up = (id: string, z: number): Feature => ({ id, type: "plane", name: id, base: { std: "XY" }, mode: "offset", offset: { v: z } });
+  const on = (sk: SketchFeature, plane: string): SketchFeature => ({ ...sk, plane: { plane } });
+  const arc = (id: string, r: number, a: [number, number], b: [number, number]): SketchFeature => ({
+    id, type: "sketch", name: id, plane: { std: "XY" }, rels: [], dims: [], ents: [
+      { id: `${id}c`, t: "point", x: 0, y: 0 }, { id: `${id}a`, t: "point", x: a[0], y: a[1] }, { id: `${id}b`, t: "point", x: b[0], y: b[1] },
+      { id: `${id}r`, t: "arc", c: `${id}c`, a: `${id}a`, b: `${id}b` },
+    ],
+  });
+  const loft = (over: Partial<SmLoftFeature> = {}): SmLoftFeature => ({ id: "lb", type: "smloft", name: "Lofted-Bend1", sketch1: "s1", sketch2: "s2", thickness: { v: 2 }, radius: { v: 2 }, k: 0.5, ...over });
+  const area = (st: NonNullable<ReturnType<typeof run>["sheet"]>) => st.panels.reduce((a, p) => a + Math.abs(polyArea(loopPolygon(p.outer))), 0);
+
+  // Two parallel lines 30 apart: one flat panel 100 × 30, no folds.
+  let r = run(doc([chain("s1", [[0, 0], [100, 0]]), up("pl", 30), on(chain("s2", [[0, 0], [100, 0]]), "pl"), loft()]));
+  close(r.props.volume, 100 * 30 * 2, 1e-6);
+  assert.equal(r.sheet!.panels.length, 1);
+  assert.equal(r.sheet!.folds!.length, 0);
+  const sz = flatSize(r.sheet!);
+  close(Math.max(sz.w, sz.h), 100, 1e-6); close(Math.min(sz.w, sz.h), 30, 1e-6);
+  assert.ok(r.body!.names.includes("lb:p0:top") && r.body!.names.includes("lb:p0:bot"));
+  r = run(doc([chain("s1", [[0, 0], [100, 0]]), up("pl", 30), on(chain("s2", [[0, 0], [100, 0]]), "pl"), loft(), flat]));
+  close(r.props.volume, 100 * 30 * 2, 1e-6);
+
+  // Half a cone frustum (radius 50 at the bottom, 25 at 40 up): facets folded by small angles, area ≈ the cone's.
+  const cone = [arc("s1", 50, [50, 0], [-50, 0]), up("pl", 40), on(arc("s2", 25, [25, 0], [-25, 0]), "pl")];
+  r = run(doc([...cone, loft({ thickness: { v: 1 }, facets: 24 })]));
+  const st = r.sheet!;
+  assert.ok(st.folds!.length >= 23, `${st.folds!.length} folds`);
+  assert.ok(st.folds!.every(f => f.angle < 0.2 && f.up === st.folds![0].up));
+  // Thickness on the other side turns every fold the other way.
+  const rev = run(doc([...cone, loft({ thickness: { v: 1 }, facets: 24, reverse: true })])).sheet!;
+  assert.ok(rev.folds!.every(f => f.up !== st.folds![0].up));
+  const lateral = Math.PI * (50 + 25) * Math.hypot(25, 40) / 2;
+  assert.ok(Math.abs(area(st) - lateral) < lateral * 0.02, `${area(st)} vs ${lateral}`);
+  // K = 0.5: the folded volume is the flat area times the thickness.
+  close(r.props.volume, area(st) * 1, 2e-3);
+  assert.equal(flatLoops(st).outer.length, 1);
+  const fd = flatDrawing(st);
+  assert.ok(fd.entities.filter(e => e.layer === "BEND_UP" || e.layer === "BEND_DOWN").length === st.folds!.length);
+  const fr = run(doc([...cone, loft({ thickness: { v: 1 }, facets: 24 }), flat]));
+  close(fr.props.volume, area(st), 1e-6);
+
+  // A corner of two lines lofted to a quarter circle (a square-to-round quarter): one outline, flat faces kept whole.
+  const sq = [chain("s1", [[60, 0], [60, 60], [0, 60]]), up("pl", 50), on(arc("s2", 30, [30, 0], [0, 30]), "pl")];
+  r = run(doc([...sq, loft({ facets: 8 })]));
+  assert.equal(flatLoops(r.sheet!).outer.length, 1);
+  close(r.props.volume, area(r.sheet!) * 2, 5e-3);
+  run(doc([...sq, loft({ facets: 8, reverse: true }), flat]));
+  // A second base feature is refused.
+  const two = m.evaluate(doc([rect("s", 0, 0, 10, 10), base(), ...sq, loft()])).statuses.find(x => x.id === "lb");
+  assert.ok(two && !two.ok);
 });
