@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.355.0] - 2026-11-09
+
+### Added
+- Thread callouts from geometry (FR-DRW-022): a hole read from the shape with a cosmetic thread on it now adds the thread line ("M6-6H ↧10", or the drill depth or THRU when the thread runs the full length), so a tapped hole cut without the Hole wizard reads like one made with it, and equal tapped holes are counted together.
+- Default decimals in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Linear decimals and Angle decimals set the precision of every dimension that has none of its own; Auto keeps the old behaviour (up to two, trailing zeros dropped).
+
 ## [1.354.0] - 2026-11-09
 
 ### Added
@@ -2125,7 +2131,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.354.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.355.0...HEAD
+[1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
 [1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
 [1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0

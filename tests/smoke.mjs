@@ -8780,6 +8780,13 @@ try {
     await ap.selectOption('.drw-props [data-st="lines"]', "0.7");
     const sty = await ap.evaluate(() => ({ style: window.__sv.drw.doc().style, svg: /stroke-width="0.7"/.test(window.__sv.drw.svg()) }));
     check(sty.style?.text === 5 && sty.style?.arrow === "tick" && sty.style?.lines === 0.7 && sty.svg, `drawing: drafting style is kept with the drawing and thickens visible lines (${JSON.stringify(sty)})`);
+    // Default decimals per dimension kind (FR-DRW-025): Auto, or a number that dimensions without their own precision take.
+    await ap.selectOption('.drw-props [data-st="lin"]', "1");
+    await ap.selectOption('.drw-props [data-st="ang"]', "2");
+    const dec1 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    await ap.selectOption('.drw-props [data-st="ang"]', "");
+    const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
