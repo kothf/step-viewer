@@ -107,7 +107,16 @@ const near = (a, b, tol = 1e-3) => Math.abs(a - b) <= tol;
 // `if (inShard(k)) { … }` block, k = the shard with the shortest time (printed at the end of a run).
 const [shardI, shardN] = (process.env.SMOKE_SHARD || "1/1").split("/").map(Number);
 if (!(shardN >= 1 && shardI >= 1 && shardI <= shardN)) throw new Error(`SMOKE_SHARD must be i/n, got ${process.env.SMOKE_SHARD}`);
-const inShard = k => (k - 1) % shardN + 1 === shardI;
+// Each block that runs is timed (block n = the n-th inShard call in the file); the times are printed at the
+// end of a run, to keep the shards balanced.
+const blockTimes = [];
+let blockCount = 0;
+const inShard = k => {
+  blockCount++;
+  const on = (k - 1) % shardN + 1 === shardI;
+  if (on) blockTimes.push({ n: blockCount, k, at: Date.now() });
+  return on;
+};
 // A click on a Features tree row. While a command panel is open the tree is the folded fly-out over the view
 // (FR-UI-003): open it for the click and fold it again, so later clicks in the view are not covered.
 async function treeClick(pg, sel, opts) {
@@ -10524,6 +10533,11 @@ try {
 } finally {
   await browser.close();
   server.close();
+}
+{
+  const end = Date.now();
+  const secs = blockTimes.map((b, i) => `#${b.n}:${Math.round(((blockTimes[i + 1]?.at ?? end) - b.at) / 1000)}`);
+  console.log(`\nblock times (s, #n = n-th block in the file): ${secs.join(" ")}`);
 }
 console.log(`${shardN > 1 ? `\nshard ${shardI}/${shardN}: ` : "\n"}${failures ? `${failures} check(s) failed` : "all checks passed"} in ${Math.round((Date.now() - started) / 1000)} s`);
 process.exit(failures ? 1 : 0);
