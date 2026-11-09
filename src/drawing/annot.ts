@@ -33,6 +33,8 @@ export let TEXT_H = 3.5;
 let ARROW = 3, ARROW_KIND: NonNullable<DraftStyle["arrow"]> = "filled";
 /** The drawing's default decimals for linear and angular dimensions (FR-DRW-025), set by `useStyle`. */
 let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
+/** The drawing's default ± tolerance (mm, degrees) for dimensions without their own, set by `useStyle`. */
+let TOL_LIN: number | undefined, TOL_ANG: number | undefined;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
@@ -40,6 +42,7 @@ export function useStyle(st: DraftStyle | undefined) {
   ARROW = TEXT_H * 6 / 7;
   ARROW_KIND = st?.arrow ?? "filled";
   PREC_LIN = st?.lin; PREC_ANG = st?.ang;
+  TOL_LIN = st?.tol; TOL_ANG = st?.atol;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -200,7 +203,8 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
   // ◠ (U+25E0) stands for ISO 129's arc symbol: DejaVu Sans has no ⌒.
   const pre = a.pre ?? (g.k === "rad" ? "R" : g.k === "dia" ? "Ø" : g.k === "arc" ? "◠" : "");
   const suf = (g.k === "ang" ? "°" : "") + (a.suf ?? "");
-  const tol: Tol | undefined = a.tol;
+  const dt = g.k === "ang" ? TOL_ANG : TOL_LIN;
+  const tol: Tol | undefined = a.tol ?? (dt ? { t: "sym", up: dt } : undefined);
   if (a.txt) return { main: a.txt };
   if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
   const v = g.value;
@@ -934,7 +938,7 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   // Cylinders, cones and tori seen from the side: one centreline per axis over all the faces on it. A cone or torus
   // counts when it goes all round (a taper, a countersink, a groove); a cylinder when its pieces of one radius do.
   const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
-  for (const y of [...topo.cyls, ...(topo.revs ?? []).map(q => ({ ...q, r: NaN, rk: `${q.k}:${q.o.map(x => x.toFixed(4))}` }))] as (MCyl & { rk?: string })[]) {
+  for (const y of [...topo.cyls, ...(topo.revs ?? []).filter(q => q.k !== "sphere").map(q => ({ ...q, r: NaN, rk: `${q.k}:${q.o.map(x => x.toFixed(4))}` }))] as (MCyl & { rk?: string })[]) {
     if (Math.abs(dot3(y.ax, n)) > 1e-6) continue;
     const a3 = (t: number): V3 => [y.o[0] + y.ax[0] * t, y.o[1] + y.ax[1] * t, y.o[2] + y.ax[2] * t];
     const p0 = P(a3(y.v0)), p1 = P(a3(y.v1));
@@ -953,6 +957,16 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     if (![...g.sp.values()].some(s => s >= 2 * Math.PI - 1e-3)) continue;
     const A = add2(g.a, g.d, g.t0 - ext), B = add2(g.a, g.d, g.t1 + ext);
     segs.push({ k: "l", c: 0, p: [A[0], A[1], B[0], B[1]] });
+  }
+  // Spheres (ball ends) from any side: a centre cross, unless an end-on circle already marks that centre.
+  const balls = new Set<string>();
+  for (const q of topo.revs ?? []) {
+    if (q.k !== "sphere" || !q.r || q.sp < 2 * Math.PI - 1e-3) continue;
+    const c = P(q.o), key = `${c[0].toFixed(3)},${c[1].toFixed(3)},${q.r.toFixed(4)}`;
+    if (balls.has(key) || [...circ.values()].some(g => g.sp >= 2 * Math.PI - 1e-3 && Math.hypot(g.c[0] - c[0], g.c[1] - c[1]) < 1e-3)) continue;
+    balls.add(key);
+    const L = q.r + ext;
+    segs.push({ k: "l", c: 0, p: [c[0] - L, c[1], c[0] + L, c[1]] }, { k: "l", c: 0, p: [c[0], c[1] - L, c[0], c[1] + L] });
   }
   const kept = v.kind === "detail" && v.c && v.r ? clipToCircle(segs, v.c, v.r) : segs;
   const out: Prim[] = [];

@@ -1732,6 +1732,7 @@ export class DrawingWorkspace {
     this.setAnnot("Tolerance", a => {
       if (a.t !== "dim") return;
       if (!tt) delete a.tol;
+      else if (tt === "none") a.tol = { t: "none" };
       else a.tol = { t: tt, up: a.tol?.up ?? (tt === "fit" ? undefined : 0.1), lo: a.tol?.lo ?? (tt === "sym" || tt === "fit" ? undefined : 0.1), fit: tt === "fit" ? a.tol?.fit ?? (a.k === "dia" ? "H7" : "h7") : undefined };
     });
   }
@@ -1741,7 +1742,9 @@ export class DrawingWorkspace {
     const sh = this.sheet;
     if (a.t === "dim") {
       const v = findView(sh, a.view), g = v ? dimGeo(a.src ? { ...a, refs: (() => { const it = this.factsOf(a.view)?.items.find(i => i.src === a.src); return it ? [{ pt: it.p[0] }, { pt: it.p[1] }] : a.refs; })() } : a, projector(viewDir(sh, v)).P, this.factsOf(a.view)?.topo ?? null) : null;
-      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: undefined, txt: undefined }, g, this.ctx().dec).main) : "?";
+      const val = g ? (g.k === "ang" ? null : dimText({ ...a, tol: { t: "none" }, txt: undefined }, g, this.ctx().dec).main) : "?";
+      // With a drawing default tolerance, no tolerance of its own reads "Document" and "None" turns the default off.
+      const dflt = a.k === "ang" ? this.doc.style?.atol : a.k === "chamfer" ? undefined : this.doc.style?.tol;
       const tol = a.tol?.t ?? "";
       const lin = a.k === "h" || a.k === "v" || a.k === "al";
       // A round edge can be dimensioned as radius, diameter or (an arc) its length; two lines as an angle or a chamfer.
@@ -1760,8 +1763,8 @@ export class DrawingWorkspace {
         <label class="drw-chk"><input type="checkbox" data-d="insp"${a.insp ? " checked" : ""}> ${esc(t("Inspection dimension"))}</label>
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Tolerance"))}</legend>
-        <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([["", "None"], ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as const).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
-        ${tol && tol !== "fit" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
+        <div class="seg drw-seg drw-tolseg" role="radiogroup" aria-label="${esc(t("Tolerance"))}">${([...(dflt ? [["", "Document"], ["none", "None"]] : [["", "None"]]), ["sym", "±"], ["dev", "+/−"], ["limit", "Limits"], ["fit", "Fit"]] as [string, string][]).map(([k, l]) => `<button role="radio" aria-checked="${tol === k}" class="${tol === k ? "on" : ""}" data-tolt="${k}">${esc(t(l))}</button>`).join("")}</div>
+        ${tol && tol !== "fit" && tol !== "none" ? `<label class="drw-f">${esc(t(tol === "sym" ? "Tolerance (±)" : "Upper"))}<input data-d="up" inputmode="decimal" value="${a.tol?.up ?? ""}"></label>` : ""}
         ${tol === "dev" || tol === "limit" ? `<label class="drw-f">${esc(t("Lower"))}<input data-d="lo" inputmode="decimal" value="${a.tol?.lo ?? ""}"></label>` : ""}
         ${tol === "fit" ? `<label class="drw-f">${esc(t("Fit (ISO 286)"))}<input data-d="fit" value="${esc(a.tol?.fit ?? "")}" translate="no" placeholder="H7"></label>${this.fitFields(a, g?.value)}` : ""}
       </fieldset>
@@ -2546,6 +2549,8 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Line group"))}<select data-st="lines">${[0.25, 0.35, 0.5, 0.7].map(w => `<option value="${w}"${(this.doc.style?.lines ?? 0.35) === w ? " selected" : ""}>${String(w).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Linear decimals"))}<select data-st="lin"><option value=""${this.doc.style?.lin == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.lin === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Angle decimals"))}<select data-st="ang"><option value=""${this.doc.style?.ang == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.ang === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Default tolerance (±)"))}<input data-st="tol" inputmode="decimal" value="${this.doc.style?.tol ?? ""}" placeholder="${esc(t("None"))}"></label>
+        <label class="drw-f">${esc(t("Default angle tolerance (±°)"))}<input data-st="atol" inputmode="decimal" value="${this.doc.style?.atol ?? ""}" placeholder="${esc(t("None"))}"></label>
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
         ${editableOf(sh).map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}"${k === "litera" ? ' maxlength="3"' : ""} translate="no"></label>`).join("")}
@@ -2893,7 +2898,7 @@ export class DrawingWorkspace {
     }
     else if (el.dataset.st) {
       const k = el.dataset.st as keyof DraftStyle;
-      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
+      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (k === "tol" || k === "atol") { const x = parseFloat(val.replace(",", ".")); if (x > 0) st[k] = x; else delete st[k]; } else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
     }
   }
 

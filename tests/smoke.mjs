@@ -2783,7 +2783,7 @@ try {
       check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
         `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
     }
-    // 1.364 (FR-UI-022): heads-up view bar: with a part open the view groups sit in #hud at the top centre of the view; its Previous view button works.
+    // 1.371 (FR-UI-022): heads-up view bar: with a part open the view groups sit in #hud at the top centre of the view; its Previous view button works.
     {
       const hud = await mp.evaluate(() => { const h = document.querySelector("#hud"), r = h?.getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return h && { shown: !h.hidden, views: !!h.querySelector("#views"), mode: !!h.querySelector("#display-mode"), proj: !!h.querySelector("#projection"), centred: Math.abs((r.left + r.right) / 2 - (v.left + v.right) / 2) < 4, inHeader: !!document.querySelector(".topbar #views") }; });
       await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.viewFrom(new (v.camera.position.constructor)(1, 0, 0), false); });
@@ -2791,9 +2791,9 @@ try {
       await mp.waitForTimeout(500);
       const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
       check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
-        `model 1.364: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+        `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
     }
-    // 1.364 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
+    // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
     {
       const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); document.activeElement?.blur(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
       await mp.mouse.move(vb.x, vb.y);
@@ -2813,9 +2813,9 @@ try {
       const back = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
       const d = Math.hypot(...back.map((x, i) => x - saved.cam[i]));
       check(saved.views?.length === 1 && saved.views[0].name === "Close up" && saved.dirty && shut && d < 1e-3,
-        `model 1.364: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
+        `model 1.371: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
     }
-    // 1.364 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
+    // 1.371 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
     // a value opens the Modify box and ✓ changes the feature as one undo step.
     {
       // A shell (thickness) to show: the part has only sketches and extrudes so far.
@@ -2858,7 +2858,7 @@ try {
       await mp.evaluate(() => { const st = window.__sv.model.store; if (st.doc.features.at(-1)?.type === "shell") window.__sv.modeller.undo(); });
       await idle();
       check(!!ival && after && Math.abs(after.v - after.want) < 1e-9 && !after.box && Math.abs(undone - pick.v) < 1e-9,
-        `model 1.364: a feature picked in the tree shows its values on the model; the Modify box changes it as one undo step (${JSON.stringify({ pick, ival, after, undone })})`);
+        `model 1.371: a feature picked in the tree shows its values on the model; the Modify box changes it as one undo step (${JSON.stringify({ pick, ival, after, undone })})`);
     }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
@@ -3819,7 +3819,7 @@ try {
     await click([15, 15]); await click([25, 15]); await click([20, 18]);
     await modify("8");
     await modify("30");
-    // 1.364 (FR-UI-114, FR-SK-065): the Modify box title holds the dimension's name; a new name renames it, a taken one is refused.
+    // 1.371 (FR-UI-114, FR-SK-065): the Modify box title holds the dimension's name; a new name renames it, a taken one is refused.
     {
       const d0 = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); const d = ed.sk.dims.filter(x => !x.driven); ed.editDim(d[0].id); return { id: d[0].id, name: d[0].name, other: d[1]?.name }; });
       await mp.waitForSelector(".mod-box .mod-name");
@@ -3831,7 +3831,7 @@ try {
       await mp.waitForTimeout(150);
       const named = await mp.evaluate(id => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === id)?.name, open: !!document.querySelector(".mod-box") }), d0.id);
       check(refused.open && refused.bad === "true" && named.name === "Width" && !named.open,
-        `sketch 1.364: a name typed in the Modify box title renames the dimension; a taken name is refused (${JSON.stringify({ d0, refused, named })})`);
+        `sketch 1.371: a name typed in the Modify box title renames the dimension; a taken name is refused (${JSON.stringify({ d0, refused, named })})`);
       await mp.evaluate(() => window.__sv.model.editor().setTool("cslot"));
       await mp.waitForTimeout(100);
     }
@@ -5818,7 +5818,7 @@ try {
     await shown(3);
     const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
     check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
-    // 1.364 (FR-SEL-009): a click on a component shows face › feature › component › assembly breadcrumbs.
+    // 1.371 (FR-SEL-009): a click on a component shows face › feature › component › assembly breadcrumbs.
     await mp.mouse.click(tabAt.x, tabAt.y);
     await mp.waitForTimeout(150);
     const crumbs = await mp.evaluate(() => {
@@ -5836,7 +5836,7 @@ try {
     await mp.keyboard.press("Escape");
     const crumbGone = await mp.evaluate(() => !document.getElementById("asm-crumbs"));
     check(!!crumbs && crumbs.n >= 3 && crumbs.ids[0] === "" && crumbs.ids.at(-1) === "asm" && crumbs.sel === crumbs.cid && crumbs.row && crumbAt?.c && crumbGone,
-      `asm 1.364: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
+      `asm 1.371: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
@@ -8926,6 +8926,14 @@ try {
     await ap.selectOption('.drw-props [data-st="ang"]', "");
     const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
+    // Default ± tolerance (FR-DRW-025): typed with a comma or a point; cleared, it is gone.
+    await ap.fill('.drw-props [data-st="tol"]', "0,05");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol1 = await ap.evaluate(() => window.__sv.drw.doc().style?.tol);
+    await ap.fill('.drw-props [data-st="tol"]', "");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
@@ -10455,7 +10463,7 @@ try {
     await idle();
     const back = await width();
     check(Math.abs(prev.size - 80) < 1e-6 && prev.stored === 60 && Math.abs(back - 60) < 1e-6, `modify: ⟲ rebuilds with the typed value and ✕ goes back (${JSON.stringify({ prev, back })})`);
-    // 1.364 (FR-UI-114): the increment field sets the spin step (kept for the next box); ⇄ reverses the extrude with the value.
+    // 1.371 (FR-UI-114): the increment field sets the spin step (kept for the next box); ⇄ reverses the extrude with the value.
     await clickDim("25");
     await dp.waitForSelector(".mod-box .mod-in");
     await dp.fill(".mod-box .mod-inc", "5");
@@ -10475,7 +10483,7 @@ try {
     await idle();
     const unrev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
     check(spun === "30" && rev.depth === 30 && rev.flip && incKept === "5" && unrev.depth === 25 && !unrev.flip,
-      `modify 1.364: the increment field steps the value and is remembered; Reverse direction flips the extrude with the value as one undo step (${JSON.stringify({ spun, rev, incKept, unrev })})`);
+      `modify 1.371: the increment field steps the value and is remembered; Reverse direction flips the extrude with the value as one undo step (${JSON.stringify({ spun, rev, incKept, unrev })})`);
     // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
     const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
     await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();

@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.364.0] - 2026-11-09
+## [1.371.0] - 2026-11-09
 
 ### Added
 
@@ -18,6 +18,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 
 - The heads-up view bar no longer covers the selection filter and the status line at the top left of the view.
+
+## [1.365.0] - 2026-11-09
+
+### Added
+- Default tolerance in the drafting style (FR-DRW-025): with nothing selected, the sheet panel's Default tolerance (±) and Default angle tolerance (±°) apply to every dimension without a tolerance of its own. A dimension's Tolerance row then reads Document, and None turns the default off for that dimension.
+- Centre marks on spheres (FR-DRW-023): a whole sphere (a ball end, a knob) gets a centre cross from any side, unless a circle seen end-on already marks that centre.
 
 ## [1.363.0] - 2026-11-10
 
@@ -455,7 +461,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Quick snaps (FR-SK-046)**: while drawing in a sketch, pick one snap type for the next point only: End point, Midpoint, Centre point, Quadrant point, Intersection, Tangent, Perpendicular, Parallel, Nearest or Horizontal/vertical. Pick it from the Quick snaps button in the quick access bar or from the right-click menu (Quick snaps ▸). Only that snap works, in a wider radius, and it keeps its relation: a midpoint or crossing gets a midpoint or intersection relation, and a tangent or perpendicular line gets that relation to the curve. The quick snap clears once the point is placed; Esc clears it sooner.
 - **Snap preferences**: the sketch panel's Snaps section turns each snap type on or off for automatic snapping, and the choice is remembered. Midpoints, quadrants and intersections can now snap automatically too; they start off.
-
 
 ## [1.286.0] - 2026-11-09
 
@@ -1027,7 +1032,6 @@ Found while modelling the Leuenberger steam engine through the UI only:
   - **Tab**: on a part with a base flange, Base Flange/Tab turns a closed sketch drawn beside a flat face (touching its edge) into a tab of the sheet's thickness that joins the flat pattern.
   - **Jog**: two opposite bends along a sketched line offset the rest of the face, by an outside, inside or face-to-face distance at any angle.
 
-
 ## [1.131.0] - 2026-11-08
 
 ### Added
@@ -1131,7 +1135,6 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 - **Hole table** in drawings (FR-DRW-024; Annotate ▾ and the Annotation tab). Click the origin on a view (a corner or a circle centre), then place the table. It lists every hole the view shows end-on with its X and Y from the origin along the view's axes and its size from the hole feature (Ø16 THRU, M6-6H…). Each size gets a letter from the smallest up (A1, A2, B1…), and the tags are written beside the holes, with X and Y arrows at the origin. The table follows the model; select it to set the decimals or to take the holes again after the model changed (Update holes). A hole that disappears frames the table in orange.
 - **Inspection dimensions** (FR-DRW-021): tick Inspection dimension in a dimension's panel and its text sits in an obround frame.
-
 
 ## [1.110.0] - 2026-11-08
 
@@ -2174,8 +2177,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.364.0...HEAD
-[1.364.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.364.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.371.0...HEAD
+[1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0
+[1.365.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.365.0
 [1.363.0]: https://github.com/kothf/step-viewer/compare/v1.357.0...v1.363.0
 [1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
 [1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
