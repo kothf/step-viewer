@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -443,4 +443,20 @@ test("motor segments: shapes, chaining and parsing", () => {
   assert.deepEqual(parseSegments("2, 90, h", Math.PI / 180), [[2, Math.PI / 2, "harmonic"]]);
   const m = { id: "m", kind: "motor", mate: "x", motion: "linear", profile: "segments", speed: 0, start: 1, end: 4, segs, flip: true } as const;
   near(motorAmount({ ...m, segs: segs! }, 1.5), -5);
+});
+
+test("motor plot: displacement, velocity and acceleration series", () => {
+  const near = (a: number, b: number, e = 1e-3) => assert.ok(Math.abs(a - b) < e, `${a} ≉ ${b}`);
+  // 60 rpm from 0 to 2 s in a 3 s study at 10 fps: 360°/s, 720° at the end, held after.
+  const m = { id: "m", kind: "motor", mate: "x", motion: "rotary", profile: "constant", speed: 60, start: 0, end: 2 } as const;
+  const d = motorSeries(m, 3, 10, "disp"), v = motorSeries(m, 3, 10, "vel");
+  assert.equal(d.length, 31);
+  near(d[10], 360); near(d[30], 720); near(v[10], 360, 1e-2); near(v[25], 0);
+  assert.equal(motorPlotUnit(m, "vel"), "°/s");
+  // Linear distance motor 10 mm over 0..1 s (3u² − 2u³): velocity 15 mm/s and no acceleration at the middle, 60 mm/s² at the start.
+  const l = { id: "l", kind: "motor", mate: "x", motion: "linear", profile: "distance", dist: 10, speed: 0, start: 0, end: 1 } as const;
+  near(motorSeries(l, 1, 10, "vel")[5], 15, 1e-3);
+  near(motorSeries(l, 1, 10, "acc")[5], 0, 1e-1);
+  near(motorSeries(l, 1, 10, "acc")[1], 60 - 120 * 0.1, 1e-1);
+  assert.equal(motorPlotUnit(l, "acc"), "mm/s²");
 });

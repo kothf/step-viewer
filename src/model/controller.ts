@@ -59,8 +59,8 @@ import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWe
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature } from "../sheetmetal/types";
-import { apply as smApply, applyDir as smApplyDir, crossBreakLines, flatBendLines } from "../sheetmetal/sheet";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature } from "../sheetmetal/types";
+import { apply as smApply, applyDir as smApplyDir, crossBreakLines, flatBendLines, flatPointOn } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -369,6 +369,11 @@ export class ModelController {
   private journalTimer = 0;
   private shownOnce = false;
   private decor = new THREE.Group();
+  /** Hover link (FR-UI-061): the feature whose faces are lit because the pointer is on its tree row or on one of its faces. */
+  private hoverGroup = new THREE.Group();
+  private hoverId: string | null = null;
+  private hoverFrom: "tree" | "view" | null = null;
+  private hoverRaf = 0;
   private planeMeshes: THREE.Mesh[] = [];
   private lineMats: LineMaterial[] = [];
   private down: { x: number; y: number } | null = null;
@@ -388,6 +393,8 @@ export class ModelController {
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
+    host.viewer.scene.add(this.hoverGroup);
+    this.bindHover();
     onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
@@ -529,6 +536,7 @@ export class ModelController {
     this.instantDoc = null;
     this.last = null;
     this.clearDecor();
+    this.hoverId = null; this.drawHover();
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("model");
     this.host.viewer.emptySize = 1;
@@ -789,7 +797,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -882,10 +890,10 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smcross" || type === "smvent" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smcross" || type === "smvent" || type === "smform" || type === "smmiter" || type === "smswept") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
-      const smFace = type === "smclosed" || type === "smcross" ? this.pickedFace() : null;
-      const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data });
+      const smFace = type === "smclosed" || type === "smcross" || type === "smform" ? this.pickedFace() : null;
+      const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
       if (typeof sm === "string") { toast(sm, true); return; }
       draft = sm;
     } else if (type === "sketch3d") {
@@ -1729,6 +1737,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
       else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -2027,6 +2036,19 @@ export class ModelController {
     } else if (!fr || fr.name.startsWith(`${f.id}:`) || /:(top|bot|in|out)$/.test(fr.name) || !/:p\d+:/.test(fr.name)) { toast(t("Pick an end face of a flange (a side face across its thickness).")); return; }
     const i = f.faces.findIndex(x => x.name === fr.name);
     if (i >= 0) f.faces.splice(i, 1); else f.faces.push(fr);
+    this.draftChanged();
+  }
+
+  /** Forming tool: a click on a panel's top or bottom face adds a tool there (a click on another face starts over on it). */
+  private placeForm(e: PointerEvent, f: SmFormFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    const st = this.last?.sheet;
+    if (!hit || !fr || !st || fr.name.startsWith(`${f.id}:`) || !/:p\d+:(top|bot)$/.test(fr.name)) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
+    const p = flatPointOn(st, fr.name, hit.point);
+    if (!p) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
+    if (fr.name !== f.face.name) { f.face = fr; f.pts = []; }
+    f.pts.push([p[0], p[1]]);
     this.draftChanged();
   }
 
@@ -2940,6 +2962,7 @@ export class ModelController {
 
   private drawDecor() {
     this.clearDecor();
+    this.drawHover();
     if (!this.store) return;
     const dark = document.documentElement.dataset.theme === "dark";
     const m = this.mode;
@@ -3586,9 +3609,15 @@ export class ModelController {
     const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve" || isSheet(m.draft)) ? m.draft.id : null;
     const id = draft ?? (m.kind === "none" ? this.selected : null);
     if (!id) return;
+    const mesh = this.featureFaceMesh(id, draft ? 0xffd43b : 0x4dabf7, draft ? 0.5 : 0.45);
+    if (mesh) this.decor.add(mesh);
+  }
+
+  /** A see-through overlay of the faces a feature made (or a body / cut list item's faces), in world space; null when it has none. */
+  private featureFaceMesh(id: string, color: number, opacity: number): THREE.Mesh | null {
     const part = this.host.viewer.parts[0];
     const names = this.last?.faceNames;
-    if (!part || !names) return;
+    if (!part || !names) return null;
     const pre = `${id}:`;
     // A body or a cut list item selected in the tree lights up its bodies' faces.
     const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
@@ -3603,14 +3632,73 @@ export class ModelController {
         out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
       }
     });
-    if (!out.length) return;
+    if (!out.length) return null;
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
-    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: draft ? 0xffd43b : 0x4dabf7, transparent: true, opacity: draft ? 0.5 : 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
     mesh.applyMatrix4(part.mesh.matrixWorld);
     mesh.renderOrder = 2300;
     mesh.raycast = () => {};
-    this.decor.add(mesh);
+    return mesh;
+  }
+
+  /** Tree rows and the view light each other up on hover (FR-UI-061), only while no command is open. */
+  private bindHover() {
+    const tree = document.getElementById("mc-tree");
+    tree?.addEventListener("pointerover", e => {
+      if (e.pointerType === "touch") return;
+      const row = (e.target as HTMLElement).closest?.<HTMLElement>(".ft-row[data-id]");
+      this.setHover(row?.dataset.id ?? null, "tree");
+    });
+    tree?.addEventListener("pointerleave", () => { if (this.hoverFrom === "tree") this.setHover(null, "tree"); });
+    const canvas = this.host.viewer.renderer.domElement;
+    canvas.addEventListener("pointermove", e => {
+      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); return; }
+      const x = e.clientX, y = e.clientY;
+      if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
+      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); });
+    });
+    canvas.addEventListener("pointerleave", () => {
+      if (this.hoverRaf) { cancelAnimationFrame(this.hoverRaf); this.hoverRaf = 0; }
+      if (this.hoverFrom === "view") this.setHover(null, "view");
+    });
+  }
+
+  /** The (unsuppressed) feature that made the face under a screen point. */
+  featureAt(x: number, y: number): string | null {
+    if (!this.store || !this.last || this.mode.kind !== "none") return null;
+    const hit = this.host.faceAt(x, y);
+    const id = hit ? this.last.faceNames[hit.faceId]?.split(":")[0] : undefined;
+    const f = id ? this.store.feature(id) : undefined;
+    return f && !f.suppressed ? f.id : null;
+  }
+
+  /** The hovered feature: from the tree its faces light up in the view (unless it is the selected one); from the view its tree row is marked. */
+  setHover(id: string | null, from: "tree" | "view") {
+    if (this.mode.kind !== "none" || !this.store) id = null;
+    if (id === this.hoverId && (id === null || from === this.hoverFrom)) return;
+    this.hoverId = id;
+    this.hoverFrom = id ? from : null;
+    this.drawHover();
+  }
+
+  private drawHover() {
+    for (const c of [...this.hoverGroup.children]) {
+      this.hoverGroup.remove(c);
+      const m = c as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material | undefined)?.dispose();
+    }
+    const tree = document.getElementById("mc-tree");
+    tree?.querySelectorAll(".ft-row.hover").forEach(r => r.classList.remove("hover"));
+    const id = this.mode.kind === "none" ? this.hoverId : null;
+    if (id && this.hoverFrom === "view") tree?.querySelector(`.ft-row[data-id="${CSS.escape(id)}"]`)?.classList.add("hover");
+    // Geometry under the pointer only marks its row; the view itself already shows what is hovered.
+    if (id && this.hoverFrom === "tree" && id !== this.selected) {
+      const mesh = this.featureFaceMesh(id, 0x74c0fc, 0.3);
+      if (mesh) this.hoverGroup.add(mesh);
+    }
+    this.host.viewer.invalidate();
   }
 
   /**
@@ -4267,7 +4355,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smcross": case "smvent": case "smmiter": case "smswept": this.startFeature(c); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smcross": case "smvent": case "smform": case "smmiter": case "smswept": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -4399,6 +4487,7 @@ export class ModelController {
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
+    if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
     // Name filter (FR-HIS-011): feature rows whose name doesn't match hide; a folder stays while a member matches.
     const q = (document.getElementById("ft-search") as HTMLInputElement | null)?.value.trim().toLowerCase() ?? "";
     if (q) {
@@ -5366,7 +5455,7 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
-    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true));
+    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true), UNITS[units.current].f, this.last?.sheet?.T ?? 1);
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
       const apply = () => {
         if (f.type !== "fillet") return;

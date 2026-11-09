@@ -93,6 +93,8 @@ export interface EndCapFeature {
    * inner outline, flush with the end, `inset` = clearance.
    */
   dir?: "out" | "in" | "internal";
+  /** Use thickness ratio (not with "internal"): the inset is this times the member's wall thickness (the end face's tube wall, else 2 × area / perimeter). */
+  ratio?: Num;
 }
 
 /** An end cap's thickness direction (old files use `inward`). */

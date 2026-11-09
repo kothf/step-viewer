@@ -2447,6 +2447,18 @@ try {
     await idle();
     const vdDrop = { box: vdBox, depth: await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth) };
     check(vdPick?.drag && /^40\.0+ mm$/.test(vdPick.text) && vdDrop.depth.v === 40 && !vdDrop.depth.expr, `model 1.319: a measured 40 mm dragged from the readout sets the extrude depth to 40 (${JSON.stringify([vdPick, vdDrop])})`);
+    // 1.324: hover link (FR-UI-061): a tree row lights its feature's faces; a face marks its feature's row.
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => { window.__sv.modeller.selected = null; });
+    await mp.hover('#mc-tree .ft-row[data-id="x"]');
+    await mp.waitForTimeout(100);
+    const hvTree = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+    const hvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(20, -45, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.move(hvAt[0], hvAt[1]);
+    await mp.waitForTimeout(200);
+    const hvView = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#mc-tree .ft-row.hover")].map(r => r.dataset.id), lit: window.__sv.modeller.hoverGroup.children.length }));
+    await mp.mouse.move(5, 5);
+    check(hvTree === 1 && hvView.rows.join() === "x" && hvView.lit === 0, `model 1.324: hovering the Extrude1 row lights its faces, hovering its top face marks the row (${JSON.stringify([hvTree, hvView])})`);
     await ctx.close();
   }
 
@@ -3308,6 +3320,32 @@ try {
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
       return { mid: m && ax ? [m.x, m.y, P(ax.a).x, P(ax.b).x].map(v => Math.round(v * 1000) / 1000) : null, dims: sk.dims.map(d => `${d.t}:${d.val.v}`).join(","), ok: ed.info.status };
     });
+    // Fully define dimensions the slot from its centreline ends and arc centres, not the cap tangent points (exam bug 48).
+    const fdSlot = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk0 = ed.sk, n0 = sk0.dims.length;
+      ed.fullyDefine();
+      const sk = ed.sk, key = new Set(sk.ents.flatMap(e => e.t === "arc" || e.t === "circle" ? [e.c] : e.t === "line" && e.cons ? [e.a, e.b] : []));
+      const added = sk.dims.slice(n0).filter(d => (d.t === "hdistance" || d.t === "vdistance") && d.e[1] !== "q2");
+      return { n: added.length, onKey: added.filter(d => key.has(d.e[1])).length, dof: ed.info.dof };
+    });
+    // Relation glyphs sit beside their curves: points along each arc and line are the curve, not a glyph (exam bug 47).
+    const onGlyph = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => { const e = sk.ents.find(x => x.id === id); return [e.x, e.y]; };
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), w = ed.frame;
+      const scr = p => { const q = new v.camera.position.constructor(w.o[0] + w.x[0] * p[0] + w.y[0] * p[1], w.o[1] + w.x[1] * p[0] + w.y[1] * p[1], w.o[2] + w.x[2] * p[0] + w.y[2] * p[1]).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const ids = new Set(sk.rels.flatMap(x => x.e));
+      const mids = sk.ents.filter(e => ids.has(e.id) && (e.t === "line" || e.t === "arc")).flatMap(e => [0.15, 0.3, 0.5, 0.7, 0.85].map(u => {
+        if (e.t === "line") { const a = P(e.a), b = P(e.b); return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+        const c = P(e.c), a = P(e.a), b = P(e.b), rr = Math.hypot(a[0] - c[0], a[1] - c[1]), a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0; while (sw <= 0) sw += 2 * Math.PI;
+        return [c[0] + rr * Math.cos(a0 + sw * u), c[1] + rr * Math.sin(a0 + sw * u)];
+      }));
+      return { n: mids.length, hit: mids.map(scr).filter(([x, y]) => document.elementFromPoint(x, y)?.classList.contains("sk-rel")).length, glyphs: document.querySelectorAll(".sk-rel").length };
+    });
+    check(onGlyph.n > 4 && onGlyph.glyphs > 0 && onGlyph.hit === 0, `model 1.325: relation glyphs leave the curves clickable (${JSON.stringify(onGlyph)})`);
+    check(fdSlot.n > 0 && fdSlot.onKey === fdSlot.n && fdSlot.dof === 0, `model 1.325: Fully define dimensions slot centres, not tangent points (${JSON.stringify(fdSlot)})`);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(200);
     check(a3.arcs === 5 && a3.dims === 0 && a3.ok === "ok" && !a3.box && a3.off === false && a3.saved === "0", `model 1.144: 3-point arc slot with Add dimensions off (${JSON.stringify(a3)})`);
     check(cs.mid && cs.mid[0] === 15 && cs.mid[1] === 15 && cs.mid[2] === 0 && cs.mid[3] === 30 && cs.dims === "diameter:8,distance:30" && cs.ok === "ok",
       `model 1.144: Centerpoint straight slot stays centred on its first click as the length changes (${JSON.stringify(cs)})`);
@@ -5973,6 +6011,9 @@ try {
     await mp.evaluate(() => window.__sv.motion.seek(0.2));
     const segAt = await pos();
     const segRows = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").segs.map(r => r[2]).join(","));
+    // The motor graph: velocity in °/s, with a curve and the playhead.
+    await setP("select[data-p=mplot]", "vel");
+    const motorPlot = await mp.evaluate(() => { const svg = document.querySelector("#motion .mo-motor-plot svg"); return svg ? [svg.querySelector("text")?.textContent, !!svg.querySelector("polyline"), !!svg.querySelector(".mo-ph"), window.__sv.motion.motorPlot].join("|") : ""; });
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
     await setP("select[data-p=profile]", "expr");
     await setP("input[data-p=expr]", "180*t");
@@ -5980,7 +6021,7 @@ try {
     const exprAt = await pos();
     await setP("input[data-p=expr]", "sin(");
     const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, exprAt, exprBad };
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, motorPlot, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6330,13 +6371,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8679,6 +8720,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Use thickness ratio: 0.5 of the SHS 40x40x3 wall = 1.5 mm inset, so a 37 × 37 plate.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInset"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wRatio"]');
+    await settle();
+    const capRt = await mp.evaluate(() => ({ ratio: window.__sv.model.mode().draft?.ratio?.v, field: !!document.querySelector('#mc-pm input[data-num="ratio"]'), inset: !!document.querySelector('#mc-pm input[data-num="inset"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const capRp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(capRt.ratio === 0.5 && capRt.field && !capRt.inset && !capRp.bad && JSON.stringify(capRp.plate) === "[37,37,5]", `weldments: end cap thickness ratio (${JSON.stringify({ ...capRt, ...capRp })})`);
     // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
     const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
     const len0 = await memLen();
@@ -9172,6 +9227,22 @@ try {
     const vt1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(vt0.title === "Vent" && vt0.sketch === "vsk" && /1/.test(vt0.info ?? "") && !vt1.bad && Math.abs(cb1.v - vt1.v - (60 * 25 - 2 * 25) * T) < 1e-3,
       `sheet metal: Vent cuts the boundary less the rib through the plate (${JSON.stringify({ vt0, vt1 })})`);
+    // Forming Tool: click the plate's top face beside the vent, switch to an extruded hole, ✓: a collar T thick and the hole through.
+    await smMenu("Forming Tool");
+    const [ftx, fty] = await scr([10, 25, T]);
+    await mp.mouse.click(ftx, fty);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="tool"]', "xhole");
+    await settle();
+    const ft0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, pts: d?.pts, tool: d?.tool, size: d?.size?.v, h: d?.height?.v, rows: document.querySelectorAll("#mc-pm [data-sm-pt]").length }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ft1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, forms: l.sheet?.forms?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const ftR = Math.round(5 * T * 10) / 10 / 2, ftH = Math.round(2 * T * 10) / 10;
+    const ftDv = Math.PI * ((ftR + T) ** 2 * ftH - ftR ** 2 * (ftH + T));
+    check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
+      && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
+      `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");

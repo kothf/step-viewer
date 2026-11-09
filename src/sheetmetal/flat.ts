@@ -34,6 +34,15 @@ export function flatDrawing(st: SheetState): Drawing2 {
   }
   // Cross breaks, on their own layer.
   for (const c of st.crosses ?? []) entities.push({ kind: "line", a: c.a, b: c.b, layer: "CROSS_BREAK" });
+  // Forming tools: their footprints on their own layer; an extruded hole's pre-pierce hole is part of the outline.
+  for (const m of st.forms ?? []) {
+    for (const x of m.mark) {
+      if (x.kind === "line") entities.push({ kind: "line", a: x.a, b: x.b, layer: "FORM_TOOL" });
+      else if (x.kind === "circle") entities.push({ kind: "circle", c: x.c, r: x.r, layer: "FORM_TOOL" });
+      else if (x.kind === "arc") { const [p, q] = x.ccw ? [x.a, x.b] : [x.b, x.a]; entities.push({ kind: "arc", c: x.c, r: x.r, a0: ang(x.c, p), a1: ang(x.c, q), layer: "FORM_TOOL" }); }
+    }
+    if (m.pierce && !st.flatEdges) entities.push({ kind: "circle", c: m.c, r: m.pierce, layer: "OUTLINE" });
+  }
   // Sharp folds between the facets of a lofted bend.
   for (const f of st.folds ?? []) entities.push({ kind: "line", a: f.a, b: f.b, layer: f.up ? "BEND_UP" : "BEND_DOWN" });
   return { entities, u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 1, 0), min, max };
