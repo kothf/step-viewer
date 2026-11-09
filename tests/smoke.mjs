@@ -8497,7 +8497,7 @@ try {
     await mp.click('#mc-pm input[data-k="wGap"]');
     await settle();
     await mp.fill('#mc-pm input[data-num="gap"]', "3");
-    await mp.press('#mc-pm input[data-num="gap"]', "Enter");
+    await mp.press('#mc-pm input[data-num="gap"]', "Tab");
     await settle();
     await mp.click("#mc-ok");
     await settle();
