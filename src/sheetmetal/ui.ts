@@ -8,7 +8,7 @@ import { sketchPath, sketchProfile } from "../sketch/profile";
 import { flatSize, type SheetState } from "./sheet";
 import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
-export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
@@ -16,6 +16,7 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smbase", t("Base Flange/Tab"), t("Base flange: a flat plate from a closed sketch, or a bent flange from an open chain of lines")],
   ["smflange", t("Edge Flange"), t("Edge flange: a bend and a flange on straight edges of the sheet")],
   ["smmiter", t("Miter Flange"), t("Miter flange: run a sketched profile of lines along edges of the sheet, mitred at corners")],
+  ["smswept", t("Swept Flange"), t("Swept flange: run a sketched profile of lines and tangent arcs along edges of the sheet; each arc is a bend of its own radius")],
   ["smhem", t("Hem"), t("Hem: fold an edge back on itself, closed or open")],
   ["smbend", t("Sketched Bend"), t("Sketched bend: fold a flat face along a line sketched on it")],
   ["smjog", t("Jog"), t("Jog: two opposite bends along a sketched line that offset the rest of the face")],
@@ -26,14 +27,15 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Miter-Flange", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smmiter: "⌐", smflat: "▭" };
+export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
   smbase: S('<path d="M2 10l4-3h8l-4 3z" fill="currentColor" fill-opacity=".25"/><path d="M2 10v1.6l4-3M10 10v1.6l4-3"/>'),
   smflange: S('<path d="M2 12h8a2 2 0 0 0 2-2V3"/><path d="M2 14h8a4 4 0 0 0 4-4V3"/>'),
   smmiter: S('<path d="M2 13h6V8h5"/><path d="M8 13l3-3M13 8l-2 2" stroke-dasharray="1.6 1.4"/>'),
+  smswept: S('<path d="M2 13h4a3 3 0 0 0 3-3V8a3 3 0 0 1 3-3h2"/>'),
   smhem: S('<path d="M2 6h10a2 2 0 0 1 0 4H6"/><path d="M2 4h10a4 4 0 0 1 0 8H6"/>'),
   smbend: S('<path d="M2 12h6l5-7"/><path d="M8 3v11" stroke-dasharray="1.6 1.4"/>'),
   smjog: S('<path d="M1.5 11h5l3-5h5"/><path d="M1.5 13h5.6l3-5h4.4"/>'),
@@ -64,10 +66,16 @@ const usable = (s: SketchFeature) => !sketchProfile(s).error || (() => { const p
 /** A sketch holding just one line (for sketched bends and jogs). */
 /** An open chain of lines (miter flange profiles). */
 const lineChain = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed && p.segs.length > 0 && p.segs.every(x => x.kind === "line"); };
+/** An open chain of lines joined by sharp corners or tangent arcs, starting and ending with a line (swept flange profiles). */
+const sweptChain = (s: SketchFeature) => {
+  const p = sketchPath(s);
+  if (p.error || p.closed || !p.segs.length || p.segs[0].kind !== "line" || p.segs.at(-1)!.kind !== "line") return false;
+  return p.segs.every((x, i) => x.kind === "line" || (x.kind === "arc" && p.segs[i - 1]?.kind === "line" && p.segs[i + 1]?.kind === "line"));
+};
 const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
 
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter", c: DraftCtx): Feature | string {
+export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
   const base = c.doc.features.find((f): f is SmBaseFeature => f.type === "smbase");
   if (type === "smbase") {
     if (base) {
@@ -98,6 +106,12 @@ export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjo
     if (!sk) return t("Sketch the miter flange profile first: an open chain of lines on a plane square to an edge, starting at it.");
     return { id: c.id, type: "smmiter", name: c.name("smmiter"), sketch: sk.id, edges } satisfies SmMiterFeature;
   }
+  if (type === "smswept") {
+    const sel = c.selected ? c.sketches.find(s => s.id === c.selected && sweptChain(s)) : undefined;
+    const sk = sel ?? c.sketches.filter(s => !c.used.has(s.id) && sweptChain(s)).at(-1);
+    if (!sk) return t("Sketch the swept flange profile first: lines joined by tangent arcs on a plane square to an edge, starting at it.");
+    return { id: c.id, type: "smswept", name: c.name("smswept"), sketch: sk.id, edges } satisfies SmMiterFeature;
+  }
   if (type === "smclosed") return { id: c.id, type: "smclosed", name: c.name("smclosed"), faces: c.face && /:p\d+:(?!top$|bot$)[^:]+$/.test(c.face.name) ? [c.face] : [], kind: "overlap" } satisfies SmClosedFeature;
   if (type === "smcorner") return { id: c.id, type: "smcorner", name: c.name("smcorner"), edges: edges.filter(e => !e.faces.some(n => /:(top|bot)$/.test(n))), kind: "fillet", size: { v: 5 } } satisfies SmCornerFeature;
   if (type === "smflange") return { id: c.id, type: "smflange", name: c.name("smflange"), edges, length: { v: 20 }, angle: { v: Math.PI / 2 } } satisfies SmFlangeFeature;
@@ -111,7 +125,8 @@ export function smCheck(f: Feature): string | null {
   if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
   if (f.type === "smmiter" && !f.sketch) return t("Pick a sketch with the miter flange profile.");
-  if (f.type === "smmiter" && !f.edges.length) return t("Pick the edges for the flange.");
+  if (f.type === "smswept" && !f.sketch) return t("Pick a sketch with the swept flange profile.");
+  if ((f.type === "smmiter" || f.type === "smswept") && !f.edges.length) return t("Pick the edges for the flange.");
   if (f.type === "smcorner" && !f.edges.length) return t("Pick the corner edges to break.");
   if (f.type === "smclosed" && !f.faces.length) return t("Pick the end faces of the flanges to close.");
   return null;
@@ -175,13 +190,15 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + help(t("Flanges on edges that meet at a corner run on and are mitred, with this gap between them."))) : ""),
     };
   }
-  if (f.type === "smmiter") {
-    const chains = k.sketches.filter(s => lineChain(s) || s.id === f.sketch);
+  if (f.type === "smmiter" || f.type === "smswept") {
+    const swept = f.type === "smswept";
+    const chains = k.sketches.filter(s => (swept ? sweptChain(s) : lineChain(s)) || s.id === f.sketch);
     return {
-      title: t("Miter Flange"),
+      title: swept ? t("Swept Flange") : t("Miter Flange"),
       body: group(t("Profile"), `<label class="pm-field"><span>${esc(t("Sketch"))}</span><select data-k="sketch">${chains.map(s => `<option value="${s.id}"${s.id === f.sketch ? " selected" : ""}>${esc(k.label(s.name))}</option>`).join("")}</select></label>`
-        + help(t("An open chain of lines on a plane square to an edge, starting at it. Lengths run to the virtual sharps on the profile's side.")))
-        + group(t("Miter parameters"), edgeList(f.edges) + numField("gap", t("Corner gap"), f.gap ?? { v: 0.1 }, "length")
+        + help(swept ? t("Lines joined by tangent arcs on a plane square to an edge, starting at it. Each arc is a bend of its radius on the profile's side; sharp corners use the bend radius.")
+          : t("An open chain of lines on a plane square to an edge, starting at it. Lengths run to the virtual sharps on the profile's side.")))
+        + group(swept ? t("Flange parameters") : t("Miter parameters"), edgeList(f.edges) + numField("gap", t("Corner gap"), f.gap ?? { v: 0.1 }, "length")
           + help(t("The profile runs along every picked edge; flanges on edges that meet at a corner are mitred.")))
         + group(t("Custom bend radius"), `<label class="chk pm-chk"><input type="checkbox" data-sm="customR"${f.radius ? " checked" : ""} />${esc(t("Use custom bend radius"))}</label>` + (f.radius ? numField("radius", t("Bend radius"), f.radius, "length") : "")),
     };
@@ -260,7 +277,7 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
     if (el instanceof HTMLButtonElement) {
       el.addEventListener("click", () => {
         if (key === "dxf") dxf();
-        if (key === "clear" && (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smmiter")) upd(() => { f.edges = []; }, true);
+        if (key === "clear" && (f.type === "smflange" || f.type === "smhem" || f.type === "smcorner" || f.type === "smmiter" || f.type === "smswept")) upd(() => { f.edges = []; }, true);
         if (key === "clear" && f.type === "smclosed") upd(() => { f.faces = []; }, true);
       });
       return;
@@ -300,7 +317,7 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
         if (key === "dim" && f.type === "smjog") upd(() => { if (val === "outside") delete f.dim; else f.dim = val as SmJogFeature["dim"]; });
         return;
       }
-      if (f.type === "smmiter") {
+      if (f.type === "smmiter" || f.type === "smswept") {
         if (key === "customR") upd(() => { if (val) f.radius = { v: 2 }; else delete f.radius; }, true);
         return;
       }

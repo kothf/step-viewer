@@ -373,6 +373,34 @@ test("sheet metal: miter flange runs a sketched profile along edges (FR-FT-120)"
   assert.ok(bad && !bad.ok);
 });
 
+test("sheet metal: swept flange makes each tangent arc a bend of its radius (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  // On YZ: up 20, a tangent arc of radius 10 turning outwards (-Y), then 10 more: virtual sharp at (0, 30), ends at -20.
+  const P = (k: string, x: number, y: number): SkEnt => ({ id: `sp${k}`, t: "point", x, y });
+  const pr: SketchFeature = {
+    id: "sp", type: "sketch", name: "sp", plane: { std: "YZ" }, rels: [], dims: [], ents: [
+      P("0", 0, 0), P("1", 0, 20), P("c", -10, 20), P("2", -10, 30), P("3", -20, 30),
+      { id: "spl0", t: "line", a: "sp0", b: "sp1" }, { id: "spa", t: "arc", c: "spc", a: "sp1", b: "sp2" }, { id: "spl1", t: "line", a: "sp2", b: "sp3" },
+    ],
+  };
+  const sf: SmMiterFeature = { id: "sf", type: "smswept", name: "Swept-Flange1", sketch: "sp", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }] };
+  const r = run(doc([s, base(), pr, sf]));
+  // The arc is on the inside of bend 2 (it turns against the first): inner radius 10, setback 10.
+  const ba1 = (Math.PI / 2) * (2 + 0.5 * 2), ba2 = (Math.PI / 2) * (10 + 0.5 * 2);
+  close(r.props.volume, 100 * ((50 - 4) + ba1 + (30 - 4 - 10) + ba2 + (20 - 10)) * 2, 1e-5);
+  close(r.size[1], 70, 1e-5); close(r.size[2], 32, 1e-5); close(r.min[1], -20, 1e-5);
+  close(r.sheet!.bends.find(x => x.id === "sf:b1")!.r, 10, 1e-9);
+  run(doc([s, base(), pr, sf, flat]));
+  // The same profile as a miter flange is refused (it has an arc), and an arc that doesn't sit between lines is refused here.
+  const asMiter = m.evaluate(doc([s, base(), pr, { ...sf, type: "smmiter" }])).statuses.find(x => x.id === "sf");
+  assert.ok(asMiter && !asMiter.ok);
+  const tail: SketchFeature = { ...pr, ents: pr.ents.filter(e => e.id !== "spl1") };
+  const bad = m.evaluate(doc([s, base(), tail, sf])).statuses.find(x => x.id === "sf");
+  assert.ok(bad && !bad.ok);
+});
+
 test("sheet metal: cuts across a bend are unrolled in the flat pattern (FR-FT-120)", async () => {
   oc ??= await occ();
   m ??= new Modeller(oc);
