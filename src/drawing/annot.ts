@@ -531,6 +531,11 @@ export function factsCtx(f: { topo: Topo; holes: HoleInfo[]; threads?: ThreadInf
   return { topo: f?.topo ?? null, holes: f?.holes ?? [], threads: f?.threads ?? [], sketches: f?.sketches ?? [], bends: f?.bends ?? [], items: f?.items ?? [], box: f?.box ?? null };
 }
 
+/** A section view's facts (FR-DRW-021): the model's plus the cut faces' edges from its projection, so the section can be dimensioned. */
+export function withCut<T extends { topo: Topo }>(f: T | null, proj?: { cutEdges?: MEdge[] } | null): T | null {
+  return f && proj?.cutEdges?.length ? { ...f, topo: { ...f.topo, edges: [...f.topo.edges, ...proj.cutEdges] } } : f;
+}
+
 export function viewAnnots(sheet: Sheet, v: DrawingView, pl: Placement, ctx: AnnotCtx): AnnotOut {
   const own = ctx.forView?.(v);
   if (own) ctx = { ...ctx, ...own, forView: undefined };

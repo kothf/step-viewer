@@ -3904,6 +3904,22 @@ try {
     check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
+    await ready();
+    // Smart dimension on the section's cut faces (FR-DRW-021): the hole's two cut walls are 16 apart.
+    {
+      const cutN = await dp.evaluate(i => (window.__sv.drw.proj(i)?.cutEdges ?? []).filter(e => e.k.endsWith("|§")).length, sec.id);
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [8, -8]) { const [cx, cy] = await at(sec.id, u, 10); await dp.mouse.move(cx, cy + 2); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); }
+      const [px, py] = await at(sec.id, 0, 32);
+      await dp.mouse.move(px + 3, py); await dp.mouse.move(px, py); await dp.mouse.click(px, py);
+      await dp.keyboard.press("Escape");
+      const cutDims = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "dim" && a.view === i).map(a => ({ k: a.k, refs: a.refs.map(r => r.e) })), sec.id);
+      const cutTexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s));
+      check(cutN >= 8 && cutDims.length === 1 && cutDims[0].refs.every(e => e?.endsWith("|§")) && cutTexts.includes("16"),
+        `drawing: a section view is dimensioned on its cut faces: the hole's cut walls give 16 (${cutN} cut edges, ${JSON.stringify(cutDims)})`);
+      await dp.keyboard.press("Control+z");
+      await ready();
+    }
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
     await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
