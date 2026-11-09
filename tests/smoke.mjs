@@ -2183,6 +2183,41 @@ try {
     }, { id: inf.perpId, l1: inf.l1 });
     check(glyph === "perpendicular" && inf.n === 4 && inf.perp && inf.dot < 1e-6 && inf.ctrlFree && inf.par && inf.cross < 1e-6 && inf.status === "ok" && hot.lit && hot.cleared && hot.hidden,
       `model 1.251: automatic perpendicular/parallel relations while drawing, Ctrl suppresses them, relation glyphs light up their entities (${glyph}, ${JSON.stringify(inf)}, ${JSON.stringify(hot)})`);
+    // 1.266.0 (FR-SK-043/044/047): dragging the last line's start onto the free end of the Ctrl line merges them
+    // (coincident relation); Ctrl+drag of that line copies it; the status bar shows the cursor position.
+    await tool("select");
+    const ends = await mp.evaluate(old => {
+      const sk = window.__sv.model.editor().sk, P = id => sk.ents.find(e => e.id === id);
+      const made = sk.ents.filter(e => e.t === "line" && !old.includes(e.id));
+      return { a: made[3].a, b: made[2].b, pa: [P(made[3].a).x, P(made[3].a).y], pb: [P(made[2].b).x, P(made[2].b).y], l4: made[3].id };
+    }, before);
+    const drag = async (from, to, ctrl) => {
+      const [fx, fy] = await toPage(from), [tx, ty] = await toPage(to);
+      if (ctrl) await mp.keyboard.down("Control");
+      await mp.mouse.move(fx, fy); await mp.waitForTimeout(40); await mp.mouse.down();
+      for (let i = 1; i <= 6; i++) { await mp.mouse.move(fx + ((tx - fx) * i) / 6, fy + ((ty - fy) * i) / 6); await mp.waitForTimeout(30); }
+      await mp.mouse.up(); await mp.waitForTimeout(120);
+      if (ctrl) await mp.keyboard.up("Control");
+    };
+    await drag(ends.pa, ends.pb, false);
+    const statusText = await mp.evaluate(() => document.querySelector("#mc-status")?.textContent ?? "");
+    const merged = await mp.evaluate(({ a, b }) => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
+      return { rel: sk.rels.some(r => r.t === "coincident" && r.e[0] === a && r.e[1] === b), gap: Math.hypot(P(a).x - P(b).x, P(a).y - P(b).y), status: ed.info.status };
+    }, ends);
+    const mid = await mp.evaluate(id => { const sk = window.__sv.model.editor().sk, P = x => sk.ents.find(e => e.id === x), l = P(id); return [(P(l.a).x + P(l.b).x) / 2, (P(l.a).y + P(l.b).y) / 2]; }, ends.l4);
+    const nBefore = (await lineIds()).length;
+    await click(mid);
+    await drag(mid, [mid[0] + 8, mid[1]], true);
+    const copied = await mp.evaluate(({ id, n }) => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = x => sk.ents.find(e => e.id === x);
+      const lines = sk.ents.filter(e => e.t === "line");
+      const src = P(id), cp = lines.at(-1);
+      const dx = [P(cp.a).x - P(src.a).x, P(cp.b).x - P(src.b).x], dy = [P(cp.a).y - P(src.a).y, P(cp.b).y - P(src.b).y];
+      return { n: lines.length - n, dx, dy, sel: [...ed.selection].includes(cp.id), rels: sk.rels.filter(r => r.e.includes(cp.id)).length };
+    }, { id: ends.l4, n: nBefore });
+    check(merged.rel && merged.gap < 1e-6 && merged.status === "ok" && /x -?[\d.]+, y -?[\d.]+/.test(statusText) && copied.n === 1 && copied.dx.every(v => near(v, 8, 0.05)) && copied.dy.every(v => near(v, 0, 0.05)) && copied.sel && copied.rels === 0,
+      `model 1.266: drag a point onto a point merges them, Ctrl+drag copies the selection, status shows x/y (${JSON.stringify(merged)}, ${statusText}, ${JSON.stringify(copied)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.

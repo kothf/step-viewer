@@ -153,7 +153,14 @@ export class SketchEditor {
   private ordDraft: { base: string | null; row: number | null } = { base: null, row: null };
   /** Box selection in progress (sketch coordinates), started at screen x0. */
   private box: { a: V2; b: V2; x0: number; base: Set<string> } | null = null;
-  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature } | null = null;
+  /**
+   * A drag of sketch geometry. `point` = the one point dragged (drag to merge, FR-SK-043; `target` = what it would
+   * join on release); `copy` = Ctrl+drag copies the selection (FR-SK-044), `untoggle` = a Ctrl+click without a move
+   * deselects it.
+   */
+  private drag: { ids: string[]; start: V2; orig: Map<string, V2>; circle?: string; moved: boolean; base: SketchFeature; point?: string; target?: { t: "coincident" | "onCurve"; id: string } | null; copy?: boolean; untoggle?: string | null; made?: string[] } | null = null;
+  /** The cursor in sketch coordinates, shown in the status bar (FR-SK-047). */
+  private cursorUV: V2 | null = null;
   private labels = new Map<string, HTMLElement>();
   /** A dimension value or dangling relation glyph being dragged (FR-SK-066, FR-SK-064). */
   private labelDrag: { id: string; x0: number; y0: number; moved: boolean; base: SketchFeature } | null = null;
@@ -338,14 +345,24 @@ export class SketchEditor {
         this.emitSel();
         return true;
       }
-      if (e.ctrlKey || e.shiftKey || e.metaKey) { if (this.selection.has(h.id)) this.selection.delete(h.id); else this.selection.add(h.id); }
-      else if (!this.selection.has(h.id)) { this.selection.clear(); this.selection.add(h.id); }
+      // Ctrl+drag copies (FR-SK-044): a Ctrl+click on a selected item still deselects it, on release without a move.
+      const ctrl = e.ctrlKey || e.metaKey;
+      const was = this.selection.has(h.id);
+      if (ctrl) { if (!was) this.selection.add(h.id); }
+      else if (e.shiftKey) { if (was) this.selection.delete(h.id); else this.selection.add(h.id); }
+      else if (!was) { this.selection.clear(); this.selection.add(h.id); }
       this.emitSel();
+      const ent = this.ent(h.id);
+      if (!ent) { this.render(); return true; }
+      if (ctrl) {
+        this.drag = { ids: [], start: p, orig: new Map(), moved: false, base: structuredClone(this.sk), copy: true, untoggle: was ? h.id : null };
+        this.render();
+        return true;
+      }
       // Start a drag of what is under the cursor.
-      const ent = this.ent(h.id)!;
       const ids = ent.t === "point" ? [ent.id] : ent.t === "circle" ? [] : refPts(ent);
       const orig = new Map(ids.map(id => [id, this.pt(id)] as const));
-      this.drag = { ids, start: p, orig, circle: ent.t === "circle" ? ent.id : undefined, moved: false, base: structuredClone(this.sk) };
+      this.drag = { ids, start: p, orig, circle: ent.t === "circle" ? ent.id : undefined, moved: false, base: structuredClone(this.sk), ...(ent.t === "point" ? { point: ent.id } : {}) };
       this.render();
       return true;
     }
@@ -368,6 +385,8 @@ export class SketchEditor {
     this.lastEv = e;
     const p = this.uv(e);
     if (!p) return true;
+    this.cursorUV = p;
+    if (!this.reattaching && !this.piercing) this.statusHint();
     if (this.box) {
       this.box.b = p;
       this.boxSelect(e.clientX < this.box.x0);
@@ -376,11 +395,22 @@ export class SketchEditor {
     }
     if (this.drag) {
       const d = this.drag;
+      if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) < this.px(p) * 3) return true;
       d.moved = true;
       const dx = p[0] - d.start[0], dy = p[1] - d.start[1];
       this.sk = structuredClone(d.base);
+      if (d.copy) {
+        d.made = this.copyItems([dx, dy]);
+        this.info = solve(this.sk);
+        this.render();
+        return true;
+      }
+      // Drag to merge (FR-SK-043): a point dropped on a point, the origin or a curve joins it; Ctrl leaves it free.
+      d.target = d.point ? this.mergeTarget(d.point, p) : null;
+      const to = d.target?.t === "coincident" ? this.pt(d.target.id) : d.target ? this.project(p, d.target.id) : null;
+      this.showInfer(d.target ? { p: to!, id: d.target.t === "coincident" ? d.target.id : null, curve: d.target.t === "onCurve" ? d.target.id : null, hv: null } : null);
       const r = d.circle ? solve(this.sk, { circle: d.circle, to: p })
-        : solve(this.sk, { points: d.ids.map(id => ({ id, to: [d.orig.get(id)![0] + dx, d.orig.get(id)![1] + dy] as V2 })) });
+        : solve(this.sk, { points: d.ids.map(id => ({ id, to: to && id === d.point ? to : [d.orig.get(id)![0] + dx, d.orig.get(id)![1] + dy] as V2 })) });
       this.info = r;
       this.render();
       return true;
@@ -423,6 +453,20 @@ export class SketchEditor {
     if (this.drag) {
       const d = this.drag;
       this.drag = null;
+      this.showInfer(null);
+      if (d.copy) {
+        if (d.moved && d.made?.length) {
+          this.selection = new Set(d.made);
+          this.commit("Copy entities");
+          this.emitSel();
+        } else if (d.untoggle) { this.selection.delete(d.untoggle); this.render(); this.emitSel(); }
+        return true;
+      }
+      if (d.moved && d.point && d.target && !(e.ctrlKey || e.metaKey)) {
+        const rel: SkRel = { id: uid("r"), t: d.target.t, e: [d.point, d.target.id] };
+        const r = tryAdd(this.sk, { rel });
+        if (r.ok) { this.sk = r.sketch; this.info = r.result; this.commit(d.target.t === "coincident" ? "Merge points" : "Add relation"); this.render(); return true; }
+      }
       if (d.moved) this.commit("Drag sketch geometry");
       return true;
     }
@@ -436,6 +480,60 @@ export class SketchEditor {
       return false;
     }
     return false;
+  }
+
+  /**
+   * What a dragged point would join (FR-SK-043): another point or the origin (coincident), else a curve (on curve).
+   * Points and curves of the entities that use the dragged point are left out, so a line never folds onto itself.
+   */
+  private mergeTarget(id: string, p: V2): { t: "coincident" | "onCurve"; id: string } | null {
+    if (this.suppressed()) return null;
+    const own = this.sk.ents.filter(e => e.t !== "point" && refPts(e).includes(id));
+    const exclude = new Set<string>([id, ...own.flatMap(e => refPts(e)), ...own.map(e => e.id)]);
+    const h = this.hits(p, { curves: false, exclude })[0];
+    if (h) return { t: "coincident", id: h.id };
+    const c = this.hits(p, { points: false, exclude })[0];
+    if (c && this.ent(c.id)?.t !== "text") return { t: "onCurve", id: c.id };
+    return null;
+  }
+
+  /**
+   * Copies of the selected entities moved by `d` (FR-SK-044). Relations and dimensions among the copied items are
+   * copied too (fixes and model references are not); relations to the rest of the sketch are dropped.
+   */
+  private copyItems(d: V2): string[] {
+    const items = this.sk.ents.filter(e => this.selection.has(e.id));
+    const map = new Map<string, string>();
+    const point = (id: string) => {
+      if (id === ORIGIN) return id;
+      let got = map.get(id);
+      if (!got) { got = uid("p"); const q = this.pt(id); this.sk.ents.push({ id: got, t: "point", x: q[0] + d[0], y: q[1] + d[1] }); map.set(id, got); }
+      return got;
+    };
+    const made: string[] = [];
+    const add = (src: SkEnt, e: SkEnt) => { this.sk.ents.push(e); map.set(src.id, e.id); made.push(e.id); };
+    for (const e of items) {
+      const cons = e.cons ? { cons: true } : {};
+      if (e.t === "point") { if (e.id !== ORIGIN) made.push(point(e.id)); }
+      else if (e.t === "line") add(e, { id: uid("l"), t: "line", a: point(e.a), b: point(e.b), ...cons });
+      else if (e.t === "circle") add(e, { id: uid("c"), t: "circle", c: point(e.c), r: e.r, ...cons });
+      else if (e.t === "ellipse") add(e, { id: uid("e"), t: "ellipse", c: point(e.c), a: point(e.a), b: point(e.b), ...(e.p0 && e.p1 ? { p0: point(e.p0), p1: point(e.p1) } : {}), ...cons });
+      else if (e.t === "spline") add(e, { id: uid("s"), t: "spline", pts: e.pts.map(point), ...(e.closed ? { closed: true } : {}), ...splineExtra(e), ...cons });
+      else if (e.t === "text") { const c = { ...structuredClone(e), id: uid("t"), p: point(e.p) }; delete c.along; delete c.flip; add(e, c); }
+      else add(e, { id: uid("a"), t: "arc", c: point(e.c), a: point(e.a), b: point(e.b), ...cons });
+    }
+    const inside = (ids: string[]) => ids.every(x => x === ORIGIN ? false : map.has(x));
+    for (const r of [...this.sk.rels]) {
+      if (r.t === "fix" || r.t === "pierce" || r.ext || !inside(r.e)) continue;
+      const c: SkRel = { ...structuredClone(r), id: uid("r"), e: r.e.map(x => map.get(x)!) };
+      delete c.of;
+      this.sk.rels.push(c);
+    }
+    for (const dm of [...this.sk.dims]) {
+      if (!inside(dm.e)) continue;
+      this.sk.dims.push({ ...structuredClone(dm), id: uid("d"), name: this.nextDimName(), e: dm.e.map(x => map.get(x)!), ...(dm.pos ? { pos: [dm.pos[0] + d[0], dm.pos[1] + d[1]] as V2 } : {}) });
+    }
+    return made;
   }
 
   // ---------- snapping ----------
@@ -2594,7 +2692,10 @@ export class SketchEditor {
       hord: "Click the base point, then where the values go, then each point to dimension along X",
       vord: "Click the base point, then where the values go, then each point to dimension along Y",
     };
-    this.host.status(`${def} · ${t(hints[this.tool])}`);
+    // Cursor position in sketch coordinates (FR-SK-047).
+    const u = this.host.unit(), c = this.cursorUV;
+    const at = c ? ` · x ${trimNum(c[0] / u.mm, u.decimals)}, y ${trimNum(c[1] / u.mm, u.decimals)} ${u.name}` : "";
+    this.host.status(`${def} · ${t(hints[this.tool])}${at}`);
   }
 
   // ---------- drawing the sketch ----------
