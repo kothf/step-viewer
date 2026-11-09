@@ -868,41 +868,60 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
       } else skipped++;
     }
   }
-  if (!f.inter) for (const r of runs) r.make(0, r.len);
-  else {
-    // Intermittent: runs chained end to end, then welds of length l every pitch along each chain from its start
-    // (staggered: every other chain starts half a pitch on, so the welds on two sides of a joint alternate).
-    const l = f.inter.len.v, e = Math.max(f.inter.pitch.v, l);
-    if (!(l > 0)) throw new FeatureError("E-WLD-BEAD", "The weld length must be more than zero.");
-    const tol = 1e-4 * (1 + Math.max(sz, sz2)), left = new Set(runs.map((_r, i) => i));
-    const touches = (p: V3, skip: number) => [...left].some(j => j !== skip && (d3(runs[j].p0, p) < tol || d3(runs[j].p1, p) < tol));
-    let chain = 0;
-    while (left.size) {
-      // An open chain starts at a free end; a closed one anywhere.
-      let first = [...left][0], rev = false;
-      for (const i of left) {
-        if (!touches(runs[i].p0, i)) { first = i; rev = false; break; }
-        if (!touches(runs[i].p1, i)) { first = i; rev = true; break; }
-      }
-      const off = f.inter.stagger && chain % 2 ? e / 2 : 0;
-      let s = 0, cur: number | undefined = first;
-      while (cur != null) {
-        left.delete(cur);
-        const r: Run = runs[cur];
-        for (let w0 = off + Math.max(0, Math.floor((s - off - l) / e)) * e; w0 < s + r.len; w0 += e) {
-          const x = Math.max(w0, s), y = Math.min(w0 + l, s + r.len);
-          if (y - x < 0.05) continue;
-          const a = x - s, b = y - s;
-          if (rev) r.make(r.len - b, r.len - a); else r.make(a, b);
-        }
-        s += r.len;
-        const end: V3 = rev ? r.p0 : r.p1;
-        cur = [...left].find(j => d3(runs[j].p0, end) < tol || d3(runs[j].p1, end) < tol);
-        if (cur != null) rev = d3(runs[cur].p1, end) < tol && !(d3(runs[cur].p0, end) < tol);
-      }
-      chain++;
+  // Runs chained end to end; each chain gets its welds as windows of distance along it: the whole chain, or the
+  // From/to length span, then intermittent welds of length l every pitch from the span's start (staggered: every
+  // other chain starts half a pitch on, so the welds on two sides of a joint alternate).
+  const l = f.inter?.len.v ?? 0, e = f.inter ? Math.max(f.inter.pitch.v, l) : 0;
+  if (f.inter && !(l > 0)) throw new FeatureError("E-WLD-BEAD", "The weld length must be more than zero.");
+  if (f.span && !(f.span.len.v > 0)) throw new FeatureError("E-WLD-BEAD", "The weld length must be more than zero.");
+  if (f.span && f.span.start.v < 0) throw new FeatureError("E-WLD-BEAD", "The start offset must not be negative.");
+  const tol = 1e-4 * (1 + Math.max(sz, sz2)), left = new Set(runs.map((_r, i) => i));
+  const touches = (p: V3, skip: number) => [...left].some(j => j !== skip && (d3(runs[j].p0, p) < tol || d3(runs[j].p1, p) < tol));
+  let chain = 0, made = 0;
+  while (left.size) {
+    // An open chain starts at a free end; a closed one anywhere.
+    let first = [...left][0], rev = false;
+    for (const i of left) {
+      if (!touches(runs[i].p0, i)) { first = i; rev = false; break; }
+      if (!touches(runs[i].p1, i)) { first = i; rev = true; break; }
     }
+    const pieces: { r: Run; rev: boolean; s: number }[] = [];
+    let s = 0, cur: number | undefined = first;
+    while (cur != null) {
+      left.delete(cur);
+      const r: Run = runs[cur];
+      pieces.push({ r, rev, s });
+      s += r.len;
+      const end: V3 = rev ? r.p0 : r.p1;
+      cur = [...left].find(j => d3(runs[j].p0, end) < tol || d3(runs[j].p1, end) < tol);
+      if (cur != null) rev = d3(runs[cur].p1, end) < tol && !(d3(runs[cur].p0, end) < tol);
+    }
+    const L = s;
+    let lo = 0, hi = L;
+    if (f.span) {
+      // From/to length: from the start offset for the length, measured from the chain's other end when flipped.
+      const a = f.span.start.v, b = a + f.span.len.v;
+      [lo, hi] = f.span.flip ? [L - b, L - a] : [a, b];
+      lo = Math.max(0, lo); hi = Math.min(L, hi);
+    }
+    const wins: [number, number][] = [];
+    if (!f.inter) { if (hi - lo >= 0.05) wins.push([lo, hi]); }
+    else {
+      const off = lo + (f.inter.stagger && chain % 2 ? e / 2 : 0);
+      for (let w0 = off; w0 < hi; w0 += e) { const x = Math.max(w0, lo), y = Math.min(w0 + l, hi); if (y - x >= 0.05) wins.push([x, y]); }
+    }
+    for (const { r, rev: rv, s: s0 } of pieces) {
+      for (const [x0, y0] of wins) {
+        const x = Math.max(x0, s0), y = Math.min(y0, s0 + r.len);
+        if (y - x < (f.inter || f.span ? 0.05 : 1e-9)) continue;
+        const a = x - s0, b = y - s0;
+        if (rv) r.make(r.len - b, r.len - a); else r.make(a, b);
+        made++;
+      }
+    }
+    chain++;
   }
+  if (runs.length && !made) throw new FeatureError("E-WLD-BEAD", "The weld starts past the end of the edges.");
   // Pieces that meet end to end become one bead (all round a tube, along a side and round its corners).
   if (beads.length > 1) {
     try {

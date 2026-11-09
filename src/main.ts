@@ -154,6 +154,10 @@ const asm = new AsmController({
     const f = faceUnder(x - r.left, y - r.top);
     return f ? { idx: viewer.parts.indexOf(f.part), face: f.part.data.faces.indexOf(f.face), point: f.point.toArray() as [number, number, number] } : null;
   },
+  facesAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    return snapper.facesUnder(x - r.left, y - r.top).map(s => ({ idx: viewer.parts.indexOf(s.part!), face: s.part!.data.faces.indexOf(s.face!) }));
+  },
   setDoc: label => setDoc(label, "ready"),
   selectLeftTab: tab => showLeftTab(tab),
   leaveOthers: () => { docs?.before3d(); ++loadToken; modeller.close(); },
@@ -1977,8 +1981,39 @@ const VIEWS: Record<string, THREE.Vector3> = {
 };
 $$("#views button").forEach(b => b.addEventListener("click", () => {
   const v = b.dataset.view!;
-  if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
+  if (v === "more") viewsMenu(b); else if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else viewer.viewFrom(VIEWS[v]);
 }));
+/** The standard views a narrow header hides, as a menu under the ▾ button beside Fit. */
+function viewsMenu(btn: HTMLElement) {
+  const was = document.querySelector("#views-menu");
+  if (was) { was.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+  const m = document.createElement("div");
+  m.className = "mc-menu";
+  m.id = "views-menu";
+  m.setAttribute("role", "menu");
+  const close = () => { m.remove(); btn.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc, true); };
+  const away = (e: Event) => { if (!m.contains(e.target as Node) && e.target !== btn) close(); };
+  const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); btn.focus(); } };
+  for (const b of $$<HTMLButtonElement>("#views button")) {
+    const v = b.dataset.view!;
+    if (v === "fit" || v === "more") continue;
+    const it = document.createElement("button");
+    it.setAttribute("role", "menuitem");
+    it.dataset.view = v;
+    it.textContent = b.textContent;
+    it.title = b.title;
+    it.addEventListener("click", () => { close(); b.click(); });
+    m.append(it);
+  }
+  const r = btn.getBoundingClientRect();
+  m.style.left = `${Math.round(r.left)}px`;
+  m.style.top = `${Math.round(r.bottom + 4)}px`;
+  document.body.append(m);
+  btn.setAttribute("aria-expanded", "true");
+  document.addEventListener("pointerdown", away, true);
+  document.addEventListener("keydown", esc, true);
+  m.querySelector("button")?.focus();
+}
 /** World box of the picked face, edge or parts, for Zoom to selection (FR-UI-103). */
 function selectionBox(): THREE.Box3 | null {
   const sk = modeller.sketchSelectionBox();

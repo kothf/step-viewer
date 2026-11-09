@@ -199,6 +199,19 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   const b = rw.cut.find(c => c.kind === "bead")!;
   near(b.length!, 28, 1e-3);
   near(rw.volume - rg.volume, 8 * 28, 1e-4);
+  // From/to length: 10 mm from 5 mm in; flipped, the same 10 mm from the other end (centres 28 - 10 = 18 apart).
+  const spanOf = (span: object, extra: object = {}) => run(m, doc([k, mem, tr, cap, g, { ...bead, span, ...extra } as Feature]));
+  const rs = spanOf({ start: { v: 5 }, len: { v: 10 } });
+  near(rs.cut.find(c => c.kind === "bead")!.length!, 10, 1e-3);
+  near(rs.volume - rg.volume, 8 * 10, 1e-4);
+  const faceC = (r: ReturnType<typeof run>) => centroid(m, r.body!.faces[r.body!.names.findIndex(n => n.startsWith("w:") && n.endsWith(":face"))]);
+  const a0 = faceC(spanOf({ start: { v: 0 }, len: { v: 10 } })), a1 = faceC(spanOf({ start: { v: 0 }, len: { v: 10 }, flip: true }));
+  near(Math.hypot(a0[0] - a1[0], a0[1] - a1[1], a0[2] - a1[2]), 18, 1e-3);
+  // A span running past the end is cut short; one starting past it fails; intermittent welds fill only the span.
+  near(spanOf({ start: { v: 20 }, len: { v: 50 } }).cut.find(c => c.kind === "bead")!.length!, 8, 1e-3);
+  const past = m.evaluate(doc([k, mem, tr, cap, g, { ...bead, span: { start: { v: 30 }, len: { v: 10 } } } as Feature])).statuses.find(x => !x.ok);
+  assert.match(String(past?.message ?? JSON.stringify(past)), /past the end/);
+  near(spanOf({ start: { v: 5 }, len: { v: 20 } }, { inter: { len: { v: 4 }, pitch: { v: 6 } } }).cut.find(c => c.kind === "bead")!.length!, 14, 1e-3);
 });
 
 test("fillet bead round a tube standing on a plate (FR-FT-121)", async () => {

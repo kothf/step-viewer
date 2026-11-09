@@ -14,7 +14,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, colorAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -95,6 +95,10 @@ export class MotionManager {
   private frames: Record<string, Tf>[] = [];
   /** Frames where the mates could not all be solved. */
   private badFrames = new Set<number>();
+  /** Odd while `calculate` runs; bumping it cancels the run. */
+  private calcRun = 0;
+  /** Play waits for this calculation, then starts. */
+  private pendingPlay: Promise<boolean> | null = null;
   private cacheKey = "";
   private raf = 0;
   private playStart = 0;
@@ -216,6 +220,11 @@ export class MotionManager {
 
   /** A component's own opacity (what an appearance track starts from). */
   private compOpacity(id: string) { return this.asm.doc?.components.find(c => c.id === id)?.opacity ?? 1; }
+  /** The component's own colour (#rrggbb) when it has one, else a neutral grey: where a new colour key starts. */
+  private compColor(id: string) {
+    const c = this.asm.doc?.components.find(x => x.id === id)?.color;
+    return c ? "#" + c.map(x => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, "0")).join("") : "#b0b8c4";
+  }
 
   addTrack(spec: string) {
     const [kind, ref] = [spec.slice(0, spec.indexOf(":")), spec.slice(spec.indexOf(":") + 1)];
@@ -346,7 +355,7 @@ export class MotionManager {
     const tfs = this.tfsAt(i, tq);
     this.asm.motionShow(tfs, f.explode);
     this.syncTraces(i);
-    this.asm.motionLook(f.look);
+    this.asm.motionLook(f.look, f.tint);
     if (f.camera) this.setCamera(f.camera);
     this.viewer.invalidate();
     this.updateHead(i);
@@ -791,8 +800,58 @@ export class MotionManager {
 
   // ---------- playback ----------
 
+  /** Whether frames up to `i` are solved for the study as it is now. */
+  private solvedTo(i: number) { return this.key0() === this.cacheKey && this.frames.length > i; }
+
+  /**
+   * Solves frames up to `i` a few at a time, yielding between batches so the page stays live, with
+   * "Calculating frame k of n" in the transport bar (exam #60: a big assembly's first Play froze the
+   * page for minutes). Resolves false when cancelled (Play again, Stop, or the study closing).
+   */
+  async calculate(i: number): Promise<boolean> {
+    const run = ++this.calcRun;
+    const t0 = performance.now();
+    let slice = performance.now();
+    while (!this.solvedTo(i)) {
+      if (run !== this.calcRun || !this.open) return false;
+      const key = this.key0();
+      this.ensure(key === this.cacheKey ? this.frames.length : 0);
+      if (performance.now() - slice > 40) {
+        if (performance.now() - t0 > 200) this.showCalc(this.frames.length, i + 1);
+        await new Promise(r => setTimeout(r, 0));
+        slice = performance.now();
+      }
+    }
+    const done = run === this.calcRun;
+    if (done) { this.calcRun++; this.showCalc(0, 0); }
+    return done;
+  }
+
+  /** Is a calculation running (Play shows ⏸ and cancels it). */
+  get calculating() { return this.calcRun % 2 === 1; }
+
+  private showCalc(k: number, n: number) {
+    const el = this.pane.querySelector<HTMLElement>("[data-mo=calc]");
+    if (!el) return;
+    el.hidden = !n;
+    el.textContent = n ? t("Calculating frame {k} of {n}…", { k, n }) : "";
+  }
+
   play() {
-    if (this.playing) { this.pause(); return; }
+    if (this.playing || this.pendingPlay) { this.pause(); return; }
+    const n = frameCount(this.study);
+    if (!this.solvedTo(n - 1)) {
+      const go = this.calculate(n - 1);
+      this.pendingPlay = go;
+      this.renderTransport();
+      void go.then(ok => {
+        if (this.pendingPlay !== go) return;
+        this.pendingPlay = null;
+        this.renderTransport();
+        if (ok) this.play();
+      });
+      return;
+    }
     const s = this.study;
     if ((s.play ?? "once") === "once" && this.time >= s.duration - 1e-9) this.time = 0;
     this.playing = true;
@@ -823,7 +882,7 @@ export class MotionManager {
     step();
   }
 
-  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.renderTransport(); }
+  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.pendingPlay = null; if (this.calculating) { this.calcRun++; this.showCalc(0, 0); } this.renderTransport(); }
   stop() { this.pause(); this.time = 0; this.showAt(0); }
   seek(tq: number) { this.pause(); this.time = Math.max(0, Math.min(this.study.duration, tq)); this.showAt(this.time); }
 
@@ -1052,7 +1111,7 @@ export class MotionManager {
       else {
         const keys = sortKeys(k.keys as AnyKey[]);
         if (keys.length > 1) inner += `<span class="mo-span" style="left:${this.x(keys[0].t)};width:calc(${this.x(keys[keys.length - 1].t - keys[0].t)})"></span>`;
-        inner += keys.map((key, i) => `<button class="mo-key${key.interp ? ` i-${key.interp}` : ""}${picked.some(p => p.track === k.id && same(p.t, key.t)) ? " sel" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
+        inner += keys.map((key, i) => `<button class="mo-key${key.interp ? ` i-${key.interp}` : ""}${picked.some(p => p.track === k.id && same(p.t, key.t)) ? " sel" : ""}${(key as Key).c ? " colored" : ""}" data-key="${esc(k.id)}:${i}" style="left:${this.x(key.t)}${(key as Key).c ? `;--kc:${esc((key as Key).c!)}` : ""}" title="${esc(t("Key at {t} s", { t: fmt(key.t) }))}" aria-label="${esc(t("Key at {t} s", { t: fmt(key.t) }))}"></button>`).join("");
       }
       return `<div class="mo-lane${k.off ? " off" : ""}" data-lane="${esc(k.id)}">${inner}</div>`;
     }).join("");
@@ -1070,7 +1129,7 @@ export class MotionManager {
       + ib("start", "⏮", t("To start")) + ib("play", this.playing ? "⏸" : "▶", this.playing ? t("Pause") : t("Play")) + ib("stop", "⏹", t("Stop")) + ib("end", "⏭", t("To end"))
       + `<label class="mo-f"><select data-mo="mode" aria-label="${esc(t("Playback mode"))}">${(["once", "loop", "reciprocate"] as const).map(m => `<option value="${m}"${m === playMode ? " selected" : ""}>${esc(t(m === "once" ? "Play once" : m === "loop" ? "Loop" : "Reciprocate"))}</option>`).join("")}</select></label>`
       + `<label class="mo-f"><select data-mo="speed" aria-label="${esc(t("Playback speed"))}">${[0.25, 0.5, 1, 2, 4].map(v => `<option value="${v}"${v === this.speed ? " selected" : ""}>${v}×</option>`).join("")}</select></label>`
-      + `<span class="mo-time" data-mo="time" aria-live="off"></span>`
+      + `<span class="mo-time" data-mo="time" aria-live="off"></span><span class="mo-calc muted" data-mo="calc" role="status" hidden></span>`
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
@@ -1171,7 +1230,9 @@ export class MotionManager {
     if (tr.kind === "explode") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Exploded"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
       + `<label class="mo-f" title="${esc(t("Move the explode steps one after another instead of all at once"))}"><input type="checkbox" data-p="seq"${tr.seq ? " checked" : ""} /><span>${esc(t("Step by step"))}</span></label>`;
     if (tr.kind === "look") return field(t("Time"), "t", fmt(k.t), t("s")) + field(t("Opacity"), "v", fmt(k.v * 100, 1), "%") + interpSel(k.interp)
-      + `<button class="btn small" data-p="hide">${esc(t("Hidden"))}</button><button class="btn small" data-p="show">${esc(t("Shown"))}</button>`;
+      + `<button class="btn small" data-p="hide">${esc(t("Hidden"))}</button><button class="btn small" data-p="show">${esc(t("Shown"))}</button>`
+      + `<label class="mo-f" title="${esc(t("Give the component this colour from this key; it blends to the next coloured key"))}"><input type="checkbox" data-p="cuse"${k.c ? " checked" : ""} /><span>${esc(t("Colour"))}</span></label>`
+      + (k.c ? `<label class="mo-f"><input type="color" data-p="c" value="${esc(k.c)}" aria-label="${esc(t("Key colour"))}" /></label>` : "");
     const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate), ang = mate?.type === "angle";
     return field(t("Time"), "t", fmt(k.t), t("s")) + field(ang ? t("Angle") : t("Distance"), "v", fmt(ang ? k.v / DEG : k.v), ang ? "°" : "mm") + interpSel(k.interp);
   }
@@ -1189,7 +1250,8 @@ export class MotionManager {
   private renderTransport() {
     if (!this.open) return;
     const p = this.pane.querySelector<HTMLButtonElement>("[data-mo=play]");
-    if (p) { p.textContent = this.playing ? "⏸" : "▶"; const l = this.playing ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
+    const busy = this.playing || !!this.pendingPlay;
+    if (p) { p.textContent = busy ? "⏸" : "▶"; const l = busy ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
     const w = this.pane.querySelector<HTMLButtonElement>("[data-mo=webm]"), g = this.pane.querySelector<HTMLButtonElement>("[data-mo=gif]");
     if (w) { w.textContent = this.recording === "webm" ? t("Stop recording") : t("Video"); w.disabled = !!this.recording && this.recording !== "webm"; }
     if (g) { g.textContent = this.recording === "gif" ? t("Stop recording") : "GIF"; g.disabled = !!this.recording && this.recording !== "gif"; }
@@ -1479,7 +1541,7 @@ export class MotionManager {
       });
       this.render(); this.showAt(this.time); return;
     }
-    const numeric = !["interp", "fit", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
+    const numeric = !["interp", "fit", "motion", "profile", "flip", "setcam", "hide", "show", "seq", "c", "cuse"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
     this.edit(st => {
@@ -1514,6 +1576,8 @@ export class MotionManager {
       else if (p === "setcam" && tr.kind === "camera") Object.assign(k, this.camKey(k.t));
       else if (p === "v" && (tr.kind === "explode" || tr.kind === "look")) (k as Key).v = Math.max(0, Math.min(1, v / 100));
       else if (/^[dr][xyz]$/.test(p) && tr.kind === "pose") { const pk = k as unknown as PoseKey; (p[0] === "d" ? pk.d : pk.r)["xyz".indexOf(p[1])] = v; }
+      else if (p === "c" && tr.kind === "look" && /^#[0-9a-f]{6}$/i.test(raw)) (k as Key).c = raw.toLowerCase();
+      else if (p === "cuse" && tr.kind === "look") { const kk = k as Key; if ((el as HTMLInputElement).checked) kk.c = colorAt(tr.keys, kk.t) ?? this.compColor(tr.comp); else delete kk.c; }
       else if ((p === "hide" || p === "show") && tr.kind === "look") (k as Key).v = p === "hide" ? 0 : 1;
       else if (p === "v" && tr.kind === "mate") { const mate = (this.asm.doc?.mates ?? []).find(m => m.id === tr.mate); (k as Key).v = mate?.type === "angle" ? v * DEG : v; }
       const sorted = sortKeys(keys.filter(x => x === k || Math.abs(x.t - k.t) > 1e-9));

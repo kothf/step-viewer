@@ -594,8 +594,11 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
   #app:not(.gerber) .open-grp { gap: 2px; }
   #app:not(.gerber) .open-long { display: none; }
   #app:not(.gerber) .open-short { display: inline; }
-  #app:not(.gerber) #views button:not([data-view="fit"]) { display: none; }
+  #app:not(.gerber) #views button:not([data-view="fit"]):not([data-view="more"]) { display: none; }
 }
+/* The views hidden in a narrow header are in the ▾ menu beside Fit (exam #61). */
+#views-more { display: none; }
+@media (max-width: 1599px) { #app:not(.gerber) #views-more { display: inline-flex; } }
 @media (max-width: 1359px) { #app:not(.gerber) .brand-txt { display: none; } }
 @media (max-width: 1279px) {
   #app:not(.gerber) .seg button { padding: 5px 6px; font-size: 12px; }
@@ -734,6 +737,10 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .ft-tools { display: none; gap: 2px; }
 .ft-row:hover .ft-tools, .ft-row.sel .ft-tools, .ft-row:focus-within .ft-tools { display: inline-flex; }
 .ft-tools .icon { width: 22px; height: 20px; font-size: 11px; }
+/* Assembly tree: the show/hide button stays in sight (faint until hovered), so hidden components can be found and shown (exam #57). */
+#asm-tree .ft-tools { display: inline-flex; }
+#asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
+#asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 /* FR-UI-003: with a command open the panel fills the Features tab and the tree flies out over the view. */
@@ -1064,6 +1071,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-key.mo-ghost { opacity: 0.55; pointer-events: none; outline: 1px dashed var(--accent); }
 .motion .mo-key.i-snap { rotate: 0deg; border-radius: 0; }
 .motion .mo-key.i-easein, .motion .mo-key.i-easeout, .motion .mo-key.i-ease { border-radius: 50%; }
+.motion .mo-key.colored { background: var(--kc); }
+.motion .mo-key.colored.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .motion .mo-key.i-easein { border-left-width: 4px; }
 .motion .mo-key.i-easeout { border-right-width: 4px; }
 #mo-menu .mo-mk { float: right; margin-left: 18px; color: var(--muted); font-size: 12px; }

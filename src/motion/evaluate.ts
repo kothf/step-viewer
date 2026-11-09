@@ -41,6 +41,17 @@ export function valueAt(keys: Key[], t: number): number | null {
   return s[i - 1].v + (s[i].v - s[i - 1].v) * u;
 }
 
+/** An appearance track's colour at `t` from its coloured keys (sRGB blended between them), or null when none has one. */
+export function colorAt(keys: Key[], t: number): string | null {
+  const s = sortKeys(keys.filter(k => k.c && /^#[0-9a-f]{6}$/i.test(k.c)));
+  if (!s.length) return null;
+  const { i, u } = segment(s, t);
+  if (u >= 1 || i === 0) return s[i].c!.toLowerCase();
+  const rgb = (c: string) => [1, 3, 5].map(j => parseInt(c.slice(j, j + 2), 16));
+  const a = rgb(s[i - 1].c!), b = rgb(s[i].c!);
+  return "#" + a.map((x, j) => Math.round(x + (b[j] - x) * u).toString(16).padStart(2, "0")).join("");
+}
+
 export const sortKeys = <K extends { t: number }>(keys: K[]) => [...keys].sort((a, b) => a.t - b.t);
 
 const lerp3 = (a: V3, b: V3, u: number): V3 => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
@@ -290,6 +301,8 @@ export interface Frame {
   explode: { id: string; k: number; seq?: boolean }[];
   /** Component id → opacity (0 hidden … 1 opaque) for components with appearance keys. */
   look: Record<string, number>;
+  /** Component id → colour (#rrggbb) for appearance tracks with coloured keys. */
+  tint: Record<string, string>;
   /** Component id → offset for components with placement keys. */
   pose: Record<string, { d: V3; r: V3 }>;
   camera: CamKey | null;
@@ -297,12 +310,12 @@ export interface Frame {
 
 /** Evaluates every track that is on at `t`; `mates` are the assembly's, by id (for base values and types). */
 export function frameAt(study: MotionStudy, t: number, mates: Map<string, Mate>): Frame {
-  const f: Frame = { values: {}, axis: [], explode: [], look: {}, pose: {}, camera: null };
+  const f: Frame = { values: {}, axis: [], explode: [], look: {}, tint: {}, pose: {}, camera: null };
   const on = study.tracks.filter(k => !k.off);
   for (const k of on) {
     if (k.kind === "mate") { const v = valueAt(k.keys, t); if (v != null && mates.has(k.mate)) f.values[k.mate] = v; }
     else if (k.kind === "explode") { const v = valueAt(k.keys, t); if (v != null) f.explode.push({ id: k.view, k: clamp(v, 0, 1), ...(k.seq ? { seq: true } : {}) }); }
-    else if (k.kind === "look") { const v = valueAt(k.keys, t); if (v != null) f.look[k.comp] = clamp(v, 0, 1); }
+    else if (k.kind === "look") { const v = valueAt(k.keys, t); if (v != null) f.look[k.comp] = clamp(v, 0, 1); const c = colorAt(k.keys, t); if (c) f.tint[k.comp] = c; }
     else if (k.kind === "pose") { const p = poseAt(k.keys, t); if (p) f.pose[k.comp] = p; }
     else if (k.kind === "camera") f.camera = cameraAt(k.keys, t);
   }
