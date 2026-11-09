@@ -412,12 +412,51 @@ export function miterProfile(sk: SketchFeature, frame: Frame): V3[] {
 }
 
 /**
+ * A swept flange's profile: an open chain that starts and ends with a line, with lines meeting either at a sharp
+ * corner or through one tangent arc. Returns the virtual-sharp polyline as world points and, per corner (index k =
+ * the corner before line k, so `radii[0]` is the edge's bend and always null), the arc radius there or null.
+ */
+export function sweptProfile(sk: SketchFeature, frame: Frame): { pts: V3[]; radii: (number | null)[] } {
+  const path = sketchPath(sk);
+  const bad = () => new SheetError("E-SM-SWEPTSK", "The swept flange sketch must be an open chain of lines joined by sharp corners or tangent arcs, starting and ending with a line.");
+  if (path.error || path.closed || !path.segs.length || path.segs.some(x => x.kind !== "line" && x.kind !== "arc")) throw bad();
+  const segs = path.segs as Extract<Seg, { kind: "line" | "arc" }>[];
+  if (segs[0].kind !== "line" || segs.at(-1)!.kind !== "line") throw bad();
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  const size = Math.max(1, ...segs.flatMap(x => [...x.a, ...x.b].map(Math.abs)));
+  const lines: { a: V2; b: V2; r: number | null }[] = [];
+  let arc: number | null = null;
+  for (const x of segs) {
+    if (x.kind === "arc") {
+      if (arc != null || !lines.length) throw bad();
+      arc = x.r;
+      continue;
+    }
+    lines.push({ a: x.a, b: x.b, r: lines.length ? arc : null });
+    arc = null;
+  }
+  // Each corner's virtual sharp: where the two lines' extensions meet (the lines' own ends when they meet sharp).
+  const pts: V2[] = [lines[0].a];
+  for (let k = 1; k < lines.length; k++) {
+    const A = lines[k - 1], B = lines[k];
+    if (B.r == null) { pts.push(A.b); continue; }
+    const u: V2 = [A.b[0] - A.a[0], A.b[1] - A.a[1]], v: V2 = [B.b[0] - B.a[0], B.b[1] - B.a[1]];
+    const den = u[0] * v[1] - u[1] * v[0];
+    if (Math.abs(den) < 1e-12 * size * size) throw bad();
+    const t = ((B.a[0] - A.a[0]) * v[1] - (B.a[1] - A.a[1]) * v[0]) / den;
+    pts.push([A.a[0] + u[0] * t, A.a[1] + u[1] * t]);
+  }
+  pts.push(lines.at(-1)!.b);
+  return { pts: pts.map(w), radii: lines.map(x => x.r) };
+}
+
+/**
  * Miter flange (SolidWorks): the profile, drawn on a plane square to one of the picked edges and starting at it,
  * becomes a chain of bends and flat flanges on every picked edge. Each line of the profile is one level of flanges;
  * the lengths run to the virtual sharps on the profile's side, which is the outside of the first bend.
  * Flanges of edges meeting at a corner of the face run on and are mitred, level by level.
  */
-export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { state: SheetState; ops: SheetOp[] } {
+export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[], arcs?: (number | null)[]): { state: SheetState; ops: SheetOp[] } {
   if (!f.edges.length) throw new SheetError("E-SM-NOEDGE", "Pick the edges for the flange.");
   if (prof.length < 2) throw new SheetError("E-SM-MITERSK", "The miter flange sketch must be an open chain of lines.");
   const st = clone(prev);
@@ -425,7 +464,8 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { 
   if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
   // The edge the profile starts at: the picked edge nearest either end of the chain.
   const size = Math.max(1, ...prof.flatMap(p => p.map(Math.abs)));
-  type Start = { j: number; pts: V3[]; dist: number; o: V3; z: V3; e: V3 };
+  type Start = { j: number; pts: V3[]; radii: (number | null)[]; dist: number; o: V3; z: V3; e: V3 };
+  const radii = arcs ?? prof.slice(1).map(() => null);
   let best = null as Start | null;
   f.edges.forEach((ref, j) => {
     let found;
@@ -435,10 +475,11 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { 
     const M = found.panel.M, l = d2(seg.a, seg.b);
     const e2: V2 = [(seg.b[0] - seg.a[0]) / l, (seg.b[1] - seg.a[1]) / l];
     const A = apply(M, [seg.a[0], seg.a[1], T / 2]), e = applyDir(M, [e2[0], e2[1], 0]);
-    for (const pts of [prof, [...prof].reverse()]) {
+    // Reversed, the corner before line k is the one after line n − 1 − k: shift the radii by one.
+    for (const [pts, rr] of [[prof, radii], [[...prof].reverse(), [null, ...[...radii].reverse().slice(0, -1)]]] as [V3[], (number | null)[]][]) {
       const v = sub3(pts[0], A), t = Math.min(Math.max(dot(v, e), 0), l);
       const dist = Math.hypot(...sub3(v, mul(e, t)));
-      if (!best || dist < best.dist) best = { j, pts, dist, o: applyDir(M, [e2[1], -e2[0], 0]), z: M.z, e };
+      if (!best || dist < best.dist) best = { j, pts, radii: rr, dist, o: applyDir(M, [e2[1], -e2[0], 0]), z: M.z, e };
     }
   });
   const b = best as Start | null;
@@ -446,24 +487,31 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { 
   const P0 = b.pts[0];
   if (b.pts.some(p => Math.abs(dot(sub3(p, P0), b.e)) > 1e-5 * size)) throw new SheetError("E-SM-MITERSQ", "Sketch the miter flange profile on a plane square to the edge.");
   // The profile in the edge's (outward, normal) plane; collinear lines joined.
-  const lines: { d: V2; L: number }[] = [];
+  const lines: { d: V2; L: number; arc: number | null }[] = [];
   for (let i = 1; i < b.pts.length; i++) {
     const q = sub3(b.pts[i], b.pts[i - 1]);
     const u = dot(q, b.o), v = dot(q, b.z), L = Math.hypot(u, v);
     if (L < 1e-9 * size) continue;
     const d: V2 = [u / L, v / L], last = lines.at(-1);
     if (last && Math.abs(last.d[0] * d[1] - last.d[1] * d[0]) < 1e-9 && last.d[0] * d[0] + last.d[1] * d[1] > 0) last.L += L;
-    else lines.push({ d, L });
+    else lines.push({ d, L, arc: lines.length ? b.radii[i - 1] ?? null : null });
   }
   const levels = lines.map((x, k) => {
     const p = k ? lines[k - 1].d : [1, 0] as V2;
     const angle = Math.acos(Math.min(1, Math.max(-1, p[0] * x.d[0] + p[1] * x.d[1])));
     if (!(angle > 1e-6)) throw new SheetError("E-SM-MITERTURN", "The miter flange profile must turn away from the face at the edge.");
     if (!(angle < Math.PI - 1e-3)) throw new SheetError("E-SM-ANGLE", "The flange angle must be between 0° and 180°.");
-    return { angle, up: p[0] * x.d[1] - p[1] * x.d[0] > 0, L: x.L };
+    return { angle, up: p[0] * x.d[1] - p[1] * x.d[0] > 0, L: x.L, arc: x.arc };
+  });
+  // A sketched arc is the profile side of its bend: the outside when it turns like the first bend, else the inside.
+  const rs = levels.map(x => {
+    if (x.arc == null) return r;
+    const ri = x.up === levels[0].up ? x.arc - T : x.arc;
+    if (!(ri >= -1e-9)) throw new SheetError("E-SM-SWEPTR", "An arc of the swept flange profile is smaller than the sheet thickness on the outside of its bend.");
+    return Math.max(ri, 0);
   });
   // The profile lies on the outside of the first bend: later bends the same way have it outside too, the others inside.
-  const back = levels.map(x => x.up === levels[0].up ? outerSetback(T, x.angle, r) : innerSetback(x.angle, r));
+  const back = levels.map((x, k) => x.up === levels[0].up ? outerSetback(T, x.angle, rs[k]) : innerSetback(x.angle, rs[k]));
   const flat = levels.map((x, k) => x.L - back[k]);
   levels.forEach((x, k) => {
     if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-MITERLEN", "A line of the miter flange profile is too short for its bends.");
@@ -480,7 +528,7 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { 
     const n = add(mul(ua, 1 / Math.hypot(...ua)), mul(uc, 1 / Math.hypot(...uc))), nl = Math.hypot(...n);
     return nl < 1e-9 ? null : { V: apply(a.panel.M, [sa.b[0], sa.b[1], T / 2]), n: mul(n, 1 / nl) };
   });
-  const E = 2 * Math.max(...levels.map((x, k) => flat[k] + back[k] + bendAllowance(st, x.angle, r) + 2 * T));
+  const E = 2 * Math.max(...levels.map((x, k) => flat[k] + back[k] + bendAllowance(st, x.angle, rs[k]) + 2 * T));
   const gap = Math.max(f.gap?.v ?? 0.1, 0);
   const ops: SheetOp[] = [];
   const pid = (k: number, j: number) => `${f.id}:p${k * nE + j}`;
@@ -490,7 +538,7 @@ export function miterFlange(prev: SheetState, f: SmMiterFeature, prof: V3[]): { 
       if (k === 0) { faces = ref.faces; flip = findEdge(st, ref.faces).up !== x.up; }
       else { faces = [`${pid(k - 1, j)}:tip`, `${pid(k - 1, j)}:top`]; flip = !x.up; }
       ops.push(...addFlange(st, faces, {
-        angle: x.angle, r, s: flat[k], d: back[k], off0: 0, off1: 0, flip,
+        angle: x.angle, r: rs[k], s: flat[k], d: back[k], off0: 0, off1: 0, flip,
         ext0: corners.some(c => c[1] === j) ? E : 0, ext1: corners.some(c => c[0] === j) ? E : 0,
       }, pid(k, j), `${f.id}:b${k * nE + j}`));
     });

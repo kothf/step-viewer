@@ -71,6 +71,8 @@ export interface DrawingView {
   /** Flat pattern views: bend lines and their notes (false hides them). */
   bendLines?: boolean;
   bendNotes?: boolean;
+  /** Show the model's centre of mass point (SolidWorks' Center of Mass model item); dimensions can measure from it. */
+  com?: boolean;
   /** Show the sketches that are shown in the model, as thin lines (FR-DRW-017). */
   sketches?: boolean;
   /** Alignment with the parent broken (FR-DRW-017): the view moves on its own and stays put when the parent moves. */
@@ -93,9 +95,10 @@ export interface ViewBreak { axis: "u" | "v"; a: number; b: number }
 /**
  * What an annotation is attached to (FR-DRW-021): a model edge by its key (the names of the faces
  * it joins) with its middle as a hint, and which part of it: an end (the one nearer `q`), the centre
- * of a circle, or the whole edge. Or a fixed model point (model items, whose points are rebuilt).
+ * of a circle, or the whole edge. Or a fixed model point (model items, whose points are rebuilt); with `com` it is the
+ * model's centre of mass, which follows the model (`pt` = where it was last).
  */
-export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3 };
+export type GeoRef = { e: string; h: V3; p: "a" | "b" | "c" | "e"; q?: V3 } | { pt: V3; com?: true };
 
 /** Tolerance (FR-DRW-021): symmetric ±up, deviations +up/−lo, limits, or an ISO 286 fit code. */
 export interface Tol { t: "sym" | "dev" | "limit" | "fit"; up?: number; lo?: number; fit?: string;

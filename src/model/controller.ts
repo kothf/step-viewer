@@ -784,7 +784,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -792,7 +792,7 @@ export class ModelController {
     // Pre-selected edges for fillet and chamfer (FR-SEL-006): the edge picked with Smart measure.
     const selEdge = (type === "fillet" || type === "chamfer") ? this.pickedEdge() : null;
     const threadEdge = type === "thread" ? this.pickedEdge() : null;
-    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" ? this.pickedEdge() : null;
+    const smEdge = type === "smflange" || type === "smhem" || type === "smcorner" || type === "smmiter" || type === "smswept" ? this.pickedEdge() : null;
     const pre = selEdge ? this.refOfEdge(selEdge) : null;
     const preFace = type === "plane" ? this.pickedFace() : null;
     // Axis and point take a picked edge or face too.
@@ -877,7 +877,7 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smmiter") {
+    } else if (type === "smbase" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smmiter" || type === "smswept") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
       const smFace = type === "smclosed" ? this.pickedFace() : null;
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data });
@@ -1720,7 +1720,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "chamfer" && m.draft.mode === "vertex") this.pickChamferVertex(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "fillet" && m.focus === "sbv") this.pickSetback(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
-      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter")) this.pickSmEdge(e, m.draft);
+      else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smclosed") this.pickSmFace(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
@@ -4148,7 +4148,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smmiter": this.startFeature(c); break;
+      case "smbase": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smmiter": case "smswept": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -5669,7 +5669,7 @@ export class ModelController {
     const nSel = ed.selection.size;
     const plane = "std" in sk.plane ? t(STD_NAMES[sk.plane.std]) : t("Face");
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
-      + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b></p>`
+      + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
@@ -5700,6 +5700,7 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
     pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
+    pm.querySelector("[data-a=fulldef]")?.addEventListener("click", () => { ed.fullyDefineUi(); this.renderPanel(); });
     pm.querySelector("[data-a=del]")?.addEventListener("click", () => { ed.deleteSelection(); this.renderPanel(); });
     pm.querySelectorAll<HTMLElement>("[data-dim]").forEach(b => b.addEventListener("click", () => ed.editDim(b.dataset.dim!)));
     pm.querySelectorAll<HTMLElement>("[data-delrel]").forEach(b => b.addEventListener("click", () => { ed.deleteItems([b.dataset.delrel!]); this.renderPanel(); }));
@@ -6515,7 +6516,7 @@ function bodyFaces(bodies: { key: string; faces?: number }[], keys: string[]): (
 }
 
 function absorbs(g: Feature, sketch: string): boolean {
-  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab" || g.type === "smmiter") return g.sketch === sketch;
+  if (g.type === "extrude" || g.type === "revolve" || g.type === "helix" || g.type === "smbase" || g.type === "smbend" || g.type === "smjog" || g.type === "smtab" || g.type === "smmiter" || g.type === "smswept") return g.sketch === sketch;
   const onPath = (p?: SweepPath) => !!p && "sketch" in p && p.sketch === sketch;
   if (g.type === "sweep") return g.profile === sketch || onPath(g.path) || onPath(g.guide);
   if (g.type === "sweepsurf") return g.profile === sketch || onPath(g.path);
