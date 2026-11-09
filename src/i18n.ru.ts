@@ -2616,6 +2616,7 @@ export const RU: Record<string, string> = {
   "Draw at least one line or spline.": "Нарисуйте хотя бы один отрезок или сплайн.",
   "End chain": "Завершить цепочку",
   "Cancel drawing": "Отменить построение",
+  "Drag to change the value": "Перетащите, чтобы изменить значение",
   "Select chain": "Выбрать цепочку",
   "Normal geometry": "Обычная геометрия",
   "Construction geometry": "Вспомогательная геометрия",
