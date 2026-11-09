@@ -824,8 +824,26 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     }
   }
   const holes = [...marked].filter(([, r]) => r * pl.s >= 1).map(([key, r]) => { const [x, y] = key.split(",").map(Number); return { c: [x, y] as P2, r }; });
+  // Hole rows (FR-DRW-023): 3+ holes of one size evenly spaced on a line get one centreline through them, and each
+  // hole a short line across it unless a row the other way already crosses it. Rows go first: no three holes of a
+  // bolt circle lie on a line.
   const onBolt = new Set<number>();
-  if (v.bolts !== false) for (const b of boltCircles(holes)) {
+  if (v.rows !== false) {
+    const dirs = new Map<number, P2[]>();
+    for (const row of holeLines(holes)) {
+      const a = holes[row.members[0]], b = holes[row.members[row.members.length - 1]], d = row.d, L = a.r + ext;
+      segs.push({ k: "l", c: 0, p: [a.c[0] - d[0] * L, a.c[1] - d[1] * L, b.c[0] + d[0] * L, b.c[1] + d[1] * L] });
+      for (const i of row.members) { onBolt.add(i); dirs.set(i, [...dirs.get(i) ?? [], d]); }
+    }
+    for (const [i, ds] of dirs) {
+      if (ds.length > 1) continue;
+      const h = holes[i], q: P2 = [-ds[0][1], ds[0][0]], L = h.r + ext;
+      segs.push({ k: "l", c: 0, p: [h.c[0] - q[0] * L, h.c[1] - q[1] * L, h.c[0] + q[0] * L, h.c[1] + q[1] * L] });
+    }
+  }
+  const rest = holes.map((h, i) => ({ h, i })).filter(x => !onBolt.has(x.i));
+  if (v.bolts !== false) for (const b0 of boltCircles(rest.map(x => x.h))) {
+    const b = { ...b0, members: b0.members.map(k => rest[k].i) };
     // Centre-line circle (or arc over the holes) as a polyline, so crop and break views map it like any point.
     const a0 = b.full ? 0 : b.a0 - (b.r + ext) / b.R, a1 = b.full ? 2 * Math.PI : b.a1 + (b.r + ext) / b.R;
     const n = Math.max(24, Math.ceil((a1 - a0) / (Math.PI / 36))), p: number[] = [];
@@ -903,6 +921,48 @@ export function straightSlots(halves: { c: P2; r: number; m: P2 }[]): { c: [P2, 
     used.add(i); used.add(best);
     const a = h.c, b = halves[best].c;
     out.push({ c: a[0] < b[0] - 1e-9 || (Math.abs(a[0] - b[0]) <= 1e-9 && a[1] <= b[1]) ? [a, b] : [b, a], r: h.r });
+  }
+  return out;
+}
+
+/**
+ * Hole rows among end-on holes (FR-DRW-023): 3+ holes of one radius on a line at equal spacing. `members` are hole
+ * indices in order along `d` (unit, pointing +x, or +y when vertical). A hole may be in rows of two directions (a grid)
+ * but in one row per direction and two at most; longer rows win, then closer spacing.
+ */
+export function holeLines(holes: { c: P2; r: number }[]): { members: number[]; d: P2 }[] {
+  const found: { members: number[]; d: P2; step: number }[] = [], seen = new Set<string>();
+  for (let i = 0; i < holes.length; i++) for (let j = i + 1; j < holes.length; j++) {
+    const a = holes[i], b = holes[j], rt = 1e-6 * Math.max(1, a.r);
+    if (Math.abs(a.r - b.r) > rt) continue;
+    let d = unit2([b.c[0] - a.c[0], b.c[1] - a.c[1]]);
+    if (d[0] < -1e-9 || (Math.abs(d[0]) <= 1e-9 && d[1] < 0)) d = [-d[0], -d[1]];
+    const tol = 1e-4 * Math.max(1, Math.hypot(b.c[0] - a.c[0], b.c[1] - a.c[1]));
+    const on = holes.map((h, k) => ({ k, t: (h.c[0] - a.c[0]) * d[0] + (h.c[1] - a.c[1]) * d[1], o: (h.c[0] - a.c[0]) * -d[1] + (h.c[1] - a.c[1]) * d[0], r: h.r }))
+      .filter(h => Math.abs(h.o) < tol && Math.abs(h.r - a.r) <= rt).sort((x, y) => x.t - y.t);
+    if (on.length < 3) continue;
+    // Only neighbours along the line set a spacing; the run grows both ways while the gaps stay equal to it.
+    const pi = on.findIndex(h => h.k === i), pj = on.findIndex(h => h.k === j);
+    if (Math.abs(pi - pj) !== 1) continue;
+    const g = on.slice(1).map((h, k) => h.t - on[k].t), step = Math.abs(on[pj].t - on[pi].t);
+    if (step < tol) continue;
+    let s0 = Math.min(pi, pj), s1 = Math.max(pi, pj);
+    while (s0 > 0 && Math.abs(g[s0 - 1] - step) < tol) s0--;
+    while (s1 < on.length - 1 && Math.abs(g[s1] - step) < tol) s1++;
+    const run = on.slice(s0, s1 + 1).map(h => h.k);
+    if (run.length < 3) continue;
+    const key = run.join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push({ members: run, d, step });
+  }
+  found.sort((x, y) => y.members.length - x.members.length || x.step - y.step);
+  const used = new Map<number, P2[]>(), out: { members: number[]; d: P2 }[] = [];
+  for (const r of found) {
+    // One row per direction and at most two per hole, so a grid's diagonals stay unmarked.
+    if (r.members.some(k => { const u = used.get(k) ?? []; return u.length >= 2 || u.some(e => Math.abs(e[0] * r.d[1] - e[1] * r.d[0]) < 1e-6); })) continue;
+    out.push({ members: r.members, d: r.d });
+    for (const k of r.members) used.set(k, [...used.get(k) ?? [], r.d]);
   }
   return out;
 }

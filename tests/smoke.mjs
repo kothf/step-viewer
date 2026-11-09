@@ -9966,6 +9966,41 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: hole row centreline (FR-DRW-023) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // Four Ø8 holes 20 mm apart on y = 0 through a 100 × 60 plate.
+    const part = { schema: 1, kind: "part", id: "d_drwrow", name: "HoleRow", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        ...[-30, -10, 10, 30].flatMap((x, i) => [P(`h${i}`, x, 0), { id: `c${i}`, t: "circle", c: `h${i}`, r: 4 }])] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "HoleRow.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre lines in model mm about the plate centre, inside the plate.
+    const rowLines = () => dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => q.every(x => Math.abs(x) < 45));
+    });
+    const rl = await rowLines();
+    const long = rl.filter(q => Math.abs(q[1]) < 0.01 && Math.abs(q[3]) < 0.01).map(q => Math.abs(q[2] - q[0]));
+    const across = rl.filter(q => Math.abs(q[0] - q[2]) < 0.01 && Math.abs(Math.abs(q[3] - q[1]) - 12) < 0.05);
+    check(long.length === 1 && Math.abs(long[0] - 72) < 0.05 && across.length === 4 && rl.length === 5, `drawing: hole row gets one centreline and a line across each hole (${JSON.stringify(rl)})`);
+    await ctx.close();
+  }
+
   // --- Drawings: weld symbol ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
