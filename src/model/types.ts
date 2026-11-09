@@ -882,6 +882,9 @@ export interface PartConfig {
 
 export interface FeatureFolder { id: string; name: string; ids: string[] }
 
+/** A saved camera (FR-UI-104): target, camera position and the orthographic view height, in world mm. */
+export interface NamedView { name: string; t: V3; p: V3; h: number }
+
 export interface PartDoc {
   schema: 1;
   kind: "part";
@@ -916,6 +919,8 @@ export interface PartDoc {
   bodies?: Record<string, { name?: string; hidden?: boolean; color?: V3 }>;
   /** Mate references (FR-MATE-011): named faces (persistent names; primary, secondary, tertiary) an assembly mates to a same-named reference on insert. */
   mateRefs?: { name: string; faces: string[] }[];
+  /** Named views (FR-UI-104): saved cameras, view data kept out of the undo history. */
+  views?: NamedView[];
 }
 
 // ---------- kernel results ----------

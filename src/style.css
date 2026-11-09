@@ -1065,6 +1065,13 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .nav-more { display: grid; grid-template-columns: repeat(3, auto); gap: 3px; margin-top: 8px; }
 .nav-pick button { min-height: 30px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; }
 .nav-pick button.main { border-color: var(--accent); }
+.nav-named { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+.nav-vlist { display: flex; flex-wrap: wrap; gap: 3px; max-width: 268px; margin-bottom: 4px; }
+.nav-vrow { display: inline-flex; }
+.nav-vrow > button:first-child { border-radius: 6px 0 0 6px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-pick .nav-vdel { border-left: 0; border-radius: 0 6px 6px 0; color: var(--muted); padding: 0 5px; }
+.nav-vsave { display: flex; gap: 3px; }
+.nav-vname { flex: 1; min-width: 0; min-height: 30px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
 .nav-pick button:hover, .nav-pick button:focus-visible { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); outline: none; }
 /* Keep visible pushpin in the feature panel (FR-UI-106): faded until pinned. */
 .pm-okc .pm-pin { font-size: 13px; filter: grayscale(1); opacity: .55; }
@@ -1268,3 +1275,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-vcall > .mc-handle { position: static; transform: none; border-color: #e0a800; background: #fff8db; color: #5c4400; }
 :root[data-theme="dark"] .mc-vcall > .mc-handle { background: #3a3110; color: #ffe08a; }
 :root[data-theme="dark"] .mc-vcall { background: none; }
+
+/* Heads-up view bar (FR-UI-022): view commands at the top centre of the view for parts and assemblies */
+.hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); backdrop-filter: blur(3px); }
+.hud[hidden] { display: none; }
+.hud .seg { background: var(--panel); }
+.hud [data-hud] { font-size: 14px; line-height: 1; padding: 4px 8px; }

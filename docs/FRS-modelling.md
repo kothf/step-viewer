@@ -1578,7 +1578,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
 | Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
-| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); no named views yet | Partly |
+| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); 1.360.0: named views saved with the part/assembly | Done |
 | Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
 | Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
@@ -1638,7 +1638,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | 1.107.0: What's wrong list above the tree; a click selects, a double click edits | Done |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
-| FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
+| FR-UI-022 | Heads-up view bar in the graphics area | 1.360.0: top-centre bar with Zoom to area, Previous view, standard views, projection and display style for parts and assemblies; Display ▾ (hide/show, appearance) and the section toggle stay in the header | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |

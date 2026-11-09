@@ -5,6 +5,8 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { NamedView } from "./types";
+import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -1457,6 +1459,18 @@ export class ModelController {
   }
 
   /** The shown body under a screen point. */
+  /** The part's named views (FR-UI-104): stored in the document, out of the undo history. */
+  namedViews(): NamedViews | null {
+    const st = this.store;
+    if (!st) return null;
+    const set = (list: NamedView[]) => { st.amend(d => { if (list.length) d.views = list; else delete d.views; }); this.host.setDoc(this.docLabel()); };
+    return {
+      list: () => [...(st.doc.views ?? [])],
+      save: v => set([...(st.doc.views ?? []).filter(x => x.name !== v.name), v]),
+      remove: name => set((st.doc.views ?? []).filter(x => x.name !== name)),
+    };
+  }
+
   bodyAt(x: number, y: number): string | null {
     const hit = this.host.faceAt(x, y), bodies = this.last?.bodies ?? [];
     if (!hit) return null;

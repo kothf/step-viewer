@@ -2781,6 +2781,38 @@ try {
       check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
         `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
     }
+    // 1.360 (FR-UI-022): heads-up view bar: with a part open the view groups sit in #hud at the top centre of the view; its Previous view button works.
+    {
+      const hud = await mp.evaluate(() => { const h = document.querySelector("#hud"), r = h?.getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return h && { shown: !h.hidden, views: !!h.querySelector("#views"), mode: !!h.querySelector("#display-mode"), proj: !!h.querySelector("#projection"), centred: Math.abs((r.left + r.right) / 2 - (v.left + v.right) / 2) < 4, inHeader: !!document.querySelector(".topbar #views") }; });
+      await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.viewFrom(new (v.camera.position.constructor)(1, 0, 0), false); });
+      await mp.click('#hud [data-hud="prev"]');
+      await mp.waitForTimeout(500);
+      const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
+      check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
+        `model 1.360: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+    }
+    // 1.360 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); document.activeElement?.blur(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector(".nav-pick .nav-vname");
+      await mp.fill(".nav-pick .nav-vname", "Close up");
+      await mp.press(".nav-pick .nav-vname", "Enter");
+      const saved = await mp.evaluate(() => ({ views: window.__sv.model.store.doc.views, cam: window.__sv.viewer.camera.position.toArray(), dirty: window.__sv.model.store.dirty }));
+      await mp.keyboard.press("Escape");
+      const shut = await mp.evaluate(() => !document.querySelector(".nav-pick"));
+      await mp.evaluate(() => { document.activeElement?.blur(); const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); });
+      await mp.waitForTimeout(100);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector('.nav-pick [data-nv="view:Close up"]');
+      await mp.click('.nav-pick [data-nv="view:Close up"]');
+      await mp.waitForTimeout(600);
+      const back = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+      const d = Math.hypot(...back.map((x, i) => x - saved.cam[i]));
+      check(saved.views?.length === 1 && saved.views[0].name === "Close up" && saved.dirty && shut && d < 1e-3,
+        `model 1.360: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });

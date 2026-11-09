@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.360.0] - 2026-11-09
+
+### Added
+
+- **Named views (FR-UI-104)**: the Space orientation picker has a Named views row: type a name and press Save view (or Enter) to store the camera; a click on a named view goes back to it, ✕ deletes it. Parts and assemblies keep their named views in the document (saved with it, left alone by undo and redo); model files keep them for the session.
+- **Heads-up view bar (FR-UI-022)**: with a part or an assembly open, the view commands float at the top centre of the view, as in SolidWorks: Zoom to area, Previous view, the standard views, projection and display style. For model files they stay in the header.
+
 ## [1.354.0] - 2026-11-09
 
 ### Added
@@ -2125,7 +2132,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.354.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.360.0...HEAD
+[1.360.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.360.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
 [1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0
 [1.352.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.352.0

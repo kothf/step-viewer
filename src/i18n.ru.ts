@@ -4158,4 +4158,12 @@ export const RU: Record<string, string> = {
   "Selection breadcrumbs": "Цепочка выбора",
   // FR-UI-110: value callouts
   "Click to type the value": "Щёлкните, чтобы ввести значение",
+  // FR-UI-104: named views
+  "Named views": "Именованные виды",
+  "View name": "Имя вида",
+  "View {n}": "Вид {n}",
+  "Save view": "Сохранить вид",
+  "View \"{name}\" saved.": "Вид «{name}» сохранён.",
+  // FR-UI-022: heads-up view bar
+  "Previous view (Alt+Z)": "Предыдущий вид (Alt+Z)",
 };

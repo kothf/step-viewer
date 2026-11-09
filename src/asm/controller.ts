@@ -2,6 +2,8 @@
 // view or type the pose), fixed/floating, hide, delete, save and open .mcadasm. The kernel places the
 // components (src/kernel/assembly.ts) and the viewer shows one part per component, so the measuring
 // tools work across components as for an imported assembly.
+import type { NamedViews } from "../viewer/navigation";
+import type { NamedView } from "../model/types";
 import * as THREE from "three";
 import { ModelKernel } from "../model/kernelClient";
 import { newPart, uid } from "../model/doc";
@@ -304,13 +306,26 @@ export class AsmController {
     return t(redo ? "Redo: {what} (Ctrl+Y)" : "Undo: {what} (Ctrl+Z)", { what: t(n.key, n.params) });
   }
 
+  /** The assembly's named views (FR-UI-104). */
+  namedViews(): NamedViews | null {
+    if (!this.doc) return null;
+    const set = (list: NamedView[]) => { if (!this.doc) return; if (list.length) this.doc.views = list; else delete this.doc.views; this.host.setDoc(this.label()); };
+    return {
+      list: () => [...(this.doc?.views ?? [])],
+      save: v => set([...(this.doc?.views ?? []).filter(x => x.name !== v.name), v]),
+      remove: name => set((this.doc?.views ?? []).filter(x => x.name !== name)),
+    };
+  }
   undo() { this.step(this.undoStack, this.redoStack); }
   redo() { this.step(this.redoStack, this.undoStack); }
   private step(from: string[], to: string[]) {
     const s = from.pop();
     if (!s || !this.doc) return;
     to.push(JSON.stringify(this.doc));
+    const views = this.doc.views;
     this.doc = JSON.parse(s);
+    // Named views are view data (FR-UI-104): undo keeps the current ones.
+    if (views?.length) this.doc!.views = views; else delete this.doc!.views;
     // Typed angles belong to the pose undone; the Move panel shows the restored pose afresh (exam #73).
     this.typedAngles.clear();
     const pm = document.getElementById("asm-pm");
