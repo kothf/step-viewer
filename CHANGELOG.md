@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.343.0] - 2026-11-09
+
+### Added
+
+- **Coped cuts on structural members (FR-FT-121)**: Structural Member gets SolidWorks' choice for butted ends. **Simple cut** keeps the flat end square to the face the member stops at; **Coped cut** makes the end follow the shape of the member it stops at, so a round tube meeting another gets its saddle (fish-mouth) end, ready to weld. A weld gap moves the coped end back along the member.
+
 ## [1.342.0] - 2026-11-09
 
 ### Added
@@ -2042,7 +2048,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.342.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.343.0...HEAD
+[1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0
 [1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
