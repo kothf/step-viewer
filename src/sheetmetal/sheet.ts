@@ -13,7 +13,7 @@
 // `<feature id>:p<n>` and bend ids `<feature id>:b<n>`, so a picked edge between `…:top` and
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
-import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
+import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
 import type { BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
@@ -1396,4 +1396,55 @@ export function crossBreakLines(st: SheetState, flat: boolean): { a: V3; b: V3; 
     const z = c.side === "top" ? st.T * 1.01 : -st.T * 0.01;
     return [{ a: apply(p.M, [c.a[0], c.a[1], z]), b: apply(p.M, [c.b[0], c.b[1], z]), up: c.up }];
   });
+}
+
+// ---------- vent ----------
+
+/** A vent sketch read as boundary (ccw), ribs (lines) and spars (circles), in sketch coordinates. */
+export interface VentLayout { boundary: Seg[]; ribs: { a: V2; b: V2 }[]; spars: { c: V2; r: number }[] }
+
+/**
+ * Reads a vent sketch: lines with an end no other curve shares are ribs; the remaining curves form closed loops, the
+ * one of largest area is the boundary and every other one must be a circle inside it (a spar).
+ */
+export function ventLayout(sk: SketchFeature): VentLayout {
+  const segs = sketchCurves(sk);
+  let size = 1;
+  for (const e of sk.ents) if (e.t === "point") size = Math.max(size, Math.abs(e.x), Math.abs(e.y));
+  const tol = size * 1e-7 + 1e-9;
+  const key = (p: V2) => `${Math.round(p[0] / tol)}:${Math.round(p[1] / tol)}`;
+  const count = new Map<string, number>();
+  const ends = (x: Seg): V2[] => x.kind === "line" || x.kind === "arc" || x.kind === "earc" ? [x.a, x.b] : [];
+  for (const x of segs) for (const p of ends(x)) count.set(key(p), (count.get(key(p)) ?? 0) + 1);
+  const ribs: { a: V2; b: V2 }[] = [];
+  const skip = new Set<string>();
+  for (const x of segs) if (x.kind === "line" && ends(x).some(p => count.get(key(p)) === 1)) { ribs.push({ a: x.a, b: x.b }); skip.add(x.ent); }
+  const prof = sketchProfile(sk, skip);
+  const loops = prof.error ? [] : prof.faces.flatMap(f => [f.outer, ...f.holes]);
+  if (!loops.length) throw new SheetError("E-SM-VENTBOUND", "The vent sketch needs a closed boundary.");
+  const area = (l: Seg[]) => Math.abs(polyArea(loopPolygon(l)));
+  const bi = loops.reduce((best, l, i) => area(l) > area(loops[best]) ? i : best, 0);
+  const boundary = loops[bi];
+  const poly = loopPolygon(boundary, 32);
+  const spars: { c: V2; r: number }[] = [];
+  loops.forEach((l, i) => {
+    if (i === bi) return;
+    if (l.length !== 1 || l[0].kind !== "circle" || !inPolygon(l[0].c, poly)) throw new SheetError("E-SM-VENTSPAR", "Spars must be circles inside the vent boundary.");
+    spars.push({ c: l[0].c, r: l[0].r });
+  });
+  return { boundary, ribs, spars };
+}
+
+/** Checks that a vent sketch lies on a flat face of the sheet (its top or bottom) and touches it. */
+export function ventPanel(st: SheetState, pts: V3[]): Panel {
+  const tol = 1e-4 * (1 + st.T);
+  for (const panel of st.panels) {
+    const lp = pts.map(p => local(panel.M, p));
+    for (const z of [0, st.T]) {
+      if (lp.some(p => Math.abs(p[2] - z) > tol)) continue;
+      const poly = loopPolygon(panel.outer, 32);
+      if (lp.some(p => inPolygon([p[0], p[1]], poly))) return panel;
+    }
+  }
+  throw new SheetError("E-SM-VENTFACE", "Sketch the vent on a flat face of the sheet.");
 }

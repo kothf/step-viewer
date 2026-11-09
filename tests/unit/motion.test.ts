@@ -383,6 +383,36 @@ test("motor distance and data point profiles", () => {
   assert.equal(motorAmount(m, 0), 0);
 });
 
+test("motor data points: cubic spline and Akima", () => {
+  const near = (a: number, b: number, tol = 1e-9) => assert.ok(Math.abs(a - b) < tol, `${a} vs ${b}`);
+  // Both pass through every row and hold the ends.
+  const rows: [number, number][] = [[0, 0], [1, 2], [2, 1], [4, 5]];
+  for (const fit of ["cubic", "akima"] as const) {
+    for (const [t0, v] of rows) near(pointsAt(rows, t0, fit), v);
+    near(pointsAt(rows, -1, fit), 0); near(pointsAt(rows, 9, fit), 5);
+  }
+  // Points on a line stay on the line.
+  const line: [number, number][] = [[0, 1], [1, 3], [3, 7], [4, 9]];
+  for (const fit of ["cubic", "akima"] as const) near(pointsAt(line, 2.3, fit), 1 + 2 * 2.3);
+  // The natural cubic spline through (0,0), (1,1), (2,0): slope 1.5 at 0, curvature 0 at the ends; value at 0.5 = 0.6875.
+  const hump: [number, number][] = [[0, 0], [1, 1], [2, 0]];
+  near(pointsAt(hump, 0.5, "cubic"), 0.6875);
+  near(pointsAt(hump, 0.5, "cubic"), pointsAt(hump, 1.5, "cubic"));
+  // A step: the cubic spline overshoots into the flat runs, Akima keeps them flat.
+  const step: [number, number][] = [[0, 0], [1, 0], [2, 0], [3, 10], [4, 10], [5, 10]];
+  assert.ok(pointsAt(step, 1.5, "cubic") < -0.1, "cubic undershoots before the step");
+  near(pointsAt(step, 1.5, "akima"), 0);
+  near(pointsAt(step, 4.5, "akima"), 10);
+  const mid = pointsAt(step, 2.5, "akima");
+  assert.ok(mid > 0 && mid < 10);
+  // The motor uses the track's fit; absent = linear.
+  const m: MotorTrack = { id: "m", kind: "motor", mate: "x", motion: "linear", profile: "points", speed: 0, pts: hump, start: 1, end: 3 };
+  near(motorAmount(m, 1.5), 0.5);
+  near(motorAmount({ ...m, fit: "cubic" }, 1.5), 0.6875);
+  // Two rows fall back to a straight line.
+  near(pointsAt([[0, 0], [2, 4]], 1, "akima"), 2);
+});
+
 test("motor expression profile", () => {
   const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
   near(exprValue("30*sin(2*pi*t)", 0.25), 30);

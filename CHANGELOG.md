@@ -14,6 +14,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Smart Dimension in a sketch takes a model edge clicked at its middle as the edge (it made a midpoint there), so a plate's edges can be dimensioned with one click each.
 - The sketch status line at the top of the view no longer swallows clicks on the geometry under it.
 - Dragging a mated component that can only turn about an axis (a wheel on a shaft) turns it about that axis; it used to stay put. A drag that leaves every component where it was adds no undo step and doesn't mark the assembly modified.
+## [1.316.0] - 2026-11-09
+
+### Added
+
+- **Mouse gestures (FR-UI-024)**: turn them on in Display ▾ → Mouse gestures…, then press the right button in a part or a sketch, drag in a direction and release to run that direction's command. A radial guide around the press point shows the 4 (or 8) commands and lights the one you point at. By default a part offers Top, Right, Front and Normal to (8 directions add Isometric, Sketch, Extrude and Zoom to fit), and a sketch offers Line, Circle, Dimension and Rectangle (plus Arc, Trim, Fillet and Normal to). Every direction's command can be changed. A right-click without a drag still opens the menu, Esc cancels a gesture, and panning moves to the middle button (Ctrl+middle in a sketch) while gestures are on.
+
+## [1.315.0] - 2026-11-09
+
+### Added
+
+- **Unequal leg fillet beads (FR-FT-121).** Fillet Bead gets SolidWorks' **Equal leg lengths** box: untick it to give the bead a **Leg on set 1** and a **Leg on set 2** of their own, for a fillet weld that runs further up a tube than along the plate, say. The weld symbol shows both legs (◺ z6×8), and the cut list groups such welds by both legs.
+
+## [1.314.0] - 2026-11-09
+
+### Added
+
+- **Vent (FR-FT-120)**: Sheet Metal → Vent cuts ventilation openings through a flat face of the sheet from one sketch on it, like SolidWorks' Vent. The largest closed loop is the boundary; lines that end on it are ribs and circles inside it are spars, both kept as material of the width you set (Rib width, Spar width). The openings show in the flattened part and its DXF like any other cut.
+
+## [1.313.0] - 2026-11-09
+
+### Added
+- Bolt circles in drawings (FR-DRW-023): holes of one size evenly spaced on a circle (a full or partial circular pattern, or the corners of a square) get a centre-line circle, or an arc over the holes, with a radial mark on each hole and a cross on the pattern centre, in place of separate crosses. Bolt circles in the view panel turns them off.
+
+## [1.312.0] - 2026-11-09
+
+### Added
+
+- Motion studies: a **Data points** motor chooses how its rows are joined, like SolidWorks: **Linear** (as before), **Cubic spline** (a smooth curve through every row) or **Akima** (smooth too, but it keeps flat runs flat next to a step instead of overshooting) (FR-FT-122).
 
 ## [1.311.0] - 2026-11-09
 
@@ -1833,7 +1861,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.317.0...HEAD
-[1.317.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.317.0
+[1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
+[1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0
+[1.315.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.315.0
+[1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0
+[1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0
+[1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
 [1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
 [1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
 [1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0

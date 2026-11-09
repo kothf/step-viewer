@@ -730,12 +730,19 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   return h.compoundOf([...h.bodyList(prev), plate]);
 }
 
+/** A bead's legs as text: "6", or "6×8" (set 1 × set 2) when they differ. */
+export function beadLegs(f: WeldBeadFeature): string {
+  const a = f.size.v, b = f.size2 ? f.size2.v : a;
+  return Math.abs(a - b) < 1e-9 ? `${a}` : `${a}×${b}`;
+}
+
 /** Fillet weld beads: a triangular bead of leg `size` along every line where a face of set 1 meets a face of set 2. */
 export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _frames: Record<string, Frame>): Named {
   const oc = h.oc;
   if (!prev) throw new FeatureError("E-FT-NOBODY", "There is no body yet.");
   if (!f.faces1.length || !f.faces2.length) throw new FeatureError("E-WLD-BEAD", "Pick the faces of set 1 and set 2: the bead runs where they meet.");
-  const sz = f.size.v;
+  const sz = f.size.v, sz2 = f.size2 ? f.size2.v : sz;
+  if (!(sz > 0) || !(sz2 > 0)) throw new FeatureError("E-WLD-BEAD", "The bead legs must be more than zero.");
   const beads: Named[] = [];
   let skipped = 0;
   const S = oc.GeomAbs_SurfaceType;
@@ -756,10 +763,10 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
   /** The bead's cross-section at `p`, and its edges by role: the legs on face 1 and face 2, and the weld face. */
   const tri = (p: V3, ua: V3, ub: V3) => {
     const mk = new oc.BRepBuilderAPI_MakePolygon_1();
-    for (const q of [p, add(p, mul(ua, sz)), add(p, mul(ub, sz))]) mk.Add_1(new oc.gp_Pnt_3(q[0], q[1], q[2]));
+    for (const q of [p, add(p, mul(ua, sz)), add(p, mul(ub, sz2))]) mk.Add_1(new oc.gp_Pnt_3(q[0], q[1], q[2]));
     mk.Close();
     const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
-    const mids: [V3, string][] = [[add(p, mul(ua, sz / 2)), "leg1"], [add(p, mul(ub, sz / 2)), "leg2"], [add(p, mul(add(ua, ub), sz / 2)), "face"]];
+    const mids: [V3, string][] = [[add(p, mul(ua, sz / 2)), "leg1"], [add(p, mul(ub, sz2 / 2)), "leg2"], [add(p, add(mul(ua, sz / 2), mul(ub, sz2 / 2))), "face"]];
     const edges = h.sub(face, "EDGE").map((e): [any, string] => { const m = h.edgeMid(e); return [e, mids.reduce((b, q) => d3(q[0], m) < d3(b[0], m) ? q : b)[1]]; });
     return { face, edges };
   };
@@ -841,7 +848,7 @@ export function weldBead(h: WeldHost, f: WeldBeadFeature, prev: Named | null, _f
     // (staggered: every other chain starts half a pitch on, so the welds on two sides of a joint alternate).
     const l = f.inter.len.v, e = Math.max(f.inter.pitch.v, l);
     if (!(l > 0)) throw new FeatureError("E-WLD-BEAD", "The weld length must be more than zero.");
-    const tol = 1e-4 * (1 + sz), left = new Set(runs.map((_r, i) => i));
+    const tol = 1e-4 * (1 + Math.max(sz, sz2)), left = new Set(runs.map((_r, i) => i));
     const touches = (p: V3, skip: number) => [...left].some(j => j !== skip && (d3(runs[j].p0, p) < tol || d3(runs[j].p1, p) < tol));
     let chain = 0;
     while (left.size) {
@@ -978,10 +985,11 @@ export function cutList(h: WeldHost, parts: { key: string; part: Named; volume: 
         const legEdges = (role: string) => part.faces.filter((_x, i) => part.names[i].endsWith(`:${role}`)).flatMap(x => h.sub(x, "EDGE"));
         const l2 = legEdges("leg2");
         const roots = legEdges("leg1").filter((e, i, arr) => l2.some(x => x.IsSame(e)) && arr.findIndex(y => y.IsSame(e)) === i);
-        const length = roots.length ? roots.reduce((t, e) => t + elen(e), 0) : volume / (owner.size.v * owner.size.v / 2);
+        const length = roots.length ? roots.reduce((t, e) => t + elen(e), 0) : volume / (owner.size.v * (owner.size2 ?? owner.size).v / 2);
         const it = owner.inter, pl = it ? Math.max(it.pitch.v, it.len.v) : 0, inter: CutItem["inter"] = it ? (it.stagger ? [it.len.v, pl, 1] : [it.len.v, pl]) : undefined;
-        const bk = `b|${owner.size.v}${inter ? `|${inter.join("|")}` : ""}`;
-        put(bk, { kind: "bead", desc: `${owner.size.v}`, length: 0, volume: 0, ...(inter ? { inter } : {}) }, key);
+        const legs = beadLegs(owner);
+        const bk = `b|${legs}${inter ? `|${inter.join("|")}` : ""}`;
+        put(bk, { kind: "bead", desc: legs, length: 0, volume: 0, ...(inter ? { inter } : {}) }, key);
         const r = rows.get(bk)!;
         r.length = r1((r.length ?? 0) + length);
         r.volume += volume;

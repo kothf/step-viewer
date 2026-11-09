@@ -250,7 +250,8 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
   }
   return {
     title: t("Fillet Bead"),
-    body: group(t("Settings"), numField("size", t("Bead size"), f.size, "length") + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
+    body: group(t("Settings"), (f.size2 ? numField("size", t("Leg on set 1"), f.size, "length") + numField("size2", t("Leg on set 2"), f.size2, "length") : numField("size", t("Bead size"), f.size, "length"))
+        + chk("wEqual", !f.size2, t("Equal leg lengths")) + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
         + chk("wSymbol", f.symbol !== false, t("Show weld symbol"))
         + (f.symbol !== false ? chk("wAround", !!f.around, t("Weld all around")) + chk("wField", !!f.field, t("Field weld")) : "")
         + chk("wInter", !!f.inter, t("Intermittent weld"))
@@ -326,6 +327,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     if (k === "wgOffset") return () => { if (val) f.offset = { v: 10 }; else delete f.offset; };
     if (k === "wChamfer") return () => { if (val) f.chamfer = { v: 5 }; else delete f.chamfer; };
   }
+  if (f.type === "weldbead" && k === "wEqual") return () => { if (val) delete f.size2; else f.size2 = { v: f.size.v * 1.5 }; };
   if (f.type === "weldbead" && k === "wTangent") return () => { if (val) delete f.tangent; else f.tangent = false; };
   if (f.type === "weldbead" && k === "wSymbol") return () => { if (val) delete f.symbol; else f.symbol = false; };
   if (f.type === "weldbead" && k === "wAround") return () => { if (val) f.around = true; else delete f.around; };
@@ -454,7 +456,7 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
 export function weldSymbol(f: WeldBeadFeature): string {
   const n = (v: number) => String(Math.round(v * 100) / 100);
   const it = f.inter;
-  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : "");
+  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : "");
 }
 
 /** The weld symbols to show: shown, built beads up to the rollback bar; the one being edited from its draft. */
