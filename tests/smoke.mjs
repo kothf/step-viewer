@@ -8966,15 +8966,15 @@ try {
       `sheet metal: Break Corner chamfers the picked thickness edge's corner, in the flat outline too (${JSON.stringify({ bc0, bc1, bcv0 })})`);
     // Cross Break: click the plate's top face, ✓: two diagonals, the solid stays as it is.
     await smMenu("Cross Break");
-    const [xx, xy] = await scr([30, 20, T]);
-    await mp.mouse.click(xx, xy);
+    const [cbx, cby] = await scr([30, 20, T]);
+    await mp.mouse.click(cbx, cby);
     await settle();
-    const xb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, faces: window.__sv.model.mode().draft?.faces.map(f => f.name) }));
+    const cb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, faces: window.__sv.model.mode().draft?.faces.map(f => f.name) }));
     await mp.click("#mc-ok");
     await settle();
-    const xb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
-    check(xb0.title === "Cross Break" && xb0.faces?.length === 1 && /:p0:top$/.test(xb0.faces[0]) && !xb1.bad && xb1.n === 2 && Math.abs(xb1.v - bc1.v) < 1e-6,
-      `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ xb0, xb1 })})`);
+    const cb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(cb0.title === "Cross Break" && cb0.faces?.length === 1 && /:p0:top$/.test(cb0.faces[0]) && !cb1.bad && cb1.n === 2 && Math.abs(cb1.v - bc1.v) < 1e-6,
+      `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ cb0, cb1 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
