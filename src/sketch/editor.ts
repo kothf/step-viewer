@@ -515,7 +515,10 @@ export class SketchEditor {
       const h = p ? this.hits(p)[0] : undefined;
       if (h && h.kind !== "dim" && h.kind !== "rel" && !this.selection.has(h.id)) { this.selection = new Set([h.id]); this.render(); this.emitSel(); }
     }
-    if (!this.selection.size) return rows;
+    if (!this.selection.size) {
+      if (this.tool === "select" && this.info.status === "ok" && this.info.dof > 0) { sep(); rows.push([t("Fully define sketch"), () => this.fullyDefineUi()]); }
+      return rows;
+    }
     sep();
     const ids = [...this.selection];
     const one = ids.length === 1 ? this.ent(ids[0]) : undefined;
@@ -1475,8 +1478,8 @@ export class SketchEditor {
     if (side(q) * side(p) < 0) { dim.dia = true; dim.t = "distance"; }
   }
 
-  private nextDimName() {
-    const used = new Set(this.sk.dims.map(d => d.name));
+  private nextDimName(sk: SketchFeature = this.sk) {
+    const used = new Set(sk.dims.map(d => d.name));
     let n = 1;
     while (used.has(`D${n}`)) n++;
     return `D${n}`;
@@ -1647,6 +1650,81 @@ export class SketchEditor {
     if (r.redundant) this.host.toast(t("The sketch already had that relation (redundant)."), "warn");
     this.commit(`Add ${REL_NAME[kind].toLowerCase()} relation`);
     this.render();
+  }
+
+  /**
+   * Fully define sketch (FR-SK-045, SolidWorks' Fully Define Sketch): adds horizontal/vertical relations to lines
+   * within 1° of the axes, diameters of circles and radii of arcs, then horizontal and vertical dimensions from the
+   * origin to each point (curve points first, nearest the origin first), keeping only items that remove freedom,
+   * until nothing is free. Returns how many items were added (one undo step).
+   */
+  fullyDefine(): number {
+    const start = solve(this.sk);
+    if (start.status !== "ok" || start.dof === 0) return 0;
+    let sk = this.sk, dof = start.dof, added = 0;
+    const take = (item: { rel?: SkRel; dim?: SkDim }) => {
+      if (dof === 0) return;
+      const r = tryAdd(sk, item);
+      if (!r.ok || r.redundant || r.result.dof >= dof) return;
+      sk = r.sketch; dof = r.result.dof; added++;
+    };
+    const P = (id: string): V2 => { if (id === ORIGIN) return [0, 0]; const e = sk.ents.find(x => x.id === id); return e?.t === "point" ? [e.x, e.y] : [0, 0]; };
+    const tol = Math.sin(Math.PI / 180);
+    for (const e of this.sk.ents) {
+      if (e.t !== "line" || e.cons) continue;
+      if (sk.rels.some(r => (r.t === "horizontal" || r.t === "vertical") && r.e.length === 1 && r.e[0] === e.id)) continue;
+      const a = P(e.a), b = P(e.b), L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 1e-9) continue;
+      if (Math.abs(b[1] - a[1]) / L < tol) take({ rel: { id: uid("r"), t: "horizontal", e: [e.id] } });
+      else if (Math.abs(b[0] - a[0]) / L < tol) take({ rel: { id: uid("r"), t: "vertical", e: [e.id] } });
+    }
+    // Box of the sketch, to set the new dimensions out beside it.
+    const pts = sk.ents.filter((x): x is SkEnt & { t: "point" } => x.t === "point");
+    const xs = [0, ...pts.map(q => q.x)], ys = [0, ...pts.map(q => q.y)];
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), size = Math.max(Math.max(...xs) - x0, Math.max(...ys) - y0, 1);
+    const gap = size * 0.08;
+    const dim = (t: SkDim["t"], e: string[], pos: V2) => {
+      const d: SkDim = { id: uid("d"), name: "", t, e, val: { v: 0 }, pos };
+      d.val.v = measureDim(sk, d);
+      if (!isFinite(d.val.v) || d.val.v < 1e-9) return;
+      d.name = this.nextDimName(sk);
+      take({ dim: d });
+    };
+    for (const e of this.sk.ents) {
+      if (e.cons || (e.t !== "circle" && e.t !== "arc")) continue;
+      if (sk.dims.some(d => (d.t === "radius" || d.t === "diameter") && d.e[0] === e.id)) continue;
+      const c = P(e.c), r = e.t === "circle" ? e.r : Math.hypot(P(e.a)[0] - c[0], P(e.a)[1] - c[1]);
+      dim(e.t === "circle" ? "diameter" : "radius", [e.id], [c[0] + r * 0.9, c[1] + r * 0.9]);
+    }
+    const onCurve = new Set(sk.ents.filter(x => x.t !== "point" && !x.cons).flatMap(x => refPts(x)));
+    const order = pts.map(q => ({ q, k: onCurve.has(q.id) ? 0 : 1, d: Math.hypot(q.x, q.y) })).sort((a, b) => a.k - b.k || a.d - b.d);
+    let nh = 0, nv = 0;
+    for (const { q } of order) {
+      if (dof === 0) break;
+      const n0 = added;
+      dim("hdistance", [ORIGIN, q.id], [q.x / 2, y0 - gap * (1 + nh)]);
+      if (added > n0) nh++;
+      const n1 = added;
+      dim("vdistance", [ORIGIN, q.id], [x0 - gap * (1 + nv), q.y / 2]);
+      if (added > n1) nv++;
+    }
+    if (!added) return 0;
+    this.sk = sk;
+    this.info = solve(this.sk);
+    this.commit("Fully define sketch");
+    this.render();
+    return added;
+  }
+
+  /** Fully define sketch from a menu or button: runs it and says what happened. */
+  fullyDefineUi(): number {
+    const was = solve(this.sk);
+    if (was.status !== "ok") { this.host.toast(t("Fix the sketch's errors first."), "error"); return 0; }
+    if (was.dof === 0) { this.host.toast(t("The sketch is already fully defined.")); return 0; }
+    const n = this.fullyDefine();
+    if (!n) this.host.toast(t("Nothing could be added."), "warn");
+    else this.host.toast(this.info.dof === 0 ? t("Fully defined: {n} items added.", { n }) : t("{n} items added; {d} degrees of freedom left.", { n, d: this.info.dof }));
+    return n;
   }
 
   /** Two points selected (not the origin): they can be merged into one (FR-SK-051). */
