@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
-import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
+import type { SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import { flatLoops, flatSize, bendAllowance, reliefCorners } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
 import { occ } from "./occ";
@@ -564,4 +564,100 @@ test("sheet metal: forming tools keep the thickness and stay out of the flat pat
   bad(form({ pts: [[5, 25]] }));
   bad(form({ height: { v: 1.5 } }));
   bad(form({ face: { name: "b:p0:sl1" } }));
+});
+
+test("sheet metal: unfold, cut across the bend, fold back (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2);
+  const flatLen = 50 - 4 + ba + 26;
+  const unf: SmUnfoldFeature = { id: "u", type: "smunfold", name: "Unfold1", face: { name: "b:p0:top" }, bends: [] };
+  const fold: SmUnfoldFeature = { id: "v", type: "smfold", name: "Fold1", bends: [] };
+  // Unfolded: the flange lies flat in the base plate's plane.
+  let r = run(doc([s, base(), fl, unf]));
+  close(r.props.volume, 2 * 100 * flatLen, 1e-5);
+  close(r.size[2], 2, 1e-6); close(r.size[1], flatLen, 1e-6); close(r.min[1], 50 - flatLen, 1e-6);
+  assert.ok(r.sheet!.unfold);
+  assert.ok(r.body!.names.includes("f:b0:top"), "the flat bend is named after the bend");
+  // Other sheet metal features wait for the fold.
+  const late = m.evaluate(doc([s, base(), fl, unf, { ...fl, id: "g", edges: [{ faces: ["b:p0:top", "b:p0:sl3"] }] }]));
+  assert.equal(late.statuses.find(x => x.id === "g")?.code, "E-SM-UNFOLDED");
+  // A slot inside the bend strip (y 4 - ba .. 4) and a hole in the flange, cut while flat.
+  const slot = rect("k", 40, 5 - ba, 60, 3);
+  const hole: SketchFeature = { id: "h", type: "sketch", name: "h", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "hc", t: "point", x: 50, y: 4 - ba - 13 }, { id: "hk", t: "circle", c: "hc", r: 5 }] };
+  const cut = (id: string, sk: string): Feature => ({ id, type: "extrude", name: id, sketch: sk, op: "cut", end: "through2", depth: { v: 0 } } as Feature);
+  const feats = [s, base(), fl, unf, slot, cut("c", "k"), hole, cut("d", "h")];
+  r = run(doc(feats));
+  const lost = 2 * (20 * (ba - 2) + 25 * Math.PI);
+  close(r.props.volume, 2 * 100 * flatLen - lost, 1e-6);
+  // Folded back: the slot wraps onto the bend and the hole goes up with the flange; the neutral surface keeps areas.
+  r = run(doc([...feats, fold]));
+  assert.equal(r.sheet!.unfold, undefined);
+  close(r.props.volume, 2 * 100 * flatLen - lost, 1e-5);
+  close(r.size[0], 100, 1e-6); close(r.size[1], 50, 1e-6); close(r.size[2], 30, 1e-6);
+  // The hole is in the flange (y 0..2), its centre 13 up from the bend's end (z = 4 + 13).
+  const inside = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inside([50, 1, 17]) === false && inside([20, 1, 17]) === true, "the hole is in the flange");
+  // The Flat-Pattern after the fold has both openings again.
+  r = run(doc([...feats, fold, flat]));
+  close(r.props.volume, 2 * 100 * flatLen - lost, 1e-4);
+  // Flat-Pattern straight after an unfold folds the cuts back first.
+  r = run(doc([...feats, flat]));
+  close(r.props.volume, 2 * 100 * flatLen - lost, 1e-4);
+  // A slot cut while folded, through the bend, is unrolled by the Unfold; a dimple moves with its panel.
+  const k2 = rect("k2", 40, -5, 60, 10);
+  const dim: SmFormFeature = { id: "fm", type: "smform", name: "Form-Tool1", face: { name: "b:p0:top" }, tool: "dimple", pts: [[50, 30]], size: { v: 10 }, width: { v: 4 }, height: { v: 3 } };
+  const pre = [s, base(), fl, k2, cut("c2", "k2"), dim];
+  const fv = run(doc(pre)).props.volume;
+  r = run(doc([...pre, unf]));
+  close(r.props.volume, fv, 1e-4);
+  close(r.size[2], 2 + 3, 1e-6);
+  r = run(doc([...pre, unf, fold]));
+  close(r.props.volume, fv, 1e-4);
+  // (The box of the wrapped faces' B-spline edges is a little loose.)
+  close(r.size[2], 30, 1e-3);
+});
+
+test("sheet metal: corner relief at two-bend corners (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const edges = (ids: string[]) => ids.map(e => ({ faces: ["b:p0:top", `b:p0:${e}`] as [string, string] }));
+  const fl = (ids: string[]): SmFlangeFeature => ({ id: "f", type: "smflange", name: "Edge-Flange1", edges: edges(ids), length: { v: 30 }, angle: { v: Math.PI / 2 } });
+  const rel = (over: Partial<SmReliefFeature> = {}): SmReliefFeature => ({ id: "r", type: "smrelief", name: "Corner-Relief1", corners: [], kind: "rect", ...over });
+  // Front (y = 0) and right (x = 100) flanges: one corner, where the start lines (4 inside the edges) cross.
+  const two = [s, base(), fl(["sl1", "sl2"])];
+  const r0 = run(doc(two));
+  const cs = reliefCorners(r0.sheet!);
+  assert.equal(cs.length, 1);
+  assert.equal(cs[0].key, "f:b0+f:b1");
+  close(cs[0].c0[0], 96, 1e-9); close(cs[0].c0[1], 4, 1e-9);
+  assert.equal(reliefCorners(run(doc([s, base(), fl(["sl1", "sl2", "sl3", "sl4"])])).sheet!).length, 4);
+  const inside = (r: { body: { shape: unknown } | null }, p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(r.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inside(r0, [95.5, 4.5, 1]));
+  const flat0 = run(doc([...two, flat])).props.volume;
+  for (const kind of ["rect", "circle", "tear"] as const) {
+    const r = run(doc([...two, rel({ kind })]));
+    assert.ok(r.props.volume < r0.props.volume - 1, `${kind} takes material away`);
+    assert.equal(inside(r, [95.5, 4.5, 1]), false, `${kind}: the face corner is cut`);
+    assert.ok(inside(r, [94, 6, 1]), `${kind}: the relief stays at the corner`);
+    const f = run(doc([...two, rel({ kind }), flat]));
+    // The flat pattern loses about as much (the two bends overlap a little at the folded corner).
+    const lost = flat0 - f.props.volume;
+    assert.ok(lost > 1);
+    close(lost, r0.props.volume - r.props.volume, 0.03);
+  }
+  // A bigger clearance takes more; a picked corner only that one.
+  const v1 = run(doc([...two, rel()])).props.volume, v3 = run(doc([...two, rel({ size: { v: 3 } })])).props.volume;
+  assert.ok(v3 < v1);
+  const four = [s, base(), fl(["sl1", "sl2", "sl3", "sl4"])];
+  const all = run(doc([...four, rel()])).props.volume, one = run(doc([...four, rel({ corners: ["f:b0+f:b1"] })])).props.volume;
+  close(run(doc(four)).props.volume - one, (run(doc(four)).props.volume - all) / 4, 1e-2);
+  // Errors: no corners; corners gone.
+  const bad = m.evaluate(doc([s, base(), fl(["sl1"]), rel()]));
+  assert.equal(bad.statuses.find(x => x.id === "r")?.code, "E-SM-NOCORNER");
+  const gone = m.evaluate(doc([...two, rel({ corners: ["x+y"] })]));
+  assert.equal(gone.statuses.find(x => x.id === "r")?.code, "E-SM-CORNERGONE");
 });

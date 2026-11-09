@@ -52,7 +52,7 @@ export class ModelKernel {
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private running = false;
-  private queued: { doc: PartDoc; color: V3; quality: number; previewAt?: number; resolve: (r: Rebuild | null) => void } | null = null;
+  private queued: { doc: PartDoc; color: V3; quality: number; previewAt?: number; verify?: boolean; resolve: (r: Rebuild | null) => void } | null = null;
   heap = 0;
   onCrash: ((msg: string) => void) | null = null;
 
@@ -104,10 +104,10 @@ export class ModelKernel {
   warm() { this.start().catch(() => {}); }
 
   /** Evaluates the document. Resolves null when a newer request replaced this one. */
-  rebuild(doc: PartDoc, color: V3, quality = 1, previewAt?: number): Promise<Rebuild | null> {
+  rebuild(doc: PartDoc, color: V3, quality = 1, previewAt?: number, verify = false): Promise<Rebuild | null> {
     return new Promise(resolve => {
       this.queued?.resolve(null);
-      this.queued = { doc, color, quality, previewAt, resolve };
+      this.queued = { doc, color, quality, previewAt, verify, resolve };
       if (!this.running) void this.pump();
     });
   }
@@ -120,7 +120,7 @@ export class ModelKernel {
       try {
         if (this.heap > RECYCLE_HEAP) this.stop();
         await this.start();
-        const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt });
+        const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
         this.heap = r.heap;
         job.resolve(r);
       } catch (err) {
@@ -130,7 +130,7 @@ export class ModelKernel {
         if (!this.worker) {
           try {
             await this.start();
-            const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt });
+            const r = await this.call<Rebuild & { heap: number }>({ type: "model", doc: job.doc, color: job.color, quality: job.quality, previewAt: job.previewAt, verify: job.verify });
             job.resolve(r);
             continue;
           } catch { /* give up below */ }

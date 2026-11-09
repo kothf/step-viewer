@@ -19,6 +19,8 @@ export interface SolveResult {
   missing: string[];
   /** Remaining degrees of freedom per floating component (fixed ones are 0). */
   dof: Record<string, number>;
+  /** Degrees of freedom of the whole assembly (the null space of the mates); a linkage moving as one counts once. */
+  free: number;
   moved: boolean;
 }
 
@@ -53,6 +55,12 @@ function turnAbout(t: Tf, t0: Tf, d: V3): number {
   return Math.atan2(dot(cross(uu, w), d), dot(uu, w));
 }
 const wrap = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+const I3x4: Tf = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+/** b's turn relative to a about a's (world) axis `d` since the transforms `t0`. */
+function relTurn(t0: [Tf, Tf], tfa: Tf, tfb: Tf, d: V3): number {
+  const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(t0[0]), t0[1])));
+  return turnAbout(delta, I3x4, applyDir(ia, d));
+}
 
 /** The mate's residuals (lengths in mm, directions scaled by `L`), for world geometry. */
 export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: Tf, gc?: Geo, gd?: Geo): number[] {
@@ -71,6 +79,8 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       break;
     case "concentric":
       parallel(); dirs(cross(sub(gb.p, ga.p), da));
+      // Lock rotation: b's turn about a's axis since the mate was made stays zero.
+      if (m.lockRot && tfa && tfb && m.t0 && ga.k === "axis") out.push(wrap(relTurn(m.t0, tfa, tfb, ga.d)) * L);
       break;
     case "parallel":
       if (ga.k === gb.k) parallel(); else out.push(dot(da, db0) * L);
@@ -141,7 +151,7 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       // b's motion relative to a since the mate was made, in a's frame: turn and travel along a's axis.
       const ia = invert(tfa), delta = compose(compose(ia, tfb), invert(compose(invert(m.t0[0]), m.t0[1])));
       const dA = applyDir(ia, ga.d), pA = applyPoint(ia, ga.p);
-      const turn = turnAbout(delta, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], dA);
+      const turn = turnAbout(delta, I3x4, dA);
       const travel = dot(sub(applyPoint(delta, pA), pA), dA);
       const k = Math.round(((2 * Math.PI * travel) / (s2 * pitch) - turn) / (2 * Math.PI));
       out.push(travel - (s2 * pitch * (turn + 2 * Math.PI * k)) / (2 * Math.PI));
@@ -305,11 +315,14 @@ export function solve(inp: SolveInput): SolveResult {
   if (!ok && r.every(v => Math.abs(v) < 1e-5 * L)) { ok = true; bad.length = 0; }
   const dof: Record<string, number> = {};
   for (const c of comps) dof[c.id] = c.fixed ? 0 : 6;
+  const loose = 6 * comps.filter(c => !c.fixed && !col.has(c.id)).length;
+  let free = n + loose;
   if (ok && n) {
     // A limit takes no freedom away, even when it sits at its end.
     for (const l of live) if (l.m.type === "limitdist" || l.m.type === "limitangle") l.m = { ...l.m, min: -Infinity, max: Infinity };
     const J = jac(R(tfs));
     const N = nullSpace(J, n);
+    free = N.length + loose;
     for (const id of vars) {
       const i = col.get(id)!;
       dof[id] = rank(N.map(v => v.slice(i, i + 6)));
@@ -318,7 +331,7 @@ export function solve(inp: SolveInput): SolveResult {
   const out = ok ? tfs : tf0;
   let mv = false;
   for (const c of doc.components) if (out[c.id].some((v, i) => Math.abs(v - c.tf[i]) > 1e-9 * Math.max(1, Math.abs(v)))) mv = true;
-  return { tfs: out, ok, bad, missing, dof, moved: mv };
+  return { tfs: out, ok, bad, missing, dof, free, moved: mv };
 }
 
 /** Gaussian elimination with partial pivoting; null when singular. */

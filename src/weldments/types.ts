@@ -136,6 +136,8 @@ export interface WeldBeadFeature {
   tangent?: boolean;
   /** Intermittent weld: welds of length `len` every `pitch` (centre to centre) along each chain of edges; `stagger` starts every other chain half a pitch on. */
   inter?: { len: Num; pitch: Num; stagger?: boolean };
+  /** From/to length: the bead only from `start` along each chain of edges for `len` (from the chain's other end when `flip`); intermittent welds fill this span. */
+  span?: { start: Num; len: Num; flip?: boolean };
   /** false hides the weld symbol in the view. */
   symbol?: false;
   /** Weld all around (ISO 2553 circle at the knee of the symbol). */

@@ -43,6 +43,10 @@ export interface DrawingModel {
 
 export interface DrawingHost {
   appVersion: string;
+  /** A drawing was saved (File ▸ recent documents). */
+  saved?(name: string, bytes: Uint8Array): void;
+  /** The File menu under the drawing's File button. */
+  fileMenu?(btn: HTMLElement): void;
   occtBase: string;
   /** The model open now (a part, or the STEP of the open file), or null. */
   currentModel(): Promise<DrawingModel | null>;
@@ -309,6 +313,30 @@ export class DrawingWorkspace {
     await this.loadModel();
   }
 
+  /** File ▸ Properties: the sheet's properties (title block fields, size, scale) in the side panel. */
+  sheetProperties() {
+    if (!this.store) return;
+    this.cancelMode();
+    this.sel = null;
+    this.selA = null;
+    this.renderTree(); this.renderProps(); this.renderOverlay();
+  }
+
+  /** Pack and Go: the drawing as saved, with its model inside. */
+  async packed(tab?: DrawingTab) {
+    const store = tab?.store ?? this.store;
+    if (!store) return null;
+    const name = (tab ? tab.fileName : this.fileName) || `${store.doc.name}${DRAWING_EXT}`;
+    return { name, data: await packDrawing(store.doc, `MöbiusCAD ${this.host.appVersion}`, tab ? tab.model : this.model) };
+  }
+
+  /** The export menu in the drawing's bar (File ▸ Export). */
+  openExportMenu() {
+    const b = this.el.querySelector<HTMLElement>('[data-a="export"]');
+    if (b && (b.nextElementSibling as HTMLElement | null)?.hidden) b.click();
+    (b?.nextElementSibling as HTMLElement | null)?.querySelector<HTMLElement>("button")?.focus();
+  }
+
   /** The drawing's name for its tab, and whether it has unsaved changes. */
   get title() { return this.store ? this.fileName || `${this.doc.name}.mcaddrw` : ""; }
   get dirty() { return !!this.store?.dirty; }
@@ -368,6 +396,7 @@ export class DrawingWorkspace {
     this.el.innerHTML = `
       <div class="drw-top">
         <button class="btn small" data-a="back" title="${esc(t("Back to the 3D model"))}">${ICON.back}<span>${esc(t("Model"))}</span></button>
+        ${this.host.fileMenu ? `<button class="btn small drw-file" data-a="file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="${esc(t("File: new, open, save, Pack and Go, export, print, recent documents"))}"><span>${esc(t("File"))}</span> ▾</button>` : ""}
         <span class="drw-name" translate="no"></span>
         <div class="drw-cmds" role="toolbar" aria-label="${esc(t("Drawing commands"))}">
           <button class="btn small" data-a="std3" title="${esc(t("Standard 3 views: front, top and side, lined up"))}">${ICON.std3}<span>${esc(t("Standard 3 views"))}</span></button>
@@ -2581,6 +2610,7 @@ export class DrawingWorkspace {
     if (b.dataset.orientation) { this.setSheet("Sheet orientation", s => { s.portrait = b.dataset.orientation === "port" || undefined; }); this.fit(); return; }
     switch (a) {
       case "back": this.hide(); break;
+      case "file": this.cancelMode(); this.closeMenus(); this.host.fileMenu?.(b); break;
       case "std3": this.cancelMode(); this.standard3(); break;
       case "model": case "export": case "section": case "annot": case "detail": {
         const menu = b.nextElementSibling as HTMLElement, open = menu.hidden;
@@ -2903,6 +2933,7 @@ export class DrawingWorkspace {
     this.fileName = name;
     this.store.markSaved();
     this.renderAll();
+    this.host.saved?.(name, bytes);
     toast(t("Saved {name}", { name }), "success");
   }
 

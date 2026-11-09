@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, colorAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, motorPlotUnit, motorSeries, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -459,4 +459,17 @@ test("motor plot: displacement, velocity and acceleration series", () => {
   near(motorSeries(l, 1, 10, "acc")[5], 0, 1e-1);
   near(motorSeries(l, 1, 10, "acc")[1], 60 - 120 * 0.1, 1e-1);
   assert.equal(motorPlotUnit(l, "acc"), "mm/s²");
+});
+
+test("appearance colour keys blend between coloured keys", () => {
+  const keys = [{ t: 0, v: 1, c: "#ff0000" }, { t: 1, v: 0.5 }, { t: 2, v: 1, c: "#0000FF" }];
+  assert.equal(colorAt([{ t: 0, v: 1 }], 0.5), null);
+  assert.equal(colorAt(keys, -1), "#ff0000");
+  assert.equal(colorAt(keys, 1), "#800080");
+  assert.equal(colorAt(keys, 3), "#0000ff");
+  assert.equal(colorAt([{ t: 0, v: 1, c: "#000000" }, { t: 1, v: 1, c: "#ffffff", interp: "snap" }], 0.9), "#000000");
+  const s: MotionStudy = { id: "s", name: "S", duration: 2, fps: 10, tracks: [{ id: "l", kind: "look", comp: "c1", keys }] } as MotionStudy;
+  const f = frameAt(s, 1, new Map());
+  assert.equal(f.tint.c1, "#800080");
+  assert.equal(f.look.c1, 0.5);
 });

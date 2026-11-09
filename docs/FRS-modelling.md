@@ -1020,7 +1020,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 ### 13.8 Preferences
 
-- **FR-UI-080** (P1, M) Preferences dialog (existing modal) gains a **Modelling** page: mouse mapping, default units/template, sketch colours legend, automatic relations on/off, auto rotate to sketch plane on/off, spin step sizes, preview quality, rebuild verification on/off, autosave interval.
+- **FR-UI-080** (P1, M) Preferences dialog (existing modal) gains a **Modelling** page: mouse mapping, default units/template, sketch colours legend, automatic relations on/off, auto rotate to sketch plane on/off, spin step sizes, preview quality, rebuild verification on/off, autosave interval. *Done in 1.329.0 (Display ▾ → Preferences…: Modelling, Sketch and Mouse pages; document templates are left out).*
 - **FR-UI-081** (P2, S) Keyboard shortcut editor with conflict detection; import/export as JSON; a "Classic CAD" preset (the habits marked "SW habit" in this section) and the default MöbiusCAD preset.
 
 ### 13.9 Small screens and touch
@@ -1642,7 +1642,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |
-| FR-UI-080 | Preferences dialog with a Modelling page | Settings live in the Display menu; no Modelling page | Not built |
+| FR-UI-080 | Preferences dialog with a Modelling page | 1.329.0: Display ▾ → Preferences… with Modelling, Sketch and Mouse pages (units, image quality, verification on rebuild, autosave, spin steps, sketch settings and colour legend, middle button and wheel). No document templates | Done |
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
 | FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
