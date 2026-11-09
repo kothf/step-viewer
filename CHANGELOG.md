@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.310.0] - 2026-11-09
+
+### Added
+
+- **Sketch toggles on the quick access bar (FR-UI-055)**: while sketching, the quick access bar has Grid, Snap to grid and Inferences (automatic relations) buttons next to Quick snaps, so they can be switched without opening the sketch panel. They stay in step with the panel's check boxes and are remembered; turning Snap to grid on also shows the grid.
+
 ## [1.309.0] - 2026-11-09
 
 ### Added
@@ -1807,7 +1813,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.309.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.310.0...HEAD
+[1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
 [1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0

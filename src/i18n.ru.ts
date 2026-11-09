@@ -1523,6 +1523,7 @@ export const RU: Record<string, string> = {
   "Drawings need a STEP, IGES or BREP model; mesh files have no B-rep.": "Для чертежа нужна модель STEP, IGES или BREP; в сеточных файлах нет B-rep.",
   "Merge points": "Объединить точки",
   "Grid": "Сетка",
+  "Inferences": "Автосвязи",
   "Show grid": "Показать сетку",
   "Snap to grid": "Привязка к сетке",
   "Grid spacing": "Шаг сетки",

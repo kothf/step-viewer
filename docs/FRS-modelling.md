@@ -1003,7 +1003,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 - **FR-UI-052** (P1, M) Typing a number while drawing an entity opens the value box for its next size (length, then angle), so lines can be drawn fully by keyboard.
 - **FR-UI-053** (P1, M) Dimension value boxes appear at the dimension (SW habit: Modify box) with ✓, ✕, rebuild and spin; Esc keeps the previous value.
 - **FR-UI-054** (P1, M) Sketch keyboard: L line, R rectangle, C circle, A arc (tangent arc while drawing), P point, G polygon, T trim, E extend, F sketch fillet, O offset, W slot, D dimension, K add relation, Q construction toggle (letters as built in 1.85.0, plus K), Esc ends the current tool then exits selection, Ctrl+Enter exits the sketch; letters are rebindable (P2) and do not collide with viewer letters while the sketch is active (viewer measure letters move under the Evaluate tab in modelling).
-- **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching.
+- **FR-UI-055** (P1, S) Grid and inference toggles in the heads-up bar while sketching. *Done in 1.310.0 (quick access bar: Grid, Snap to grid, Inferences).*
 
 ### 13.6 Tree UI
 

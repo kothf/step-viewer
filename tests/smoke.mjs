@@ -2366,6 +2366,20 @@ try {
       `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
     check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
+    const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+    const qt0 = await qt();
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt1 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    await mp.click('#mc-quick [data-qt="grid"]');
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt2 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    const qt3 = await qt();
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
