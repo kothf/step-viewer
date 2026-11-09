@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.340.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Sheet Metal Gusset (FR-FT-120): a stiffening rib pressed across a bend, as SolidWorks' Sheet Metal Gusset (flat type). Click the bend to place it, centred or at a distance from the bend's end; the profile length runs along each face from the inside virtual sharp, and the width is the rib's outside width. The rib keeps the sheet's thickness, with the matching groove outside, and the flat pattern leaves it out. Bends with gussets can't be unfolded.
+
 ## [1.339.0] - 2026-11-09
 
 ### Added
@@ -2025,7 +2031,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.339.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.340.0...HEAD
+[1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
 [1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
 [1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
 [1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0

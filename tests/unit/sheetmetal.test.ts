@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -660,4 +660,37 @@ test("sheet metal: corner relief at two-bend corners (FR-FT-120)", async () => {
   assert.equal(bad.statuses.find(x => x.id === "r")?.code, "E-SM-NOCORNER");
   const gone = m.evaluate(doc([...two, rel({ corners: ["x+y"] })]));
   assert.equal(gone.statuses.find(x => x.id === "r")?.code, "E-SM-CORNERGONE");
+});
+
+test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  // The front flange stands on y 0..2 up to z 30; the inside faces meet at y = z = 2.
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const gus = (over: Partial<SmGussetFeature> = {}): SmGussetFeature => ({ id: "g", type: "smgusset", name: "Sheet-Metal-Gusset1", bend: "f:b0", depth: { v: 10 }, width: { v: 6 }, ...over });
+  const pre = [s, base(), fl];
+  const r0 = run(doc(pre));
+  const r = run(doc([...pre, gus()]));
+  const inside = (q: { body: { shape: unknown } | null }, p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(q.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(!inside(r0, [48, 4, 4]), "air inside the bend before");
+  assert.ok(inside(r, [48, 4, 4]), "the rib's side wall");
+  assert.ok(!inside(r, [50, 4, 4]), "the groove behind it");
+  assert.ok(inside(r, [50, 6.25, 6.25]), "the rib's top wall");
+  assert.ok(!inside(r, [50, 7.5, 7.5]), "past the rib");
+  assert.ok(!inside(r, [50, 1.88, 1.88]) && inside(r, [20, 1.88, 1.88]), "the groove goes through the bend");
+  assert.equal(r.sheet!.gussets?.length, 1);
+  // Off the middle: at 20 from the start end, the rib is where asked (the bend runs along x, from one end or the other).
+  const r2 = run(doc([...pre, gus({ at: { v: 20 } })]));
+  assert.ok(inside(r2, [18, 4, 4]) !== inside(r2, [82, 4, 4]));
+  // The flat pattern is the same as without the gusset.
+  close(run(doc([...pre, gus(), flat])).props.volume, run(doc([...pre, flat])).props.volume, 1e-6);
+  // Errors.
+  const code = (g: SmGussetFeature, more: Feature[] = []) => m.evaluate(doc([...pre, g, ...more])).statuses.find(x => x.id === "g")?.code;
+  assert.equal(code(gus({ width: { v: 4 } })), "E-SM-GUSSETWIDTH");
+  assert.equal(code(gus({ depth: { v: 3 } })), "E-SM-GUSSETDEPTH");
+  assert.equal(code(gus({ bend: "x:b0" })), "E-SM-GUSSETBEND");
+  assert.equal(code(gus({ at: { v: 99 } })), "E-SM-GUSSETPOS");
+  const unf: SmUnfoldFeature = { id: "u", type: "smunfold", name: "Unfold1", bends: [] };
+  assert.equal(m.evaluate(doc([...pre, gus(), unf])).statuses.find(x => x.id === "u")?.code, "E-SM-UNFOLDGUSSET");
 });
