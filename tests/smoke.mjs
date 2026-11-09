@@ -2553,6 +2553,43 @@ try {
     const cpUndo = await mp.evaluate(() => window.__sv.model.store.undoLabel);
     check(cpV.n === cpN.n + 2 && /^extrude,Extrude\d+,10$/.test(cpV.ex.join()) && cpV.sk.join() === "true,YZ,true" && near(cpV.vol - cpN.vol, 4000, 1e-3) && !cpV.bad && cpV.sel && cpDrop.type === "sketch" && cpDrop.face && cpUndo === "Paste",
       `model 1.342: Ctrl+C on an extrude and Ctrl+V on the Right plane paste it with a copy of its sketch (+4000 mm³); Ctrl+drop of a sketch row on a face pastes it there (${JSON.stringify([cpN, cpV, cpDrop, cpUndo])})`);
+    // 1.350: tree housekeeping (FR-HIS-013): the eye button hides the Top plane (outlined icon), Shift+C folds absorbed sketches, ▸ unfolds.
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkEye = await mp.evaluate(() => ({ hidden: window.__sv.model.store.doc.stdHidden, hid: document.querySelector('#mc-tree .ft-row[data-id="std:XY"]').classList.contains("hid"), stroke: getComputedStyle(document.querySelector('#mc-tree .ft-row[data-id="std:XY"] .ft-ico')).webkitTextStrokeWidth, sketchEye: !!document.querySelector('#mc-tree .ft-row[data-id="cps"] [data-a="eye"]'), extrudeEye: !!document.querySelector('#mc-tree .ft-row[data-id="cpe"] [data-a="eye"]') }));
+    await mp.hover('#mc-tree .ft-row[data-id="std:XY"]');
+    await mp.click('#mc-tree .ft-row[data-id="std:XY"] [data-a="eye"]');
+    const hkShown = await mp.evaluate(() => window.__sv.model.store.doc.stdHidden ?? null);
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Shift+C");
+    const hkFold = await mp.evaluate(() => ({ cps: !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'), exp: document.querySelector('#mc-tree .ft-row[data-id="cpe"]')?.getAttribute("aria-expanded") }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"] [data-a="twist"]');
+    const hkOpen = await mp.evaluate(() => !!document.querySelector('#mc-tree .ft-row[data-id="cps"]'));
+    check(hkEye.hidden?.join() === "XY" && hkEye.hid && hkEye.stroke === "1px" && hkEye.sketchEye && !hkEye.extrudeEye && hkShown === null && !hkFold.cps && hkFold.exp === "false" && hkOpen,
+      `model 1.350: the eye button hides and shows the Top plane (outlined icon while hidden), Shift+C folds the extrude's sketch and ▸ unfolds it (${JSON.stringify([hkEye, hkShown, hkFold, hkOpen])})`);
+    // FR-HIS-012 / AT-UX-14: Roll back to here from the tree menu, reopen rolled back with the notice, Roll to end, Roll to previous.
+    const rbN = await mp.evaluate(() => window.__sv.model.store.doc.features.length);
+    const rbAt = await mp.evaluate(() => window.__sv.model.store.doc.features.at(-2).id);
+    await mp.click(`#mc-tree .ft-row[data-id="${rbAt}"]`, { button: "right" });
+    const rbMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll back to here")');
+    await idle();
+    const rbDoc = await mp.evaluate(() => JSON.parse(JSON.stringify(window.__sv.model.store.doc)));
+    await mp.evaluate(d => { const m = window.__sv.modeller; m.store.markSaved(); m.load(d, "rolled.mcadprt", null); }, rbDoc);
+    await idle();
+    const rbOpen = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: document.querySelector("#mc-rolled span")?.textContent, rolled: document.querySelectorAll("#mc-tree .ft-row.rolled").length }));
+    await mp.click("#mc-rolled button");
+    await idle();
+    const rbEnd = await mp.evaluate(() => ({ rb: window.__sv.model.store.doc.rollback, note: !!document.querySelector("#mc-rolled") }));
+    await mp.click("#mc-tree .ft-rollback", { button: "right" });
+    const rbBarMenu = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.click('#mc-menu button:text-is("Roll to previous")');
+    await idle();
+    const rbPrev = await mp.evaluate(() => window.__sv.model.store.doc.rollback);
+    await mp.evaluate(() => window.__sv.modeller.setRollback(null));
+    await idle();
+    check(rbMenu.includes("Roll back to here") && rbOpen.rb === rbN - 2 && rbOpen.note === "The part is rolled back: 2 features are not shown" && rbOpen.rolled >= 1 && rbEnd.rb === null && !rbEnd.note && rbBarMenu.join("|") === "Roll to previous" && rbPrev === rbN - 2,
+      `model 1.350: Roll back to here, reopened rolled back with the notice, Roll to end from it, then Roll to previous from the bar menu (${JSON.stringify([rbMenu, rbOpen, rbEnd, rbBarMenu, rbPrev])})`);
     await ctx.close();
   }
 

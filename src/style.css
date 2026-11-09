@@ -741,6 +741,12 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #asm-tree .ft-tools { display: inline-flex; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > :not([data-a=hide]) { display: none; }
 #asm-tree .ft-row:not(:hover):not(.sel):not(:focus-within) .ft-tools > [data-a=hide]:not(.off) { color: var(--muted); }
+/* FR-HIS-013: hidden items have an outlined icon; parents of an absorbed sketch fold it with a twisty. */
+.ft-row.hid > .ft-ico { color: transparent; -webkit-text-stroke: 1px var(--muted); }
+.ft-tools .ft-eye svg { display: block; margin: auto; }
+.ft-tools .ft-eye.off { color: var(--muted); }
+.ft-twist.icon { width: 14px; height: 18px; min-width: 0; padding: 0; margin-left: -4px; border: 0; background: none; font-size: 10px; color: var(--muted); flex: none; }
+.ft-twist.icon:hover { color: var(--text); }
 .ft-tools .ft-color { width: 22px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
 .pm { border-bottom: 1px solid var(--line); padding: 8px 12px 12px; background: var(--panel-2); overflow: auto; max-height: 60%; flex: none; }
 /* FR-UI-003: with a command open the panel fills the Features tab and the tree flies out over the view. */

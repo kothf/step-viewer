@@ -4122,4 +4122,8 @@ export const RU: Record<string, string> = {
   "The sketch X axis follows the new plane": "Ось X эскиза взята от новой плоскости",
   "The end condition went back to Blind": "Граничное условие сброшено на «На заданное расстояние»",
   "The start went back to the sketch plane": "Начало сброшено на плоскость эскиза",
+  // FR-HIS-012/013: rollback commands, rolled-back notice, tree housekeeping
+  "Roll to previous": "Откатить к предыдущему",
+  "The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown": "Деталь откачена: {n} элемент не показан|Деталь откачена: {n} элемента не показаны|Деталь откачена: {n} элементов не показаны",
+  "Expand": "Развернуть",
 };
