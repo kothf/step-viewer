@@ -5701,6 +5701,21 @@ try {
     // A 60 rpm rotary motor on Concentric1: half a turn at 0.5 s.
     await mp.evaluate(() => { const m = window.__sv.motion; m.addTrack("motor:mc"); m.edit(s => { const k = s.tracks.find(x => x.kind === "motor"); k.speed = 60; }); m.seek(0.5); });
     const turn = await pos();
+    // Motor profiles from its panel: Distance 180° over the study (half way at 2.5 s), Data points 0 → 90° in 1 s.
+    const setP = (sel, v) => mp.evaluate(([sel, v]) => { const el = document.querySelector(`#motion ${sel}`); el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }, [sel, v]);
+    await mp.evaluate(() => { const m = window.__sv.motion; const k = m.study.tracks.find(x => x.kind === "motor"); m.sel = { track: k.id }; m.render(); });
+    await setP("select[data-p=profile]", "distance");
+    await setP("input[data-p=dist]", "180");
+    await mp.evaluate(() => window.__sv.motion.seek(2.5));
+    const dist = await pos();
+    await setP("select[data-p=profile]", "points");
+    await setP("textarea[data-p=pts]", "0, 0\n1; 90");
+    await mp.evaluate(() => window.__sv.motion.seek(0.5));
+    const ptsAt = await pos();
+    const ptsEnd = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").end);
+    await setP("textarea[data-p=pts]", "1, 0\n0, 5");
+    const ptsBad = await mp.evaluate(() => document.querySelector("#motion textarea[data-p=pts]").getAttribute("aria-invalid"));
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -5860,6 +5875,9 @@ try {
       let gl = null; window.__sv.viewer.scene.traverse(o => { if (o.userData?.gapLine === gt.id) gl = o; });
       const gpa = gl?.geometry.getAttribute("position");
       prox.line = !!gpa && (gv[0] < 1e-6 || Math.abs(Math.hypot(gpa.getX(1) - gpa.getX(0), gpa.getY(1) - gpa.getY(0), gpa.getZ(1) - gpa.getZ(0)) - gv[0]) < 1e-3);
+      // Its plot saves as a stand-alone SVG (English, no playhead line).
+      const gsvg = m.plotSvgFile(m.study.traces.find(x => x.id === gt.id));
+      prox.svg = !!document.querySelector('#motion button[data-tr="svg"]') && gsvg.startsWith("<?xml") && gsvg.includes("<polyline") && !gsvg.includes("mo-ph");
       m.deleteTrace(gt.id);
       const trace = { prox, sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);
@@ -6037,12 +6055,13 @@ try {
       `motion study: the timeline zooms in, follows the playhead and fits again (FR-FT-122) (${JSON.stringify(pose.zoomed)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor, explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points), explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8787,6 +8806,25 @@ try {
     check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
       && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
       `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
+    // A slot cut across the front flange's bend: the flat pattern loses the same material, bend part unrolled.
+    const across = async withCut => {
+      await mp.evaluate(withCut => window.__sv.model.store.change("Slot across bend", d => {
+        const b = d.features.find(f => f.type === "smbase");
+        d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+        const P = (id, x, y) => ({ id, t: "point", x, y });
+        d.features.push({ id: "fx", type: "smflange", name: "Edge-Flange6", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } },
+          { id: "s6", type: "sketch", name: "Sketch6", plane: { std: "XY" }, rels: [], dims: [], ents: [P("k1", 40, -5), P("k2", 60, -5), P("k3", 60, 10), P("k4", 40, 10), { id: "k5", t: "line", a: "k1", b: "k2" }, { id: "k6", t: "line", a: "k2", b: "k3" }, { id: "k7", t: "line", a: "k3", b: "k4" }, { id: "k8", t: "line", a: "k4", b: "k1" }] },
+          { id: "c6", type: "extrude", name: "Cut-Extrude6", sketch: "s6", op: "cut", end: "through2", depth: { v: 0 } });
+        if (!withCut) d.features = d.features.filter(f => f.id !== "c6");
+        d.features.push({ id: "fp6", type: "smflat", name: "Flat-Pattern1" });
+      }), withCut);
+      await settle();
+      return mp.evaluate(() => ({ v: window.__sv.model.last().props?.volume ?? 0, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    };
+    const xb0 = await across(false), xb1 = await across(true);
+    const xbWant = T * 20 * (10 - (R + T) + (Math.PI / 2) * (R + 0.42 * T) + 20 - (R + T));
+    check(!xb0.bad && !xb1.bad && Math.abs(xb0.v - xb1.v - xbWant) / xbWant < 1e-3,
+      `sheet metal: a cut across a bend is unrolled in the flat pattern (${JSON.stringify({ xb0, xb1, xbWant })})`);
     await ctx.close();
   }
 
