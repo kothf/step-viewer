@@ -120,6 +120,11 @@ test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
   assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3 } as Feature])).cut.map(c => c.length), [500, 377]);
   assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, kind: "body" } as Feature])).cut.map(c => c.length), [500, 383]);
   assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, boundary: undefined, plane: { std: "YZ" } } as Feature])).cut.map(c => c.length), [500, 397]);
+  // Planar trim against the body: a flat end where the beam first meets the post (its flat side, x = 20), not round its corners.
+  const pt = run(m, doc([k, mem, { ...tr, kind: "body", planar: true } as Feature]));
+  assert.deepEqual(pt.cut.map(c => [c.length, c.angle1, c.angle2]), [[500, 0, 0], [380, 0, 0]]);
+  near(pt.volume, rb.volume - 6 * pt.cut[1].volume / 380, 0.2 * pt.cut[1].volume / 380);
+  assert.deepEqual(run(m, doc([k, mem, { ...tr, ...g3, kind: "body", planar: true } as Feature])).cut.map(c => c.length), [500, 377]);
 
   // End cap on the beam's free end, 5 thick, 2 in from its outline.
   const cap: Feature = { id: "c", type: "endcap", name: "End cap1", faces: [{ name: "m:beam:end" }], thickness: { v: 5 }, inset: { v: 2 } };

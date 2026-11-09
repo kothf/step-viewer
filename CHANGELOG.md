@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.272.0] - 2026-11-09
+
+### Added
+
+- **Trim/Extend planar trim (FR-FT-121).** Trimming a member against another body now offers SolidWorks' **Planar trim** next to **Body trim**: the member gets a flat end square to its axis where it first meets the body, instead of an end shaped like the body. Weld gap works with it too.
+
 ## [1.268.0] - 2026-11-09
 
 ### Added
@@ -1667,7 +1673,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.268.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.272.0...HEAD
+[1.272.0]: https://github.com/kothf/step-viewer/compare/v1.268.0...v1.272.0
 [1.268.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.268.0
 [1.266.0]: https://github.com/kothf/step-viewer/compare/v1.263.0...v1.266.0
 [1.263.0]: https://github.com/kothf/step-viewer/compare/v1.259.0...v1.263.0

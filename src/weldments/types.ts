@@ -69,6 +69,8 @@ export interface TrimExtendFeature {
   noExtend?: boolean;
   /** Weld gap: trimmed members stop this far short of the boundary (an end miter splits it between the two ends). */
   gap?: Num;
+  /** kind body: a flat end square to the member where it first meets the body (Planar trim) instead of following the body's shape. */
+  planar?: boolean;
 }
 
 /** End cap: a plate closing a member's open end face, `inset` in from its outer edges, `thickness` thick, outwards (or into the member). */
