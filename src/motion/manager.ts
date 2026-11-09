@@ -14,7 +14,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, motorPlotUnit, motorSeries, type MotorPlot, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -39,6 +39,7 @@ const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
 const FITS: [PointsFit, string][] = [["linear", "Linear"], ["cubic", "Cubic spline"], ["akima", "Akima"]];
+const MOTOR_PLOTS: [MotorPlot, string][] = [["disp", "Displacement"], ["vel", "Velocity"], ["acc", "Acceleration"]];
 const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["segments", "Motion segments"], ["expr", "Expression"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
@@ -51,6 +52,8 @@ export class MotionManager {
   time = 0;
   playing = false;
   speed = 1;
+  /** What the selected motor's graph shows (view only). */
+  motorPlot: MotorPlot = "disp";
   private _sel: Sel = null;
   /** More selected keys (Ctrl/Shift+click, a box on the timeline, Ctrl+A), by track and time; `sel` is the one the panel shows. */
   private more: KeyRef[] = [];
@@ -92,6 +95,10 @@ export class MotionManager {
   private frames: Record<string, Tf>[] = [];
   /** Frames where the mates could not all be solved. */
   private badFrames = new Set<number>();
+  /** Odd while `calculate` runs; bumping it cancels the run. */
+  private calcRun = 0;
+  /** Play waits for this calculation, then starts. */
+  private pendingPlay: Promise<boolean> | null = null;
   private cacheKey = "";
   private raf = 0;
   private playStart = 0;
@@ -502,7 +509,7 @@ export class MotionManager {
   /** Draws the paths (solving every frame once when the study or the traces change) and moves the markers to frame `i`. */
   private syncTraces(i: number) {
     const tr = this.traces, g = this.traceGroup;
-    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); this.mateVals.clear(); this.gapVals.clear(); return; }
+    if (!tr.length || !this.open) { if (g.parent) g.removeFromParent(); this.traceKey = ""; this.tracePts.clear(); this.traceAng.clear(); this.mateVals.clear(); this.gapVals.clear(); this.updatePlot(i); return; }
     const s = this.study, n = frameCount(s);
     const key = JSON.stringify([this.key0(), s.tracks.filter(k => k.kind === "pose" && !k.off), tr]);
     if (key !== this.traceKey) {
@@ -607,9 +614,18 @@ export class MotionManager {
 
   /** Moves the plot's playhead line and the readout under it (no re-render while playing). */
   private updatePlot(i: number) {
+    const mbox = this.pane.querySelector<HTMLElement>(".mo-motor-plot"), m = this.sel && this.study.tracks.find(k => k.id === this.sel!.track);
+    if (mbox && m?.kind === "motor") mbox.innerHTML = this.motorPlotHtml(m);
     const x = this.traces.find(k => k.id === this.selTrace), box = this.pane.querySelector<HTMLElement>(".mo-trace-plot");
     if (!x || !box) return;
     box.innerHTML = this.plotHtml(x, i);
+  }
+
+  /** The selected motor's displacement, velocity or acceleration over the study, with the playhead. */
+  private motorPlotHtml(m: MotorTrack): string {
+    const s = this.study, q = this.motorPlot;
+    const label = MOTOR_PLOTS.find(([k]) => k === q)?.[1] ?? "Displacement";
+    return plotSvg(motorSeries(m, s.duration, s.fps, q), s.fps, this.time, motorPlotUnit(m, q), TRACE_COLORS[1], esc(t(label)));
   }
 
   private plotHtml(x: TracePath, i: number): string {
@@ -779,8 +795,58 @@ export class MotionManager {
 
   // ---------- playback ----------
 
+  /** Whether frames up to `i` are solved for the study as it is now. */
+  private solvedTo(i: number) { return this.key0() === this.cacheKey && this.frames.length > i; }
+
+  /**
+   * Solves frames up to `i` a few at a time, yielding between batches so the page stays live, with
+   * "Calculating frame k of n" in the transport bar (exam #60: a big assembly's first Play froze the
+   * page for minutes). Resolves false when cancelled (Play again, Stop, or the study closing).
+   */
+  async calculate(i: number): Promise<boolean> {
+    const run = ++this.calcRun;
+    const t0 = performance.now();
+    let slice = performance.now();
+    while (!this.solvedTo(i)) {
+      if (run !== this.calcRun || !this.open) return false;
+      const key = this.key0();
+      this.ensure(key === this.cacheKey ? this.frames.length : 0);
+      if (performance.now() - slice > 40) {
+        if (performance.now() - t0 > 200) this.showCalc(this.frames.length, i + 1);
+        await new Promise(r => setTimeout(r, 0));
+        slice = performance.now();
+      }
+    }
+    const done = run === this.calcRun;
+    if (done) { this.calcRun++; this.showCalc(0, 0); }
+    return done;
+  }
+
+  /** Is a calculation running (Play shows ⏸ and cancels it). */
+  get calculating() { return this.calcRun % 2 === 1; }
+
+  private showCalc(k: number, n: number) {
+    const el = this.pane.querySelector<HTMLElement>("[data-mo=calc]");
+    if (!el) return;
+    el.hidden = !n;
+    el.textContent = n ? t("Calculating frame {k} of {n}…", { k, n }) : "";
+  }
+
   play() {
-    if (this.playing) { this.pause(); return; }
+    if (this.playing || this.pendingPlay) { this.pause(); return; }
+    const n = frameCount(this.study);
+    if (!this.solvedTo(n - 1)) {
+      const go = this.calculate(n - 1);
+      this.pendingPlay = go;
+      this.renderTransport();
+      void go.then(ok => {
+        if (this.pendingPlay !== go) return;
+        this.pendingPlay = null;
+        this.renderTransport();
+        if (ok) this.play();
+      });
+      return;
+    }
     const s = this.study;
     if ((s.play ?? "once") === "once" && this.time >= s.duration - 1e-9) this.time = 0;
     this.playing = true;
@@ -811,7 +877,7 @@ export class MotionManager {
     step();
   }
 
-  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.renderTransport(); }
+  pause() { this.playing = false; cancelAnimationFrame(this.raf); this.pendingPlay = null; if (this.calculating) { this.calcRun++; this.showCalc(0, 0); } this.renderTransport(); }
   stop() { this.pause(); this.time = 0; this.showAt(0); }
   seek(tq: number) { this.pause(); this.time = Math.max(0, Math.min(this.study.duration, tq)); this.showAt(this.time); }
 
@@ -1058,7 +1124,7 @@ export class MotionManager {
       + ib("start", "⏮", t("To start")) + ib("play", this.playing ? "⏸" : "▶", this.playing ? t("Pause") : t("Play")) + ib("stop", "⏹", t("Stop")) + ib("end", "⏭", t("To end"))
       + `<label class="mo-f"><select data-mo="mode" aria-label="${esc(t("Playback mode"))}">${(["once", "loop", "reciprocate"] as const).map(m => `<option value="${m}"${m === playMode ? " selected" : ""}>${esc(t(m === "once" ? "Play once" : m === "loop" ? "Loop" : "Reciprocate"))}</option>`).join("")}</select></label>`
       + `<label class="mo-f"><select data-mo="speed" aria-label="${esc(t("Playback speed"))}">${[0.25, 0.5, 1, 2, 4].map(v => `<option value="${v}"${v === this.speed ? " selected" : ""}>${v}×</option>`).join("")}</select></label>`
-      + `<span class="mo-time" data-mo="time" aria-live="off"></span>`
+      + `<span class="mo-time" data-mo="time" aria-live="off"></span><span class="mo-calc muted" data-mo="calc" role="status" hidden></span>`
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
@@ -1132,7 +1198,9 @@ export class MotionManager {
                 ? `<label class="mo-f"><span>${esc(t("Expression"))}</span><input type="text" data-p="expr" class="mo-expr" spellcheck="false" translate="no" value="${esc(tr.expr ?? "")}" title="${esc(t("Displacement ({u}) as a formula in t, the seconds after the motor start; sin and cos take radians", { u: rot ? "°" : "mm" }))}" /><span class="muted">${esc(rot ? "°" : "mm")}</span></label>`
                 : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
         + field(t("Start"), "start", fmt(tr.start), t("s")) + field(t("End"), "end", fmt(tr.end), t("s"))
-        + `<label class="mo-f"><input type="checkbox" data-p="flip"${tr.flip ? " checked" : ""} /><span>${esc(t("Reverse direction"))}</span></label>`;
+        + `<label class="mo-f"><input type="checkbox" data-p="flip"${tr.flip ? " checked" : ""} /><span>${esc(t("Reverse direction"))}</span></label>`
+        + `<label class="mo-f"><span>${esc(t("Plot"))}</span><select data-p="mplot">${MOTOR_PLOTS.map(([k, l]) => `<option value="${k}"${this.motorPlot === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+        + `<div class="mo-motor-plot">${this.motorPlotHtml(tr)}</div>`;
     }
     const keys = sortKeys(tr.keys as Key[]), key = keys[sel.key ?? -1];
     if (!key) return "";
@@ -1175,7 +1243,8 @@ export class MotionManager {
   private renderTransport() {
     if (!this.open) return;
     const p = this.pane.querySelector<HTMLButtonElement>("[data-mo=play]");
-    if (p) { p.textContent = this.playing ? "⏸" : "▶"; const l = this.playing ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
+    const busy = this.playing || !!this.pendingPlay;
+    if (p) { p.textContent = busy ? "⏸" : "▶"; const l = busy ? t("Pause") : t("Play"); p.title = l; p.setAttribute("aria-label", l); }
     const w = this.pane.querySelector<HTMLButtonElement>("[data-mo=webm]"), g = this.pane.querySelector<HTMLButtonElement>("[data-mo=gif]");
     if (w) { w.textContent = this.recording === "webm" ? t("Stop recording") : t("Video"); w.disabled = !!this.recording && this.recording !== "webm"; }
     if (g) { g.textContent = this.recording === "gif" ? t("Stop recording") : "GIF"; g.disabled = !!this.recording && this.recording !== "gif"; }
@@ -1428,6 +1497,7 @@ export class MotionManager {
     const bad = () => el?.setAttribute("aria-invalid", "true");
     const tr0 = this.study.tracks.find(k => k.id === sel.track);
     if (!tr0) return;
+    if (p === "mplot") { this.motorPlot = raw === "vel" || raw === "acc" ? raw : "disp"; this.render(); return; }
     if (p === "interp" && this.picked().length > 1) { this.setInterp(interpOf(raw) ?? "linear"); return; }
     if (p === "scale") {
       const ps = this.picked();

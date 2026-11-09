@@ -40,7 +40,7 @@ export type KernelRequest =
   | { id: number; type: "asmInterfere"; doc: AsmDoc; touch?: boolean }
   | { id: number; type: "asmClearance"; doc: AsmDoc; min: number }
   | { id: number; type: "asmStep"; doc: AsmDoc }
-  | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number }
+  | { id: number; type: "model"; doc: PartDoc; color: [number, number, number]; quality: number; previewAt?: number; verify?: boolean }
   /** Modelling: STEP of the last evaluated body. */
   | { id: number; type: "modelStep"; name: string; color: [number, number, number] }
   | { id: number; type: "importBody"; buffer: ArrayBuffer; name: string };
@@ -111,6 +111,7 @@ self.onmessage = async (e: MessageEvent<KernelRequest>) => {
       post({ id: r.id, ok: true, bytes, report: { ...report, preview } }, transfer);
     } else if (r.type === "model") {
       modeller ??= new Modeller(kernel.module);
+      modeller.setVerify(!!r.verify);
       const t0 = performance.now();
       const res = modeller.evaluate(r.doc);
       const t1 = performance.now();
