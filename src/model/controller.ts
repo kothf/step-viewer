@@ -58,7 +58,7 @@ import { units, UNITS } from "../tools/units";
 import { csys } from "../tools/csys";
 import { confirmModal, toast, trapFocus } from "../ui";
 import { cmTab, onCmTab, selectCmTab } from "../commandBar";
-import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
+import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cornerSpots, cutListRows, locateSpots, isWeldFeature, showCutList, weldChange, weldSymbols, weldDraft, weldFocus, weldMissing, weldPanel, weldPick, type WeldCtx, type WeldTool } from "../weldments/ui";
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
@@ -99,6 +99,8 @@ export interface ModelHost {
   selectedEdge?(): EdgeInfo | null;
   /** The part's material changed (or a part opened): preset the mass properties panel. */
   setMaterial?(m: { name: string; density: number } | undefined): void;
+  /** The open part's length unit became the display unit (FR-UI-116). */
+  setUnits?(u: PartDoc["units"]["length"]): void;
   /** Normal to the picked flat face (the view's "8"). */
   normalTo?(normal?: V3): void;
   /** A standard view by name (front, top, iso, ..., "normal", "fit"), for mouse gestures. */
@@ -131,6 +133,9 @@ type Focus = "wbodies" | "wbound" | "wfaces" | "wf1" | "wf2" | "tsurf" | "ttool"
 type CopyFeature = MirrorFeature | LinearPatternFeature | CircularPatternFeature | SketchPatternFeature;
 type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBodyFeature | DeleteBodyFeature | MoveBodyFeature | ScaleFeature;
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
+/** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
+const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
   : f.type === "chamfer" && f.mode === "vertex" ? !!f.vertices?.length : f.edges.length > 0;
@@ -184,6 +189,15 @@ const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve"
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+/** Selection box colours (FR-SEL-011), in box order: orange, blue, green, purple (3:1 on the model grey and the background). */
+const BOX_COLORS = [0xe8590c, 0x1971c2, 0x2b8a3e, 0x9c36b5];
+/** Eye icons for the tree's show/hide buttons (FR-HIS-013). */
+const EYE = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.1" fill="currentColor"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.3"/></svg>`;
+const eyeButton = (hidden: boolean, name: string) => {
+  const tip = hidden ? t("Show") : t("Hide");
+  return `<button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="eye" title="${esc(tip)}" aria-label="${esc(tip)}: ${esc(name)}" aria-pressed="${!hidden}">${hidden ? EYE_OFF : EYE}</button>`;
+};
 
 /** A default feature name ("Extrude2") in the interface language; renamed features stay as typed. */
 export function featureLabel(name: string) {
@@ -406,6 +420,8 @@ export class ModelController {
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
     host.viewer.scene.add(this.hoverGroup);
+    this.ghostGroup.visible = false;
+    host.viewer.scene.add(this.ghostGroup);
     this.bindHover();
     // Preferences (FR-UI-080): an open sketch takes the new sketch settings; quality and verification rebuild.
     onPrefs((p, changed) => {
@@ -523,6 +539,9 @@ export class ModelController {
         if (d.freezeAfter && !have.has(d.freezeAfter)) delete d.freezeAfter;
       };
     }
+    // A part saved rolled back reopens rolled back, with a notice (FR-HIS-012); a parked tab keeps its own state.
+    if (!keep) { this.rollNotice = doc.rollback != null; this.rollPrev = undefined; this.closedFeats.clear(); }
+    this.clearGhosts();
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
     $("#empty").hidden = true;
@@ -530,6 +549,8 @@ export class ModelController {
     $("#t-features").hidden = false;
     this.host.selectLeftTab("features");
     this.host.setMaterial?.(doc.material);
+    // The part's units are the display units while it is open (FR-UI-116).
+    if (doc.units.length !== units.current) this.host.setUnits?.(doc.units.length);
     this.renderAll();
     this.host.opened?.(this.docLabel());
     if (!doc.features.length) {
@@ -555,6 +576,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    document.getElementById("mc-crumbs")?.remove();
     this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
@@ -598,6 +620,7 @@ export class ModelController {
     this.renderEmpty();
     this.host.setDoc(this.docLabel());
     if (why === "undo" || why === "redo" || why.startsWith("Properties")) this.host.setMaterial?.(this.doc.material);
+    if (this.doc.units.length !== units.current) this.host.setUnits?.(this.doc.units.length);
     if (why !== "saved" && why !== "open") {
       clearTimeout(this.journalTimer);
       const wait = autosaveDelay();
@@ -635,6 +658,7 @@ export class ModelController {
 
   private async rebuild() {
     if (!this.store) return;
+    this.noteDraft();
     const doc = this.displayDoc();
     // An empty part has nothing to build: no busy sign while the kernel loads behind it.
     const quiet = !doc.features.length;
@@ -1045,7 +1069,8 @@ export class ModelController {
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
       : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
-    this.mode = { kind: "feature", draft, index, isNew: true, focus };
+    this.mode = { kind: "feature", draft, index, isNew: true, focus: this.openFocus(draft, focus) };
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -1091,7 +1116,10 @@ export class ModelController {
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     if (f.type === "sketch") { void this.editSketch(id); return; }
     this.exitMode(false);
-    this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false };
+    const draft = structuredClone(f);
+    this.mode = { kind: "feature", draft, index: i, isNew: false, focus: this.openFocus(draft, undefined) };
+    if (!this.mode.focus) delete this.mode.focus;
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -1340,6 +1368,12 @@ export class ModelController {
   private tangentProp = true;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
+  /** Features whose absorbed sketch rows are folded away (view state, FR-HIS-013). */
+  private closedFeats = new Set<string>();
+  /** Where the rollback bar was before it last moved (FR-HIS-012 Roll to previous); undefined: not moved yet. */
+  private rollPrev: number | null | undefined = undefined;
+  /** The part opened rolled back: the notice above the tree shows until it is rolled to the end (FR-HIS-012). */
+  private rollNotice = false;
 
   /** Moves the rollback bar: features from `index` on are not evaluated (null: none). */
   setRollback(index: number | null) {
@@ -1349,7 +1383,115 @@ export class ModelController {
     const n = this.doc.features.length;
     const rb = index == null || index >= n ? null : Math.max(0, index);
     if (rb === this.doc.rollback) return;
+    this.rollPrev = this.doc.rollback;
     this.store.change(rb == null ? "Roll to end" : "Roll back", d => { d.rollback = rb; });
+  }
+
+  /** Roll to previous (FR-HIS-012): back to where the bar was before its last move, else one feature up. */
+  rollToPrevious() {
+    if (!this.store) return;
+    const cur = this.doc.rollback ?? this.doc.features.length;
+    const to = this.rollPrev !== undefined && this.rollPrev !== this.doc.rollback ? this.rollPrev : Math.max(this.frozenCount(), cur - 1);
+    this.setRollback(to);
+  }
+
+  /** The notice of a part opened rolled back (AT-UX-14): how many features are not shown, and Roll to end. */
+  private renderRollNotice() {
+    let bar = document.getElementById("mc-rolled");
+    const n = this.store && this.doc.rollback != null ? this.doc.features.length - this.doc.rollback : 0;
+    if (!n) this.rollNotice = false;
+    if (!this.rollNotice) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mc-rolled";
+      bar.className = "mc-ro";
+      bar.setAttribute("role", "status");
+      document.getElementById("tab-features")!.prepend(bar);
+    }
+    bar.innerHTML = `<span>${esc(t("The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown", { n }))}</span><button class="btn small primary" data-a="rollend">${esc(t("Roll to end"))}</button>`;
+    bar.querySelector("button")!.addEventListener("click", () => this.setRollback(null));
+  }
+
+  /** Units from the status bar (FR-UI-116): the part's length unit, as one undo step; values stay in mm. */
+  setDocUnits(u: PartDoc["units"]["length"]) {
+    if (!this.store || this.doc.units.length === u) return;
+    this.store.change(`Units: ${u}`, d => { d.units = { ...d.units, length: u }; });
+  }
+
+  /**
+   * Hide/show under the cursor (FR-UI-105). Hidden bodies are not meshed, so each one keeps the triangles it had
+   * when it was hidden (world coordinates) as a see-through ghost: Shift+Tab shows the one under the cursor, and
+   * holding Ctrl+Shift+Tab draws them all so one can be clicked.
+   */
+  private ghostGroup = new THREE.Group();
+  private pointerIn = false;
+
+  private keepGhost(key: string) {
+    const m = this.featureFaceMesh(`body:${key}`, 0x8c99a6, 0.28);
+    if (!m) return;
+    this.dropGhost(key);
+    m.userData.ghost = key;
+    m.raycast = THREE.Mesh.prototype.raycast;
+    this.ghostGroup.add(m);
+  }
+
+  private dropGhost(key: string) {
+    for (const o of [...this.ghostGroup.children]) if (o.userData.ghost === key) { this.ghostGroup.remove(o); const m = o as THREE.Mesh; m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+  }
+
+  private clearGhosts() { for (const o of [...this.ghostGroup.children]) this.dropGhost(o.userData.ghost); this.showGhosts(false); }
+
+  private showGhosts(on: boolean) {
+    if (this.ghostGroup.visible === on) return;
+    this.ghostGroup.visible = on;
+    this.host.viewer.invalidate();
+  }
+
+  /** The hidden body whose ghost is under a screen point (only bodies that are still hidden). */
+  private ghostAt(x: number, y: number): string | null {
+    const v = this.host.viewer, r = v.renderer.domElement.getBoundingClientRect();
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), v.camera);
+    const live = this.ghostGroup.children.filter(o => this.doc.bodies?.[o.userData.ghost]?.hidden);
+    return (rc.intersectObjects(live, false)[0]?.object.userData.ghost as string | undefined) ?? null;
+  }
+
+  /** The shown body under a screen point. */
+  bodyAt(x: number, y: number): string | null {
+    const hit = this.host.faceAt(x, y), bodies = this.last?.bodies ?? [];
+    if (!hit) return null;
+    let at = 0;
+    for (const b of bodies) { const n = b.faces ?? 0; if (hit.faceId >= at && hit.faceId < at + n) return b.key; at += n; }
+    return null;
+  }
+
+  /** Tab / Shift+Tab / Ctrl+Shift+Tab over the view; false when the keys are not for it. */
+  private tabKey(e: KeyboardEvent): boolean {
+    if (e.key !== "Tab" || e.altKey || this.mode.kind !== "none" || !this.pointerIn || !this.pointer) return false;
+    const tg = e.target as HTMLElement;
+    if (!(tg === document.body || tg === document.documentElement || tg === this.host.viewer.renderer.domElement || tg.id === "viewport")) return false;
+    const { x, y } = this.pointer;
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey) { this.showGhosts(true); return true; }
+    if (e.ctrlKey || e.metaKey) return false;
+    if (e.shiftKey) {
+      const key = this.ghostAt(x, y);
+      if (key) this.setBody(key, { hidden: false });
+      else toast(t("No hidden body under the cursor."));
+      return true;
+    }
+    const key = this.bodyAt(x, y);
+    if (key) this.setBody(key, { hidden: true });
+    return !!key;
+  }
+
+  /** Shift+C (FR-HIS-013): folds every folder and every feature's absorbed sketch. */
+  collapseAll() {
+    if (!this.store) return;
+    for (const g of this.doc.folders ?? []) this.closedFolders.add(g.id);
+    this.closedFolders.add("bodies");
+    this.closedFolders.add("cutlist");
+    for (const f of this.doc.features) if (f.type === "extrude" || f.type === "revolve") this.closedFeats.add(f.id);
+    this.renderTree();
   }
 
   rename(id: string, name: string) {
@@ -1578,8 +1720,57 @@ export class ModelController {
     this.store!.change(`Delete ${f.name}`, d => { d.features = d.features.filter(x => !gone.has(x.id)); d.rollback = null; });
   }
 
-  undo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
-  redo() { if (this.mode.kind === "feature" || this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+  undo() { if (this.mode.kind === "feature") { this.stepDraft(-1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.undo(); }
+  redo() { if (this.mode.kind === "feature") { this.stepDraft(1); return; } if (this.mode.kind === "plane") this.exitMode(false); this.store?.redo(); }
+
+  /**
+   * Undo inside a command (FR-UI-108): every state of the open feature's draft (picks, values, options, the box in
+   * focus) is kept per command; Ctrl+Z / Ctrl+Y step through them without leaving the panel, and the document's own
+   * undo stack is not touched until OK.
+   */
+  private drafts = new WeakMap<object, { snaps: string[]; at: number }>();
+
+  private draftSnap(m: Extract<Mode, { kind: "feature" }>) { return JSON.stringify({ d: m.draft, f: m.focus ?? null }); }
+
+  /** Records the draft's state when it differs from the last one kept. */
+  private noteDraft() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const snap = this.draftSnap(m), h = this.drafts.get(m);
+    if (!h) { this.drafts.set(m, { snaps: [snap], at: 0 }); return; }
+    if (h.snaps[h.at] === snap) return;
+    h.snaps.length = h.at + 1;
+    h.snaps.push(snap);
+    if (h.snaps.length > 100) h.snaps.shift();
+    h.at = h.snaps.length - 1;
+    this.renderQuick();
+  }
+
+  /** Whether the open command has a step to undo (-1) or redo (+1). */
+  draftCan(dir: -1 | 1) {
+    const m = this.mode, h = m.kind === "feature" ? this.drafts.get(m) : undefined;
+    return !!h && (dir < 0 ? h.at > 0 : h.at < h.snaps.length - 1);
+  }
+
+  private stepDraft(dir: -1 | 1) {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    this.noteDraft();
+    const h = this.drafts.get(m)!;
+    const to = h.at + dir;
+    if (to < 0 || to >= h.snaps.length) { toast(dir < 0 ? t("Nothing to undo in this command.") : t("Nothing to redo in this command.")); return; }
+    h.at = to;
+    const { d, f } = JSON.parse(h.snaps[to]) as { d: Feature; f: Focus | null };
+    // The draft object keeps its identity: view state keyed by it (3D sketch tools) stays.
+    const dr = m.draft as unknown as Record<string, unknown>;
+    for (const k of Object.keys(dr)) delete dr[k];
+    Object.assign(dr, d);
+    if (f) m.focus = f; else delete m.focus;
+    this.renderQuick();
+    this.renderPanel();
+    this.drawDecor();
+    void this.rebuild();
+  }
 
   // ---------- files ----------
 
@@ -1807,7 +1998,18 @@ export class ModelController {
         this.startArrowDrag(e);
       }
     }, true);
-    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; }, true);
+    vp.addEventListener("pointermove", e => { this.pointer = { x: e.clientX, y: e.clientY }; this.pointerIn = e.target === this.host.viewer.renderer.domElement; }, true);
+    vp.addEventListener("pointerleave", () => { this.pointerIn = false; });
+    // Ctrl+Shift+Tab held (FR-UI-105): a click on a see-through hidden body shows it.
+    window.addEventListener("pointerdown", e => {
+      if (!this.ghostGroup.visible || e.button !== 0 || e.target !== this.host.viewer.renderer.domElement) return;
+      const key = this.ghostAt(e.clientX, e.clientY);
+      if (!key) return;
+      e.preventDefault(); e.stopPropagation();
+      this.setBody(key, { hidden: false });
+    }, true);
+    window.addEventListener("keyup", e => { if (this.ghostGroup.visible && (e.key === "Tab" || e.key === "Control" || e.key === "Shift" || e.key === "Meta")) this.showGhosts(false); });
+    window.addEventListener("blur", () => this.showGhosts(false));
     vp.addEventListener("pointermove", e => {
       if (this.arrowDrag) { e.stopPropagation(); this.moveArrow(e); return; }
       if (!onCanvas(e)) return;
@@ -1916,6 +2118,7 @@ export class ModelController {
     const k = e.key.toLowerCase();
     const mod = e.ctrlKey || e.metaKey;
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    if (this.tabKey(e)) { stop(); return; }
     if (mod && k === "s") { stop(); void this.save(e.shiftKey); return; }
     if (mod && !e.shiftKey && k === "z") { stop(); this.undo(); return; }
     if (mod && (k === "y" || (e.shiftKey && k === "z"))) { stop(); this.redo(); return; }
@@ -1929,6 +2132,11 @@ export class ModelController {
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
+    // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).
+    if (k === "escape" && document.querySelector(".mag-lens")) return;
+    // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
+    if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
+    if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
     const m = this.mode;
@@ -1958,6 +2166,8 @@ export class ModelController {
     const inTree = !!tg.closest?.("#tab-features");
     // Enter with no command running repeats the last feature command (FR-UI-111).
     if (k === "enter" && !inTree && !e.shiftKey && this.lastCmd && !tg.matches?.("button, a, summary, [role=treeitem], [role=tab], [role=menuitem]")) { stop(); toast(t("Repeat: {name}", { name: this.cmdLabel(this.lastCmd) })); this.command(this.lastCmd); return; }
+    // Shift+C folds the whole tree (FR-HIS-013).
+    if (k === "c" && e.shiftKey && m.kind === "none") { stop(); this.collapseAll(); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
@@ -2053,7 +2263,52 @@ export class ModelController {
       changed: () => this.draftChanged(),
     };
   }
-  private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+  private draftChanged() { this.flowFocus(); this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+
+  /**
+   * FR-UI-109: the required selection boxes of a panel in order. `one` = the box is done with one item (a plane, an
+   * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
+   */
+  private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
+    const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
+    switch (d.type) {
+      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!d.axis, one: true }] : [])];
+      case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
+      case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
+      case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
+      case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
+      case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
+      case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
+      case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : [])];
+      default: return [];
+    }
+  }
+  private flowWas = new WeakMap<object, string>();
+  /** Moves focus to the next empty required box when the focused one-item box has just been filled (FR-UI-109). */
+  private flowFocus() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const flow = this.boxFlow(m.draft);
+    const key = flow.filter(b => b.filled).map(b => b.focus).join(",");
+    const was = this.flowWas.get(m);
+    this.flowWas.set(m, key);
+    if (was == null) return;
+    const i = flow.findIndex(b => b.focus === m.focus);
+    if (i < 0 || !flow[i].one || !flow[i].filled || was.split(",").includes(flow[i].focus)) return;
+    const next = flow.slice(i + 1).find(b => !b.filled) ?? flow.slice(0, i).find(b => !b.filled);
+    if (next) m.focus = next.focus;
+  }
+  /** The box a panel opens on (FR-UI-109): the given one, unless it is a filled one-item box, then the first empty required box. */
+  private openFocus(d: Feature, focus: Focus | undefined): Focus | undefined {
+    const flow = this.boxFlow(d);
+    const cur = flow.find(b => b.focus === focus);
+    if (focus && (!cur || !cur.filled || !cur.one)) return focus;
+    return flow.find(b => !b.filled)?.focus ?? focus;
+  }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
   /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
@@ -3210,11 +3465,10 @@ export class ModelController {
     this.drawHoles();
     this.drawThreads();
     this.drawWeldSymbols();
+    this.drawCornerCallouts();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
-      const pos: number[] = [];
-      for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
-      this.lines(pos, 0xf08c00, 4);
+      // The picked edges are drawn by drawBoxPicks in the Edges box's colour (FR-SEL-011).
       this.drawRoundPreview(m.draft);
     }
     if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "composite") {
@@ -3233,7 +3487,170 @@ export class ModelController {
     }
     this.drawArrow();
     this.drawFeatureFaces();
+    this.drawBoxPicks();
+    this.drawValueCallouts();
     this.host.viewer.invalidate();
+  }
+
+  /**
+   * Value callouts (FR-UI-110): the main values of the open feature (thickness, angle, distance, spacing, count…)
+   * in small labels on the model by its result, as in SolidWorks. A click opens the Modify box; the value goes
+   * through the panel's own field, so both stay in step. A ⇄ beside the first one reverses the direction.
+   * Features with drag handles or their own callouts (extrude, revolve, fillet, chamfer, end cap, gusset, flange) keep those.
+   */
+  private drawValueCallouts() {
+    const layer = document.getElementById("mc-layer");
+    layer?.querySelectorAll(".mc-vcall").forEach(x => x.remove());
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    if (m.kind !== "feature" || !layer || !pm || !this.last) return;
+    const f = m.draft;
+    if (VALUE_CALLOUT_SKIP.has(f.type)) return;
+    const fields = VALUE_KEYS.map(k => pm.querySelector<HTMLInputElement>(`input[data-num="${k}"], input[data-int="${k}"]`)).filter((x): x is HTMLInputElement => !!x && !x.closest("[hidden]"));
+    if (!fields.length) return;
+    const at = this.calloutPoint(f);
+    if (!at) return;
+    const flip = pm.querySelector<HTMLInputElement>('input[type=checkbox][data-k="flip"]');
+    fields.forEach((inp, row) => {
+      const lab = inp.closest(".pm-field")?.querySelector("span")?.textContent ?? "";
+      const unit = inp.parentElement?.querySelector(".muted")?.textContent ?? "";
+      const key = inp.dataset.num ?? inp.dataset.int!;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-vcall";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = key;
+      const b = document.createElement("button");
+      b.className = "mc-handle";
+      b.title = t("Click to type the value");
+      b.textContent = `${lab}: ${inp.value}${unit === "°" ? "°" : unit ? ` ${unit}` : ""}`;
+      b.addEventListener("click", () => {
+        const r = b.getBoundingClientRect();
+        new ModifyBox({
+          at: { x: r.right, y: r.top + r.height / 2 }, title: lab, value: inp.value,
+          step: inp.dataset.int ? 1 : stepFor(inp.dataset.q === "angle" ? "angle" : "length", units.current),
+          accept: text => {
+            inp.value = text;
+            inp.dispatchEvent(new Event("change"));
+            return inp.getAttribute("aria-invalid") !== "true";
+          },
+          cancel: () => {},
+        });
+      });
+      el.append(b);
+      if (row === 0 && flip) {
+        const fb = document.createElement("button");
+        fb.className = "mc-handle mc-vflip";
+        fb.textContent = "⇄";
+        fb.title = t("Reverse direction");
+        fb.setAttribute("aria-label", t("Reverse direction"));
+        fb.addEventListener("click", () => { flip.click(); });
+        el.append(fb);
+      }
+      layer.append(el);
+    });
+    this.placeCallouts();
+  }
+
+  /** Where a feature's value callouts sit: the middle of its own faces in the last rebuild, else of the faces it picked. */
+  private calloutPoint(f: Feature): V3 | null {
+    const data = this.host.viewer.parts[0]?.data, names = this.last?.faceNames;
+    if (!data || !names) return null;
+    const pre = `${f.id}:`, own: number[] = [];
+    names.forEach((n, i) => { if (n?.startsWith(pre)) own.push(i); });
+    if (!own.length) {
+      const refs = ((f as { faces?: FaceRef[] }).faces ?? []);
+      for (const r of refs) { const i = names.indexOf(r.name); if (i >= 0) own.push(i); }
+    }
+    if (!own.length) return null;
+    const c = [0, 0, 0];
+    for (const i of own) { const fc = data.faces[i]; if (!fc) continue; c[0] += fc.center[0]; c[1] += fc.center[1]; c[2] += fc.center[2]; }
+    return [c[0] / own.length, c[1] / own.length, c[2] / own.length];
+  }
+
+  /**
+   * Colour-coded selection boxes (FR-SEL-011): each selection box of the open feature's panel has its own colour,
+   * its picks are drawn in that colour in the view, with a small tag naming the box at the first one.
+   */
+  private boxPicks(d: Feature): { focus: string; label: string; faces?: FaceRef[]; edges?: EdgeRef[]; sel?: string }[] {
+    const pf = (p?: PlaneRef) => (p && "face" in p ? [p.face] : []);
+    switch (d.type) {
+      case "fillet":
+        if (d.kind === "face" || d.kind === "full") return [
+          { focus: "fs1", label: d.kind === "full" ? t("Side face set 1") : t("Face set 1"), faces: d.faces1 ?? [] },
+          ...(d.kind === "full" ? [{ focus: "fc", label: t("Center face set"), faces: d.center ?? [] }] : []),
+          { focus: "fs2", label: d.kind === "full" ? t("Side face set 2") : t("Face set 2"), faces: d.faces2 ?? [] }];
+        return [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "chamfer": return d.mode === "vertex" ? [] : [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "draft": return [{ focus: "nplane", label: d.kind === "parting" ? t("Direction of pull") : t("Neutral plane"), faces: pf(d.plane) },
+        d.kind === "parting" ? { focus: "faces", label: t("Parting line"), edges: d.parting ?? [] } : { focus: "faces", label: t("Faces to draft"), faces: d.faces }];
+      case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
+      case "delface": case "moveface": case "offsurf": case "replaceface": case "split":
+        return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      default: return [];
+    }
+  }
+
+  /** The panel's selection boxes take their colours (also after a panel re-render). */
+  private tintBoxes() {
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    pm?.querySelectorAll<HTMLElement>("[data-boxc]").forEach(el => { el.style.removeProperty("--box-c"); delete el.dataset.boxc; });
+    if (m.kind !== "feature" || !pm) return;
+    this.boxPicks(m.draft).forEach((g, k) => {
+      const el = pm.querySelector<HTMLElement>(g.sel ?? `.pm-box[data-focus="${g.focus}"]`);
+      if (el) { el.style.setProperty("--box-c", `#${BOX_COLORS[k % BOX_COLORS.length].toString(16).padStart(6, "0")}`); el.dataset.boxc = String(k); }
+    });
+  }
+
+  private drawBoxPicks() {
+    const m = this.mode;
+    this.tintBoxes();
+    if (m.kind !== "feature") return;
+    const part = this.host.viewer.parts[0], names = this.last?.faceNames;
+    const groups = this.boxPicks(m.draft);
+    groups.forEach((g, k) => {
+      const col = BOX_COLORS[k % BOX_COLORS.length];
+      const css = `#${col.toString(16).padStart(6, "0")}`;
+      let at: V3 | null = null;
+      // Edges in the box's colour (the fillet/chamfer edges keep their usual width).
+      if (g.edges?.length) {
+        const pos: number[] = [];
+        for (const r of g.edges) { const ed = this.edgeOf(r); if (ed) { pushEdge(pos, ed); at ??= ed.mid; } }
+        if (pos.length) this.lines(pos, col, 4);
+      }
+      // Faces: a see-through overlay in the colour.
+      if (g.faces?.length && part && names) {
+        const want = new Set(g.faces.map(f => f.name));
+        const geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+        const out: number[] = [];
+        part.data.faces.forEach((fc, i) => {
+          if (!want.has(names[i] ?? "")) return;
+          for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let q = 0; q < 3; q++) {
+            const vi = idx ? idx.getX(tri * 3 + q) : tri * 3 + q;
+            out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+          }
+          if (!at && fc.center) at = new THREE.Vector3(...fc.center).applyMatrix4(part.mesh.matrixWorld).toArray() as V3;
+        });
+        if (out.length) {
+          const gm = new THREE.BufferGeometry();
+          gm.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+          const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide }));
+          mesh.applyMatrix4(part.mesh.matrixWorld);
+          mesh.renderOrder = 2310;
+          mesh.raycast = () => {};
+          mesh.userData.boxPick = g.focus;
+          this.decor.add(mesh);
+        }
+      }
+      if (!at || groups.length < 2 && !g.faces?.length) return;
+      const tag = document.createElement("span");
+      tag.className = "mc-callout mc-boxtag";
+      tag.dataset.box = g.focus;
+      tag.style.setProperty("--box-c", css);
+      tag.textContent = g.label;
+      tag.dataset.at = JSON.stringify(at);
+      $("#mc-layer").appendChild(tag);
+    });
+    this.placeCallouts();
   }
 
   /** Standard planes (when picking one) and the reference planes, as see-through squares. */
@@ -3303,6 +3720,67 @@ export class ModelController {
       label.title = t("Weld symbol: click to edit the bead");
       label.dataset.at = JSON.stringify(fi.center);
       label.addEventListener("click", () => { if (this.mode.kind === "none") this.editFeature(id); });
+      $("#mc-layer").appendChild(label);
+    }
+    this.placeCallouts();
+  }
+
+  /**
+   * Corner callouts of an open structural member (FR-FT-121, SolidWorks' corner spheres): the treatment at
+   * each corner where its segments meet; a click offers the treatments for that corner alone.
+   */
+  /** The Locate profile focus the view was last zoomed for (zoom once per start). */
+  private locateFit: string | null = null;
+  private drawCornerCallouts() {
+    const m = this.mode;
+    if (m.kind !== "feature" || m.draft.type !== "member") { this.locateFit = null; return; }
+    const f = m.draft, ctx = this.weldCtx(m.index);
+    // Locate profile: the profile's points at the start of the group's first segment; a click puts that point on the path.
+    const fo = m.focus as string | undefined;
+    if (!fo?.startsWith("wlocate")) this.locateFit = null;
+    if (fo?.startsWith("wlocate")) {
+      const gi = fo === "wlocate" ? 0 : +fo.slice(8);
+      const spots = locateSpots(ctx, f, gi);
+      // Zoom to the profile once when locating starts, so its points are far enough apart to click.
+      if (this.locateFit !== fo && spots.length) {
+        this.locateFit = fo;
+        const b = new THREE.Box3();
+        for (const p of spots) b.expandByPoint(new THREE.Vector3(...p.at));
+        b.expandByScalar(Math.max(1, b.getSize(new THREE.Vector3()).length() / 2));
+        this.host.viewer.fit(true, b);
+      }
+      for (const p of spots) {
+        const dot = document.createElement("button");
+        dot.className = `mc-handle wld-pierce${p.cur ? " cur" : ""}`;
+        dot.dataset.pierce = p.key;
+        dot.dataset.at = JSON.stringify(p.at);
+        dot.title = p.label;
+        dot.setAttribute("aria-label", t("Locate profile: {point}", { point: p.label }));
+        dot.addEventListener("click", e => {
+          e.stopPropagation();
+          const fn = weldChange(f, gi ? `wganchor:${gi - 1}` : "anchor", p.key, ctx);
+          if (fn) { fn(); m.focus = undefined; this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        });
+        $("#mc-layer").appendChild(dot);
+      }
+    }
+    for (const c of cornerSpots(ctx, f)) {
+      const label = document.createElement("button");
+      label.className = `mc-handle mc-callout wld-corner${c.own ? " own" : ""}`;
+      label.dataset.corner = c.key;
+      label.dataset.at = JSON.stringify(c.at);
+      label.textContent = c.text;
+      label.title = t("Corner {corner}: click to change its treatment", { corner: c.label });
+      label.setAttribute("aria-haspopup", "menu");
+      label.addEventListener("pointerdown", e => e.stopPropagation());
+      label.addEventListener("click", e => {
+        e.stopPropagation();
+        const r = label.getBoundingClientRect();
+        this.showMenu(c.opts.map(([v, l]): [string, () => void] => [(v === c.cur ? "✓ " : "") + l, () => {
+          const fn = weldChange(f, `wcorner:${c.key}`, v, ctx);
+          if (fn) { fn(); this.renderPanel(); this.drawDecor(); this.renderBar(); void this.rebuild(); }
+        }]), r.left, r.bottom + 4, () => label.focus());
+      });
       $("#mc-layer").appendChild(label);
     }
     this.placeCallouts();
@@ -3999,10 +4477,15 @@ export class ModelController {
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
       el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
     });
+    $("#mc-layer").querySelectorAll<HTMLElement>(".wld-pierce").forEach(el => {
+      const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
+      el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y}px`;
+    });
     $("#mc-layer").querySelectorAll<HTMLElement>(".mc-callout").forEach(el => {
       const s = new THREE.Vector3(...(JSON.parse(el.dataset.at!) as V3)).project(v.camera);
       el.style.left = `${((s.x + 1) / 2) * v.size.x}px`;
-      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24}px`;
+      el.style.top = `${((1 - s.y) / 2) * v.size.y - 24 + 28 * Number(el.dataset.row ?? 0)}px`;
     });
   }
 
@@ -4060,12 +4543,16 @@ export class ModelController {
     if (!this.store) { q.hidden = true; q.innerHTML = ""; return; }
     q.hidden = false;
     const m = this.mode, busy = m.kind !== "none" && m.kind !== "sketch", sk = m.kind === "sketch";
-    const btn = (id: string, label: string, title: string, on = false, dis = false) =>
-      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
-    const canUndo = sk ? this.store.canUndo : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : !busy && this.store.canRedo;
+    // A disabled button says why (FR-UI-112): `data-why` shows in its tooltip.
+    const btn = (id: string, label: string, title: string, on = false, dis = false, why = "") =>
+      `<button class="mc-b${on ? " on" : ""}" data-c="${id}" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}${dis ? " disabled" : ""}${dis && why ? ` data-why="${esc(why)}"` : ""}><span class="mc-i" aria-hidden="true">${ICON_SVG[id] ?? ""}</span><span class="mc-l">${esc(label)}</span></button>`;
+    // Inside a feature command, Undo / Redo step the panel's own changes (FR-UI-108).
+    const inCmd = m.kind === "feature";
+    const canUndo = sk ? this.store.canUndo : inCmd ? this.draftCan(-1) : !busy && this.store.canUndo, canRedo = sk ? this.store.canRedo : inCmd ? this.draftCan(1) : !busy && this.store.canRedo;
+    const whyNot = (redo: boolean) => busy && !inCmd ? t("Finish or cancel the command first.") : inCmd ? t(redo ? "Nothing to redo in this command." : "Nothing to undo in this command.") : t(redo ? "Nothing to redo." : "Nothing to undo.");
     q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
-      + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
-      + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
+      + `<span class="mc-fly">${btn("undo", t("Undo"), inCmd ? t("Undo in this command (Ctrl+Z)") : this.undoTip(), false, !canUndo, whyNot(false))}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
+      + btn("redo", t("Redo"), inCmd ? t("Redo in this command (Ctrl+Y)") : this.undoTip(true), false, !canRedo, whyNot(true))
       + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) + this.sketchToggles(m.editor) : "")
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
@@ -4186,6 +4673,8 @@ export class ModelController {
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
     $("#mc-confirm").hidden = m.kind === "none";
+    if (m.kind !== "none") document.getElementById("mc-crumbs")?.remove();
+    if (m.kind !== this.crumbMode) { this.crumbMode = m.kind; this.crumbAt = null; this.placeCrumbs(); }
     $("#mc-ok").title = m.kind === "sketch" ? t("Exit sketch (Enter)") : t("OK (Enter)");
     $("#mc-ok").setAttribute("aria-label", $("#mc-ok").title);
     const btn = (id: string, label: string, title: string, on = false, dis = false) =>
@@ -4408,6 +4897,93 @@ export class ModelController {
     });
   }
 
+  /** Where Shift+D put the breadcrumbs and the confirmation corner (FR-SEL-009); null = their usual places. */
+  private crumbAt: { x: number; y: number } | null = null;
+  private crumbMode = "none";
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009): after a pick, the chain from the picked face or edge up to the part (face →
+   * feature → sketch → body → part) at the top left of the view. Hovering a crumb lights it up, a click selects it as
+   * in the tree, a right-click opens its tree menu.
+   */
+  private showCrumbs(pick: { edge?: EdgeInfo; faceId?: number; plane?: PlaneRef } | null) {
+    const list: { id: string; icon: string; label: string }[] = [];
+    if (this.mode.kind === "none" && this.store && this.last && pick) {
+      const fid = pick.edge ? pick.edge.faces[0] : pick.faceId;
+      if (fid != null) {
+        list.push({ id: "", icon: pick.edge ? "╱" : "▱", label: pick.edge ? t("Edge") : t("Face") });
+        const f = this.store.feature(this.last.faceNames[fid]?.split(":")[0] ?? "");
+        if (f) {
+          list.push({ id: f.id, icon: f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type] ?? "•", label: featureLabel(f.name) });
+          const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+          if (sk) list.push({ id: sk.id, icon: ICONS.sketch, label: featureLabel(sk.name) });
+        }
+        let at = 0;
+        for (const b of this.last.bodies ?? []) {
+          const n = b.faces ?? 0;
+          if (fid >= at && fid < at + n) { list.push({ id: `body:${b.key}`, icon: "▣", label: this.bodyName(b.key) }); break; }
+          at += n;
+        }
+      } else if (pick.plane && ("std" in pick.plane || "plane" in pick.plane)) {
+        list.push({ id: "std" in pick.plane ? `std:${pick.plane.std}` : pick.plane.plane, icon: ICONS.plane, label: this.refLabel(pick.plane) });
+      }
+      if (list.length) list.push({ id: "part", icon: ICONS.part, label: this.displayName() });
+    }
+    let el = document.getElementById("mc-crumbs");
+    if (!list.length) { el?.remove(); if (this.mode.kind === "none") this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "mc-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#mc-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + `<button class="mc-crumb${c.id ? "" : " here"}"${c.id ? ` data-id="${esc(c.id)}"` : ` aria-current="true"`} translate="no"><span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}</button>`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("pointerenter", () => this.setHover(id, "tree"));
+      b.addEventListener("pointerleave", () => { if (this.hoverId === id) this.setHover(null, "tree"); });
+      b.addEventListener("click", () => this.selectRow(id));
+      b.addEventListener("contextmenu", e => { e.preventDefault(); this.selectRow(id); this.openMenu(id, e.clientX, e.clientY); });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects a Features tree row as a click on it would (opening folded folders on the way). */
+  private selectRow(id: string) {
+    this.setHover(null, "tree");
+    this.selected = id;
+    if (id.startsWith("body:")) this.closedFolders.delete("bodies");
+    this.renderTree();
+    this.drawDecor();
+    document.querySelector(`#mc-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Shift+D: the breadcrumbs and the confirmation corner come to the cursor (FR-SEL-009). */
+  private crumbsToCursor() {
+    if (!this.pointer) return;
+    this.crumbAt = { ...this.pointer };
+    this.placeCrumbs();
+  }
+
+  private placeCrumbs() {
+    const vr = this.host.vp.getBoundingClientRect(), at = this.crumbAt;
+    for (const el of [document.getElementById("mc-crumbs"), document.getElementById("mc-confirm")]) {
+      if (!el) continue;
+      el.classList.toggle("at-cursor", !!at);
+      if (!at) { el.style.left = el.style.top = ""; continue; }
+      const crumbs = el.id === "mc-crumbs", w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+      // The crumbs sit just below-right of the cursor, the corner just above-right, both kept inside the view.
+      const x = Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4));
+      const y = Math.max(vr.top + 4, Math.min(at.y + (crumbs ? 16 : -h - 12), vr.bottom - h - 4));
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+    }
+  }
+
+
   /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
   showShortcutBar() {
     const m = this.mode;
@@ -4477,6 +5053,7 @@ export class ModelController {
         items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
       }
     }
+    this.showCrumbs(this.ctxPick);
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
     if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
@@ -4660,6 +5237,7 @@ export class ModelController {
 
   private renderTree() {
     const box = $("#mc-tree");
+    this.renderRollNotice();
     if (!this.store) { box.innerHTML = ""; return; }
     const d = this.doc;
     const st = new Map((this.last?.statuses ?? []).map(s => [s.id, s]));
@@ -4671,7 +5249,10 @@ export class ModelController {
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
     html += row("configs", "◇", t("Configuration: {name}", { name: d.config ?? "Default" }), "", " ft-plane");
     html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
-    for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const hid = (d.stdHidden ?? []).includes(std);
+      html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), `<span class="ft-tools">${eyeButton(hid, t(STD_NAMES[std]))}</span>`, ` ft-plane${hid ? " hid" : ""}`);
+    }
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
     html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
@@ -4697,14 +5278,18 @@ export class ModelController {
       const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type];
       const badge = s && !s.ok ? `<span class="ft-err" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Error"))}: ${esc(statusText(s))}">⚠</span>`
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
+      const hid = this.isHidden(f);
+      const tools = `<span class="ft-tools">${hid == null ? "" : eyeButton(hid, featureLabel(f.name))}<button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
       // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
       const pl = (f as { plane?: PlaneRef }).plane, cr = pl && "ctx" in pl ? pl.ctx : null;
       const xm = cr ? (d.ctxLocked || cr.locked ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")]) : null;
       const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
-      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
+      // A feature with an absorbed sketch folds it away (FR-HIS-013).
+      const kidsOf = [...absorbed.values()].includes(i), open = !this.closedFeats.has(f.id);
+      const twist = kidsOf ? `<button class="icon ft-twist" tabindex="-1" data-a="twist" aria-expanded="${open}" title="${esc(open ? t("Collapse") : t("Expand"))}" aria-label="${esc(open ? t("Collapse") : t("Expand"))}">${open ? "▾" : "▸"}</button>` : "";
+      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${hid ? " hid" : ""}${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}${kidsOf ? " ft-parentrow" : ""}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"${kidsOf ? ` aria-expanded="${open}"` : ""}`).replace('<span class="ft-ico"', `${twist}<span class="ft-ico"`);
     };
     // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
     const frozen = this.frozenCount();
@@ -4727,7 +5312,7 @@ export class ModelController {
       }
       if (g && this.closedFolders.has(g.id)) return;
       html += featRow(f, i, false);
-      for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
+      if (!this.closedFeats.has(f.id)) for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
     });
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
@@ -4792,6 +5377,8 @@ export class ModelController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         if (a === "sup") { this.toggleSuppress(id); return; }
+        if (a === "eye") { this.toggleHidden(id); return; }
+        if (a === "twist") { this.toggleFeat(id); return; }
         if (a === "del") { void this.deleteFeature(id); return; }
         if (id.startsWith("body:")) {
           const key = id.slice(5);
@@ -4876,6 +5463,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
+        else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
@@ -4902,8 +5490,11 @@ export class ModelController {
         this.setRollback(Math.max(0, Math.min(n, cur + (e.key === "ArrowDown" ? 1 : -1))));
         setTimeout(() => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus(), 0);
       } else if (e.key === "End") { e.preventDefault(); this.setRollback(null); }
+      else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = bar.getBoundingClientRect(); this.barMenu(b.left + 30, b.bottom); }
     });
+    bar.addEventListener("contextmenu", e => { e.preventDefault(); this.barMenu(e.clientX, e.clientY); });
     bar.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
       e.preventDefault();
       bar.setPointerCapture(e.pointerId);
       bar.classList.add("drag");
@@ -4965,9 +5556,7 @@ export class ModelController {
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
-      items.push([t("Roll back to here"), () => this.setRollback(i)]);
-      if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
-      if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+      items.push(...this.rollItems(i, end));
       items.push([t("Freeze up to here"), () => this.setFreeze(f.id)]);
       if (this.doc.freezeAfter) items.push([t("Unfreeze all"), () => this.setFreeze(null)]);
       items.push(null);
@@ -4985,6 +5574,22 @@ export class ModelController {
     }
     if (!items.length) return;
     this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus());
+  }
+
+  /** The rollback bar's own menu: Roll to previous and Roll to end. */
+  private barMenu(x: number, y: number) {
+    const items = this.rollItems(null, this.doc.rollback ?? this.doc.features.length);
+    if (items.length) this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus());
+  }
+
+  /** Rollback commands of the tree menu (FR-HIS-012): Roll back to here, Roll to previous, Roll forward past this, Roll to end. */
+  private rollItems(i: number | null, end: number): [string, () => void][] {
+    const items: [string, () => void][] = [];
+    if (i != null && i !== end) items.push([t("Roll back to here"), () => this.setRollback(i)]);
+    if (this.doc.rollback != null || this.rollPrev !== undefined) items.push([t("Roll to previous"), () => this.rollToPrevious()]);
+    if (i != null && (i < end - 1 || i >= end)) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
+    if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+    return items;
   }
 
   /** A pop-up menu at x, y; Esc or Tab closes it and calls `back` (focus returns there). */
@@ -5028,10 +5633,10 @@ export class ModelController {
     const hex = (c?: V3) => "#" + (c ?? this.doc.color ?? DEFAULT_COLOR).map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, "0")).join("");
     for (const b of list) {
       const hidden = !!st[b.key]?.hidden, name = this.bodyName(b.key);
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? "◌" : "◉"}</button>`
+      const tools = `<span class="ft-tools"><button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? EYE_OFF : EYE}</button>`
         + `<input type="color" class="ft-color" tabindex="-1" data-bcolor value="${hex(st[b.key]?.color)}" title="${esc(t("Body colour"))}" aria-label="${esc(t("Body colour"))}: ${esc(name)}" />`
         + `<button class="icon" tabindex="-1" data-a="bdel" title="${esc(t("Delete body"))}" aria-label="${esc(t("Delete body"))}: ${esc(name)}">✕</button></span>`;
-      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup" : ""}`);
+      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup hid" : ""}`);
     }
     return html;
   }
@@ -5039,6 +5644,9 @@ export class ModelController {
   /** Bodies folder actions: show/hide and colour are display state (one undo step each), delete adds a Body-Delete feature. */
   setBody(key: string, ch: { name?: string; hidden?: boolean; color?: V3 }) {
     if (!this.store) return;
+    // A body being hidden leaves a see-through copy, so Shift+Tab / Ctrl+Shift+Tab can find it again (FR-UI-105).
+    // (A shown body keeps its ghost: undo may hide it again; only still-hidden bodies are picked.)
+    if (ch.hidden === true) this.keepGhost(key);
     this.store.change(ch.hidden != null ? (ch.hidden ? "Hide body" : "Show body") : "color" in ch ? "Body colour" : "Rename body", d => {
       const cur = { ...(d.bodies?.[key] ?? {}), ...ch };
       if (!cur.hidden) delete cur.hidden;
@@ -5060,6 +5668,20 @@ export class ModelController {
     this.store.change(`Add ${name}`, x => { const at = x.rollback ?? x.features.length; x.features.splice(at, 0, feat); if (x.rollback != null) x.rollback++; });
     this.renderAll();
     void this.rebuild();
+  }
+
+  /** Folds or unfolds a feature's absorbed sketch row (FR-HIS-013). */
+  private toggleFeat(id: string) {
+    if (this.closedFeats.has(id)) this.closedFeats.delete(id); else this.closedFeats.add(id);
+    this.selected = id;
+    this.renderTree();
+  }
+
+  /** Whether a feature is hidden in the view (eye button, FR-HIS-013); null: it can't be hidden. */
+  private isHidden(f: Feature): boolean | null {
+    if (f.type === "sketch") return !this.sketchShown(f);
+    if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") return !!f.hidden;
+    return null;
   }
 
   private toggleFolder(fid: string) {
@@ -5106,6 +5728,9 @@ export class ModelController {
     const m = this.mode;
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
+    this.noteDraft();
+    // Selection box colours (FR-SEL-011) once the panel's markup is in.
+    queueMicrotask(() => { this.tintBoxes(); this.drawValueCallouts(); });
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;

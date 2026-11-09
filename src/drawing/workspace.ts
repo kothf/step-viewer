@@ -2544,6 +2544,8 @@ export class DrawingWorkspace {
         <label class="drw-f">${esc(t("Text height"))}<select data-st="text">${[2.5, 3.5, 5].map(h => `<option value="${h}"${(this.doc.style?.text ?? 3.5) === h ? " selected" : ""}>${String(h).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Arrowheads"))}<select data-st="arrow">${(["filled", "open", "dot", "tick"] as const).map(k => `<option value="${k}"${(this.doc.style?.arrow ?? "filled") === k ? " selected" : ""}>${esc(t(ARROW_NAMES[k]))}</option>`).join("")}</select></label>
         <label class="drw-f">${esc(t("Line group"))}<select data-st="lines">${[0.25, 0.35, 0.5, 0.7].map(w => `<option value="${w}"${(this.doc.style?.lines ?? 0.35) === w ? " selected" : ""}>${String(w).replace(".", lang() === "ru" ? "," : ".")} ${esc(t("mm"))}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Linear decimals"))}<select data-st="lin"><option value=""${this.doc.style?.lin == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.lin === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="drw-f">${esc(t("Angle decimals"))}<select data-st="ang"><option value=""${this.doc.style?.ang == null ? " selected" : ""}>${esc(t("Auto"))}</option>${[0, 1, 2, 3, 4].map(n => `<option value="${n}"${this.doc.style?.ang === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>
       </fieldset>
       <fieldset class="pm-group"><legend>${esc(t("Title block"))}</legend>
         ${editableOf(sh).map(k => `<label class="drw-f">${esc(t(FIELD_LABEL[k]))}<input data-f="${k}" value="${esc(this.doc.props[k] ?? "")}" placeholder="${esc(String(f[k] ?? ""))}"${k === "litera" ? ' maxlength="3"' : ""} translate="no"></label>`).join("")}
@@ -2891,7 +2893,7 @@ export class DrawingWorkspace {
     }
     else if (el.dataset.st) {
       const k = el.dataset.st as keyof DraftStyle;
-      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else (st as Record<string, number>)[k] = +val; d.style = st; });
+      this.store.change("Drafting style", d => { const st: DraftStyle = { ...d.style }; if (k === "arrow") st.arrow = val as DraftStyle["arrow"]; else if (val === "") delete st[k]; else (st as Record<string, number>)[k] = +val; d.style = st; });
     }
   }
 

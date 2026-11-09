@@ -31,12 +31,15 @@ export interface AnnotCtx {
 /** Annotation text height and arrowhead in force (FR-DRW-025): set from the drawing's style by `useStyle` before composing. */
 export let TEXT_H = 3.5;
 let ARROW = 3, ARROW_KIND: NonNullable<DraftStyle["arrow"]> = "filled";
+/** The drawing's default decimals for linear and angular dimensions (FR-DRW-025), set by `useStyle`. */
+let PREC_LIN: number | undefined, PREC_ANG: number | undefined;
 
 /** Applies a drawing's drafting style: text height (arrow length follows it), arrowhead kind and the ISO 128 line group. */
 export function useStyle(st: DraftStyle | undefined) {
   TEXT_H = st?.text ?? 3.5;
   ARROW = TEXT_H * 6 / 7;
   ARROW_KIND = st?.arrow ?? "filled";
+  PREC_LIN = st?.lin; PREC_ANG = st?.ang;
   const thick = st?.lines ?? 0.35, thin = { 0.25: 0.13, 0.35: 0.18, 0.5: 0.25, 0.7: 0.35 }[thick] ?? thick / 2;
   Object.assign(PEN_W, { thick, thin, hidden: thin, center: thin, phantom: thin, frame: Math.max(0.5, thick * 1.4) });
 }
@@ -192,13 +195,14 @@ export function angleSector(l1: [P2, P2], l2: [P2, P2], t: P2): { x: P2; a0: num
 // ---------- text of dimensions and callouts ----------
 
 export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up?: string; lo?: string } {
-  const f = (v: number) => fmtNum(v, a.prec, dec);
+  const prec = a.prec ?? (g.k === "ang" ? PREC_ANG : PREC_LIN);
+  const f = (v: number) => fmtNum(v, prec, dec), fa = (v: number) => fmtNum(v, a.prec ?? PREC_ANG, dec);
   // ◠ (U+25E0) stands for ISO 129's arc symbol: DejaVu Sans has no ⌒.
   const pre = a.pre ?? (g.k === "rad" ? "R" : g.k === "dia" ? "Ø" : g.k === "arc" ? "◠" : "");
   const suf = (g.k === "ang" ? "°" : "") + (a.suf ?? "");
   const tol: Tol | undefined = a.tol;
   if (a.txt) return { main: a.txt };
-  if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${f(g.ang ?? 0)}°${suf}` };
+  if (g.k === "chamfer") return { main: `${pre}${f(g.value)} × ${fa(g.ang ?? 0)}°${suf}` };
   const v = g.value;
   if (tol?.t === "limit") return { main: "", up: pre + f(v + (tol.up ?? 0)) + suf, lo: pre + f(v - (tol.lo ?? 0)) + suf };
   let main = pre + f(v);
@@ -208,7 +212,7 @@ export function dimText(a: DimAnnot, g: DimGeo, dec: string): { main: string; up
     const code = tol.fit ?? "", lim = tol.show && tol.show !== "code" && !code.includes("/") ? fitLimits(code, v) : null;
     if (!lim) return { main: `${main}${code}${suf}` };
     // Deviations to the fit's own precision (µm), never rounded away by the dimension's.
-    const fd = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + (x === 0 ? "0" : fmtNum(Math.abs(x), Math.max(a.prec ?? 0, 3), dec));
+    const fd = (x: number) => (x > 0 ? "+" : x < 0 ? "−" : "") + (x === 0 ? "0" : fmtNum(Math.abs(x), Math.max(prec ?? 0, 3), dec));
     return { main: tol.show === "both" ? `${main}${code}${suf}` : main + suf, up: fd(lim.up), lo: fd(lim.lo) };
   }
   main += suf;
@@ -239,10 +243,10 @@ export function holeText(e: MEdge, ctx: AnnotCtx, count = true): string[] {
     }
   }
   // No hole feature: read the hole from the geometry (count, counterbore, countersink, depth or THRU).
-  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f);
+  const st = c && ax && r ? stackAt(c, ax, r, ctx.topo) : null, g = st && geoHole(st, f, ctx.threads);
   if (g) {
     const words = (h: GeoHole) => h.lines.map(s => s.replace(/ THRU$/, ` ${ctx.label("THRU")}`));
-    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
+    const n = count ? ctx.topo!.holes!.filter(h => { const o = geoHole(h, f, ctx.threads); return !!o && o.key === g.key && (g.free ? Math.abs(Math.abs(dot3(o.dir, g.dir)) - 1) < 1e-6 : dot3(o.dir, g.dir) > 1 - 1e-6); }).length : 1;
     const lines = words(g);
     if (n > 1) lines[0] = `${n}× ${lines[0]}`;
     return lines;
@@ -276,7 +280,7 @@ export function stackAt(c: V3, ax: V3, r: number, topo: Topo | null): MHole | nu
  * the entry face or THRU, then ⌴ counterbore Ø and depth or ⌵ countersink Ø × angle. The entry is the open end (for a
  * through hole, the wider one). Null when the hole has no cylinder to call the drill or no open end.
  */
-export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined)): GeoHole | null {
+export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, undefined), threads: ThreadInfo[] = []): GeoHole | null {
   const [o0, o1] = h.open;
   if (!o0 && !o1) return null;
   const s = h.segs, first = s[0], last = s[s.length - 1];
@@ -297,6 +301,13 @@ export function geoHole(h: MHole, f: (v: number) => string = v => fmtNum(v, unde
   if (!d || d.k !== "cyl") return null;
   const thru = o0 && o1;
   const lines = [`Ø${f(2 * d.ra)} ${thru ? "THRU" : `↧${f(d.b)}`}`];
+  // A cosmetic thread on the drill (FR-DRW-022): its size with the ISO 965 6H class, and its length unless it runs through.
+  const th = threads.find(t => {
+    if (!t.internal || Math.abs(Math.abs(dot3(t.ax, h.ax)) - 1) > 1e-6 || Math.abs(t.r - d.ra) > 1e-3) return false;
+    const w = sub3(t.c, h.o), v = dot3(w, h.ax);
+    return Math.hypot(w[0] - h.ax[0] * v, w[1] - h.ax[1] * v, w[2] - h.ax[2] * v) < 1e-3;
+  });
+  if (th) lines.push(`${th.size ?? `M${f(th.d)}`}-6H ${th.L == null ? (thru ? "THRU" : `↧${f(d.b)}`) : `↧${f(th.L)}`}`);
   if (extra) lines.push(extra);
   // The rest past the drill (a drill point) is part of the key, so a flat-bottomed hole is not counted with a pointed one.
   const rest = W.slice(i + 1).map(g => `${g.k}:${f(g.b - g.a)}:${f(g.ra)}:${f(g.rb)}`).join(",");

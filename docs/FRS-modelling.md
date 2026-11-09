@@ -1572,59 +1572,59 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
-| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (sketch mode fixed in 1.89.0) |
-| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V; dotted alignment lines with existing points (1.303.0) | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
-| Middle click sets the rotation centre | FR-UI-100 | No | New |
-| Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
-| Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |
-| Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | No (tree double-click fits a node in the viewer only) | New |
-| Space orientation picker, named views | FR-UI-031, FR-UI-104 | Ctrl+1…8 work; Space does nothing | Weaker / New (named views) |
-| Animated view changes | FR-UI-103 | Done (`animateTo`), no reduced-motion rule | New (detail) |
+| Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | 1.329.0: Preferences → Mouse sets the middle button (rotate or pan) and the wheel direction | Done |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | 1.89.0 model snapping; 1.251.0 automatic relations while drawing; 1.303.0 alignment inference | Done |
+| Middle click sets the rotation centre | FR-UI-100 | 1.351.0: middle click on a vertex/edge/face sets the pivot with a marker, empty space clears; an edge pivots about the clicked point, not its line (Z-up orbit) | Partly |
+| Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
+| Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
+| Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
+| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); no named views yet | Partly |
+| Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
 | Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
-| Breadcrumbs, D to the cursor | FR-SEL-009 | No | New |
-| Magnifying glass G | FR-SEL-010 | No | New |
-| Colour-coded selection boxes | FR-SEL-011 | One pick colour | New |
-| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | No (H hides the selection in the viewer) | New |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; assemblies not yet | Partly |
+| Magnifying glass G | FR-SEL-010 | 1.354.0: G lens at the cursor, wheel factor, picks inside at that zoom | Done |
+| Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
+| Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
 | Confirmation corner | FR-UI-021 | ✓/✕ in the view | Done |
 | Shortcut bar on S | FR-UI-023 | Done (part and sketch) | Done |
 | Context toolbar on selection | FR-UI-026 | Done | Done |
 | Right-click menu on geometry | FR-UI-025 | Browser menu suppressed; only fillet/chamfer edge helpers | Weaker |
-| Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
+| Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | 1.107.0: right-click without drag offers OK and Cancel | Done |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
 | Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
-| Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
-| Undo inside an open panel | FR-UI-108 | No | New |
-| Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
-| Panel remembers last options | FR-UI-043 | No (hole favourites only) | Weaker |
-| Value callouts on the model | FR-UI-110 | Fillet/chamfer callouts, extrude arrow | New (rule for all) |
-| Enter repeats the last command | FR-UI-111 | Enter exits a sketch / OKs a panel only | New |
+| Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | 1.107.0: 📌 Keep visible and Ctrl+Enter | Done |
+| Undo inside an open panel | FR-UI-108 | 1.351.0: Ctrl+Z / Ctrl+Y step the panel's draft; the document stack waits for OK | Done |
+| Selection box focus moves on by itself | FR-UI-109 | 1.354.0: one-item boxes hand focus to the next empty required box; panels open on the first empty box | Done |
+| Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
+| Value callouts on the model | FR-UI-110 | 1.354.0: callouts for the main values of every feature panel (Modify box, two-way with the panel, ⇄ flip); extrude/revolve/fillet/chamfer/end cap/gusset/flange keep their handles | Done |
+| Enter repeats the last command | FR-UI-111 | 1.107.0: Enter with no command running repeats the last one | Done |
 | Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
 | Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0) | Done (no arrow flip yet) |
-| Typing a number while drawing | FR-UI-052 | No | Weaker |
+| Typing a number while drawing | FR-UI-052 | 1.121.0: typed sizes while drawing | Done |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
-| Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | New |
-| Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | New |
-| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | New |
+| Drag an end point onto another to merge | FR-SK-043 | 1.266.0: dropping a point on a point, the origin or a curve adds coincident / on curve | Done |
+| Ctrl+drag copies sketch entities | FR-SK-044 | 1.266.0: copies with the relations and dimensions among them | Done |
+| Sketch right-click menu (End chain, Select chain…) | FR-SK-045 | 1.275.0: right-click menu; a line-tool right-click ends the chain; 1.298.0: Fully define sketch | Done |
 | Quick snaps | FR-SK-046 | Yes (1.290.0) | Done |
-| Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | New |
+| Cursor x, y in the status bar while sketching | FR-SK-047 | 1.266.0: status shows DOF, the tool hint and the cursor x, y | Done |
 | Hover a tree row highlights the feature; hover geometry highlights the row | FR-UI-061 | 1.324.0: both ways | Done |
 | Rollback bar drag and arrows | FR-HIS-005 | Done | Done |
-| Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | Bar works; menu items partly | New (detail) |
-| Shift+C collapse, eye buttons in the tree | FR-HIS-013 | Folders collapse; sketch Show/Hide in the menu | New |
+| Roll to previous / Roll to end; reopens rolled back | FR-HIS-012 | 1.350.0: tree and rollback-bar menus (Roll back to here, Roll to previous, Roll forward past this, Roll to end); a part saved rolled back reopens rolled back with the notice and Roll to end | Done |
+| Shift+C collapse, eye buttons in the tree | FR-HIS-013 | 1.350.0: Shift+C folds folders, bodies and absorbed sketches; eye button on hover for sketch/plane/axis/point/csys/curve/body rows; hidden icons outlined | Done |
 | Copy and paste features | FR-HIS-014 | 1.342.0: Ctrl+C/Ctrl+V and Ctrl+drag for sketches, extrudes, revolves and holes; lost references listed | Done |
 | Tree reorder by drag, Alt+↑/↓ | FR-HIS-006 | Done | Done |
 | Rename F2, Del deletes | FR-UI-060 | Done | Done |
 | Undo/redo with names and a ▾ list | FR-UND-001, FR-UND-005 | Generic "Undo (Ctrl+Z)" tooltip, no list | Weaker / New |
 | Rebuild Ctrl+B, force Ctrl+Q | FR-HIS-020 | Done | Done |
 | Command search Ctrl+K | FR-UI-014 (S) | Done (1.121.0) | Done |
-| Units in the status bar | FR-UI-116 | No | New |
-| Tooltips with the shortcut key | FR-UI-112 | Some buttons | New (rule) |
+| Units in the status bar | FR-UI-116 | 1.351.0: unit and decimals button in the status bar; the part's unit is a document change (undoable); mass stays g/kg | Done |
+| Tooltips with the shortcut key | FR-UI-112 | 1.351.0: command bar tooltips with name, shortcut key and description; disabled buttons say why | Done |
 
 ### Appendix G. Implementation status audit (2026-11-08, MöbiusCAD 1.87.0)
 
@@ -1635,7 +1635,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
 | FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); camera and selection are not kept yet | Partly |
-| FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
+| FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | 1.107.0: What's wrong list above the tree; a click selects, a double click edits | Done |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
@@ -1654,7 +1654,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | --- | --- | --- | --- |
 | FR-SK-006 | Section view at the sketch plane (S) | Done in 1.139.0 (sketch bar Section toggle) | Done |
 | FR-SK-020 | Text: bundled fonts, height, emboss/engrave (S) | Built in 1.137.0 (sans/serif/mono, bold, italic, angle); along a curve in 1.142.0 | Done |
-| FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | Being reworked in 1.87.0 by the modelling thread | Partly |
+| FR-SK-042 / FR-SK-052 | Inference from model geometry; automatic relations while drawing | 1.89.0 model snapping, 1.251.0 automatic relations, 1.303.0 alignment inference | Done |
 | FR-SK-073 | **Check sketch for feature** before starting it | Done in 1.121.0 (sketch panel Check) | Done |
 | FR-UI-052 | Typing a number while drawing opens the size box | 1.121.0: typed sizes while drawing | Done |
 
@@ -1662,20 +1662,20 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-FT-012 | Extrude end condition **Up to body** | The other P2 end conditions are built (`EndKind`); Up to body is missing | Partly |
+| FR-FT-012 | Extrude end condition **Up to body** | 1.100.0: Up to body | Done |
 | FR-FT-033 | Setback fillets (P3, S) | Yes | Built in 1.134.0: setback vertices with a distance each; fillets cut square to the edges, corner filled with a G1 patch |
-| FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | Two distances is built; vertex and offset-face are missing | Partly |
-| FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | Simple, counterbore, countersink, tapped and heat-set insert; blind or through all | Partly |
-| FR-FT-060 | Shell with multi-thickness faces (P3) | One thickness | Partly |
-| FR-FT-061 | Parting-line draft (P5) | Neutral-plane draft only | Partly |
-| FR-FT-062 | Rib draft | Rib without draft | Partly |
-| FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | Features only | Partly |
-| FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | No (sketch patterns exist inside the sketcher only) | Not built |
+| FR-FT-041 | Vertex chamfer (three distances) and offset-face chamfer | 1.100.0: offset-face and vertex chamfers | Done |
+| FR-FT-050 | Hole types counterdrilled, clearance (close/normal/loose) and slot; end conditions up to face and up to next | 1.100.0: clearance, counterdrill and slot holes; Up to next and Up to surface ends | Done |
+| FR-FT-060 | Shell with multi-thickness faces (P3) | 1.100.0: multi-thickness faces | Done |
+| FR-FT-061 | Parting-line draft (P5) | 1.100.0: parting-line draft | Done |
+| FR-FT-062 | Rib draft | 1.100.0: rib draft (normal ribs) | Done |
+| FR-FT-070 / FR-FT-071 / FR-FT-072 | Patterns and mirror of **faces and bodies** (P3) | 1.100.0: features, faces or bodies as the pattern/mirror source | Done |
+| FR-FT-073 | **Sketch-driven** pattern (P3) and table-driven pattern (P5) | 1.100.0: sketch-driven and table-driven patterns | Done |
 | FR-FT-074 | Geometry pattern option: copy the result, or re-evaluate per instance | Done in 1.141.0 (Geometry pattern box on feature patterns and mirror) | Done |
 | FR-FT-080 | Sweep start/end tangency (P5) | Done: start tangency in 1.108.0, end tangency in 1.143.0 | Done |
 | FR-FT-082 | Loft start/end constraints, connectors, guide curves | Built: ruled, close, centreline, start/end normal, guide curves (1.119.0) and connectors (1.131.0) | Built |
-| FR-BODY-007 | Intersect (S) and Indent (P5) | No | Not built |
-| FR-FT-102 | Feature recognition on imported bodies (P5, C) | No | Not built |
+| FR-BODY-007 | Intersect (S) and Indent (P5) | 1.88.0: Intersect; 1.108.0: Indent | Done |
+| FR-FT-102 | Feature recognition on imported bodies (P5, C) | 1.116.0: Recognize Holes on imported bodies (holes only) | Partly |
 | FR-FT-131 | Check and heal as a feature with a before/after report (S) | Built in 1.126.0 (Check-Heal feature; Insert body also heals) | Built |
 
 **Assemblies (section 10)**
