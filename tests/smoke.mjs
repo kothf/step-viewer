@@ -2218,6 +2218,23 @@ try {
     }, { id: ends.l4, n: nBefore });
     check(merged.rel && merged.gap < 1e-6 && merged.status === "ok" && /x -?[\d.]+, y -?[\d.]+/.test(statusText) && copied.n === 1 && copied.dx.every(v => near(v, 8, 0.05)) && copied.dy.every(v => near(v, 0, 0.05)) && copied.sel && copied.rels === 0,
       `model 1.266: drag a point onto a point merges them, Ctrl+drag copies the selection, status shows x/y (${JSON.stringify(merged)}, ${statusText}, ${JSON.stringify(copied)})`);
+    // Sketch right-click (FR-SK-045): with the line tool it ends the chain; with Select it opens the menu for the item under it.
+    const rclick = async q => { const [x, y] = await toPage(q); await mp.mouse.move(x, y); await mp.waitForTimeout(40); await mp.mouse.down({ button: "right" }); await mp.mouse.up({ button: "right" }); await mp.waitForTimeout(150); };
+    const linesBefore = (await lineIds()).length;
+    await tool("line");
+    await click([30, 38]);
+    await click([46, 38]);
+    await rclick([60, 30]);
+    const ended = await mp.evaluate(() => { const ed = window.__sv.model.editor(); return { tool: ed.tool, pts: ed.draft.pts.length, menu: !document.querySelector("#mc-menu").hidden }; });
+    const added = (await lineIds()).filter(id => !before.includes(id)).at(-1);
+    await tool("select");
+    await rclick([38, 38]);
+    const menuItems = await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].map(b => b.textContent));
+    await mp.evaluate(() => [...document.querySelectorAll("#mc-menu button")].find(b => b.textContent === "Construction geometry")?.click());
+    const ctxAfter = await mp.evaluate(id => { const ed = window.__sv.model.editor(); return { sel: [...ed.selection], cons: !!ed.sk.ents.find(e => e.id === id)?.cons }; }, added);
+    check(ended.tool === "line" && ended.pts === 0 && !ended.menu && (await lineIds()).length === linesBefore + 1
+      && ["Select chain", "Construction geometry", "Horizontal", "Delete", "Exit sketch", "Discard"].every(l => menuItems.some(m => m.endsWith(l))) && ctxAfter.sel.includes(added) && ctxAfter.cons,
+      `model 1.275: right-click ends a line chain, and the sketch menu sets construction on the line under the cursor (${JSON.stringify(ended)}, ${JSON.stringify(menuItems)}, ${JSON.stringify(ctxAfter)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
