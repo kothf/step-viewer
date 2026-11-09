@@ -5,11 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.267.0] - 2026-11-09
+## [1.273.0] - 2026-11-09
 
 ### Added
 
 - **Sketch on the drawing sheet**: Line, Rectangle, Circle and Polyline on the Annotation tab (and in Annotate ▾) draw on the sheet itself, as SolidWorks lets you sketch in a drawing. Clicks snap to the model's corners and circle centres in a view, and run horizontal or vertical when close to it; a polyline ends with Enter or closes on its first point. Select an entity to give it an ISO 128 line type (thin, visible, centre, hidden or phantom) or type its length, width and height, or diameter. Entities export to PDF, SVG and DXF on the layer of their line type.
+## [1.268.0] - 2026-11-09
+
+### Added
+
+- **Trim/Extend weld gap (FR-FT-121).** Trim/Extend gets SolidWorks' **Weld gap**: the trimmed members stop that far short of the face, plane or body they are trimmed to. With End butt the stopping member ends short of the other's side, and an End miter splits the gap between the two ends.
+
 ## [1.266.0] - 2026-11-08
 
 ### Added
@@ -1666,8 +1672,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.267.0...HEAD
-[1.267.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.267.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.273.0...HEAD
+[1.273.0]: https://github.com/kothf/step-viewer/compare/v1.268.0...v1.273.0
+[1.268.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.268.0
 [1.266.0]: https://github.com/kothf/step-viewer/compare/v1.263.0...v1.266.0
 [1.263.0]: https://github.com/kothf/step-viewer/compare/v1.259.0...v1.263.0
 [1.259.0]: https://github.com/kothf/step-viewer/compare/v1.256.0...v1.259.0
