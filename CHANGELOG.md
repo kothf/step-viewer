@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.337.0] - 2026-11-09
+
+### Changed
+
+- Assemblies: the mate solver is much faster on big linkages. Each Jacobian column only re-evaluates the mates of the component it moves, the damped step solves the smaller of its two equivalent systems, and the degrees of freedom come from a Gram-Schmidt null space in place of a Jacobi eigen-solve. Motion study frames and constrained drags skip the degrees of freedom altogether. A 50-link hinge chain now solves in about 0.5 s instead of 8 s (exam bug 62: about 57 s per motion frame with the steam engine's link motion).
+
 ## [1.336.0] - 2026-11-09
 
 ### Added
@@ -1986,7 +1992,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.336.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.337.0...HEAD
+[1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
 [1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0
 [1.335.0]: https://github.com/kothf/step-viewer/compare/v1.334.0...v1.335.0
 [1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
