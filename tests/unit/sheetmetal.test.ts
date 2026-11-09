@@ -372,3 +372,28 @@ test("sheet metal: miter flange runs a sketched profile along edges (FR-FT-120)"
   const bad = m.evaluate(doc([s, base(), off, mf])).statuses.find(x => x.id === "mf");
   assert.ok(bad && !bad.ok);
 });
+
+test("sheet metal: cuts across a bend are unrolled in the flat pattern (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const ba = (Math.PI / 2) * (2 + 0.5 * 2);
+  const flatLen = 50 - 4 + ba + 26;
+  // A slot through everything over x 40..60, y < 10: 6 of the plate, the whole bend and the flange go.
+  const slot = rect("k", 40, -5, 60, 10);
+  const cut: Feature = { id: "c", type: "extrude", name: "Cut-Extrude1", sketch: "k", op: "cut", end: "through2", depth: { v: 0 } };
+  const want = 2 * (100 * flatLen - 20 * (6 + ba + 26));
+  const folded = run(doc([s, base(), fl, slot, cut]));
+  close(folded.props.volume, want, 1e-5);
+  const r = run(doc([s, base(), fl, slot, cut, flat]));
+  close(r.props.volume, want, 1e-4);
+  close(r.size[0], 100, 1e-6); close(r.size[1], flatLen, 1e-6);
+  // A slot ending inside the bend (z < 2 on the flange side) takes part of the bend strip only.
+  const slot2 = { ...rect("k", 40, -5, 60, 10), plane: { std: "XY" as const } };
+  const part: Feature = { ...cut, end: "blind", depth: { v: 2 }, flip: true } as Feature;
+  const f2 = run(doc([s, base(), fl, slot2, part]));
+  const r2 = run(doc([s, base(), fl, slot2, part, flat]));
+  // The flat pattern loses what the folded part lost (the neutral surface keeps lengths).
+  close(r2.props.volume, f2.props.volume, 2e-3);
+});

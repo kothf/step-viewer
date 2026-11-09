@@ -3,7 +3,7 @@
 // a WebM video or an animated GIF of the view. Frames are solved in order with the assembly's mate solver
 // (each from the one before, so linkages do not flip) and cached until the study or the assembly changes.
 import { makeGrip } from "../resize";
-import { t, onLangChange } from "../i18n";
+import { t, onLangChange, withLang } from "../i18n";
 import { toast } from "../ui";
 import { uid } from "../model/doc";
 import * as THREE from "three";
@@ -13,12 +13,12 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, parsePoints, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
-import { GAP_PLOTS, gapCsv, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -37,6 +37,7 @@ type KeyRef = { track: string; t: number };
 const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
+const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
 const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
@@ -637,6 +638,13 @@ export class MotionManager {
     return c.items.flatMap(it => it.spans.map(([a]) => Math.round(a * this.study.fps)));
   }
 
+  /** The selected result's plot as a stand-alone SVG file, titled with its name and plotted quantity. */
+  plotSvgFile(x: TracePath): string {
+    const svg = /<svg[\s\S]*<\/svg>/.exec(this.plotBody(x, Math.round(this.time * this.study.fps)))?.[0] ?? "";
+    const label = /aria-label="([^"]*)"/.exec(svg)?.[1]?.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") ?? "";
+    return plotFile(svg, `${this.study.name}: ${label}`);
+  }
+
   private plotBody(x: TracePath, i: number): string {
     if (x.gap) return this.gapPlotHtml(x, i);
     if (x.mate) return this.matePlotHtml(x, i);
@@ -699,6 +707,7 @@ export class MotionManager {
         + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
         + this.alertFields(x)
         + `<button class="btn small" data-tr="csv" title="${esc(t("Save the distances as CSV (time, distance)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
         + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
         + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
     }
@@ -708,6 +717,7 @@ export class MotionManager {
         + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
         + this.alertFields(x)
         + `<button class="btn small" data-tr="csv" title="${esc(t("Save the values as CSV (time, distance, angle)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
         + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
         + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
     }
@@ -718,6 +728,7 @@ export class MotionManager {
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
       + this.alertFields(x)
       + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
   }
@@ -1087,10 +1098,14 @@ export class MotionManager {
       const canRot = !mate || mate.type !== "distance", canLin = !mate || (mate.type !== "angle" && mate.type !== "hinge");
       const rot = tr.motion === "rotary";
       return `<label class="mo-f"><span>${esc(t("Motor"))}</span><select data-p="motion"><option value="rotary"${rot ? " selected" : ""}${canRot ? "" : " disabled"}>${esc(t("Rotary motor"))}</option><option value="linear"${!rot ? " selected" : ""}${canLin ? "" : " disabled"}>${esc(t("Linear motor"))}</option></select></label>`
-        + `<label class="mo-f"><span>${esc(t("Profile"))}</span><select data-p="profile"><option value="constant"${tr.profile === "constant" ? " selected" : ""}>${esc(t("Constant speed"))}</option><option value="oscillate"${tr.profile === "oscillate" ? " selected" : ""}>${esc(t("Oscillating"))}</option></select></label>`
+        + `<label class="mo-f"><span>${esc(t("Profile"))}</span><select data-p="profile">${PROFILES.map(([k, l]) => `<option value="${k}"${tr.profile === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
         + (tr.profile === "oscillate"
           ? field(t("Amplitude"), "amp", fmt(rot ? (tr.amp ?? 0) / DEG : tr.amp ?? 0), rot ? "°" : "mm") + field(t("Frequency"), "freq", fmt(tr.freq ?? 1), t("Hz"))
-          : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
+          : tr.profile === "distance"
+            ? field(rot ? t("Angle") : t("Distance"), "dist", fmt(rot ? (tr.dist ?? 0) / DEG : tr.dist ?? 0), rot ? "°" : "mm")
+            : tr.profile === "points"
+              ? `<label class="mo-f mo-pts"><span>${esc(t("Data points"))}</span><textarea data-p="pts" rows="4" spellcheck="false" aria-label="${esc(t("Time (s) and value per line"))}" title="${esc(t("One row per line: time after the motor start (s), then the value ({u})", { u: rot ? "°" : "mm" }))}">${esc((tr.pts ?? []).map(([a, b]) => `${fmt(a)}, ${fmt(rot ? b / DEG : b)}`).join("\n"))}</textarea></label>`
+              : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
         + field(t("Start"), "start", fmt(tr.start), t("s")) + field(t("End"), "end", fmt(tr.end), t("s"))
         + `<label class="mo-f"><input type="checkbox" data-p="flip"${tr.flip ? " checked" : ""} /><span>${esc(t("Reverse direction"))}</span></label>`;
     }
@@ -1196,6 +1211,10 @@ export class MotionManager {
       this.setTrace(this.selTrace!, x => { const a = { ...(x.alert ?? {}) }; if (v) a.stop = true; else delete a.stop; if (a.min === undefined && a.max === undefined && !a.stop) delete x.alert; else x.alert = a; });
     });
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
+    on("button[data-tr=svg]", "click", () => {
+      const x = this.traces.find(k => k.id === this.selTrace);
+      if (x) download(new Blob([withLang("en", () => this.plotSvgFile(x))], { type: "image/svg+xml" }), `${this.fileBase()}-${x.gap ? "proximity" : x.mate ? "mate" : "trace"}.svg`);
+    });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
       if (x?.gap) download(new Blob([gapCsv(this.gapValues(x.id), this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-proximity.csv`);
@@ -1390,6 +1409,17 @@ export class MotionManager {
       if (!this.scaleKeys(ps, Math.min(...ps.map(q => q.t)), v / 100)) { bad(); toast(t("The keys can't be stretched that far."), "warn"); return; }
       this.render(); this.showAt(this.time); return;
     }
+    if (p === "pts" && tr0.kind === "motor") {
+      const pts = parsePoints(raw, tr0.motion === "rotary" ? DEG : 1);
+      if (!pts) { bad(); toast(t("Type at least two rows of time and value, with the times increasing."), "warn"); return; }
+      this.edit(st => {
+        const tr = st.tracks.find(k => k.id === sel.track);
+        if (tr?.kind !== "motor") return;
+        tr.pts = pts;
+        tr.end = Math.max(tr.start, Math.min(st.duration, tr.start + pts[pts.length - 1][0]));
+      });
+      this.render(); this.showAt(this.time); return;
+    }
     const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
@@ -1399,7 +1429,12 @@ export class MotionManager {
       if (tr.kind === "motor") {
         const rot = tr.motion === "rotary";
         if (p === "motion") tr.motion = raw as MotorTrack["motion"];
-        else if (p === "profile") tr.profile = raw as MotorTrack["profile"];
+        else if (p === "profile") {
+          tr.profile = raw as MotorTrack["profile"];
+          if (tr.profile === "distance" && tr.dist === undefined) tr.dist = rot ? Math.PI / 2 : 10;
+          if (tr.profile === "points" && !tr.pts) tr.pts = [[0, 0], [Math.max(0.1, (tr.end - tr.start) / 2), rot ? Math.PI : 10], [Math.max(0.2, tr.end - tr.start), 0]];
+        }
+        else if (p === "dist") tr.dist = rot ? v * DEG : v;
         else if (p === "flip") tr.flip = (el as HTMLInputElement).checked || undefined;
         else if (p === "speed") tr.speed = v;
         else if (p === "amp") tr.amp = rot ? v * DEG : v;
