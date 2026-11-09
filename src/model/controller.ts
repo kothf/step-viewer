@@ -2160,7 +2160,7 @@ export class ModelController {
     if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
     if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
-    if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
+    if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
     // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
