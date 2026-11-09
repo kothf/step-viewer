@@ -8479,6 +8479,18 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
+    const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wMergeMiter"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const mm = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bodies: l.bodies?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), cut: (l.cutList ?? []).map(c => [c.qty, c.length]) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(mm.bodies === 1 && !mm.bad && JSON.stringify(mm.cut) === "[[1,2200]]", `weldments: merge miter trimmed bodies (${JSON.stringify(mm)})`);
     // End cap on an open end: an L of two members butted, a cap on the free end.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("L", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("e", 0, 600), P("f", 300, 600), P("g", 300, 800), L("k1", "e", "f"), L("k2", "f", "g")] }, { id: "m2", type: "member", name: "Structural Member2", profile: "shs", size: "40x40x3", segs: [{ sketch: "s2", ent: "k1" }, { sketch: "s2", ent: "k2" }], corner: "butt1" }); }); });
     await settle();
