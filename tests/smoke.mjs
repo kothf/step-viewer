@@ -8405,11 +8405,20 @@ try {
     await mp.fill('#wld-cut input[data-cp="part"][data-ci="0"]', "FR-001");
     await mp.press('#wld-cut input[data-cp="part"][data-ci="0"]', "Tab");
     await settle();
+    // A cut list item can have its own material: the row mass and the total follow its density (steel 7.85 → aluminium 2.7).
+    const num = v => Number(String(v).replace(/[^\d.]/g, ""));
+    const kgOf = () => mp.evaluate(() => [...document.querySelectorAll("#wld-cut [data-wkg]")].map(e => e.textContent));
+    const kg0 = await kgOf();
+    await mp.selectOption('#wld-cut select[data-cp="mat"][data-ci="0"]', "Aluminium 6061");
+    await settle();
+    const kg1 = await kgOf();
+    const matRatio = num(kg1[0]) / num(kg0[0]);
+    check(Math.abs(matRatio - 2.7 / 7.85) < 0.01 && kg1[1] === kg0[1], `weldments: cut list item material (${JSON.stringify({ kg0, kg1, matRatio })})`);
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
     await settle();
     const cp = await mp.evaluate(() => ({ props: Object.values(window.__sv.model.store.doc.cutProps ?? {}), row: document.querySelector('#mc-tree .ft-row[data-id="cut:0"]')?.textContent ?? "" }));
-    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
+    check(JSON.stringify(cp.props) === '[{"desc":"Top rail","part":"FR-001","mat":"Aluminium 6061"}]' && cp.row.includes("Top rail"), `weldments: cut list item properties (${JSON.stringify(cp)})`);
     // The Cut list folder in the tree: one row per item; clicking one lights up its two bodies.
     await mp.click('#mc-tree .ft-row[data-id="cut:0"]');
     await mp.waitForTimeout(100);
@@ -8951,6 +8960,28 @@ try {
     check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
       && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
       `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
+    // Swept Flange: up 12, a tangent arc of radius 8 turning outwards, then on to 10 outwards; the front top edge clicked.
+    await mp.evaluate(() => window.__sv.model.store.change("Swept profile", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s7", type: "sketch", name: "Sketch7", plane: { std: "YZ" }, rels: [], dims: [], ents: [P("v1", 0, 0), P("v2", 0, 12), P("vc", -8, 12), P("v3", -8, 20), P("v4", -10, 20),
+        { id: "v5", t: "line", a: "v1", b: "v2" }, { id: "v6", t: "arc", c: "vc", a: "v2", b: "v3" }, { id: "v7", t: "line", a: "v3", b: "v4" }] });
+    }));
+    await settle();
+    await smMenu("Swept Flange");
+    { const [x, y] = await scr([60, 0, T]); await mp.mouse.click(x, y); await settle(); }
+    const sw0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, edges: window.__sv.model.mode().draft?.edges.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sw1 = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      const f = window.__sv.model.store.doc.features.find(x => x.type === "smswept");
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), r: l.sheet?.bends.find(b => b.id === `${f?.id}:b1`)?.r, name: f?.name };
+    });
+    check(sw0.title === "Swept Flange" && sw0.sketch === "s7" && sw0.edges === 1 && !sw1.bad && sw1.size[0] === 100 && sw1.size[1] === 60 && Math.abs(sw1.size[2] - (20 + T)) < 2e-3 && sw1.r === 8 && sw1.name === "Swept-Flange1",
+      `sheet metal: Swept Flange makes the sketched tangent arc a bend of its radius (${JSON.stringify({ sw0, sw1 })})`);
     // A slot cut across the front flange's bend: the flat pattern loses the same material, bend part unrolled.
     const across = async withCut => {
       await mp.evaluate(withCut => window.__sv.model.store.change("Slot across bend", d => {
