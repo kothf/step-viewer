@@ -4126,4 +4126,23 @@ export const RU: Record<string, string> = {
   "Roll to previous": "Откатить к предыдущему",
   "The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown": "Деталь откачена: {n} элемент не показан|Деталь откачена: {n} элемента не показаны|Деталь откачена: {n} элементов не показаны",
   "Expand": "Развернуть",
+  // FR-UI-108: undo inside a command
+  "Nothing to undo in this command.": "В этой команде отменять нечего.",
+  "Nothing to redo in this command.": "В этой команде повторять нечего.",
+  // FR-UI-116: units in the status bar
+  "Units and decimals: click to change": "Единицы и знаки после запятой: щёлкните, чтобы изменить",
+  "Millimetres (mm)": "Миллиметры (мм)",
+  "Centimetres (cm)": "Сантиметры (см)",
+  "Metres (m)": "Метры (м)",
+  "Inches (in)": "Дюймы (in)",
+  "Feet (ft)": "Футы (ft)",
+  // FR-UI-112: command tooltips
+  "Unavailable: {why}": "Недоступно: {why}",
+  "Finish or cancel the command first.": "Сначала завершите или отмените команду.",
+  "Nothing to redo.": "Повторять нечего.",
+  "Undo in this command (Ctrl+Z)": "Отменить в этой команде (Ctrl+Z)",
+  "Redo in this command (Ctrl+Y)": "Повторить в этой команде (Ctrl+Y)",
+  // FR-UI-105: hide/show under the cursor
+  "No hidden body under the cursor.": "Под курсором нет скрытого тела.",
+  "No hidden component under the cursor.": "Под курсором нет скрытого компонента.",
 };
