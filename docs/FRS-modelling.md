@@ -958,7 +958,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 
 - **FR-UI-001** (P0, M) The modelling layout reuses the existing header, panels, right-panel pages, NavCube, status bar, toasts and dialogs from `ui.ts`. Viewer-only users see no change until they create or edit a model.
 - **FR-UI-002** (P1, M) **Left panel** (SW habit: FeatureManager on the left) with tabs: **Tree** (feature or assembly tree), **Feature** (the feature panel while a command runs), **Parameters** (P2), **Vault** (P2, FR-PDM-002), **Display** (P4 display states). Collapsible with Ctrl+[ like today; width resizable and remembered.
-- **FR-UI-003** (P1, M) While a feature or sketch command runs, the left panel switches to the **Feature** tab (SW habit: PropertyManager replaces the tree) and a **mini tree** (fly-out, semi-transparent) is shown at the top left of the graphics area so planes and features can still be picked from the tree.
+- **FR-UI-003** (P1, M) While a feature or sketch command runs, the left panel switches to the **Feature** tab (SW habit: PropertyManager replaces the tree) and a **mini tree** (fly-out, semi-transparent) is shown at the top left of the graphics area so planes and features can still be picked from the tree. **Done (1.335.0).**
 - **FR-UI-004** (P1, M) The **right panel** keeps MöbiusCAD's pages (properties, section, explode, mass, export, measurement list); its Properties page shows the selected entity's data (face type, area, radius, owning feature).
 - **FR-UI-005** (P1, M) Breakpoints from the UI standards: ≥1366 px full layout on one command row; 1280–1365 labels fold to icons (existing `fitToolbar` logic); 768–1279 left and right panels are overlays; <768 view-only (FR-UI-090).
 
@@ -1596,7 +1596,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
-| Fly-out mini tree while a panel is open | FR-UI-003 | No | Weaker |
+| Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
 | Undo inside an open panel | FR-UI-108 | No | New |
 | Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |
@@ -1636,7 +1636,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | --- | --- | --- | --- |
 | FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); camera and selection are not kept yet | Partly |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | Errors show as tree badges and tooltips and in the feature panel; there is no list | Partly |
-| FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
+| FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |

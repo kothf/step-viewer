@@ -15,6 +15,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: a key added in the middle of a colour blend on an appearance track keeps the colour shown there instead of dropping it.
 
+## [1.337.0] - 2026-11-09
+
+### Changed
+
+- Assemblies: the mate solver is much faster on big linkages. Each Jacobian column only re-evaluates the mates of the component it moves, the damped step solves the smaller of its two equivalent systems, and the degrees of freedom come from a Gram-Schmidt null space in place of a Jacobi eigen-solve. Motion study frames and constrained drags skip the degrees of freedom altogether. A 50-link hinge chain now solves in about 0.5 s instead of 8 s (exam bug 62: about 57 s per motion frame with the steam engine's link motion).
+
+## [1.336.0] - 2026-11-09
+
+### Added
+
+- **Structural member alignment (FR-FT-121)**: Structural Member gets SolidWorks' Alignment. Pick a straight sketch line (any 2D or 3D sketch line, construction lines too) and choose whether the profile's vertical or horizontal axis points along it: every segment turns its profile that way, square to the segment, and the rotation angle turns it on from there. Members of a 3D sketch can now all face one way instead of following world Z.
+## [1.335.0] - 2026-11-09
+
+### Added
+
+- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. As in SolidWorks it shows folded to the part name: click the name to open it (remembered). It is see-through until the pointer is over it, and has no suppress or delete buttons, so a click in the view can't remove a feature. Starting a command brings the Features tab forward. On phones the tree stays under the panel.
+
+## [1.334.0] - 2026-11-09
+
+### Added
+- Hole rows in drawings (FR-DRW-023): three or more end-on holes of one size evenly spaced on a line (a row, or the rows and columns of a grid) get one centreline through them, 2 mm past the end holes, and a short centre line across each hole in place of the cross. The view panel's Hole rows box turns it off.
+
+## [1.333.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Corner Relief (FR-FT-120): cuts a relief where two bends meet at a corner of one face, as SolidWorks' Corner Relief for two-bend corners. Rectangular covers both bend zones with a clearance past them, Circular is centred where the bend centre lines cross, Tear is a small round at the inside corner; the size is the relief ratio × thickness or a typed value. Every corner is relieved until some are picked, by ticking them in the panel or clicking near them in the view. The relief comes off the panels and is wrapped onto the bends, so the flat pattern and its DXF show it too.
+
 ## [1.332.0] - 2026-11-09
 
 ### Added
@@ -1975,7 +2003,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.338.0...HEAD
-[1.338.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.338.0
+[1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
+[1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
+[1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0
+[1.335.0]: https://github.com/kothf/step-viewer/compare/v1.334.0...v1.335.0
+[1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
+[1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0
 [1.332.0]: https://github.com/kothf/step-viewer/compare/v1.331.0...v1.332.0
 [1.331.0]: https://github.com/kothf/step-viewer/compare/v1.330.0...v1.331.0
 [1.330.0]: https://github.com/kothf/step-viewer/compare/v1.329.0...v1.330.0

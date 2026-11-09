@@ -336,3 +336,38 @@ test("FR-MATE-005: gear, screw, hinge and slot mates", () => {
   assert.ok(s4.ok, JSON.stringify(s4.bad));
   assert.ok(Math.abs(applyPoint(s4.tfs.q, [0, 0, 0])[1] - 35) < 1e-5, String(applyPoint(s4.tfs.q, [0, 0, 0])));
 });
+
+test("a 50-link hinge chain solves and counts its freedom in well under a second each (exam #62)", () => {
+  const N = 50;
+  geos.link = { a: { k: "axis", p: [0, 0, 0], d: [0, 0, 1], r: 3 }, b: { k: "axis", p: [30, 0, 0], d: [0, 0, 1], r: 3 }, top: { k: "plane", p: [0, 0, 5], n: [0, 0, 1] }, under: { k: "plane", p: [0, 0, 0], n: [0, 0, -1] } };
+  try {
+    const comps = Array.from({ length: N + 1 }, (_, k) => ({ id: `l${k}`, name: `link<${k}>`, part: "link", fixed: k === 0,
+      tf: k ? compose(translation([30 * k + Math.sin(k), Math.cos(k), 5 * k + 0.3 * Math.sin(2 * k)]), rotation([0, 0, 0], [0, 0, 1], 0.2 * Math.sin(k))) : IDENTITY }));
+    const mates: Mate[] = [];
+    for (let k = 1; k <= N; k++) {
+      mates.push({ id: `c${k}`, name: `Concentric${k}`, type: "concentric", a: { comp: `l${k - 1}`, face: "b" }, b: { comp: `l${k}`, face: "a" } });
+      mates.push({ id: `p${k}`, name: `Coincident${k}`, type: "coincident", a: { comp: `l${k - 1}`, face: "top" }, b: { comp: `l${k}`, face: "under" }, align: "anti" });
+    }
+    const d: AsmDoc = { ...doc([]), parts: { link: { name: "link", file: "link.mcadprt", doc: stub } }, components: comps, mates };
+    let t0 = performance.now();
+    const r = solve({ doc: d, geo, size: 30 * N });
+    const full = performance.now() - t0;
+    assert.ok(r.ok, JSON.stringify(r.bad));
+    assert.equal(r.free, N);
+    assert.equal(r.dof.l1, 1);
+    assert.equal(r.dof[`l${N}`], 3);
+    // Each link's pin sits on the previous link's hole, one layer up.
+    for (let k = 1; k <= N; k++) {
+      const p = applyPoint(r.tfs[`l${k}`], [0, 0, 0]), q = applyPoint(r.tfs[`l${k - 1}`], [30, 0, 5]);
+      assert.ok(Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-4, `${k}: ${p} vs ${q}`);
+    }
+    // A motion frame from the solved pose with one joint turned skips the freedom count.
+    d.components = comps.map(c => ({ ...c, tf: r.tfs[c.id] }));
+    d.components[1].tf = compose(rotation([0, 0, 0], [0, 0, 1], 0.05), r.tfs.l1);
+    t0 = performance.now();
+    const f = solve({ doc: d, geo, size: 30 * N, dof: false });
+    const frame = performance.now() - t0;
+    assert.ok(f.ok);
+    assert.ok(full < 4000 && frame < 1500, `solve ${full.toFixed(0)} ms, frame ${frame.toFixed(0)} ms`);
+  } finally { delete geos.link; }
+});

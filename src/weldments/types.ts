@@ -44,6 +44,12 @@ export interface MemberFeature {
   mergeArcs?: boolean;
   /** Merge miter trimmed bodies: segments meeting at a mitred corner (no weld gap) become one body. */
   mergeMiter?: boolean;
+  /**
+   * Alignment (SolidWorks' Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
+   * straight sketch line, square to each segment, before the rotation angle; for every group. Absent: a 2D path
+   * sketch's normal (else world Z) is up.
+   */
+  align?: { sketch: string; ent: string; axis: "h" | "v" };
 }
 
 /** A group of a Structural Member's segments placed with its own profile settings. */

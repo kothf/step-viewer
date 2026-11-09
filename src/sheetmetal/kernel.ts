@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -59,6 +59,10 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the vent boundary.");
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
     return { body: ventCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
+  }
+  if (f.type === "smrelief") {
+    if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    return { body: reliefCut(api, body, sm, cornerRelief(sm, f).loops, f.id), sm };
   }
   if (f.type === "smform") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
@@ -478,6 +482,31 @@ function footprint(api: SheetApi, M: Mat, loop: Seg[], T: number, tag: string): 
   const shape = prism(api, faceOf(api, loop, [], frameOf(M, -T * 0.01)), applyDir(M, [0, 0, T * 1.02]));
   const faces = api.sub(shape, "FACE");
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
+}
+
+/**
+ * Corner relief: each outline (flat coordinates) is cut from every panel it overlaps, where the panel lies, and from
+ * every bend strip it overlaps, wrapped onto the bend; so the flat pattern (made from what the bends lost) shows it too.
+ */
+function reliefCut(api: SheetApi, body: Named, st: SheetState, loops: Seg[][], fid: string): Named {
+  const T = st.T, tiny = T * T * T * 1e-6;
+  let out = body;
+  loops.forEach((loop, i) => {
+    for (const p of st.panels) {
+      const tool = footprint(api, p.M, loop, T, `${fid}:r${i}:`);
+      // The panel's prism a little thicker, so the piece reaches past its faces.
+      const slab = prism(api, faceOf(api, p.outer, p.holes, frameOf(p.M, -T * 0.01)), applyDir(p.M, [0, 0, T * 1.02]));
+      const piece = api.bool("common", tool, { shape: slab, faces: api.sub(slab, "FACE"), names: api.sub(slab, "FACE").map(() => `${fid}:s`) }, fid);
+      if (volumeOf(api, piece.shape) > tiny) out = api.bool("cut", out, piece, fid);
+    }
+    for (const b of st.bends) {
+      const strip = stripSolid(api, b, b.M, T);
+      const piece = api.bool("common", strip, footprint(api, b.M, loop, T, `${fid}:r${i}:`), fid);
+      if (volumeOf(api, piece.shape) <= tiny) continue;
+      for (const w of wrapped(api, T, b, piece, b.M, `${fid}:w${i}`)) out = api.bool("cut", out, w, fid);
+    }
+  });
+  return out;
 }
 
 /** A ruled solid through the same loop at two heights, drawn by `at(z)` (the loop at height z) in a frame. */
