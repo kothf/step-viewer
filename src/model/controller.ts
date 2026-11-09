@@ -59,8 +59,8 @@ import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWe
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature } from "../sheetmetal/types";
-import { apply as smApply, applyDir as smApplyDir, bendOfFace, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature } from "../sheetmetal/types";
+import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -421,6 +421,7 @@ export class ModelController {
       if (this.store && (changed.includes("quality") || changed.includes("verify"))) void this.rebuild();
     });
     onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
+    matchMedia("(max-width: 767px)").addEventListener("change", () => this.syncFlyTree());
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
       this.sizeArrow();
@@ -551,6 +552,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
     this.vault = null;
@@ -824,7 +826,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -917,7 +919,7 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smcross" || type === "smvent" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smcross" || type === "smvent" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
       const smFace = type === "smclosed" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
@@ -1767,6 +1769,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smunfold" || m.draft.type === "smfold")) this.pickUnfold(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smrelief") this.pickRelief(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -2078,6 +2081,23 @@ export class ModelController {
     if (!p) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
     if (fr.name !== f.face.name) { f.face = fr; f.pts = []; }
     f.pts.push([p[0], p[1]]);
+    this.draftChanged();
+  }
+
+  /** Corner relief: a click near a two-bend corner toggles it (none picked = every corner). */
+  private pickRelief(e: PointerEvent, f: SmReliefFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const st = this.last?.sheet;
+    const all = st && !st.faceted ? reliefCorners(st) : [];
+    let best: (typeof all)[number] | undefined, bd = Infinity;
+    if (hit) for (const c of all) {
+      const q = smApply(c.M, [c.c0[0] + (c.oa[0] * c.baA + c.ob[0] * c.baB) / 2, c.c0[1] + (c.oa[1] * c.baA + c.ob[1] * c.baB) / 2, st!.T / 2]);
+      const d = Math.hypot(hit.point[0] - q[0], hit.point[1] - q[1], hit.point[2] - q[2]);
+      if (d < bd) { bd = d; best = c; }
+    }
+    if (!best || bd > 4 * (best.baA + best.baB + st!.T)) { toast(t("Click near a corner where two bends meet.")); return; }
+    const i = f.corners.indexOf(best.key);
+    if (i >= 0) f.corners.splice(i, 1); else f.corners.push(best.key);
     this.draftChanged();
   }
 
@@ -3973,6 +3993,48 @@ export class ModelController {
 
   private wasSketch = false;
   private inBar = false;
+  private wasCmd = false;
+  /** The fly-out tree is folded to its title row, as SolidWorks shows it, until opened (kept per browser). */
+  private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") !== "1"; } catch { return true; } })();
+
+  /**
+   * Fly-out tree (FR-UI-003, SolidWorks' fly-out FeatureManager): while a panel is open it fills the Features tab,
+   * and the tree itself moves to the top left of the view, so planes and features can still be picked from it.
+   * The same `#mc-tree` element moves, so its rows, listeners and selectors stay as they are. Phones keep it in the panel.
+   */
+  private syncFlyTree() {
+    const tree = document.getElementById("mc-tree"), tab = document.getElementById("tab-features");
+    if (!tree || !tab) return;
+    const fly0 = document.getElementById("mc-treefly");
+    const on = !!this.store && this.mode.kind !== "none" && !$("#mc-bar").hidden && !matchMedia("(max-width: 767px)").matches;
+    tab.classList.toggle("pm-full", on);
+    if (!on) {
+      if (fly0) { document.getElementById("ft-search")?.after(tree); fly0.remove(); }
+      tree.hidden = false;
+      return;
+    }
+    let fly = fly0;
+    if (!fly) {
+      fly = document.createElement("div");
+      fly.id = "mc-treefly";
+      fly.className = "mc-treefly";
+      fly.innerHTML = `<button type="button" class="mc-treefly-h" data-a="fly"><span class="mc-treefly-tw" aria-hidden="true"></span><span class="mc-treefly-n" translate="no"></span></button>`;
+      fly.querySelector("[data-a=fly]")!.addEventListener("click", () => {
+        this.flyClosed = !this.flyClosed;
+        try { localStorage.setItem("mc:flyTree", this.flyClosed ? "0" : "1"); } catch { /* private mode */ }
+        this.syncFlyTree();
+      });
+      $("#mc-bar").append(fly);
+    }
+    if (tree.parentElement !== fly) fly.append(tree);
+    const h = fly.querySelector<HTMLElement>("[data-a=fly]")!;
+    h.setAttribute("aria-expanded", String(!this.flyClosed));
+    h.title = this.flyClosed ? t("Show the feature tree") : t("Fold the feature tree");
+    fly.querySelector(".mc-treefly-tw")!.textContent = this.flyClosed ? "▸" : "▾";
+    fly.querySelector(".mc-treefly-n")!.textContent = this.doc.name;
+    fly.classList.toggle("closed", this.flyClosed);
+    tree.hidden = this.flyClosed;
+  }
 
   private renderBar() {
     const bar = $("#mc-bar");
@@ -3987,6 +4049,9 @@ export class ModelController {
       this.inBar = false;
     }
     document.getElementById("app")!.classList.toggle("mc-cmd", m.kind !== "none");
+    // A command takes the left panel to the Feature tab (FR-UI-003), once as it starts.
+    if ((m.kind !== "none") !== this.wasCmd) { this.wasCmd = m.kind !== "none"; if (this.wasCmd) this.host.selectLeftTab("features"); }
+    this.syncFlyTree();
     this.syncSketchSection();
     if (m.kind !== "sketch") {
       $("#mc-status").textContent = m.kind === "plane" ? t(m.edit?.pickX ? "Click a straight edge for the sketch X axis." : m.edit ? "Pick the new plane or flat face for the sketch." : "Pick a plane or a flat face for the sketch.")
@@ -4408,7 +4473,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smcross": case "smvent": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smcross": case "smvent": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -4540,6 +4605,8 @@ export class ModelController {
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
+    const flyName = document.querySelector("#mc-treefly .mc-treefly-n");
+    if (flyName) flyName.textContent = d.name;
     if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
     // Name filter (FR-HIS-011): feature rows whose name doesn't match hide; a folder stays while a member matches.
     const q = (document.getElementById("ft-search") as HTMLInputElement | null)?.value.trim().toLowerCase() ?? "";

@@ -2506,7 +2506,7 @@ export class DrawingWorkspace {
           <label class="drw-f">${esc(t("Tangent edges"))}<select data-v="tangent">${(["visible", "thin", "hidden"] as TangentEdges[]).map(s => `<option value="${s}"${s === tan ? " selected" : ""}>${esc(t(TAN_NAMES[s]))}</option>`).join("")}</select></label>
           <label class="drw-chk"><input type="checkbox" data-v="label"${v.label ? " checked" : ""}> ${esc(t("Show the view label"))}</label>
           <label class="drw-chk"><input type="checkbox" data-v="marks"${v.marks !== false ? " checked" : ""}> ${esc(t("Centre marks and centrelines"))}</label>
-          ${v.marks !== false ? `<label class="drw-chk"><input type="checkbox" data-v="bolts"${v.bolts !== false ? " checked" : ""}> ${esc(t("Bolt circles"))}</label>` : ""}
+          ${v.marks !== false ? `<label class="drw-chk"><input type="checkbox" data-v="bolts"${v.bolts !== false ? " checked" : ""}> ${esc(t("Bolt circles"))}</label><label class="drw-chk"><input type="checkbox" data-v="rows"${v.rows !== false ? " checked" : ""}> ${esc(t("Hole rows"))}</label>` : ""}
           <label class="drw-chk"><input type="checkbox" data-v="threads"${v.threads !== false ? " checked" : ""}> ${esc(t("Cosmetic threads"))}</label>
           <label class="drw-chk"><input type="checkbox" data-v="sketches"${v.sketches ? " checked" : ""}> ${esc(t("Sketches"))}</label>
           ${this.factsOf(v.id)?.topo.com ? `<label class="drw-chk" title="${esc(t("Mark the model's centre of mass; dimensions can measure from it"))}"><input type="checkbox" data-v="com"${v.com ? " checked" : ""}> ${esc(t("Centre of mass"))}</label>` : ""}
@@ -2838,6 +2838,7 @@ export class DrawingWorkspace {
     else if (vk === "label") this.setView("View label", v => { v.label = (el as HTMLInputElement).checked || undefined; });
     else if (vk === "marks") this.setView("Centre marks", v => { if ((el as HTMLInputElement).checked) delete v.marks; else v.marks = false; });
     else if (vk === "bolts") this.setView("Bolt circles", v => { if ((el as HTMLInputElement).checked) delete v.bolts; else v.bolts = false; });
+    else if (vk === "rows") this.setView("Hole rows", v => { if ((el as HTMLInputElement).checked) delete v.rows; else v.rows = false; });
     else if (vk === "bendLines" || vk === "bendNotes") this.setView(vk === "bendLines" ? "Bend lines" : "Bend notes", v => { if ((el as HTMLInputElement).checked) delete v[vk]; else v[vk] = false; });
     else if (vk === "threads") this.setView("Cosmetic threads", v => { if ((el as HTMLInputElement).checked) delete v.threads; else v.threads = false; });
     else if (vk === "sketches") this.setView("Show sketches", v => { v.sketches = (el as HTMLInputElement).checked || undefined; });

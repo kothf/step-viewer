@@ -921,6 +921,43 @@ test("bolt circles: evenly spaced holes on a circle get a centre-line circle and
   assert.equal(off.length, 14);
 });
 
+test("hole rows: evenly spaced holes on a line get one centreline and a cross line each (FR-DRW-023)", async () => {
+  const { holeLines, centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const H = (x: number, y: number, r = 2) => ({ c: [x, y] as [number, number], r });
+  // A row of four along x; uneven spacing, two holes or mixed sizes are not rows.
+  const four = holeLines([H(0, 0), H(10, 0), H(20, 0), H(30, 0)]);
+  assert.equal(four.length, 1);
+  assert.deepEqual(four[0].members, [0, 1, 2, 3]);
+  assert.ok(Math.abs(four[0].d[0] - 1) < 1e-12 && Math.abs(four[0].d[1]) < 1e-12);
+  assert.equal(holeLines([H(0, 0), H(10, 0), H(25, 0)]).length, 0, "uneven");
+  assert.equal(holeLines([H(0, 0), H(10, 0)]).length, 0, "two holes");
+  assert.equal(holeLines([H(0, 0), H(10, 0), H(20, 0, 3)]).length, 0, "mixed sizes");
+  // A slanted row; a run of 3 inside a longer uneven line.
+  const slant = holeLines([H(0, 0), H(6, 8), H(12, 16)]);
+  assert.ok(slant.length === 1 && Math.abs(slant[0].d[0] - 0.6) < 1e-12 && Math.abs(slant[0].d[1] - 0.8) < 1e-12);
+  assert.deepEqual(holeLines([H(0, 0), H(10, 0), H(20, 0), H(45, 0)]).map(r => r.members), [[0, 1, 2]]);
+  // A 3 × 3 grid: three rows and three columns, no diagonals.
+  const grid: { c: [number, number]; r: number }[] = [];
+  for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) grid.push(H(x * 20, y * 15));
+  const g = holeLines(grid);
+  assert.equal(g.length, 6);
+  assert.ok(g.every(r => Math.abs(r.d[0] * r.d[1]) < 1e-12), "rows and columns only");
+  // Drawn: four holes in a row of a view = one centreline 2 mm past the end holes plus a short line across each.
+  const rowHoles = [H(-15, 0), H(-5, 0), H(5, 0), H(15, 0)];
+  const edges = rowHoles.map((h, i) => ({ k: `h${i}`, t: "c" as const, a: [0, 0, 0] as [number, number, number], b: [0, 0, 0] as [number, number, number], c: [h.c[0], h.c[1], 0] as [number, number, number], m: [h.c[0] + h.r, h.c[1], 0] as [number, number, number], ax: [0, 0, 1] as [number, number, number], r: h.r, sp: 2 * Math.PI }));
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -50, 50, 50] as [number, number, number, number], ready: true };
+  const top = projector(ORIENTS.top);
+  const on = centreMarks({ id: "v", name: "v", orient: "top", x: 0, y: 0 }, pl, { edges, cyls: [] } as any, top.P, top.n);
+  const ls = on.filter(p => p.t === "l").map(p => p.p.map(x => Math.round(x * 1000) / 1000));
+  assert.equal(ls.length, 5, JSON.stringify(ls));
+  const along = ls.filter(q => Math.abs(q[1] - q[3]) < 1e-9);
+  assert.ok(along.length === 1 && Math.min(along[0][0], along[0][2]) === -19 && Math.max(along[0][0], along[0][2]) === 19, `row line: ${along}`);
+  assert.equal(ls.filter(q => Math.abs(q[0] - q[2]) < 1e-9 && Math.abs(Math.abs(q[1] - q[3]) - 8) < 1e-9).length, 4);
+  const off = centreMarks({ id: "v", name: "v", orient: "top", x: 0, y: 0, rows: false }, pl, { edges, cyls: [] } as any, top.P, top.n);
+  assert.equal(off.length, 8, "plain crosses when off");
+});
+
 test("slot centre marks: a centreline over a straight slot and a cross line at each end, no circle marks (FR-DRW-023)", async () => {
   const { topology } = await import("../../src/kernel/drawing");
   const { centreMarks, projector, straightSlots } = await import("../../src/drawing/annot");

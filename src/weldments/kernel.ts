@@ -88,12 +88,29 @@ export function segOf(ref: { sketch: string; ent: string }, doc: PartDoc, frames
   return { ent: ref.ent, a, b, w, L, wa: w, wb: w };
 }
 
-/** The "up" direction of a profile on a segment: a 2D sketch's normal, else world Z (X for vertical members). */
-function upOf(ref: { sketch: string }, seg: PathSeg, doc: PartDoc, frames: Record<string, Frame>): V3 {
+/**
+ * The "up" direction of a profile on a segment: a 2D sketch's normal, else world Z (X for vertical members).
+ * With an alignment line, the profile's vertical (or horizontal) axis points along it, square to the segment;
+ * a segment running along the line keeps the usual direction.
+ */
+function upOf(ref: { sketch: string }, seg: PathSeg, doc: PartDoc, frames: Record<string, Frame>, align?: MemberFeature["align"]): V3 {
+  if (align) {
+    const d = alignDir(align, doc, frames);
+    const q = sub(d, mul(seg.wa, dot(d, seg.wa)));
+    if (len(q) > 1e-3) { const e = unit(q); return align.axis === "h" ? cross(seg.wa, e) : e; }
+  }
   const sk = doc.features.find(x => x.id === ref.sketch);
   let up: V3 = sk?.type === "sketch" && frames[sk.id] ? frames[sk.id].n : [0, 0, 1];
   if (Math.abs(dot(up, seg.wa)) > 0.99) up = Math.abs(seg.wa[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
   return unit(sub(up, mul(seg.wa, dot(up, seg.wa))));
+}
+
+/** The direction of a member's alignment line (a straight line of a 2D or 3D sketch, from its start to its end). */
+export function alignDir(align: NonNullable<MemberFeature["align"]>, doc: PartDoc, frames: Record<string, Frame>): V3 {
+  const sk = doc.features.find(x => x.id === align.sketch);
+  const e = sk?.type === "sketch" ? sk.ents.find(x => x.id === align.ent) : sk?.type === "sketch3d" ? sk.segs.find(x => x.id === align.ent) : undefined;
+  if (!sk || sk.suppressed || !e || e.t !== "line") throw new FeatureError("E-WLD-ALIGN", "The alignment line is missing: pick another one.");
+  return segOf(align, doc, frames).w;
 }
 
 /** How a member's profile is placed on one segment: profile (u, v) to world, on the plane through `at`. */
@@ -125,7 +142,7 @@ export function groupOf(f: MemberFeature, ent: string): Pick<MemberFeature, "anc
 }
 
 function placement(f: MemberFeature, seg: PathSeg, ref: { sketch: string; ent: string }, doc: PartDoc, frames: Record<string, Frame>, shape = memberShape(f, doc)): Placement {
-  const v = upOf(ref, seg, doc, frames);
+  const v = upOf(ref, seg, doc, frames, f.align);
   const u = cross(v, seg.wa);
   const g = groupOf(f, ref.ent);
   const an = g.anchor ? anchorPoint(shape, g.anchor) : shape.origin ?? [0, 0];
