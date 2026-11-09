@@ -9559,6 +9559,22 @@ try {
     check(cr0.title === "Corner Relief" && cr0.all === "All corners (1)" && cr0.rows === 1 && cr1.corners?.length === 1 && /^cr:b0\+cr:b1$/.test(cr1.corners[0]) && cr1.kind === "circle"
       && !cr2.bad && cr2.v < crv0 - 10 * T,
       `sheet metal: Corner Relief lists the two-bend corner, picks it on a click and cuts a circular relief (${JSON.stringify({ cr0, cr1, cr2, crv0 })})`);
+    // Edit it: Rectangular with fillet corners (radius T/2 by default), then Obround; each cuts less than the sharp rectangle would.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smrelief").id));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "rect");
+    await settle();
+    const crSharp = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await mp.click('#mc-pm input[data-sm="rround"]');
+    await settle();
+    const cr3 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { round: d?.round?.v, field: !!document.querySelector('#mc-pm input[data-num="round"]'), v: window.__sv.model.last().props?.volume ?? 0 }; });
+    await mp.selectOption('#mc-pm select[data-sm="kind"]', "obround");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const cr4 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.type === "smrelief"); return { kind: f?.kind, round: f?.round, v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(Math.abs(cr3.round - T / 2) < 1e-3 && cr3.field && cr3.v > crSharp && !cr4.bad && cr4.kind === "obround" && cr4.round === undefined && cr4.v > cr3.v && cr4.v < crv0,
+      `sheet metal: Corner Relief with fillet corners and obround cut less than the sharp rectangle (${JSON.stringify({ crSharp, cr3, cr4, crv0 })})`);
     // Sheet Metal Gusset: one flange on the front edge; click its bend at the middle, ✓: a rib inside the bend, a groove outside.
     await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9579,6 +9595,18 @@ try {
     check(gs0.title === "Sheet Metal Gusset" && gs0.bend === "gs:b0" && gs0.at === undefined && gs0.picked === "Picked bend" && gs0.depth > 0 && gs0.width > 2 * T
       && !gs1.bad && gs1.n === 1 && Math.abs(gs1.v - gsv0) > 0.01,
       `sheet metal: Sheet Metal Gusset goes on the clicked bend (${JSON.stringify({ gs0, gs1, gsv0 })})`);
+    // Edit it: 3 gussets (spacing defaults to twice the width), ✓: three ribs, three times the change in volume.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smgusset").id));
+    await settle();
+    await mp.fill('#mc-pm input[data-sm="gcount"]', "3");
+    await mp.press('#mc-pm input[data-sm="gcount"]', "Enter");
+    await settle();
+    const gs2 = await mp.evaluate(() => ({ count: window.__sv.model.mode().draft?.count, spacing: window.__sv.model.mode().draft?.spacing?.v, field: !!document.querySelector('#mc-pm input[data-num="spacing"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const gs3 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gs2.count === 3 && gs2.spacing > 0 && gs2.field && !gs3.bad && gs3.n === 3 && Math.abs((gs3.v - gsv0) - 3 * (gs1.v - gsv0)) < 1e-3,
+      `sheet metal: Sheet Metal Gusset makes three ribs along the bend (${JSON.stringify({ gs2, gs3 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9702,6 +9730,31 @@ try {
       && !lb2.bad && lb1.v > 0 && Math.abs(lb2.v - lb1.v) / lb1.v < 5e-3
       && lbru.title === "Сгиб по сечениям" && !/[A-Za-z]{3}/.test(lbru.text.replace(/Enter|Esc|mm|Sketch8|Sketch9/g, "")),
       `sheet metal: Lofted Bend joins two sketched profiles with folded facets; flat pattern keeps the volume; panel in Russian (${JSON.stringify({ lb0, lb1, lb2, lbru })})`);
+    // Convert to Sheet Metal: a 100 × 60 × 40 box; click its top face, then its two long top edges, ✓: a U channel of the
+    // same size, thickness inside (defaults: T 2, R 2, K 0.5).
+    await mp.evaluate(() => window.__sv.model.store.change("Box", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), L = (id, a, b) => ({ id, t: "line", a, b });
+      d.features = [
+        { id: "cb", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("cb1", 0, 0), P("cb2", 100, 0), P("cb3", 100, 60), P("cb4", 0, 60), L("cl1", "cb1", "cb2"), L("cl2", "cb2", "cb3"), L("cl3", "cb3", "cb4"), L("cl4", "cb4", "cb1")] },
+        { id: "ce", type: "extrude", name: "Boss-Extrude1", sketch: "cb", op: "boss", end: "blind", depth: { v: 40 } },
+      ];
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.viewer.fit(false));
+    await mp.waitForTimeout(300);
+    await smMenu("Convert to Sheet Metal");
+    for (const p of [[50, 30, 40], [50, 0, 40], [50, 60, 40]]) {
+      const [x, y] = await scr(p);
+      await mp.mouse.click(x, y);
+      await settle();
+    }
+    const cv0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, edges: d?.edges?.map(e => [...e.faces].sort().join("|")) }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const cv1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
+    check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
+      `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
     await ctx.close();
   }
 

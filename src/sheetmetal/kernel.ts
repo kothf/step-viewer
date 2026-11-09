@@ -1,11 +1,11 @@
 // Sheet metal on OpenCASCADE (FR-FT-120): turns the panels and bends of sheet.ts into solids and
 // joins them to the body. Runs in the kernel worker, called from Modeller.evaluate.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
+import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
-import { gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
+import { convertFlanges, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -14,6 +14,9 @@ export interface SheetApi {
   segEdge(s: Seg, frame: Frame): any;
   sub(shape: any, kind: "FACE" | "EDGE"): any[];
   centroid(face: any): V3;
+  /** A face / edge of the body by its reference (null when it is gone). */
+  face(body: Named | null, ref: FaceRef): any;
+  edge(body: Named | null, ref: EdgeRef): any;
 }
 
 const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -36,6 +39,11 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!s1 || !s2) throw new SheetError("E-SM-SKETCH", "Pick two sketches with open profiles for the lofted bend.");
     const { state, ops } = loftedBend(f, s1, frameOfSketch(s1), s2, frameOfSketch(s2));
     return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
+  }
+  if (f.type === "smconvert") {
+    if (sm) throw new SheetError("E-SM-BASE2", "This part already has a base flange.");
+    if (!body) throw new SheetError("E-SM-CONVBODY", "Make a solid to convert first.");
+    return convertSolid(api, body, f);
   }
   if (!sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   if (f.type === "smunfold" || f.type === "smfold") {
@@ -68,9 +76,13 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
   }
   if (f.type === "smgusset") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
-    const { state, mark } = gussetSheet(sm, f);
-    let out = api.bool("fuse", body, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib`), f.id);
-    out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g`), f.id);
+    const { state, marks } = gussetSheet(sm, f);
+    let out = body;
+    marks.forEach((mark, i) => {
+      const tag = i ? `${i}` : "";
+      out = api.bool("fuse", out, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib${tag}`), f.id);
+      out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g${tag}`), f.id);
+    });
     return { body: out, sm: state };
   }
   if (f.type === "smrelief") {
@@ -498,6 +510,100 @@ function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, s
     tool = api.bool("cut", tool, ring, f.id);
   });
   return api.bool("cut", body, tool, f.id);
+}
+
+/**
+ * Convert to Sheet Metal (FR-FT-120): the fixed face's outline (lines, arcs, circles) becomes a plate sketched on its
+ * plane with the thickness inside the solid; each bend edge gets a flange as long and as steep as the face across it;
+ * then the sheet is trimmed to the solid, so openings and slanted ends of those faces carry over.
+ */
+function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature): { body: Named; sm: SheetState } {
+  const oc = api.oc;
+  const plane = (fc: any): { o: V3; n: V3; x: V3 } | null => {
+    const ad = new oc.BRepAdaptor_Surface_2(fc, true);
+    if (ad.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Plane) return null;
+    const pl = ad.Plane(), a = pl.Axis().Direction(), xd = pl.XAxis().Direction(), l = pl.Location();
+    const s = fc.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED ? -1 : 1;
+    return { o: [l.X(), l.Y(), l.Z()], n: [a.X() * s, a.Y() * s, a.Z() * s], x: [xd.X(), xd.Y(), xd.Z()] };
+  };
+  const face = f.face.name ? api.face(body, f.face) : null;
+  const pl = face ? plane(face) : null;
+  if (!face || !pl) throw new SheetError("E-SM-CONVFACE", "Pick a flat face of the solid to stay fixed.");
+  // The plate's frame: z into the solid, so the thickness lies inside it.
+  const n: V3 = [-pl.n[0], -pl.n[1], -pl.n[2]];
+  const y = cross3(n, pl.x);
+  const fr: Frame = { o: pl.o, x: pl.x, y, n };
+  const to2 = (q: any): V2 => { const d = sub3([q.X(), q.Y(), q.Z()], fr.o); return [dot(d, fr.x), dot(d, fr.y)]; };
+  // The face's wires as sketch entities: points shared by key, one entity per edge.
+  const ents: SkEnt[] = [];
+  const pts = new Map<string, string>();
+  const pt = (p: V2) => {
+    const k = `${Math.round(p[0] * 1e6)}:${Math.round(p[1] * 1e6)}`;
+    let id = pts.get(k);
+    if (!id) { id = `q${pts.size}`; pts.set(k, id); ents.push({ id, t: "point", x: p[0], y: p[1] }); }
+    return id;
+  };
+  const edgeEnt: { edge: any; ent: string }[] = [];
+  const outer = oc.BRepTools.OuterWire(face);
+  let k = 0;
+  for (const ex = new oc.TopExp_Explorer_2(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const w = oc.TopoDS.Wire_1(ex.Current());
+    const isOuter = w.IsSame(outer);
+    for (const we = new oc.BRepTools_WireExplorer_2(w); we.More(); we.Next()) {
+      const ed = we.Current();
+      const cu = new oc.BRepAdaptor_Curve_2(ed);
+      const u0 = cu.FirstParameter(), u1 = cu.LastParameter();
+      const a = to2(cu.Value(u0)), b = to2(cu.Value(u1)), m = to2(cu.Value((u0 + u1) / 2));
+      const id = `e${k++}`;
+      const ty = cu.GetType();
+      if (ty === oc.GeomAbs_CurveType.GeomAbs_Line) ents.push({ id, t: "line", a: pt(a), b: pt(b) });
+      else if (ty === oc.GeomAbs_CurveType.GeomAbs_Circle) {
+        const c = to2(cu.Circle().Location()), r = cu.Circle().Radius();
+        if (Math.abs(u1 - u0) > 2 * Math.PI - 1e-7) ents.push({ id, t: "circle", c: pt(c), r });
+        else {
+          // Arcs run counter-clockwise from a to b.
+          const ccw = (m[0] - a[0]) * (b[1] - m[1]) - (m[1] - a[1]) * (b[0] - m[0]) > 0;
+          ents.push({ id, t: "arc", c: pt(c), a: pt(ccw ? a : b), b: pt(ccw ? b : a) });
+        }
+      } else throw new SheetError("E-SM-CURVE", "Sheet metal profiles use lines, arcs and circles.");
+      if (isOuter) edgeEnt.push({ edge: ed, ent: id });
+    }
+  }
+  const sk: SketchFeature = { id: `${f.id}:sk`, type: "sketch", name: f.name, plane: { std: "XY" }, rels: [], dims: [], ents };
+  const base: SmBaseFeature = { id: f.id, type: "smbase", name: f.name, sketch: sk.id, thickness: f.thickness, radius: f.radius, depth: { v: 1 }, k: f.k ?? 0.5 };
+  const { state, ops } = baseFlange(base, sk, fr);
+  // Each bend edge: the face across it, its angle to the fixed face and its reach from the edge.
+  const items = f.edges.map(ref => {
+    const ed = api.edge(body, ref);
+    const hit = ed ? edgeEnt.find(x => x.edge.IsSame(ed)) : undefined;
+    if (!ed || !hit) throw new SheetError("E-SM-CONVEDGE", "Pick bend edges on the outline of the fixed face.");
+    const other = body.faces.find(fc => !fc.IsSame(face) && api.sub(fc, "EDGE").some((x: any) => x.IsSame(ed)));
+    const op = other ? plane(other) : null;
+    if (!op) throw new SheetError("E-SM-CONVFLAT", "A bend edge must join the fixed face to another flat face.");
+    const cu = new oc.BRepAdaptor_Curve_2(ed);
+    const p0 = cu.Value(cu.FirstParameter()), p1 = cu.Value(cu.LastParameter());
+    const A: V3 = [p0.X(), p0.Y(), p0.Z()], u = unit3(sub3([p1.X(), p1.Y(), p1.Z()], A));
+    let length = 0;
+    for (const x of api.sub(other, "EDGE")) {
+      const c = new oc.BRepAdaptor_Curve_2(x);
+      const n0 = c.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 16;
+      for (let i = 0; i <= n0; i++) {
+        const q = c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / n0);
+        const v = sub3([q.X(), q.Y(), q.Z()], A), al = dot(v, u);
+        length = Math.max(length, Math.hypot(v[0] - u[0] * al, v[1] - u[1] * al, v[2] - u[2] * al));
+      }
+    }
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot(pl.n, op.n))));
+    return { faces: [`${f.id}:p0:top`, `${f.id}:p0:${hit.ent}`] as [string, string], length, angle };
+  });
+  const fl = convertFlanges(state, items, f.id, Math.max(f.gap?.v ?? 0.1, 0));
+  let out = applyOps(api, null, ops, state.T, f.id);
+  if (fl.ops.length) out = applyOps(api, out, fl.ops, state.T, f.id);
+  // Trimmed to the solid: openings and shapes of the converted faces carry over (the flat pattern picks them up as cuts).
+  const v = volumeOf(api, out.shape);
+  const trimmed = api.bool("common", out, body, f.id);
+  if (volumeOf(api, trimmed.shape) < v * (1 - 1e-7)) out = trimmed;
+  return { body: out, sm: fl.state };
 }
 
 /** Lines, arcs and circles wound the other way. */

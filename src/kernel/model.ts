@@ -3949,7 +3949,7 @@ export class Modeller {
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
   private sheetApi() {
-    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this) };
+    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */
