@@ -438,7 +438,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 7.7 Materials and properties
 
-- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library.
+- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library. *Built in 1.372.0 for parts: a library of 170 materials with a searchable dialog and custom materials; per-body materials are still to do.*
 - **FR-MAT-002** (P1, M) Mass properties panel (existing) works on the modelled part using exact kernel values: volume, area, mass, centre of mass, principal moments and axes of inertia (new), relative to origin or a chosen coordinate system.
 - **FR-MAT-003** (P1, M) Appearance: colour and opacity per part, body (P3), feature and face; stored in the document and exported to STEP.
 - **FR-MAT-004** (P2, S) Mass property override (user-entered mass/COM for purchased parts), flagged in BOM.

@@ -5,10 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.372.0] - 2026-11-10
+## [1.373.0] - 2026-11-10
 
 ### Added
 - Slot end axes from the side (FR-DRW-023): a view that looks at a slot from the side draws the axis of each rounded end (half a cylinder with material around it), like a hole's centreline. Rounded bar ends and fillets get none.
+
+## [1.372.0] - 2026-11-09
+
+### Added
+
+- **Material library (FR-MAT-001)**: 170 materials in 14 categories instead of the 14 densities: structural, carbon, alloy and tool steels, stainless steels, cast irons, aluminium, copper, titanium and nickel alloys, magnesium, zinc and other metals, plastics, rubbers, composites, glass and ceramics, woods and wood panels. Each has its density, elastic modulus, Poisson's ratio, yield and tensile strength, thermal conductivity, specific heat, thermal expansion and a colour, with the source named (EN, ASTM and GOST product standards give minimum strengths; handbooks and data sheets typical values). A value the source does not give is left empty.
+- **Material dialog**: Part properties ▸ Material and the Mass page open the library: categories on the left, a list with search, the properties on the right. Search takes the name, the grade or another standard's designation (`1.4301`, `AISI 316L`, `Д16Т`, `сталь 45`), in English or Russian. Enter or a double-click applies; **Use the material's colour** also colours the part.
+- **My materials**: **New material…** or **Copy to my materials…** keeps your own materials in the browser. A part stores its material's values in its file, so it opens the same on another computer.
+- A weldment cut list item's Material list is grouped by category and includes your materials; section hatching in drawings picks its pattern from the material's category.
+
+### Changed
+
+- The part's material is no longer a drop-down; its density can still be typed over under the button.
 
 ## [1.371.0] - 2026-11-09
 
@@ -2182,7 +2195,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.372.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.373.0...HEAD
+[1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0
 [1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0
 [1.365.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.365.0

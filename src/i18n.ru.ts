@@ -1,7 +1,11 @@
 // Russian interface strings, keyed by the English text (see i18n.ts).
 // "{x}" placeholders must be kept; "a|b|c" are plural forms (one|few|many) picked by {n}.
 
+import { MATERIAL_RU } from "./tools/materials";
+
 export const RU: Record<string, string> = {
+  // Material library: names, categories and sources (tools/materials.ts)
+  ...MATERIAL_RU,
   // ---------- header ----------
   "Toggle side panel (Ctrl+[)": "Показать или скрыть боковую панель (Ctrl+[)",
   "Toggle right panel (Ctrl+])": "Показать или скрыть правую панель (Ctrl+])",
@@ -225,17 +229,6 @@ export const RU: Record<string, string> = {
   "Centre": "Центр",
   "Edge": "Ребро",
   "Custom…": "Другой…",
-  "Steel (carbon)": "Сталь (углеродистая)",
-  "Stainless steel 304": "Нержавеющая сталь 304",
-  "Aluminium 6061": "Алюминий 6061",
-  "Brass": "Латунь",
-  "Copper": "Медь",
-  "Titanium Ti-6Al-4V": "Титан Ti-6Al-4V",
-  "Cast iron": "Чугун",
-  "Nylon PA6": "Нейлон PA6",
-  "Polycarbonate": "Поликарбонат",
-  "POM (Delrin)": "POM (Delrin, полиацеталь)",
-  "Wood (oak)": "Дерево (дуб)",
   "Enter a density in g/cm³, for example 7.85 for steel.": "Введите плотность в g/cm³, например 7.85 для стали.",
   "Density must be a number greater than 0 g/cm³.": "Плотность должна быть числом больше 0 g/cm³.",
 
@@ -4174,6 +4167,40 @@ export const RU: Record<string, string> = {
   // FR-UI-105: hide/show under the cursor
   "No hidden body under the cursor.": "Под курсором нет скрытого тела.",
   "No hidden component under the cursor.": "Под курсором нет скрытого компонента.",
+  // Material library (FR-MAT-001)
+  "Search by name, grade or standard": "Поиск по названию, марке или стандарту",
+  "Search materials": "Поиск материалов",
+  "Categories": "Категории",
+  "Apply": "Применить",
+  "Edit": "Изменить",
+  "All materials": "Все материалы",
+  "Use the material's colour": "Взять цвет материала",
+  "New material…": "Новый материал…",
+  "No material": "Без материала",
+  "No material matches the search.": "По запросу ничего не найдено.",
+  "Elastic modulus": "Модуль упругости",
+  "Poisson's ratio": "Коэффициент Пуассона",
+  "Yield strength": "Предел текучести",
+  "Tensile strength": "Предел прочности",
+  "Thermal conductivity": "Теплопроводность",
+  "Specific heat": "Удельная теплоёмкость",
+  "Thermal expansion": "Тепловое расширение",
+  "Strengths are the standard's minimum values.": "Прочность: минимальные значения по стандарту.",
+  "Typical values.": "Типовые значения.",
+  "Source:": "Источник:",
+  "For mass and first estimates; use the supplier's certificate for design.": "Для массы и предварительных оценок; для расчётов берите данные из сертификата поставщика.",
+  "Add to my materials": "Добавить в мои материалы",
+  "Copy to my materials…": "Копировать в мои материалы…",
+  "Edit material": "Изменить материал",
+  "New material": "Новый материал",
+  "Other designations": "Другие обозначения",
+  "Only the name and density are needed. My materials are kept in this browser; a part keeps its material's values in its file.": "Нужны только название и плотность. Мои материалы хранятся в этом браузере; деталь хранит значения своего материала в файле.",
+  "Give the material a name.": "Введите название материала.",
+  "Check the value of {p}.": "Проверьте значение: {p}.",
+  "A library material already has this name. Choose another name.": "В библиотеке уже есть материал с таким названием. Выберите другое.",
+  "{name} (copy)": "{name} (копия)",
+  "Delete the material “{name}” from My materials? Parts that use it keep their values.": "Удалить материал «{name}» из моих материалов? Детали, где он задан, сохранят его значения.",
+  "Choose a material from the library": "Выбрать материал из библиотеки",
   // FR-SEL-009: selection breadcrumbs
   "Selection breadcrumbs": "Цепочка выбора",
   // FR-UI-110: value callouts

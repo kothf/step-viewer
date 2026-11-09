@@ -258,7 +258,7 @@
       </div>
     </section>
     <section class="rp" id="rp-mass" role="tabpanel" aria-labelledby="rt-mass"><h2 class="rp-title">Mass properties</h2>
-      <div class="row"><label for="material">Material</label> <select id="material"></select></div>
+      <div class="row"><span id="material-lbl">Material</span> <button type="button" class="btn small" id="material" aria-labelledby="material-lbl material" title="Choose a material from the library"></button></div>
       <div class="row"><label for="density">Density</label> <input type="number" id="density" step="0.01" min="0" value="7.85" style="width:80px" aria-describedby="density-err" /> g/cm³</div>
       <p class="field-err" id="density-err" role="alert" hidden></p>
       <div class="row"><button class="btn small" id="mass-run">Calculate</button><label class="chk"><input type="checkbox" id="com-show" checked /> Show CoM</label></div>
