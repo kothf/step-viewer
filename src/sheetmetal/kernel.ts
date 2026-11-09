@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, breakCorner, closedCorner, miterFlange, miterProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { apply, applyDir, baseFlange, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -44,11 +44,12 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the bend line.");
     const ln = bendSketchLine(sk, frameOfSketch(sk));
     res = f.type === "smbend" ? sketchedBend(sm, f, ln) : jog(sm, f, ln);
-  } else if (f.type === "smmiter") {
+  } else if (f.type === "smmiter" || f.type === "smswept") {
     const sk = doc.features.find(x => x.id === f.sketch);
-    if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the miter flange profile.");
-    res = miterFlange(sm, f, miterProfile(sk, frameOfSketch(sk)));
-  } else res = f.type === "smflange" ? edgeFlange(sm, f) : f.type === "smcorner" ? breakCorner(sm, f) : f.type === "smclosed" ? closedCorner(sm, f) : hem(sm, f);
+    if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", f.type === "smswept" ? "Pick a sketch with the swept flange profile." : "Pick a sketch with the miter flange profile.");
+    if (f.type === "smswept") { const sp = sweptProfile(sk, frameOfSketch(sk)); res = miterFlange(sm, f, sp.pts, sp.radii); }
+    else res = miterFlange(sm, f, miterProfile(sk, frameOfSketch(sk)));
+  } else res = f.type === "smflange" ? edgeFlange(sm, f) : f.type === "smcorner" ? breakCorner(sm, f) : f.type === "smclosed" ? closedCorner(sm, f) : f.type === "smhem" ? hem(sm, f) : (() => { throw new SheetError("E-SM-TYPE", "Unknown sheet metal feature."); })();
   const { state, ops } = res;
   if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
   return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
