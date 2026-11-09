@@ -14,7 +14,8 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { BendCalc, BendPosition, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -63,6 +64,21 @@ export interface SheetState {
   used: string[];
   /** Set by the Flat-Pattern feature when later features cut the sheet: the pattern's real outline. */
   flatEdges?: FlatEdge[];
+  /** Sharp folds between flat facets (lofted bends), in flat coordinates. */
+  folds?: SheetFold[];
+  /** The folded solid is a faceted shell (lofted bend), not the panels' prisms and bends. */
+  faceted?: boolean;
+}
+
+/** A sharp fold line between two facets of a lofted bend: towards the top face when `up`. */
+export interface SheetFold { a: V2; b: V2; up: boolean; angle: number }
+
+/** A lofted bend's folded solid as facets: bottom and top points per vertex, triangles (ccw seen from the top) and boundary sides. */
+export interface SheetMesh {
+  bot: V3[]; top: V3[];
+  tris: { v: [number, number, number]; pid: string }[];
+  /** Boundary edges a → b (in a triangle's ccw order) with the panel and its outline edge they belong to. */
+  sides: { a: number; b: number; pid: string; ent: string }[];
 }
 
 /** A piece of the flat pattern's outline (arcs counter-clockwise from a0 to a1, as DXF draws them). */
@@ -76,7 +92,8 @@ export type FlatEdge =
 export type SheetOp =
   | { kind: "cut"; M: Mat; loop: V2[]; /** A closed outline used instead of `loop`; a piece whose `ent` holds ":" names the face it leaves. */ segs?: Seg[] }
   | { kind: "panel"; panel: Panel }
-  | { kind: "bend"; bend: Bend };
+  | { kind: "bend"; bend: Bend }
+  | { kind: "mesh"; mesh: SheetMesh };
 
 // ---------- small vector helpers ----------
 
@@ -850,13 +867,13 @@ export function bendSketchLine(sk: SketchFeature, frame: Frame): [V3, V3] {
   return [w(s.a), w(s.b)];
 }
 
-interface Fold { up: boolean; angle: number; r: number }
+interface BendFold { up: boolean; angle: number; r: number }
 
 /**
  * Folds a panel along a flat line: the panel is split there, the moving side becomes new panels joined
  * by the bends `folds` (with flat gaps `gaps` between them). The flat pattern keeps its outline.
  */
-function foldPanel(st: SheetState, panel: Panel, a: V2, b: V2, flip: boolean, position: BendPosition, folds: Fold[], gaps: number[], fid: string): SheetOp[] {
+function foldPanel(st: SheetState, panel: Panel, a: V2, b: V2, flip: boolean, position: BendPosition, folds: BendFold[], gaps: number[], fid: string): SheetOp[] {
   const size = Math.max(1, ...loopPolygon(panel.outer, 8).flatMap(p => [Math.abs(p[0]), Math.abs(p[1])]));
   const tol = size * 1e-7;
   const l = d2(a, b);
@@ -1108,12 +1125,13 @@ export function flatSize(st: SheetState): { w: number; h: number; min: V2; max: 
 
 /** Bend lines on the flat pattern's top face, in world coordinates (drawn in the view when flattened). */
 export function flatBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[] {
-  return st.bends.map(b => { const [p, q] = bendLine(b); return { a: apply(st.root, [p[0], p[1], st.T]), b: apply(st.root, [q[0], q[1], st.T]), up: b.up }; });
+  return [...st.bends.map(b => { const [p, q] = bendLine(b); return { a: apply(st.root, [p[0], p[1], st.T]), b: apply(st.root, [q[0], q[1], st.T]), up: b.up }; }),
+    ...(st.folds ?? []).map(f => ({ a: apply(st.root, [f.a[0], f.a[1], st.T]), b: apply(st.root, [f.b[0], f.b[1], st.T]), up: f.up }))];
 }
 
 /** A copy of a sheet metal part with its flat pattern shown (the Flat-Pattern feature on, or added last); null for other parts. */
 export function flatPatternDoc(doc: PartDoc): PartDoc | null {
-  if (!doc.features.some(f => f.type === "smbase" && !f.suppressed)) return null;
+  if (!doc.features.some(isSheetBase)) return null;
   const d: PartDoc = structuredClone(doc);
   d.rollback = null;
   const f = d.features.find(x => x.type === "smflat");
@@ -1125,11 +1143,208 @@ export function flatPatternDoc(doc: PartDoc): PartDoc | null {
 /** A bend line on the flat pattern, in flat coordinates on the top face (z = T), with what its note says. */
 export interface FlatBend { a: V3; b: V3; up: boolean; angle: number; r: number }
 export function flatBends(st: SheetState): FlatBend[] {
-  return st.bends.map(b => { const [p, q] = bendLine(b); return { a: [p[0], p[1], st.T], b: [q[0], q[1], st.T], up: b.up, angle: b.angle, r: b.r }; });
+  return [...st.bends.map(b => { const [p, q] = bendLine(b); return { a: [p[0], p[1], st.T], b: [q[0], q[1], st.T], up: b.up, angle: b.angle, r: b.r } as FlatBend; }),
+    ...(st.folds ?? []).map(f => ({ a: [f.a[0], f.a[1], st.T], b: [f.b[0], f.b[1], st.T], up: f.up, angle: f.angle, r: 0 } as FlatBend))];
 }
 
 /** The rigid move that lays the flat pattern on the world XY plane (flat coordinates), as a 3×4 row-major matrix: root⁻¹. */
 export function flatToXY(st: SheetState): number[] {
   const R = st.root, rows = [R.x, R.y, R.z];
   return rows.flatMap(r => [r[0], r[1], r[2], -(r[0] * R.o[0] + r[1] * R.o[1] + r[2] * R.o[2])]);
+}
+
+// ---------- lofted bend ----------
+
+/** An open profile of lines and arcs as world points, each arc split into `n` straight pieces. */
+function loftProfile(sk: SketchFeature, frame: Frame, n: number): V3[] {
+  const path = sketchPath(sk);
+  if (path.error || path.closed || !path.segs.length || path.segs.some(x => x.kind !== "line" && x.kind !== "arc"))
+    throw new SheetError("E-SM-LOFTSK", "Each lofted bend profile must be an open chain of lines and arcs.");
+  const w = (p: V2): V3 => add(add(frame.o, mul(frame.x, p[0])), mul(frame.y, p[1]));
+  const segs = path.segs as Extract<Seg, { kind: "line" | "arc" }>[];
+  const pts: V2[] = [segs[0].a];
+  for (const s of segs) {
+    if (s.kind === "arc") {
+      const a0 = Math.atan2(s.a[1] - s.c[1], s.a[0] - s.c[0]), a1 = Math.atan2(s.b[1] - s.c[1], s.b[0] - s.c[0]);
+      let sw = a1 - a0;
+      if (s.ccw) { while (sw <= 1e-12) sw += 2 * Math.PI; } else { while (sw >= -1e-12) sw -= 2 * Math.PI; }
+      for (let i = 1; i < n; i++) pts.push([s.c[0] + s.r * Math.cos(a0 + sw * i / n), s.c[1] + s.r * Math.sin(a0 + sw * i / n)]);
+    }
+    pts.push(s.b);
+  }
+  return pts.map(w);
+}
+
+/** Normalised arc-length parameter of each point of a polyline. */
+function arcParams(p: V3[]): number[] {
+  const t = [0];
+  for (let i = 1; i < p.length; i++) t.push(t[i - 1] + Math.hypot(...sub3(p[i], p[i - 1])));
+  const L = t.at(-1)!;
+  if (!(L > 1e-9)) throw new SheetError("E-SM-LOFTSK", "Each lofted bend profile must be an open chain of lines and arcs.");
+  return t.map(x => x / L);
+}
+
+/** The point at parameter u along a polyline with parameters t. */
+function atParam(p: V3[], t: number[], u: number): V3 {
+  let i = 0;
+  while (i < t.length - 2 && t[i + 1] < u) i++;
+  const s = t[i + 1] - t[i] > 0 ? Math.min(1, Math.max(0, (u - t[i]) / (t[i + 1] - t[i]))) : 0;
+  return add(p[i], mul(sub3(p[i + 1], p[i]), s));
+}
+
+/** The offset direction at a vertex: v · n = 1 for each (different) facet normal n there, least squares past three. */
+function offsetDir(ns: V3[]): V3 {
+  const dist: V3[] = [];
+  for (const n of ns) if (!dist.some(m => dot(m, n) > 1 - 1e-10)) dist.push(n);
+  if (dist.length === 1) return dist[0];
+  if (dist.length === 2) { const c = 1 + dot(dist[0], dist[1]); return mul(add(dist[0], dist[1]), 1 / Math.max(c, 0.05)); }
+  // (Aᵀ A + λ I) v = Aᵀ 1 + λ m: nearly parallel normals leave v close to the mitre of their mean m.
+  const m0 = unit(dist.reduce((a, n) => add(a, n), [0, 0, 0] as V3));
+  const m = mul(m0, 1 / Math.max(0.05, dist.reduce((a, n) => a + dot(m0, n), 0) / dist.length));
+  const lam = 1e-4;
+  const A = [0, 1, 2].map(r => [0, 1, 2].map(c => dist.reduce((a, n) => a + n[r] * n[c], 0) + (r === c ? lam : 0)));
+  const b = [0, 1, 2].map(r => dist.reduce((a, n) => a + n[r], 0) + lam * m[r]);
+  const det = (M: number[][]) => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  const D = det(A);
+  if (Math.abs(D) < 1e-18) return m;
+  const v = [0, 1, 2].map(j => det(A.map((row, r) => row.map((x, c) => (c === j ? b[r] : x)))) / D) as V3;
+  return Math.hypot(...v) > 20 ? m : v;
+}
+
+/**
+ * Lofted bend: the two profiles are sampled at matching arc-length parameters (every corner of either kept), the
+ * strip between them split into triangles along the shorter diagonal of each quad, and triangles lying in one
+ * plane joined into panels. The profiles are the sheet's bottom face; the neutral surface (K-factor) is unfolded
+ * triangle by triangle, so lengths there are kept and the folds between panels become the flat pattern's bend lines.
+ */
+export function loftedBend(f: SmLoftFeature, sk1: SketchFeature, fr1: Frame, sk2: SketchFeature, fr2: Frame): { state: SheetState; ops: SheetOp[] } {
+  const T = f.thickness.v, k = f.k ?? 0.5, R = f.radius.v;
+  if (!(T > 1e-6)) throw new SheetError("E-SM-T", "The thickness must be more than 0.");
+  if (!(R >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  if (!(k >= 0 && k <= 1)) throw new SheetError("E-SM-K", "The K-factor must be between 0 and 1.");
+  if (sk1.id === sk2.id) throw new SheetError("E-SM-LOFT2", "Pick two different sketches for the lofted bend.");
+  const n = Math.max(1, Math.min(64, Math.round(f.facets ?? 8)));
+  const A0 = loftProfile(sk1, fr1, n);
+  let B0 = loftProfile(sk2, fr2, n);
+  const d = (a: V3, b: V3) => Math.hypot(...sub3(a, b));
+  if (d(A0[0], B0[0]) + d(A0.at(-1)!, B0.at(-1)!) > d(A0[0], B0.at(-1)!) + d(A0.at(-1)!, B0[0])) B0 = [...B0].reverse();
+  const ta = arcParams(A0), tb = arcParams(B0);
+  const us: number[] = [];
+  for (const u of [...ta, ...tb].sort((x, y) => x - y)) if (!us.length || u - us.at(-1)! > 1e-6) us.push(u);
+  us[us.length - 1] = 1;
+  const m = us.length;
+  const pts: V3[] = [...us.map(u => atParam(A0, ta, u)), ...us.map(u => atParam(B0, tb, u))];
+  const size = Math.max(1, ...pts.flatMap(p => p.map(Math.abs)));
+  const tol = size * 1e-9;
+  const ia = (i: number) => i, ib = (i: number) => (d(pts[i], pts[m + i]) < tol ? i : m + i);
+  // Triangles in strip order, each sharing an edge with one before it; quad i is a_i, a_i+1, b_i+1, b_i.
+  const raw: [number, number, number][] = [];
+  for (let i = 0; i < m - 1; i++) {
+    const a = ia(i), a1 = ia(i + 1), b = ib(i), b1 = ib(i + 1);
+    if (d(pts[a], pts[b1]) <= d(pts[a1], pts[b])) raw.push([a, b1, b], [a, a1, b1]);
+    else raw.push([a, a1, b], [a1, b1, b]);
+  }
+  const nrm = (t: [number, number, number]) => cross(sub3(pts[t[1]], pts[t[0]]), sub3(pts[t[2]], pts[t[0]]));
+  let tris = raw.filter(t => new Set(t).size === 3 && Math.hypot(...nrm(t)) > tol * size);
+  if (!tris.length) throw new SheetError("E-SM-LOFTFLAT", "The two profiles make no sheet between them.");
+  if (f.reverse) tris = tris.map(([p, q, r]) => [p, r, q]);
+  const tn = tris.map(t => unit(nrm(t)));
+  // Neighbours across shared edges.
+  const key = (u: number, v: number) => `${u}>${v}`;
+  const owner = new Map<string, number>();
+  tris.forEach((t, j) => t.forEach((u, q) => owner.set(key(u, t[(q + 1) % 3]), j)));
+  // Panels: triangles in one plane, joined across shared edges.
+  const group = tris.map((_t, j) => j);
+  const find = (j: number): number => (group[j] === j ? j : (group[j] = find(group[j])));
+  tris.forEach((t, j) => t.forEach((u, q) => {
+    const o = owner.get(key(t[(q + 1) % 3], u));
+    if (o != null && dot(tn[j], tn[o]) > 1 - 1e-10) group[find(o)] = find(j);
+  }));
+  const roots = [...new Set(tris.map((_t, j) => find(j)))];
+  const pidOf = (j: number) => `${f.id}:p${roots.indexOf(find(j))}`;
+  // Bottom = the profiles, top = T along each vertex's offset direction, neutral surface k·T.
+  const vn: V3[][] = pts.map(() => []);
+  tris.forEach((t, j) => t.forEach(u => vn[u].push(tn[j])));
+  const off = vn.map(ns => (ns.length ? offsetDir(ns) : [0, 0, 0] as V3));
+  const top = pts.map((p, i) => add(p, mul(off[i], T)));
+  const neu = pts.map((p, i) => add(p, mul(off[i], k * T)));
+  // Unfold the neutral triangles: a vertex's flat point is set by the first triangle that reaches it.
+  const flat = new Map<number, V2>();
+  for (const t of tris) {
+    const placed = t.filter(u => flat.has(u)).length;
+    if (placed === 3) continue;
+    let [p, q, r] = t;
+    if (placed === 0) {
+      if (flat.size) throw new SheetError("E-SM-LOFTFLAT", "The lofted bend could not be unfolded.");
+      flat.set(p, [0, 0]);
+      flat.set(q, [d(neu[p], neu[q]), 0]);
+    } else if (placed === 1) throw new SheetError("E-SM-LOFTFLAT", "The lofted bend could not be unfolded.");
+    // The unplaced vertex last: it lies left of p → q (counter-clockwise).
+    while (flat.has(r)) [p, q, r] = [q, r, p];
+    const fp = flat.get(p)!, fq = flat.get(q)!;
+    const L = d2(fp, fq), e: V2 = [(fq[0] - fp[0]) / L, (fq[1] - fp[1]) / L];
+    const dp = d(neu[r], neu[p]), dq = d(neu[r], neu[q]);
+    const x = (dp * dp - dq * dq + L * L) / (2 * L), h = Math.sqrt(Math.max(0, dp * dp - x * x));
+    flat.set(r, [fp[0] + x * e[0] - h * e[1], fp[1] + x * e[1] + h * e[0]]);
+  }
+  // Lay the pattern with the first profile's first piece along +x from the origin.
+  const o0 = flat.get(ia(0)), o1 = flat.get(ia(1));
+  if (o0 && o1) {
+    const th = Math.atan2(o1[1] - o0[1], o1[0] - o0[0]), c = Math.cos(th), sn = Math.sin(th);
+    for (const [u, p] of flat) flat.set(u, [(p[0] - o0[0]) * c + (p[1] - o0[1]) * sn, -(p[0] - o0[0]) * sn + (p[1] - o0[1]) * c]);
+  }
+  // Each panel's transform from its first triangle: flat → neutral at z = k·T.
+  const matFor = (t: [number, number, number], nz: V3): Mat => {
+    const [p, q] = t;
+    const e3 = unit(sub3(neu[q], neu[p])), w3 = cross(nz, e3);
+    const fp = flat.get(p)!, fq = flat.get(q)!, L = d2(fp, fq);
+    const ex = (fq[0] - fp[0]) / L, ey = (fq[1] - fp[1]) / L;
+    const x = add(mul(e3, ex), mul(w3, -ey)), y = add(mul(e3, ey), mul(w3, ex));
+    const o = sub3(sub3(sub3(neu[p], mul(nz, k * T)), mul(x, fp[0])), mul(y, fp[1]));
+    return { o, x, y, z: nz };
+  };
+  const st: SheetState = { T, R, calc: "k", k, relief: "rect", reliefRatio: 0.5, root: matFor(tris[0], tn[0]), panels: [], bends: [], used: [], folds: [], faceted: true };
+  const fl = (u: number) => flat.get(u)!;
+  const sides: SheetMesh["sides"] = [];
+  roots.forEach((g, gi) => {
+    const mine = tris.map((t, j) => ({ t, j })).filter(x => find(x.j) === g);
+    // Boundary edges of the panel, chained into its outline.
+    const edges: [number, number][] = [];
+    for (const { t, j } of mine) t.forEach((u, q) => {
+      const v = t[(q + 1) % 3], o = owner.get(key(v, u));
+      if (o == null || find(o) !== g) edges.push([u, v]);
+      if (o != null && find(o) !== g && j < o) {
+        // A fold between two panels, counted once.
+        const other = tris[o], c = other.find(x => x !== u && x !== v)!;
+        st.folds!.push({ a: fl(u), b: fl(v), up: dot(sub3(neu[c], neu[u]), tn[j]) > 0, angle: Math.acos(Math.max(-1, Math.min(1, dot(tn[j], tn[o])))) });
+      }
+    });
+    const loop: [number, number][] = [edges.shift()!];
+    while (edges.length) {
+      const i = edges.findIndex(([u]) => u === loop.at(-1)![1]);
+      if (i < 0) break;
+      loop.push(edges.splice(i, 1)[0]);
+    }
+    if (edges.length) throw new SheetError("E-SM-LOFTFLAT", "The lofted bend could not be unfolded.");
+    const segs = mergeLines(loop.map(([u, v], q) => line(`x${q}`, fl(u), fl(v))), size * 1e-9).map((s, q) => ({ ...s, ent: `e${q}` }));
+    const pid = `${f.id}:p${gi}`;
+    st.panels.push({ id: pid, outer: segs, holes: [], M: matFor(mine[0].t, tn[mine[0].j]), n: 0 });
+    // The mesh's boundary sides: outline edges no other triangle shares.
+    for (const { t } of mine) t.forEach((u, q) => {
+      const v = t[(q + 1) % 3];
+      if (owner.has(key(v, u))) return;
+      const mid: V2 = [(fl(u)[0] + fl(v)[0]) / 2, (fl(u)[1] + fl(v)[1]) / 2];
+      let best = segs[0].ent, bd = Infinity;
+      for (const s of segs) {
+        if (s.kind !== "line") continue;
+        const ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1], l2 = ux * ux + uy * uy || 1;
+        const c = Math.max(0, Math.min(1, ((mid[0] - s.a[0]) * ux + (mid[1] - s.a[1]) * uy) / l2));
+        const dd = Math.hypot(mid[0] - s.a[0] - c * ux, mid[1] - s.a[1] - c * uy);
+        if (dd < bd) { bd = dd; best = s.ent; }
+      }
+      sides.push({ a: u, b: v, pid, ent: best });
+    });
+  });
+  const mesh: SheetMesh = { bot: pts, top, tris: tris.map((t, j) => ({ v: t, pid: pidOf(j) })), sides };
+  return { state: st, ops: [{ kind: "mesh", mesh }] };
 }
