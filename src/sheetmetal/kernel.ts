@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { apply, applyDir, baseFlange, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -27,6 +27,14 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     const sk = doc.features.find(x => x.id === f.sketch);
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch for the base flange.");
     const { state, ops } = baseFlange(f, sk, frameOfSketch(sk));
+    return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
+  }
+  if (f.type === "smloft") {
+    if (sm) throw new SheetError("E-SM-BASE2", "This part already has a base flange.");
+    const sk = (id: string) => doc.features.find((x): x is SketchFeature => x.id === id && x.type === "sketch");
+    const s1 = sk(f.sketch1), s2 = sk(f.sketch2);
+    if (!s1 || !s2) throw new SheetError("E-SM-SKETCH", "Pick two sketches with open profiles for the lofted bend.");
+    const { state, ops } = loftedBend(f, s1, frameOfSketch(s1), s2, frameOfSketch(s2));
     return { body: applyOps(api, body, ops, state.T, f.id), sm: state };
   }
   if (!sm) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
@@ -65,7 +73,7 @@ function applyOps(api: SheetApi, body: Named | null, ops: SheetOp[], T: number, 
   });
   for (const op of ops) {
     if (op.kind === "cut") continue;
-    const piece = op.kind === "panel" ? panelSolid(api, op.panel, T) : bendSolid(api, op.bend, T);
+    const piece = op.kind === "panel" ? panelSolid(api, op.panel, T) : op.kind === "mesh" ? meshSolid(api, op.mesh) : bendSolid(api, op.bend, T);
     out = out ? api.bool("fuse", out, piece, fid) : piece;
   }
   if (!out) throw new SheetError("E-SM-EMPTY", "The sheet metal feature made nothing.");
@@ -154,6 +162,62 @@ function bendSolid(api: SheetApi, b: Bend, T: number): Named {
   return { shape, faces, names };
 }
 
+/**
+ * A lofted bend's solid: a triangle on the bottom and on the top for each facet, and the boundary sides (split in two
+ * when they twist), sewn into one closed shell. Faces lying in one plane are merged; names go by the nearest piece.
+ */
+function meshSolid(api: SheetApi, m: SheetMesh): Named {
+  const oc = api.oc;
+  const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
+  const pieces: { face: any; name: string; c: V3; n: V3 }[] = [];
+  const poly = (pts: V3[], name: string) => {
+    const mk = new oc.BRepBuilderAPI_MakePolygon_1();
+    for (const p of pts) mk.Add_1(P(p));
+    mk.Close();
+    const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+    pieces.push({ face, name, c: pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length, a[2] + p[2] / pts.length], [0, 0, 0] as V3), n: unit3(cross3(sub3(pts[1], pts[0]), sub3(pts[2], pts[0]))) });
+  };
+  for (const t of m.tris) {
+    poly([m.bot[t.v[0]], m.bot[t.v[2]], m.bot[t.v[1]]], `${t.pid}:bot`);
+    poly(t.v.map(i => m.top[i]), `${t.pid}:top`);
+  }
+  const size = Math.max(1, ...m.top.flatMap(p => p.map(Math.abs)));
+  for (const s of m.sides) {
+    const q = [m.bot[s.b], m.bot[s.a], m.top[s.a], m.top[s.b]];
+    const n = unit3(cross3(sub3(q[1], q[0]), sub3(q[2], q[0])));
+    const name = `${s.pid}:${s.ent}`;
+    if (Math.abs(dot(sub3(q[3], q[0]), n)) < size * 1e-9) poly(q, name);
+    else { poly([q[0], q[1], q[2]], name); poly([q[0], q[2], q[3]], name); }
+  }
+  const tol = Math.max(1e-7, size * 1e-8);
+  const sew = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false);
+  for (const p of pieces) sew.Add(p.face);
+  sew.Perform(new oc.Message_ProgressRange_1());
+  const sewn = sew.SewedShape();
+  const shells: any[] = [];
+  for (const ex = new oc.TopExp_Explorer_2(sewn, oc.TopAbs_ShapeEnum.TopAbs_SHELL, oc.TopAbs_ShapeEnum.TopAbs_SHAPE); ex.More(); ex.Next()) shells.push(oc.TopoDS.Shell_1(ex.Current()));
+  if (shells.length !== 1 || !oc.BRep_Tool.IsClosed_1(shells[0])) throw new SheetError("E-SM-LOFTSOLID", "The lofted bend could not be closed into a solid; check that the profiles don't cross.");
+  let solid = new oc.ShapeFix_Solid_1().SolidFromShell(shells[0]);
+  if (volumeOf(api, solid) < 0) solid = solid.Reversed();
+  let shape = solid;
+  const un = new oc.ShapeUpgrade_UnifySameDomain_2(solid, true, true, false);
+  try { un.Build(); shape = un.Shape(); } catch { /* keep the facets */ }
+  const faces = api.sub(shape, "FACE");
+  // A merged face's centroid lies in the plane of the pieces it was made of.
+  const names = faces.map(fc => {
+    const c = api.centroid(fc);
+    let best = pieces[0].name, bd = Infinity;
+    for (const p of pieces) {
+      const dd = Math.hypot(...sub3(p.c, c)) + (Math.abs(dot(sub3(c, p.c), p.n)) < size * 1e-7 ? 0 : 1e9);
+      if (dd < bd) { bd = dd; best = p.name; }
+    }
+    return best;
+  });
+  return { shape, faces, names };
+}
+const cross3 = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit3 = (a: V3): V3 => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
 /** A cut prism across the sheet: a flat polygon in the panel frame, a little beyond both faces. */
 function cutTool(api: SheetApi, M: Mat, loop: V2[], T: number, fid: string): Named {
   const pts = polyArea(loop) >= 0 ? loop : [...loop].reverse();
@@ -186,7 +250,8 @@ export function flatBody(api: SheetApi, st: SheetState, fid: string, folded: Nam
   });
   let out = parts[0];
   for (const p of parts.slice(1)) out = api.bool("fuse", out, p, fid);
-  const removed = folded ? removedPieces(api, st, folded, fid) : [];
+  // A faceted (lofted) sheet isn't made of the panels' prisms, so what was cut out can't be told by volume.
+  const removed = folded && !st.faceted ? removedPieces(api, st, folded, fid) : [];
   if (!removed.length) return { body: out };
   for (const r of removed) out = api.bool("cut", out, r, fid);
   return { body: out, edges: topEdges(api, out, st.root, st.T) };
