@@ -9081,6 +9081,18 @@ try {
     check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
+    // Coped cut: the Butt end choice; the line meets the arc tangent-free at a sharp corner, so it butts there.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wcope"]', "coped");
+    await settle();
+    const copeHelp = await mp.evaluate(() => !!document.querySelector("#mc-pm .pm-help") && [...document.querySelectorAll("#mc-pm .pm-help")].some(e => /saddle/.test(e.textContent)));
+    await mp.click("#mc-ok");
+    await settle();
+    const cp2 = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), coped: f.coped, bodies: l.bodies?.length }; }, bendId);
+    check(copeHelp && cp2.coped === true && !cp2.bad, `weldments: coped cut option on a member (${JSON.stringify({ copeHelp, cp2 })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
