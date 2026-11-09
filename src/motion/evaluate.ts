@@ -5,7 +5,7 @@ import type { Geo } from "../asm/solver";
 import type { Mate, MateType, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import { evaluate } from "../model/expr";
-import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, Track } from "./types";
+import type { CamKey, Interp, Key, MotionStudy, MotorSeg, MotorTrack, PoseKey, SegShape, Track } from "./types";
 
 /** Mates whose value a key track or a motor changes. */
 export const VALUE_MATES: ReadonlySet<MateType> = new Set(["distance", "angle"]);
@@ -163,6 +163,51 @@ function akimaSlopes(pts: [number, number][]): number[] {
   return d;
 }
 
+export const SEG_SHAPES: SegShape[] = ["linear", "cubic", "quintic", "harmonic", "cycloid"];
+
+/** A segment's progress 0 … 1 at u = 0 … 1 by its shape (cubic and quintic start and stop at rest, quintic also without a jerk; harmonic = half a cosine; cycloidal = no acceleration jump). */
+export function segShape(k: SegShape, u: number): number {
+  if (u <= 0) return 0;
+  if (u >= 1) return 1;
+  if (k === "cubic") return u * u * (3 - 2 * u);
+  if (k === "quintic") return u * u * u * (10 - 15 * u + 6 * u * u);
+  if (k === "harmonic") return (1 - Math.cos(Math.PI * u)) / 2;
+  if (k === "cycloid") return u - Math.sin(2 * Math.PI * u) / (2 * Math.PI);
+  return u;
+}
+
+/** A segments motor's value at `t` s after its start: the chain from (0, 0) through each row's end, held after the last. */
+export function segmentsAt(segs: MotorSeg[], t: number): number {
+  let t0 = 0, v0 = 0;
+  for (const [t1, v1, k] of segs) {
+    if (t < t1) return v0 + (v1 - v0) * segShape(k, t1 > t0 ? (t - t0) / (t1 - t0) : 1);
+    t0 = t1; v0 = v1;
+  }
+  return v0;
+}
+
+/**
+ * Segments typed as "end time, end value, shape" lines (separators as in `parsePoints`; the shape is one of
+ * `SEG_SHAPES`, or its first letters, and linear when left out). Null when no rows, a time not after the last
+ * (the first after 0) or an unknown shape.
+ */
+export function parseSegments(text: string, scale = 1): MotorSeg[] | null {
+  const out: MotorSeg[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const parts = (line.includes(";") ? line.split(";").map(x => x.trim().replace(",", ".")) : line.split(/[\s,]+/)).filter(Boolean);
+    const a = Number(parts[0]), b = Number(parts[1]);
+    if (parts.length < 2 || parts.length > 3 || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+    if (a <= (out.length ? out[out.length - 1][0] : 0)) return null;
+    const w = (parts[2] ?? "linear").toLowerCase();
+    const k = SEG_SHAPES.find(x => x.startsWith(w) || (w.length >= 3 && w.startsWith(x.slice(0, 3))));
+    if (!k) return null;
+    out.push([a, b * scale, k]);
+  }
+  return out.length ? out : null;
+}
+
 /**
  * Motor data points typed or pasted as "time, value" lines (spaces, commas or semicolons with decimal commas;
  * `#` starts a comment). `scale` turns the value into internal units. Null when fewer than two rows or the
@@ -206,6 +251,7 @@ export function motorAmount(m: MotorTrack, t: number): number {
     return s * (m.dist ?? 0) * u * u * (3 - 2 * u);
   }
   if (m.profile === "points") return s * pointsAt(m.pts ?? [], dt, m.fit);
+  if (m.profile === "segments") return s * segmentsAt(m.segs ?? [], dt);
   if (m.profile === "expr") { const v = exprAt(m.expr ?? "0", dt); return Number.isFinite(v) ? s * (m.motion === "rotary" ? (v * Math.PI) / 180 : v) : 0; }
   return s * (m.motion === "rotary" ? (m.speed * 2 * Math.PI) / 60 : m.speed) * dt;
 }

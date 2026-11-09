@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.318.0] - 2026-11-09
+
+### Added
+
+- Motion studies: a **Motion segments** motor profile, like SolidWorks' segments motor. Each row is a segment with its end time, end value and shape (linear, cubic, quintic, harmonic or cycloid), and each segment starts where the last one ended, so a cam-like rise, dwell and return takes three rows (FR-FT-122).
+
 ## [1.312.0] - 2026-11-09
 
 ### Added
@@ -1828,7 +1834,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.312.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.318.0...HEAD
+[1.318.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.318.0
 [1.312.0]: https://github.com/kothf/step-viewer/compare/v1.311.0...v1.312.0
 [1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
 [1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
