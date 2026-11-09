@@ -9552,6 +9552,36 @@ try {
     check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
     await mp.evaluate(() => window.__sv.model.store.undo());
     await settle();
+    // Polygonal gusset: the other end by profile angle starts at the symmetric profile's angle; 60° then moves the flat at
+    // face 2; an unequal chamfer of the inner corner takes its own distance along face 2.
+    const gVol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const gv0 = await gVol();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wshape"]', "poly");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wpolyEnd"]', "angle");
+    await settle();
+    const gp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { d1: d.d1.v, d2: d.d2.v, d3: d.d3?.v, a: d.polyAngle?.v, field: !!document.querySelector('#mc-pm [data-num="polyAngle"]') }; });
+    await mp.fill('#mc-pm input[data-num="polyAngle"]', "60");
+    await mp.press('#mc-pm input[data-num="polyAngle"]', "Tab");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer2"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="chamfer2"]', "12");
+    await mp.press('#mc-pm input[data-num="chamfer2"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const gp1 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === "g5"); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), a: f.polyAngle?.v, c: f.chamfer?.v, c2: f.chamfer2?.v, t: f.thickness.v, v: l.props?.volume ?? 0 }; });
+    const gd4 = gp0.d1 - (gp0.d2 - gp0.d3) / Math.tan(Math.PI / 3);
+    const gWant = ((gp0.d1 * gp0.d2 - 0.5 * (gp0.d1 - gd4) * (gp0.d2 - gp0.d3) - 0.5 * 5 * 12) - 0.5 * gp0.d1 * gp0.d2) * gp1.t;
+    check(gp0.field && Math.abs(gp0.a - Math.atan2(gp0.d2 - gp0.d3, gp0.d1 - gp0.d3)) < 1e-9 && !gp1.bad && Math.abs(gp1.a - Math.PI / 3) < 1e-9 && gp1.c === 5 && gp1.c2 === 12 && Math.abs(gp1.v - gv0 - gWant) < 1e-3 * Math.abs(gWant),
+      `weldments: polygonal gusset by profile angle, unequal chamfer (${JSON.stringify({ gp0, gp1, dv: gp1.v - gv0, gWant })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Bend", d => { d.features.push({ id: "sa", type: "sketch", name: "Bend", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b0", 3000, 0), P("b1", 3300, 0), P("bc", 3300, 100), P("b2", 3400, 100), P("b3", 3400, 400), { id: "j1", t: "line", a: "b0", b: "b1" }, { id: "j2", t: "arc", c: "bc", a: "b1", b: "b2" }, { id: "j3", t: "line", a: "b2", b: "b3" }] }); }); });
     await settle();

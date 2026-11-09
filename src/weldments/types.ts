@@ -129,8 +129,14 @@ export interface GussetFeature {
   /** Polygonal profile: the outer corner is cut off, leaving `d3` along each leg's end. */
   shape: "tri" | "poly";
   d3?: Num;
-  /** Inner corner chamfer (clears the weld between the members). */
+  /** Polygonal profile: the flat at the end of leg 2 (along face 1's direction) when it differs from `d3`. */
+  d4?: Num;
+  /** Polygonal profile: the sloping edge's angle from face 1 (radians); sets the flat at the end of leg 2 instead of `d4`. */
+  polyAngle?: Num;
+  /** Inner corner chamfer (clears the weld between the members): the distance along face 1, and along face 2 unless `chamfer2`. */
   chamfer?: Num;
+  /** The chamfer's distance along face 2 when it differs. */
+  chamfer2?: Num;
   loc: "mid" | "start" | "end";
   /** Moves the plate from its location along the corner line (from the start or end inwards; from the middle towards the end). */
   offset?: Num;
