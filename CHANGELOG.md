@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.336.0] - 2026-11-09
+
+### Added
+
+- **Structural member alignment (FR-FT-121)**: Structural Member gets SolidWorks' Alignment. Pick a straight sketch line (any 2D or 3D sketch line, construction lines too) and choose whether the profile's vertical or horizontal axis points along it: every segment turns its profile that way, square to the segment, and the rotation angle turns it on from there. Members of a 3D sketch can now all face one way instead of following world Z.
 ## [1.335.0] - 2026-11-09
 
 ### Added
@@ -1981,7 +1986,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.335.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.336.0...HEAD
+[1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0
 [1.335.0]: https://github.com/kothf/step-viewer/compare/v1.334.0...v1.335.0
 [1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
 [1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0

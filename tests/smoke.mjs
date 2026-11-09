@@ -9066,6 +9066,21 @@ try {
     await settle();
     const grp = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), groups: f.groups?.map(g => [g.ents, Math.round((g.angle?.v ?? 0) * 180 / Math.PI)]) }; }, bendId);
     check(JSON.stringify(gl) === '["Group 2"]' && !grp.bad && JSON.stringify(grp.groups) === '[[["j3"],90]]', `weldments: member groups with their own rotation (${JSON.stringify({ gl, grp })})`);
+    // Alignment: the profile's horizontal axis along a sketch line; the axis choice shows once a line is picked.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    const alNone = await mp.evaluate(() => !document.querySelector('#mc-pm select[data-k="walignAxis"]'));
+    const alOpt = await mp.evaluate(() => [...document.querySelectorAll('#mc-pm select[data-k="walign"] option')].map(o => o.value).find(v => /\|j3$/.test(v)));
+    await mp.selectOption('#mc-pm select[data-k="walign"]', alOpt ?? "");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="walignAxis"]', "h");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const al = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), align: f.align }; }, bendId);
+    check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
