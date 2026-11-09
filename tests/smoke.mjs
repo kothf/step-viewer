@@ -9067,6 +9067,22 @@ try {
     const vt1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(vt0.title === "Vent" && vt0.sketch === "vsk" && /1/.test(vt0.info ?? "") && !vt1.bad && Math.abs(cb1.v - vt1.v - (60 * 25 - 2 * 25) * T) < 1e-3,
       `sheet metal: Vent cuts the boundary less the rib through the plate (${JSON.stringify({ vt0, vt1 })})`);
+    // Forming Tool: click the plate's top face beside the vent, switch to an extruded hole, ✓: a collar T thick and the hole through.
+    await smMenu("Forming Tool");
+    const [ftx, fty] = await scr([10, 25, T]);
+    await mp.mouse.click(ftx, fty);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="tool"]', "xhole");
+    await settle();
+    const ft0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, pts: d?.pts, tool: d?.tool, size: d?.size?.v, h: d?.height?.v, rows: document.querySelectorAll("#mc-pm [data-sm-pt]").length }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ft1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, forms: l.sheet?.forms?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const ftR = Math.round(5 * T * 10) / 10 / 2, ftH = Math.round(2 * T * 10) / 10;
+    const ftDv = Math.PI * ((ftR + T) ** 2 * ftH - ftR ** 2 * (ftH + T));
+    check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
+      && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
+      `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
