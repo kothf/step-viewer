@@ -193,6 +193,8 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
           + `<p class="pm-count">${esc(t("{n} segment|{n} segments", { n: f.segs.length }))}</p>${segList}`
           + help(t("Each segment becomes its own body; where two segments meet end to end the corner is treated.")))
         + group(t("Settings"), sel("corner", t("Corner treatment"), [["miter", t("End miter")], ["butt1", t("End butt 1")], ["butt2", t("End butt 2")], ["none", t("None")]], f.corner)
+          + (f.segs.length > 1 ? sel("wcope", t("Butt end"), [["simple", t("Simple cut")], ["coped", t("Coped cut")]], f.coped ? "coped" : "simple")
+            + (f.coped ? help(t("A butted member's end follows the shape of the member it stops at, such as a saddle on a round tube.")) : "") : "")
           + chk("wGap", (f.gap?.v ?? 0) > 0, t("Weld gap")) + ((f.gap?.v ?? 0) > 0 ? numField("gap", t("Gap"), f.gap!, "length") : "")
           + (sk?.type === "sketch" && f.segs.some(r => sk.ents.find(e => e.id === r.ent)?.t === "arc") ? chk("wMergeArcs", !!f.mergeArcs, t("Merge arc segment bodies")) : "")
           + (f.segs.length > 1 && (f.corner === "miter" || Object.values(f.corners ?? {}).includes("miter")) ? chk("wMergeMiter", !!f.mergeMiter, t("Merge miter trimmed bodies"))
@@ -315,6 +317,7 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
     };
     if (k === "wGap") return () => { if (val) f.gap = { v: 2 }; else delete f.gap; };
     if (k === "wMergeArcs") return () => { if (val) f.mergeArcs = true; else delete f.mergeArcs; };
+    if (k === "wcope") return () => { if (val === "coped") f.coped = true; else delete f.coped; };
     if (k === "walign") return () => { const [sketch, ent] = String(val).split("|"); if (val && sketch && ent) f.align = { sketch, ent, axis: f.align?.axis ?? "v" }; else delete f.align; };
     if (k === "walignAxis") return () => { if (f.align) f.align.axis = val === "h" ? "h" : "v"; };
     if (k === "wMergeMiter") return () => { if (val) f.mergeMiter = true; else delete f.mergeMiter; };

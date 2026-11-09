@@ -80,6 +80,9 @@
         <button data-tool="bbox" aria-pressed="false" title="Bounding box of visible or selected parts (B)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v11h-11z" stroke-dasharray="2 1.6"/><path d="M5.5 5.5h5v5h-5z"/></svg><span class="tb-lbl">Bounding box</span></button>
         <button data-tool="note" aria-pressed="false" title="Note: a text note with a leader on the model, in PNG and the PDF report (T). Drag the box to move it, double-click to edit"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5h11v8h-6l-3 3v-3h-2z"/><path d="M5 5.5h6M5 7.8h4"/></svg><span class="tb-lbl">Note</span></button>
       </div>
+        <div class="tb-group" id="mp-tools" role="group" aria-label="Mass properties">
+        <button id="mp-btn" aria-pressed="false" title="Mass properties: mass, centre of mass, principal axes and moments of inertia of the model or the selected parts"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="3.8" r="1.6"/><path d="M4.6 6.5h6.8l2.1 7H2.5z"/><path d="M8 9v2.6M6.7 10.3h2.6"/></svg><span class="tb-lbl">Mass properties</span></button>
+        </div>
         <button id="csys-reset" class="btn small" hidden title="Back to the global coordinate system">⌖ Global CSYS</button>
       </div>
       <div id="mc-tools" class="mc-tools cm-pane" data-cm-pane="features sketch surfaces sheetmetal weldments" role="toolbar" aria-label="Modelling commands" hidden></div>
@@ -164,6 +167,7 @@
     <div id="tool-hint" class="tool-hint step-only" hidden></div>
     <div id="readout" class="readout step-only" hidden></div>
     <div id="ana-panel" class="ana-panel step-only" role="region" aria-label="Surface analysis" hidden></div>
+    <div id="mp-panel" class="mp-panel step-only" role="region" aria-label="Mass properties" hidden></div>
     <div id="hint" class="hint" role="status" hidden></div>
     <div id="gerber" class="gerber-vp gerber-only">
       <canvas id="g-canvas" aria-hidden="true"></canvas>

@@ -121,6 +121,22 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   // A lost alignment line is an error, not a silent fallback.
   const lost = m.evaluate(doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "gone", axis: "v" } }])).statuses.find(x => !x.ok);
   assert.match(lost?.message ?? "", /alignment line/);
+  // Coped cut: a round post butting a round rail at a T gets a saddle end.
+  const tee: SketchFeature = { ...poly("t", [[0, 0], [200, 0], [400, 0]], false) };
+  tee.ents.push({ id: "tp3", t: "point", x: 200, y: 300 }, { id: "tl2", t: "line", a: "tp1", b: "tp3" });
+  const post: MemberFeature = { id: "c", type: "member", name: "Structural Member1", profile: "chs", size: "48.3x3.2", segs: lines(tee), corner: "butt1" };
+  const flat = run(m, doc([tee, post])), cope = run(m, doc([tee, { ...post, coped: true }]));
+  assert.equal(cope.info.length, 3);
+  const Ac = profileArea(profileShape("chs", "48.3x3.2")!), R = 48.3 / 2;
+  // The flat cut stops the post at the rail's top (R from the axis); the saddle runs on down the rail's sides.
+  assert.ok(cope.volume > flat.volume + Ac * 2 && cope.volume < flat.volume + Ac * R, `${cope.volume - flat.volume}`);
+  assert.ok(cope.body!.names.includes("c:tl2:start"));
+  // A weld gap moves the coped end back along the post: 3 mm less of it.
+  near(run(m, doc([tee, { ...post, coped: true, gap: { v: 3 } }])).volume, cope.volume - 3 * Ac, 2e-3);
+  const sq = { ...post, profile: "shs" as const, size: "40x40x3" };
+  // On a square tube the coped end is flat except where the post's side walls run down into the rail's corner rounds.
+  const dsq = run(m, doc([tee, { ...sq, coped: true }])).volume - run(m, doc([tee, sq])).volume;
+  assert.ok(dsq > 0 && dsq < 2 * 40 * 3 * 7.5, `${dsq}`);
 });
 
 test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {

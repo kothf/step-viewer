@@ -1996,7 +1996,7 @@ try {
     await mp.evaluate(() => document.querySelector("#mass-run").click());
     await mp.waitForTimeout(300);
     const massTxt = await mp.evaluate(() => document.querySelector("#mass-out").textContent);
-    check(/Principal moments.*kg·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
+    check(/Principal moments.*k?g·mm²/.test(massTxt) && /Principal axes/.test(massTxt), `model 1.19: mass properties list the principal moments of the modelled part (${massTxt.match(/Principal moments[^A-Z]*/)?.[0]})`);
     // 1.43: mass property override (FR-MAT-004): 1.25 kg and a centre of mass replace the calculated values.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
     await mp.waitForSelector("#mc-pm input[data-p=ovr]");
@@ -3238,6 +3238,87 @@ try {
     await mp.evaluate(() => document.querySelector("#lang-btn").click());
     check(/^Configuration,\$STATE@Sketch1,/.test(csv) && /\nDefault,/.test(csv) && /\nConfig2,/.test(csv) && /D1@Sketch1/.test(csv) && cfg.names.join() === "Default,Config2,Tall" && cfg.act === "Config2" && cfg.depth === 35 && cfg.d1 === 30 && cfg.ok, `model 1.139: configuration table export and import (${csv.split("\n")[0]}, ${JSON.stringify(cfg)})`);
     check(ru === "Таблица конфигураций|Экспорт таблицы|Импорт таблицы…", `model 1.139: configuration table in Russian (${ru})`);
+    await ctx.close();
+  }
+
+  // --- 1.344.0: Evaluate ▸ Mass properties (FR-MAT-002): moments of inertia, principal axes, output frames incl. own axes ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.evaluate(() => localStorage.setItem("sv:tips", "off"));
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 60000 });
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    // A 100 × 50 × 20 block from the origin, density 20 g/cm³: 2000 g, centre (50, 25, 10).
+    await mp.evaluate(() => window.__sv.model.store.change("Block", d => {
+      d.features.push({ id: "s", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [
+        { id: "p1", t: "point", x: 0, y: 0 }, { id: "p2", t: "point", x: 100, y: 0 }, { id: "p3", t: "point", x: 100, y: 50 }, { id: "p4", t: "point", x: 0, y: 50 },
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] });
+      d.features.push({ id: "x", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 20 } });
+      d.material = { name: "Test", density: 20 };
+    }));
+    await idle();
+    await mp.waitForFunction(() => window.__sv.viewer.parts.length === 1);
+    await mp.evaluate(() => { const d = document.querySelector("#density"); d.value = "20"; d.dispatchEvent(new Event("input")); });
+    await mp.evaluate(() => [...document.querySelectorAll("#cm-tabs button")].find(b => /Evaluate/.test(b.textContent))?.click());
+    await mp.click("#mp-btn");
+    await mp.waitForSelector("#mp-panel:not([hidden]) .mp-grid");
+    const read = () => mp.evaluate(() => {
+      const P = document.querySelector("#mp-panel"), grids = P.querySelectorAll(".mp-grid");
+      const val = (g, k) => +([...g.querySelectorAll(".mp-c")].map(e => e.textContent).find(x => x.startsWith(`${k} =`)) ?? "").split("=")[1]?.replace(/,/g, "");
+      return {
+        text: P.textContent, frames: [...P.querySelectorAll("select[data-mp=frame] option")].map(o => o.value), frame: P.querySelector("select[data-mp=frame]").value,
+        com: ["X", "Y", "Z"].map(k => val(grids[0], k)), L: ["Lxx", "Lyy", "Lzz", "Lxy"].map(k => val(grids[1], k)), I: ["Ixx", "Iyy", "Izz", "Ixy", "Iyz", "Izx"].map(k => val(grids[2], k)),
+        P: [...P.querySelectorAll(".mp-princ span")].map(e => e.textContent),
+        axes: window.__sv.hl.com.visible, btn: document.querySelector("#mp-btn").getAttribute("aria-pressed"),
+      };
+    });
+    let r = await read();
+    // kg·mm² (mass ≥ 1 kg; one decimal from 1000 up): Lxx = m(b² + h²)/12 = 483.3333, Ixx = Lxx + m(25² + 10²) = 1933.3333, Ixy = m·50·25 = 2500.
+    check(r.btn === "true" && r.axes && /2\.0000 kg/.test(r.text) && /kg·mm²/.test(r.text) && r.com.join() === "50,25,10"
+      && near(r.L[0], 483.3333, 0.06) && near(r.L[1], 1733.3333, 0.06) && near(r.L[2], 2083.3333, 0.06) && r.L[3] === 0
+      && near(r.I[0], 1933.3333, 0.06) && near(r.I[3], 2500, 0.06) && near(r.I[4], 500, 0.06) && near(r.I[5], 1000, 0.06)
+      && /^Ix = \(1\.0000, 0\.0000, 0\.0000\)/.test(r.P[0]) && /Px = 483\.3333/.test(r.P[1]),
+      `mass 1.344: Evaluate ▸ Mass properties lists CoM, principal, Lxx… and Ixx… of a 2 kg block (${JSON.stringify({ com: r.com, L: r.L, I: r.I, P: r.P.slice(0, 2) })})`);
+    // Own axes, typed: origin at the centre of mass, X along world Y → Ixx is the world-Y moment and the centre is at 0.
+    await mp.click("#mp-panel [data-mp=type]");
+    for (const [k, v] of [["o0", "50"], ["o1", "25"], ["o2", "10"], ["x0", "0"], ["x1", "1"], ["x2", "0"]]) await mp.fill(`#mp-panel [data-ax="${k}"]`, v);
+    await mp.fill('#mp-panel [data-ax="name"]', "Mine");
+    await mp.click("#mp-panel [data-mp=addaxes]");
+    r = await read();
+    const markOn = await mp.evaluate(() => window.__sv.viewer.scene.children.some(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9));
+    check(r.frame === "u:0" && /Mine/.test(r.text) && r.com.every(v => Math.abs(v) < 1e-9) && near(r.I[0], 1733.3333, 0.06) && near(r.I[1], 483.3333, 0.06) && markOn,
+      `mass 1.344: typed own axes become the output coordinate system (${JSON.stringify({ frame: r.frame, com: r.com, I: r.I.slice(0, 2), markOn })})`);
+    // Own axes, picked: Pick axes, then a click on the top face puts Z up at its centre; the part stays unselected.
+    await mp.click("#mp-panel [data-mp=pick]");
+    await mp.evaluate(() => {
+      const { viewer, handlePick } = window.__sv, p = viewer.parts[0], V3 = p.group.position.constructor;
+      const f = p.data.faces.find(x => x.normal?.[2] > 0.99);
+      handlePick({ kind: "onFace", point: new V3(...f.centroid), part: p, face: f, normal: new V3(...f.normal), px: 0 });
+    });
+    r = await read();
+    const sel = await mp.evaluate(() => window.__sv.state.selectedParts.length);
+    check(r.frame === "u:1" && r.frames.join() === "global,u:0,u:1" && near(r.com[2], -10, 1e-3) && sel === 0,
+      `mass 1.344: picked own axes on the top face (${JSON.stringify({ frames: r.frames, com: r.com, sel })})`);
+    await mp.selectOption("#mp-panel select[data-mp=frame]", "global");
+    r = await read();
+    check(r.com.join() === "50,25,10", `mass 1.344: back to the global frame (${r.com})`);
+    await mp.addScriptTag({ content: await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8") });
+    const ax = await mp.evaluate(async () => (await window.axe.run(document.querySelector("#mp-panel"), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }, resultTypes: ["violations"] })).violations.map(v => `${v.id}: ${v.nodes.slice(0, 2).map(n => n.target.join(" ")).join(", ")}`));
+    check(ax.length === 0, `mass 1.344: 0 WCAG 2.1 AA violations in the mass properties panel${ax.length ? ": " + ax.join(" | ") : ""}`);
+    await mp.click("#lang-btn");
+    await mp.waitForTimeout(300);
+    const ru = await mp.evaluate(() => { const P = document.querySelector("#mp-panel"); return { h: P.querySelector("h2").textContent, eng: [...P.querySelectorAll("h3, label, button, .mp-note, .k, .mp-scope")].map(e => e.textContent.trim()).filter(x => /\b(the|of|and|Mass|Density|Volume|Pick|Show|Include)\b/.test(x)) }; });
+    await mp.click("#lang-btn");
+    check(ru.h === "Массовые характеристики" && ru.eng.length === 0, `mass 1.344: mass properties panel in Russian (${ru.h}${ru.eng.length ? ": " + ru.eng.join(" | ") : ""})`);
+    await mp.click("#mp-panel [data-mp=close]");
+    const closed = await mp.evaluate(() => ({ hidden: document.querySelector("#mp-panel").hidden, marks: window.__sv.viewer.scene.children.filter(o => o.type === "AxesHelper" && o.visible && Math.abs(o.position.x - 50) < 1e-9).length }));
+    check(closed.hidden && closed.marks === 0, `mass 1.344: closing the panel removes its axes (${JSON.stringify(closed)})`);
     await ctx.close();
   }
 
@@ -9183,6 +9264,18 @@ try {
     await settle();
     const al = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), align: f.align }; }, bendId);
     check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
+    // Coped cut: the Butt end choice; the line meets the arc tangent-free at a sharp corner, so it butts there.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wcope"]', "coped");
+    await settle();
+    const copeHelp = await mp.evaluate(() => !!document.querySelector("#mc-pm .pm-help") && [...document.querySelectorAll("#mc-pm .pm-help")].some(e => /saddle/.test(e.textContent)));
+    await mp.click("#mc-ok");
+    await settle();
+    const cp2 = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), coped: f.coped, bodies: l.bodies?.length }; }, bendId);
+    check(copeHelp && cp2.coped === true && !cp2.bad, `weldments: coped cut option on a member (${JSON.stringify({ copeHelp, cp2 })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
