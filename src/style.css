@@ -659,7 +659,7 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 #gst-dlg .gst-t { border-collapse: collapse; margin: 8px 0; }
 #gst-dlg .gst-t th, #gst-dlg .gst-t td { padding: 3px 6px; text-align: left; }
 #gst-dlg .gst-t select { max-width: 160px; }
-#gestures-btn { width: 100%; margin-top: 6px; }
+#gestures-btn, #prefs-btn { width: 100%; margin-top: 6px; }
 .mc-fly .mc-b { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 3px; }
 .mc-caret { width: 14px; padding: 0; border: 1px solid transparent; border-radius: 0 7px 7px 0; background: none; color: var(--muted); font-size: 10px; cursor: pointer; }
 .mc-caret:hover, .mc-caret[aria-expanded=true] { background: var(--panel-2); border-color: var(--line); color: var(--text); }
@@ -1148,3 +1148,14 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .pm-snapgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
 .pm-grid .pm-field { grid-column: 1 / -1; margin: 2px 0; }
 .pm-grid .pm-field input { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: inherit; }
+
+/* Preferences (FR-UI-080) */
+#prefs-dlg { width: min(560px, calc(100vw - 32px)); }
+#prefs-dlg .prefs-tabs { margin-bottom: 8px; }
+#prefs-dlg .prefs-page { min-height: 300px; display: flex; flex-direction: column; gap: 6px; }
+#prefs-dlg .prefs-page[hidden] { display: none; }
+#prefs-dlg .prefs-page .row { display: flex; align-items: center; gap: 8px; }
+#prefs-dlg .prefs-page input[type=number] { width: 7em; }
+#prefs-dlg .prefs-legend, #prefs-dlg .prefs-mouse { margin: 0; padding: 0 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+#prefs-dlg .prefs-mouse { list-style: disc; padding-left: 20px; }
+#prefs-dlg .prefs-sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); }
