@@ -1072,6 +1072,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-key.i-snap { rotate: 0deg; border-radius: 0; }
 .motion .mo-key.i-easein, .motion .mo-key.i-easeout, .motion .mo-key.i-ease { border-radius: 50%; }
 .motion .mo-key.colored { background: var(--kc); }
+.motion .mo-autokey::before { content: "● "; }
+.motion .mo-autokey[aria-pressed="true"] { border-color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+.motion .mo-autokey[aria-pressed="true"]::before { color: var(--danger); }
 .motion .mo-key.colored.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .motion .mo-key.i-easein { border-left-width: 4px; }
 .motion .mo-key.i-easeout { border-right-width: 4px; }

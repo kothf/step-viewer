@@ -6175,9 +6175,23 @@ try {
       const keyed = m.study.tracks.filter(k => k.kind !== "motor" && !k.off);
       const keyAll = { all: keyed.length >= 3 && keyed.every(k => k.keys.some(x => Math.abs(x.t - 1) < 1e-9)), sel: document.querySelectorAll("#motion .mo-key.sel").length === keyed.length,
         c: m.study.tracks.find(k => k.kind === "look").keys.find(x => Math.abs(x.t - 1) < 1e-9)?.c ?? "" };
+      // Autokey: with no camera track, a view change at 2 s makes one (the old view at 0, the new one at 2 s); a click that does not move the view adds nothing.
+      m.edit(st => { st.tracks = st.tracks.filter(k => k.kind !== "camera"); });
+      m.seek(2); m.render();
+      document.querySelector('#motion [data-mo="autokey"]').click();
+      const pressed = document.querySelector('#motion [data-mo="autokey"]').getAttribute("aria-pressed");
+      const vw = window.__sv.viewer, ctl = vw.controls, p0 = vw.camera.position.toArray();
+      ctl.dispatchEvent({ type: "start" }); vw.camera.position.x += 25; vw.camera.updateMatrixWorld(); ctl.dispatchEvent({ type: "end" });
+      const cam = () => m.study.tracks.find(k => k.kind === "camera");
+      const made = cam() && cam().keys.map(k => k.t).join(",");
+      const camKeyed = cam() && Math.abs(cam().keys[1].pos[0] - (p0[0] + 25)) < 1e-6 && Math.abs(cam().keys[0].pos[0] - p0[0]) < 1e-6;
+      ctl.dispatchEvent({ type: "start" }); ctl.dispatchEvent({ type: "end" });
+      const still = cam().keys.length;
+      document.querySelector('#motion [data-mo="autokey"]').click();
+      const auto = { pressed, made, keyed: camKeyed, still, off: m.autoKey === false };
       m.deleteTrack(tr.id);
       m.seek(5);
-      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll };
+      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own, keyAll, auto };
       return { listed, half, end, moved, label, color, back: { op: p().opacity, vis: p().visible } };
     });
     // Recording: a GIF of a 1 s study and a WebM video.
@@ -6506,10 +6520,10 @@ try {
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
-      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && look.color.keyAll.all && look.color.keyAll.sel && /^#[0-9a-f]{6}$/.test(look.color.keyAll.c) && look.color.auto.pressed === "true" && look.color.auto.made === "0,2" && look.color.auto.keyed && look.color.auto.still === 2 && look.color.auto.off && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, Key all, Autokey, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
