@@ -2272,7 +2272,7 @@ try {
     const undoneDim = await dimNow();
     check(tFree === "hdistance" && tLocked.t === "hdistance" && tLocked.lock && tLocked.cls && placed?.t === "hdistance" && near(placed.v, 30, 0.01) && gripPos && near(gripPos[0], 50, 0.01)
       && near(dragged?.v, 40, 1e-6) && near(undoneDim?.v, placed?.v, 1e-9),
-      `model 1.278: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
+      `model 1.282: right-click locks a dimension while placing, and dragging its handle changes the value with one undo step (${tFree}, ${JSON.stringify(tLocked)}, ${JSON.stringify(placed)}, ${JSON.stringify(gripPos)}, ${JSON.stringify(dragged)}, ${JSON.stringify(undoneDim)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
@@ -8626,6 +8626,33 @@ try {
     await settle();
     const tp = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { plane: f.plane, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - 200) < 0.01).map(c => c.qty) }; });
     check(noFaceBox && tp.plane?.plane === "xpl" && !tp.bad && JSON.stringify(tp.rows) === "[1]", `weldments: Trim/Extend to a reference plane (${JSON.stringify({ noFaceBox, tp })})`);
+    // Planar trim against a body: Beam C (300 long) runs back flat to Beam D's near side (x = 3020): 380 long, square ends.
+    await mp.evaluate(() => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
+      window.__sv.model.store.change("Beams", d => {
+        d.features.push({ id: "xsc", type: "sketch", name: "SketchC", plane: { std: "XY" }, rels: [], dims: [], ents: [P("c1", 3100, 3000), P("c2", 3400, 3000), L("wc", "c1", "c2")] },
+          { id: "xsd", type: "sketch", name: "SketchD", plane: { std: "XY" }, rels: [], dims: [], ents: [P("d1", 3000, 2900), P("d2", 3000, 3100), L("wd", "d1", "d2")] },
+          { id: "xmc", type: "member", name: "Beam C", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsc", ent: "wc" }], corner: "none" },
+          { id: "xmd", type: "member", name: "Beam D", profile: "shs", size: "40x40x3", segs: [{ sketch: "xsd", ent: "wd" }], corner: "none" });
+        d.rollback = null;
+      });
+    });
+    await settle();
+    const qtyAt = len => (window.__sv.model.last().cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && Math.abs(c.length - len) < 0.01 && c.angle1 + c.angle2 === 0).reduce((n, c) => n + c.qty, 0);
+    const before = await mp.evaluate(`[${qtyAt}][0](380)`);
+    await runCmd(mp, "Trim/Extend");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wkind"]', "body");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wplanar"]', "1");
+    await settle();
+    await mp.evaluate(() => { const m = window.__sv.model.mode(); m.draft.bodies = [{ name: "xmc:wc:start" }]; m.draft.boundary = { name: "xmd:wd:start" }; window.__sv.modeller.draftChanged(); });
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const pt = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.at(-1); return { planar: f.planar, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), }; });
+    pt.added = (await mp.evaluate(`[${qtyAt}][0](380)`)) - before;
+    check(pt.planar === true && !pt.bad && pt.added === 1, `weldments: Trim/Extend planar trim against a body (${JSON.stringify(pt)})`);
     // In Russian: the Structural Member panel.
     await mp.click("#lang-btn");
     await mp.evaluate(() => window.__sv.modeller.editFeature("m2"));
