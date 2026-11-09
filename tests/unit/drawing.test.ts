@@ -1057,6 +1057,32 @@ test("cones and tori seen from the side get a centreline on their axis (FR-DRW-0
   assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, part, front.P, front.n).length, 0);
 });
 
+test("spheres get a centre cross from any side; corner blends do not (FR-DRW-023)", async () => {
+  const { topology } = await import("../../src/kernel/drawing");
+  const { centreMarks, projector } = await import("../../src/drawing/annot");
+  const { ORIENTS } = await import("../../src/drawing/views");
+  const m = new Modeller(await occ());
+  // A half disc R10 revolved about its straight side: a ball.
+  const P = (id: string, x: number, y: number): SkEnt => ({ id, t: "point", x, y });
+  const s: SketchFeature = { id: "b", type: "sketch", name: "b", plane: { std: "XZ" }, rels: [], dims: [],
+    ents: [P("o", 0, 0), P("a", 0, -10), P("c", 0, 10), { id: "k", t: "arc", c: "o", a: "a", b: "c" }, { id: "l", t: "line", a: "c", b: "a" }] };
+  const r = m.evaluate(doc([s, { id: "f1", type: "revolve", name: "R", sketch: "b", op: "boss", axis: "l", angle: { v: 2 * Math.PI } } as Feature]));
+  assert.ok(r.body, JSON.stringify(r.errors ?? r.warnings));
+  const topo = topology(await occ(), r.body!.shape, r.body!.names);
+  const ball = topo.revs!.find(q => q.k === "sphere");
+  assert.ok(ball && Math.abs(ball.r! - 10) < 1e-6, `a sphere R10: ${JSON.stringify(topo.revs)}`);
+  const pl = { s: 1, uc: 0, vc: 0, x: 0, y: 0, box: [-50, -30, 50, 30] as [number, number, number, number], ready: true };
+  for (const o of ["front", "top", "iso"] as const) {
+    const pr = projector(ORIENTS[o]);
+    const cm = centreMarks({ id: "f", name: "f", orient: o, x: 0, y: 0 }, pl, { ...topo, cyls: [] }, pr.P, pr.n);
+    const c = pr.P(ball!.o), cross = cm.filter(g => { const p = g.p as number[]; return Math.abs((p[0] + p[2]) / 2 - c[0]) < 1e-6 && Math.abs((p[1] + p[3]) / 2 - c[1]) < 1e-6 && Math.abs(Math.hypot(p[2] - p[0], p[3] - p[1]) - 24) < 1e-6; });
+    assert.equal(cross.length, 2, `${o}: a 24 mm cross at the centre (${JSON.stringify(cm.map(g => g.p))})`);
+  }
+  const blend = { edges: [], cyls: [], revs: [{ k: "sphere" as const, o: [0, 0, 0] as V3, ax: [0, 0, 1] as V3, v0: -2, v1: 2, sp: Math.PI / 2, r: 2 }] };
+  const front = projector(ORIENTS.front);
+  assert.equal(centreMarks({ id: "f", name: "f", orient: "front", x: 0, y: 0 }, pl, blend, front.P, front.n).length, 0);
+});
+
 test("hole callouts read from the geometry: count, counterbore, countersink, blind with a point (FR-DRW-022)", async () => {
   const { topology } = await import("../../src/kernel/drawing");
   const { holeText, geoHole } = await import("../../src/drawing/annot");
@@ -1099,6 +1125,22 @@ test("hole callout adds a cosmetic thread; drafting style sets default decimals 
     assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100.00");
     assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ",").main, "30,0°");
     assert.equal(dimText({ ...lin, prec: 0 }, { k: "h", pts: [], value: 12.34 }, ".").main, "12", "a dimension's own precision wins");
+  } finally { useStyle(undefined); }
+  assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
+});
+
+test("drafting style sets a default ± tolerance; a dimension's own tolerance or None wins (FR-DRW-025)", async () => {
+  const { dimText, useStyle } = await import("../../src/drawing/annot");
+  const lin = { id: "a", t: "dim" as const, view: "v", k: "h" as const, refs: [], pos: [0, 0] as [number, number] };
+  const ang = { ...lin, k: "ang" as const };
+  try {
+    useStyle({ tol: 0.1, atol: 0.5 });
+    assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100±0.1");
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ",").main, "30±0,5°");
+    assert.equal(dimText({ ...lin, tol: { t: "none" } }, { k: "h", pts: [], value: 100 }, ".").main, "100", "None turns the default off");
+    assert.deepEqual(dimText({ ...lin, tol: { t: "dev", up: 0.2, lo: 0 } }, { k: "h", pts: [], value: 100 }, "."), { main: "100", up: "+0.2", lo: "0" });
+    useStyle({ tol: 0.1 });
+    assert.equal(dimText(ang, { k: "ang", pts: [], value: 30 }, ".").main, "30°", "no angle default: angles stay plain");
   } finally { useStyle(undefined); }
   assert.equal(dimText(lin, { k: "h", pts: [], value: 100 }, ".").main, "100");
 });
