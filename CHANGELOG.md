@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.374.0] - 2026-11-10
+
+### Changed
+- Model items layout (FR-DRW-020): imported model dimensions are stacked outside the view with the shorter ones nearer the outline, so extension lines no longer cross dimension lines. The gaps (10 mm from the view, 8 mm apart) are sheet millimetres at any view scale, a later import starts beyond the dimensions already on that side, and radius or diameter texts on one centre turn aside instead of sharing a place.
+
 ## [1.373.0] - 2026-11-10
 
 ### Added
@@ -2195,7 +2200,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.373.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.374.0...HEAD
+[1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
 [1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0
 [1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0

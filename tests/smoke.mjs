@@ -4748,6 +4748,14 @@ try {
     await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="items"]');
     await dp.waitForTimeout(150);
     check((await annots()).length === 4, "drawing: model items are not inserted twice");
+    {
+      // Their dimension lines sit 10 mm from the view on the sheet, whatever its scale.
+      const sc = await dp.evaluate(() => { const s = window.__sv.drw.doc().sheets[0].scale; return s[0] / s[1]; });
+      const near = (x, cands) => Math.min(...cands.map(c => Math.abs(Math.abs(x - c) - 10 / sc)));
+      const hd = an.find(a => a.src === "s1:d1"), vd = an.find(a => a.src === "s1:d2");
+      const eh = near(hd.pos[1], [-30, 30, 0, 60, -60]), ev = near(vd.pos[0], [-50, 50, 0, 100, -100]);
+      check(eh < 0.02 && ev < 0.02, `drawing: model items sit 10 mm outside the view on the sheet (scale ${sc}; off by ${eh.toFixed(3)} / ${ev.toFixed(3)})`);
+    }
     // Smart dimension: the front view's top edge, placed above it, is a horizontal 100; the hole's circle gives Ø16.
     await dp.click('#drw [data-a="dim"]');
     let [x, y] = await at(front.id, -20, 20);
