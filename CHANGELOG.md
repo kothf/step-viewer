@@ -5,11 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.281.0] - 2026-11-09
+## [1.284.0] - 2026-11-09
 
 ### Added
 
 - **Bend table on flat pattern drawing views (FR-FT-120)**: Annotate ▾ → Bend table, click a flat pattern view and place the table. The bend lines get tags A, B, … (top to bottom, then left to right) in place of their notes, and the table lists each bend's direction, angle and inner radius, like SolidWorks' Bend Table. The table follows the model and the interface language.
+
+## [1.282.0] - 2026-11-09
+
+### Added
+
+- **Instant 2D (FR-SK-067)**: a selected driving dimension in a sketch shows a round handle at its moving end. Dragging it changes the value in steps that suit the zoom (Shift: ten times finer), with a ruler of snap ticks along the drag, and the sketch follows as it solves. Releasing is one undo step; Esc during the drag puts the value back. Dimensions given by an equation have no handle.
+- **Dimension placement lock (FR-SK-068)**: while placing a dimension, a right-click locks the type it shows (horizontal, vertical or aligned), so the text can be placed anywhere; the preview label turns solid with a lock, and another right-click frees it. Esc still cancels only the placement.
 
 ## [1.279.0] - 2026-11-09
 
@@ -1709,8 +1716,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.281.0...HEAD
-[1.281.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.281.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.284.0...HEAD
+[1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
+[1.282.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.282.0
 [1.279.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.279.0
 [1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0
 [1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
