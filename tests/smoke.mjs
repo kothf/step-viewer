@@ -2520,6 +2520,30 @@ try {
     const ftBack = await mp.evaluate(() => ({ fly: !!document.querySelector("#mc-treefly"), parent: document.querySelector("#mc-tree").parentElement.id, prev: document.querySelector("#mc-tree").previousElementSibling?.id, shown: !document.querySelector("#mc-tree").hidden, full: document.querySelector("#tab-features").classList.contains("pm-full") }));
     check(ftOpen.tab === "true" && ftOpen.full && ftOpen.inView && ftOpen.name && ftOpen.folded && ftBase?.std === "YZ" && ftFold.hidden && ftFold.exp === "false" && ftFold.ls === "0" && !ftBack.fly && ftBack.parent === "tab-features" && ftBack.prev === "ft-search" && ftBack.shown && !ftBack.full,
       `model 1.335: a command panel fills the Features tab, the tree flies out folded over the view, opens, picks a plane and folds again; Cancel puts it back (${JSON.stringify([ftOpen, ftBase, ftFold, ftBack])})`);
+    // 1.342: copy and paste features (FR-HIS-014): Ctrl+C on an extrude, Ctrl+V on the Right plane; Ctrl+drop of the row on a face.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "cps", type: "sketch", name: "CpSketch", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 200, 200), P("b", 220, 200), P("c", 220, 220), P("d", 200, 220), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "cpe", type: "extrude", name: "CpExtrude", sketch: "cps", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    await idle();
+    const cpN = await mp.evaluate(() => ({ n: window.__sv.model.store.doc.features.length, vol: window.__sv.model.last().props.volume }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Control+c");
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await mp.keyboard.press("Control+v");
+    await idle();
+    const cpV = await mp.evaluate(() => { const d = window.__sv.model.store.doc, f = d.features, ex = f.at(-1), sk = f.find(x => x.id === ex.sketch); return { n: f.length, ex: [ex.type, ex.name, ex.depth?.v], sk: [sk?.id !== "cps", sk?.plane?.std, f.indexOf(sk) === f.length - 2], vol: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, sel: window.__sv.modeller.selected === ex.id }; });
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const cpDrop = await mp.evaluate(() => {
+      const v = window.__sv.viewer, cv = v.renderer.domElement, r = cv.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera);
+      const x = r.left + ((s.x + 1) / 2) * r.width, y = r.top + ((1 - s.y) / 2) * r.height, dt = new DataTransfer();
+      dt.setData("application/x-mcad-feature", "cps");
+      cv.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      cv.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      const f = window.__sv.model.store.doc.features.at(-1);
+      return { type: f.type, face: !!f.plane?.face };
+    });
+    await idle();
+    const cpUndo = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    check(cpV.n === cpN.n + 2 && /^extrude,Extrude\d+,10$/.test(cpV.ex.join()) && cpV.sk.join() === "true,YZ,true" && near(cpV.vol - cpN.vol, 4000, 1e-3) && !cpV.bad && cpV.sel && cpDrop.type === "sketch" && cpDrop.face && cpUndo === "Paste",
+      `model 1.342: Ctrl+C on an extrude and Ctrl+V on the Right plane paste it with a copy of its sketch (+4000 mm³); Ctrl+drop of a sketch row on a face pastes it there (${JSON.stringify([cpN, cpV, cpDrop, cpUndo])})`);
     await ctx.close();
   }
 
