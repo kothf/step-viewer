@@ -5669,7 +5669,7 @@ export class ModelController {
     const nSel = ed.selection.size;
     const plane = "std" in sk.plane ? t(STD_NAMES[sk.plane.std]) : t("Face");
     pm.innerHTML = okHead(featureLabel(sk.name), { ok: t("Exit sketch (Enter)"), noTranslate: true })
-      + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b></p>`
+      + `<p class="pm-help muted">${esc(t("Plane"))}: ${esc(plane)} · <b class="pm-def" data-state="${info.status !== "ok" ? "over" : info.dof === 0 ? "full" : "under"}">${esc(def)}</b>${info.status === "ok" && info.dof > 0 ? ` <button class="btn small" data-a="fulldef" title="${esc(t("Add horizontal/vertical relations and dimensions from the origin until nothing is free"))}">${esc(t("Fully define sketch"))}</button>` : ""}</p>`
       + `<p class="pm-help muted">${esc(t("Draw with the tools above. Blue is free to move, black is fixed by dimensions and relations. Double-click a dimension to change it."))}</p>`
       + `<label class="chk pm-chk" title="${esc(t("Points snap to model vertices, edge midpoints and circle centres, and stay attached to them; Smart Dimension takes model edges."))}"><input type="checkbox" data-a="modelsnap"${ed.modelSnap ? " checked" : ""} />${esc(t("Snap to model geometry"))}</label>`
       + `<label class="chk pm-chk" title="${esc(t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."))}"><input type="checkbox" data-a="autorels"${ed.autoRels ? " checked" : ""} />${esc(t("Automatic relations"))}</label>`
@@ -5700,6 +5700,7 @@ export class ModelController {
     pm.querySelectorAll<HTMLElement>("[data-rel]").forEach(b => b.addEventListener("click", () => { ed.addRelation(b.dataset.rel as never); this.renderPanel(); }));
     pm.querySelector("[data-a=cons]")?.addEventListener("click", () => ed.toggleConstruction());
     pm.querySelector("[data-a=merge]")?.addEventListener("click", () => { ed.mergePoints(); this.renderPanel(); });
+    pm.querySelector("[data-a=fulldef]")?.addEventListener("click", () => { ed.fullyDefineUi(); this.renderPanel(); });
     pm.querySelector("[data-a=del]")?.addEventListener("click", () => { ed.deleteSelection(); this.renderPanel(); });
     pm.querySelectorAll<HTMLElement>("[data-dim]").forEach(b => b.addEventListener("click", () => ed.editDim(b.dataset.dim!)));
     pm.querySelectorAll<HTMLElement>("[data-delrel]").forEach(b => b.addEventListener("click", () => { ed.deleteItems([b.dataset.delrel!]); this.renderPanel(); }));
