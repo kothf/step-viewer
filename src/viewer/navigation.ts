@@ -15,6 +15,8 @@ export interface NavHost {
   normalTo(): void;
   /** World box of the current selection, or null when nothing is picked. */
   selectionBox(): THREE.Box3 | null;
+  /** The model point under the screen point (a vertex, an edge or a face), for the rotation centre (FR-UI-100). */
+  pointAt?(x: number, y: number): THREE.Vector3 | null;
 }
 
 /** Degrees per arrow press, and the pan step as a fraction of the view height. */
@@ -117,6 +119,18 @@ export function bindNavigation(host: NavHost): Navigation {
       return;
     }
     lastMiddle = { t: now, x: e.clientX, y: e.clientY };
+  });
+
+  // ---------- rotation centre (FR-UI-100): a middle click without a drag ----------
+  let midDown: { x: number; y: number; t: number } | null = null;
+  canvas.addEventListener("pointerdown", e => { midDown = e.button === 1 && host.active() ? { x: e.clientX, y: e.clientY, t: performance.now() } : null; });
+  window.addEventListener("pointerup", e => {
+    const d = midDown;
+    midDown = null;
+    if (!d || e.button !== 1 || performance.now() - d.t > 500 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const p = host.pointAt?.(e.clientX, e.clientY) ?? null;
+    if (!p && !viewer.pivot) return;
+    viewer.setPivot(p);
   });
 
   // ---------- orientation picker (Space) ----------

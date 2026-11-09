@@ -1,4 +1,5 @@
 import "./style.css";
+import { bindCommandTips } from "./tooltip";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -115,6 +116,7 @@ const modeller = new ModelController({
   },
   selectedFace: () => (state.selection?.kind === "face" && state.selection.face ? state.selection.face.id : null),
   selectedEdge: () => (state.selection?.kind === "edge" && state.selection.edge ? state.selection.edge : null),
+  setUnits: u => applyUnits(u),
   setMaterial: m => {
     if (!m) return;
     const i = MATERIALS.findIndex(x => x.name === m.name && x.density === m.density);
@@ -2069,6 +2071,10 @@ const nav = bindNavigation({
   active: () => !drawing.open && !isPcbMode() && viewer.parts.length + (modeller.active ? 1 : 0) > 0,
   normalTo: () => normalTo(),
   selectionBox,
+  pointAt: (x, y) => {
+    const r = viewer.renderer.domElement.getBoundingClientRect();
+    return snapper.pick(x - r.left, y - r.top)?.point.clone() ?? faceUnder(x - r.left, y - r.top)?.point ?? null;
+  },
 });
 void nav;
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
@@ -2175,12 +2181,19 @@ onLangChange(() => {
   validateDensity();
   if (csys.active) $("#csys-reset").textContent = `⌖ ${t("CSYS: {name} · back to global", { name: t(csys.active.name) })}`;
   fitToolbar();
+  syncUnitsButton();
   gerber.relocalize();
 });
 
+/** A unit picked anywhere: with a part open it is the part's unit, one undo step (FR-UI-116). */
 function setUnits(u: Unit) {
+  if (modeller.active && modeller.store) { modeller.setDocUnits(u); applyUnits(u); return; }
+  applyUnits(u);
+}
+function applyUnits(u: Unit) {
   units.current = u;
   $<HTMLSelectElement>("#units").value = u;
+  syncUnitsButton();
   storage.set("sv:units", u);
   refreshMeasurements();
   renderProps();
@@ -2190,12 +2203,46 @@ function setUnits(u: Unit) {
 function setDecimals(d: string) {
   units.decimals = d === "" ? null : Number(d);
   $<HTMLSelectElement>("#decimals").value = d;
+  syncUnitsButton();
   storage.set("sv:decimals", d);
   refreshMeasurements();
   renderProps();
   renderSections();
   renderMass();
 }
+// Units in the status bar (FR-UI-116): the unit and decimals; a click opens the choices.
+const UNIT_NAMES: Record<Unit, string> = { mm: "Millimetres (mm)", cm: "Centimetres (cm)", m: "Metres (m)", in: "Inches (in)", ft: "Feet (ft)" };
+function syncUnitsButton() {
+  const b = document.getElementById("st-units");
+  if (!b) return;
+  b.textContent = `${units.current} · ${units.decimals ?? t("auto")}`;
+  b.title = t("Units and decimals: click to change");
+}
+function openUnitsMenu() {
+  const b = $("#st-units"), old = document.getElementById("st-units-menu");
+  if (old) { old.remove(); b.setAttribute("aria-expanded", "false"); return; }
+  const m = document.createElement("div");
+  m.id = "st-units-menu";
+  m.className = "menu st-units-menu";
+  m.setAttribute("role", "menu");
+  m.innerHTML = `<p class="menu-h">${t("Units")}</p>` + UNIT_LIST.map(u => `<button type="button" role="menuitemradio" aria-checked="${u === units.current}" data-u="${u}">${esc(t(UNIT_NAMES[u]))}</button>`).join("")
+    + `<p class="menu-h">${t("Decimals")}</p><div class="st-dec">` + ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<button type="button" role="menuitemradio" aria-checked="${(units.decimals === null ? "" : String(units.decimals)) === d}" data-d="${d}">${d === "" ? esc(t("Auto")) : d}</button>`).join("") + `</div>`;
+  document.body.appendChild(m);
+  const r = b.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+  m.style.top = `${r.top - m.offsetHeight - 6}px`;
+  b.setAttribute("aria-expanded", "true");
+  const close = () => { m.remove(); b.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); };
+  const away = (e: Event) => { if (!m.contains(e.target as Node) && e.target !== b) close(); };
+  document.addEventListener("pointerdown", away, true);
+  m.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); b.focus(); } });
+  m.querySelectorAll<HTMLButtonElement>("[data-u]").forEach(x => x.addEventListener("click", () => { close(); setUnits(x.dataset.u as Unit); }));
+  m.querySelectorAll<HTMLButtonElement>("[data-d]").forEach(x => x.addEventListener("click", () => { close(); setDecimals(x.dataset.d!); }));
+  m.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+}
+$("#st-units").addEventListener("click", openUnitsMenu);
+bindCommandTips($("#cm"));
+syncUnitsButton();
 $("#csys-reset").addEventListener("click", () => setCsys(null));
 $<HTMLSelectElement>("#units").addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
 $<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
@@ -2204,6 +2251,7 @@ $<HTMLSelectElement>("#decimals").addEventListener("change", e => setDecimals((e
   if (u && UNIT_LIST.includes(u)) { units.current = u; $<HTMLSelectElement>("#units").value = u; }
   const d = storage.get("sv:decimals");
   if (d && /^[0-6]$/.test(d)) { units.decimals = Number(d); $<HTMLSelectElement>("#decimals").value = d; }
+  syncUnitsButton();
 }
 $$<HTMLInputElement>("[data-snap]").forEach(c => c.addEventListener("change", () => {
   (SNAP_FILTERS as Record<string, boolean>)[c.dataset.snap!] = c.checked;
