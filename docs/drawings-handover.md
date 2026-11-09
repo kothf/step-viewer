@@ -31,7 +31,7 @@ Written for whoever continues drawing work (FRS section 11, `FR-DRW-…`). The C
    - To run one block alone, mark it `inShard(5)`, run `npm run package && SMOKE_SHARD=5/100 npm test`, then switch it back.
 3. Checks:
    - `npm run -s typecheck`
-   - `node scripts/unit.mjs drawing` (63 tests), then `node scripts/unit.mjs` (everything)
+   - `node scripts/unit.mjs drawing` (62 tests at 1.341.0), then `node scripts/unit.mjs` (everything)
 4. Release files:
    - `npm version X.Y.Z --no-git-tag-version`.
    - Add a CHANGELOG section and update the compare links (`[Unreleased]` → vX, `[X]` compare from the previous version).
