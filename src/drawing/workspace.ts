@@ -29,6 +29,7 @@ import { FLAT_CONFIG, ORIENTS, ORIENT_NAMES, SCALES, viewConfig, viewOnly, topoO
 import { PALETTE, PALETTE_MIME, thumbPath } from "./palette";
 import "./drawing.css";
 import { makeGrip } from "../resize";
+import { isSheetBase } from "../sheetmetal/types";
 
 export interface DrawingModel {
   name: string;
@@ -938,7 +939,7 @@ export class DrawingWorkspace {
     // A sheet metal part also offers its flat pattern (FR-FT-120).
     // The drawing may have closed while the thumbnails were drawn.
     if (run !== this.palRun || !this.store) return;
-    const src = this.doc.source, sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
+    const src = this.doc.source, sm = src.kind === "part" && src.doc.features.some(isSheetBase);
     let tile = this.el.querySelector<HTMLElement>('[data-pal="flat"]');
     if (!sm) { tile?.remove(); return; }
     if (!tile) {
@@ -2623,7 +2624,7 @@ export class DrawingWorkspace {
   /** A part's configuration for a model view (FR-DRW-010); views made from it follow theirs. */
   private configField(v: DrawingView): string {
     const src = this.doc.source;
-    const sm = src.kind === "part" && src.doc.features.some(f => f.type === "smbase" && !f.suppressed);
+    const sm = src.kind === "part" && src.doc.features.some(isSheetBase);
     if (src.kind !== "part" || (!src.doc.configs?.length && !sm) || v.kind || v.parent) return "";
     const act = src.doc.config ?? src.doc.configs?.[0]?.name ?? t("Default");
     const flat = sm ? `<option value="${FLAT_CONFIG}"${v.config === FLAT_CONFIG ? " selected" : ""}>${esc(t("Flat pattern"))}</option>` : "";

@@ -8986,6 +8986,40 @@ try {
     const xbWant = T * 20 * (10 - (R + T) + (Math.PI / 2) * (R + 0.42 * T) + 20 - (R + T));
     check(!xb0.bad && !xb1.bad && Math.abs(xb0.v - xb1.v - xbWant) / xbWant < 1e-3,
       `sheet metal: a cut across a bend is unrolled in the flat pattern (${JSON.stringify({ xb0, xb1, xbWant })})`);
+    // Lofted Bend: a corner of two lines on XY lofted to a quarter circle 50 up; both profiles sketched, then the command.
+    await mp.evaluate(() => window.__sv.model.store.change("Loft profiles", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [
+        { id: "q1", type: "sketch", name: "Sketch8", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1a", 60, 0), P("q1b", 60, 60), P("q1c", 0, 60), { id: "q1l", t: "line", a: "q1a", b: "q1b" }, { id: "q1m", t: "line", a: "q1b", b: "q1c" }] },
+        { id: "qp", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } },
+        { id: "q2", type: "sketch", name: "Sketch9", plane: { plane: "qp" }, rels: [], dims: [], ents: [P("q2c", 0, 0), P("q2a", 30, 0), P("q2b", 0, 30), { id: "q2r", t: "arc", c: "q2c", a: "q2a", b: "q2b" }] },
+      ];
+    }));
+    await settle();
+    await smMenu("Lofted Bend");
+    const lb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, s1: window.__sv.model.mode().draft?.sketch1, s2: window.__sv.model.mode().draft?.sketch2 }));
+    await mp.click("#mc-ok");
+    await settle();
+    const lbState = () => mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data?.positions ?? [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      const f = window.__sv.model.store.doc.features.find(x => x.type === "smloft");
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), folds: l.sheet?.folds?.length ?? 0, v: l.props?.volume ?? 0, name: f?.name };
+    });
+    const lb1 = await lbState();
+    await smMenu("Flatten");
+    const lb2 = await lbState();
+    await smMenu("Flatten");
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smloft").id));
+    await settle();
+    const lbru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm .pm-count, #mc-pm button")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await mp.click("#lang-btn");
+    check(lb0.title === "Lofted Bend" && lb0.s1 === "q1" && lb0.s2 === "q2" && !lb1.bad && lb1.folds >= 8 && lb1.size[2] >= 50 && lb1.size[2] < 56 && lb1.name === "Lofted-Bend1"
+      && !lb2.bad && lb1.v > 0 && Math.abs(lb2.v - lb1.v) / lb1.v < 5e-3
+      && lbru.title === "Сгиб по сечениям" && !/[A-Za-z]{3}/.test(lbru.text.replace(/Enter|Esc|mm|Sketch8|Sketch9/g, "")),
+      `sheet metal: Lofted Bend joins two sketched profiles with folded facets; flat pattern keeps the volume; panel in Russian (${JSON.stringify({ lb0, lb1, lb2, lbru })})`);
     await ctx.close();
   }
 
