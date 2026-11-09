@@ -92,9 +92,10 @@ export interface SmClosedFeature {
 }
 
 /** Miter flange: an open profile of lines, sketched on a plane square to an edge and starting at it, run
- * along the picked edges; flanges on edges meeting at a corner are mitred. */
+ * along the picked edges; flanges on edges meeting at a corner are mitred. A swept flange ("smswept") is the same
+ * with tangent arcs between the lines: each arc is a bend of its own radius (the profile is the outside of the first bend). */
 export interface SmMiterFeature {
-  id: string; type: "smmiter"; name: string; suppressed?: boolean;
+  id: string; type: "smmiter" | "smswept"; name: string; suppressed?: boolean;
   /** Open chain of lines; one end at the first edge. Lengths are to the virtual sharps on the profile's side. */
   sketch: string;
   edges: EdgeRef[];
@@ -147,7 +148,7 @@ export interface SmTabFeature {
 }
 
 export type SheetFeature = SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smflat"]);
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
 
 /** Gauge tables: thickness, default inside radius and K-factor for common sheet gauges. */
