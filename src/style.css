@@ -1275,6 +1275,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mc-vcall > .mc-handle { position: static; transform: none; border-color: #e0a800; background: #fff8db; color: #5c4400; }
 :root[data-theme="dark"] .mc-vcall > .mc-handle { background: #3a3110; color: #ffe08a; }
 :root[data-theme="dark"] .mc-vcall { background: none; }
+.mc-ival { position: absolute; display: inline-flex; padding: 0; border: 0; background: none; pointer-events: auto; }
+.mc-ival > .mc-handle { position: static; transform: none; border-color: #1d4ed8; background: #eef3ff; color: #1d4ed8; font: 600 12px var(--mono); }
+.mc-ival > .mc-handle:hover, .mc-ival > .mc-handle.on { background: #1d4ed8; color: #fff; }
+:root[data-theme="dark"] .mc-ival > .mc-handle { background: #15233f; color: #8ab4ff; border-color: #8ab4ff; }
+:root[data-theme="dark"] .mc-ival { background: none; }
 
 /* Heads-up view bar (FR-UI-022): view commands at the top centre of the view for parts and assemblies */
 .hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); backdrop-filter: blur(3px); }

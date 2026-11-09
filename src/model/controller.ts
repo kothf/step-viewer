@@ -137,6 +137,12 @@ type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBody
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
 /** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
 const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+/** Feature values shown with its dimensions on the model (FR-UI-115): key, quantity, English label. */
+const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
+  ["angle", "angle", "Angle"], ["angle2", "angle", "Angle"], ["radius", "length", "Radius"], ["diameter", "length", "Diameter"],
+  ["distance", "length", "Distance"], ["distance2", "length", "Distance"], ["thickness", "length", "Thickness"], ["depth", "length", "Depth"],
+  ["offset", "length", "Offset"], ["spacing", "length", "Spacing"], ["count", "count", "Instances"], ["spacing2", "length", "Spacing"],
+  ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
 const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
@@ -4788,6 +4794,21 @@ export class ModelController {
     return items.filter(it => (sk && it.src.startsWith(`${sk}:`)) || it.src === `${f.id}:depth`);
   }
 
+  /** A feature's own values shown beside its dimensions (FR-UI-115): angles, radii, thicknesses, counts… */
+  private featureValues(f: Feature): { key: string; q: "length" | "angle" | "count"; label: string }[] {
+    if (f.type === "sketch" || f.type === "sketch3d" || f.suppressed) return [];
+    const g = f as unknown as Record<string, unknown>, out: { key: string; q: "length" | "angle" | "count"; label: string }[] = [];
+    for (const [key, q, label] of INSTANT_VALUES) {
+      if (f.type === "extrude" && key === "depth") continue;
+      if (key === "depth" && typeof g.end === "string" && g.end !== "blind") continue;
+      const v = g[key];
+      if (q === "count" ? typeof v === "number" : !!v && typeof v === "object" && typeof (v as Num).v === "number") out.push({ key, q, label: t(label) });
+    }
+    return out;
+  }
+
+  private hasInstant(f: Feature) { return this.instantItems(f).length > 0 || this.featureValues(f).length > 0; }
+
   /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in SolidWorks. */
   showInstant(x: number, y: number) {
     if (!this.store || !this.last || this.mode.kind !== "none") return;
@@ -4797,7 +4818,7 @@ export class ModelController {
     const f = id ? this.store.feature(id) : undefined;
     if (!f || f.suppressed) { this.hideInstant(); return; }
     this.hideShortcutBar();
-    if (!this.instantItems(f).length) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
+    if (!this.hasInstant(f)) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
     this.instant = f.id;
     this.selected = f.id;
     this.renderTree();
@@ -4844,6 +4865,25 @@ export class ModelController {
       layer.appendChild(el);
     }
     this.lines(pos, dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    // The feature's own values (angle, radius, thickness, count…) stacked by the middle of its faces.
+    const at = this.calloutPoint(f), g = f as unknown as Record<string, unknown>;
+    if (at) this.featureValues(f).forEach((fv, row) => {
+      const v = g[fv.key] as Num | number;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-ival";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = fv.key;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mc-handle";
+      b.dataset.src = `${f.id}:${fv.key}`;
+      b.textContent = `${fv.label}: ${typeof v === "number" ? v : fv.q === "angle" ? `${trimNum(v.v * 180 / Math.PI, dec)}°` : trimNum(v.v * fu, dec)}`;
+      b.title = t("{name}: click to change", { name: fv.label });
+      b.addEventListener("click", ev => { ev.stopPropagation(); this.editInstant(`${f.id}:${fv.key}`, b); });
+      el.append(b);
+      layer.appendChild(el);
+    });
     this.placeCallouts();
   }
 
@@ -4854,26 +4894,39 @@ export class ModelController {
     const f = this.store.feature(fid);
     if (!f) return;
     const fu = UNITS[units.current].f;
-    let num: Num, title: string;
+    let num: Num, title: string, q: "length" | "angle" | "count" = "length";
+    const fv = f.type === "extrude" && key === "depth" ? undefined : this.featureValues(f).find(x => x.key === key);
     if (key === "depth" && f.type === "extrude") { num = f.depth; title = `${t("Depth")}@${f.name}`; }
-    else if (f.type === "sketch") {
+    else if (fv) {
+      const raw = (f as unknown as Record<string, unknown>)[key] as Num | number;
+      num = typeof raw === "number" ? { v: raw } : raw;
+      q = fv.q;
+      title = `${fv.label}@${f.name}`;
+    } else if (f.type === "sketch") {
       const d = f.dims.find(x => x.id === key);
       if (!d) return;
       num = d.val;
       title = `${d.name}@${f.name}`;
     } else return;
-    const value = num.expr ?? trimNum(num.v * fu, 6);
+    const value = num.expr ?? (q === "count" ? String(num.v) : trimNum(q === "angle" ? num.v * 180 / Math.PI : num.v * fu, 6));
     // The document with the typed value, or an error.
     const docWith = (text: string): PartDoc | string | null => {
       let v: number;
-      try { v = evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
-      catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
-      if (!(v > 0)) return t("The value must be more than 0.");
-      const val: Num = isPlain(text) ? { v } : { v, expr: text.trim() };
-      if (Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
+      if (q === "count") {
+        v = Number(text.trim());
+        if (!Number.isInteger(v) || v < 1) return t("Enter a whole number of 1 or more.");
+        if (v === num.v) return null;
+      } else {
+        try { v = q === "angle" ? evaluate(text, "angle", "deg", evalVars(this.doc, units.current).values) : evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
+        catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
+        if (!(v > 0)) return t("The value must be more than 0.");
+      }
+      const val: Num = q === "count" || isPlain(text) ? { v } : { v, expr: text.trim() };
+      if (q !== "count" && Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
       const d = structuredClone(this.doc);
       const g = d.features.find(x => x.id === fid)!;
-      if (g.type === "extrude") g.depth = val;
+      if (fv) (g as unknown as Record<string, unknown>)[key] = q === "count" ? v : val;
+      else if (g.type === "extrude") g.depth = val;
       else if (g.type === "sketch") {
         g.dims.find(x => x.id === key)!.val = val;
         if (solve(g).status !== "ok") return t("That value cannot be reached with the other relations and dimensions.");
@@ -4887,7 +4940,7 @@ export class ModelController {
       at: { x: r.right, y: r.top + r.height / 2 },
       title,
       value,
-      step: stepFor("length", units.current),
+      step: q === "count" ? 1 : stepFor(q, units.current),
       preview: text => {
         const d = docWith(text);
         if (typeof d === "string") { toast(d, "error"); return; }
@@ -5451,6 +5504,8 @@ export class ModelController {
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
         if (id === "configs") { this.editConfigs(); return; }
+        // A feature picked in the tree shows its dimensions and values on the model, as in SolidWorks (FR-UI-115).
+        if (mm.kind === "none") { const f = this.store!.feature(id); this.instant = f && !f.suppressed && this.hasInstant(f) ? id : null; }
         this.selected = id;
         this.renderTree();
         this.drawDecor();

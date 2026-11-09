@@ -2813,6 +2813,51 @@ try {
       check(saved.views?.length === 1 && saved.views[0].name === "Close up" && saved.dirty && shut && d < 1e-3,
         `model 1.360: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
     }
+    // 1.360 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
+    // a value opens the Modify box and ✓ changes the feature as one undo step.
+    {
+      // A shell (thickness) to show: the part has only sketches and extrudes so far.
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.evaluate(() => window.__sv.modeller.ok());
+      await idle();
+      const pick = await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = window.__sv.model.store.doc;
+        const f = d.features.find(x => m.featureValues(x).some(v => v.q !== "count") && m.calloutPoint(x));
+        const fv = f && m.featureValues(f).find(v => v.q !== "count");
+        return f ? { id: f.id, type: f.type, key: fv.key, q: fv.q, v: f[fv.key].v } : { types: d.features.map(x => x.type) };
+      });
+      let ival = null, after = null, undone = null;
+      if (pick.id) {
+        await treeClick(mp, `#mc-tree .ft-row[data-id="${pick.id}"]`);
+        await mp.waitForSelector(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`, { timeout: 5000 }).catch(() => {});
+        ival = await mp.evaluate(k => document.querySelector(`#mc-layer .mc-ival[data-v="${k}"] .mc-handle`)?.textContent ?? null, pick.key);
+        if (ival) {
+          const nv = pick.q === "angle" ? "33" : String(Math.round(pick.v * 10) / 10 + 0.5);
+          await mp.click(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`);
+          await mp.waitForSelector(".mod-box input");
+          await mp.fill(".mod-box input", nv);
+          await mp.keyboard.press("Enter");
+          await idle();
+          after = await mp.evaluate(p => ({ v: window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, undo: window.__sv.model.store.undoLabel, box: !!document.querySelector(".mod-box") }), pick);
+          after.want = pick.q === "angle" ? 33 * Math.PI / 180 : Number(nv);
+          await mp.evaluate(() => window.__sv.modeller.undo());
+          await idle();
+          undone = await mp.evaluate(p => window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, pick);
+        }
+      }
+      await mp.keyboard.press("Escape");
+      // Take the shell off again so the checks below see the part as before.
+      await mp.evaluate(() => { const st = window.__sv.model.store; if (st.doc.features.at(-1)?.type === "shell") window.__sv.modeller.undo(); });
+      await idle();
+      check(!!ival && after && Math.abs(after.v - after.want) < 1e-9 && !after.box && Math.abs(undone - pick.v) < 1e-9,
+        `model 1.360: a feature picked in the tree shows its values on the model; the Modify box changes it as one undo step (${JSON.stringify({ pick, ival, after, undone })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
