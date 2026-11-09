@@ -59,8 +59,8 @@ import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWe
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature } from "../sheetmetal/types";
-import { apply as smApply, applyDir as smApplyDir, crossBreakLines, flatBendLines } from "../sheetmetal/sheet";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature } from "../sheetmetal/types";
+import { apply as smApply, applyDir as smApplyDir, crossBreakLines, flatBendLines, flatPointOn } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
 import { ModifyBox } from "../modifyBox";
@@ -797,7 +797,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smcross" | "smvent" | "smform" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -890,10 +890,10 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smcross" || type === "smvent" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smcross" || type === "smvent" || type === "smform" || type === "smmiter" || type === "smswept") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
-      const smFace = type === "smclosed" || type === "smcross" ? this.pickedFace() : null;
-      const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data });
+      const smFace = type === "smclosed" || type === "smcross" || type === "smform" ? this.pickedFace() : null;
+      const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
       if (typeof sm === "string") { toast(sm, true); return; }
       draft = sm;
     } else if (type === "sketch3d") {
@@ -1737,6 +1737,7 @@ export class ModelController {
       else if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer" || (m.draft.type === "curve" && m.draft.kind === "composite"))) this.pickEdge(e);
       else if (m.kind === "feature" && (m.draft.type === "smflange" || m.draft.type === "smhem" || m.draft.type === "smcorner" || m.draft.type === "smmiter" || m.draft.type === "smswept")) this.pickSmEdge(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smclosed" || m.draft.type === "smcross")) this.pickSmFace(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -2035,6 +2036,19 @@ export class ModelController {
     } else if (!fr || fr.name.startsWith(`${f.id}:`) || /:(top|bot|in|out)$/.test(fr.name) || !/:p\d+:/.test(fr.name)) { toast(t("Pick an end face of a flange (a side face across its thickness).")); return; }
     const i = f.faces.findIndex(x => x.name === fr.name);
     if (i >= 0) f.faces.splice(i, 1); else f.faces.push(fr);
+    this.draftChanged();
+  }
+
+  /** Forming tool: a click on a panel's top or bottom face adds a tool there (a click on another face starts over on it). */
+  private placeForm(e: PointerEvent, f: SmFormFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    const st = this.last?.sheet;
+    if (!hit || !fr || !st || fr.name.startsWith(`${f.id}:`) || !/:p\d+:(top|bot)$/.test(fr.name)) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
+    const p = flatPointOn(st, fr.name, hit.point);
+    if (!p) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
+    if (fr.name !== f.face.name) { f.face = fr; f.pts = []; }
+    f.pts.push([p[0], p[1]]);
     this.draftChanged();
   }
 
@@ -4341,7 +4355,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smcross": case "smvent": case "smmiter": case "smswept": this.startFeature(c); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smcross": case "smvent": case "smform": case "smmiter": case "smswept": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -5441,7 +5455,7 @@ export class ModelController {
         }, k === "end" || k === "op" || k === "sketch" || k === "modelled" || k === "axes" || (k === "cut" && f.type === "indent"));
       });
     });
-    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true));
+    if (isSheet(f)) bindSmPanel(pm, f, upd, () => this.exportFlatDxf(), msg => toast(msg, true), UNITS[units.current].f, this.last?.sheet?.T ?? 1);
     pm.querySelectorAll<HTMLInputElement>("input[data-er2]").forEach(inp => {
       const apply = () => {
         if (f.type !== "fillet") return;

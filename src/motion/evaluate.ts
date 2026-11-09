@@ -163,6 +163,30 @@ function akimaSlopes(pts: [number, number][]): number[] {
   return d;
 }
 
+/** What a motor's plot shows: its displacement, velocity or acceleration over the study (SolidWorks motor graph). */
+export type MotorPlot = "disp" | "vel" | "acc";
+
+/**
+ * A motor's displacement (° for rotary, mm for linear), velocity or acceleration at every frame of a study
+ * `duration` s long; the rates are central differences of `motorAmount` a step of 0.1 ms either side.
+ */
+export function motorSeries(m: MotorTrack, duration: number, fps: number, q: MotorPlot): number[] {
+  const n = Math.max(2, Math.round(duration * fps) + 1), k = m.motion === "rotary" ? 180 / Math.PI : 1, h = 1e-4;
+  const a = (tq: number) => motorAmount(m, tq) * k;
+  return Array.from({ length: n }, (_, i) => {
+    const tq = i / fps;
+    if (q === "vel") return (a(tq + h) - a(tq - h)) / (2 * h);
+    if (q === "acc") return (a(tq + h) - 2 * a(tq) + a(tq - h)) / (h * h);
+    return a(tq);
+  });
+}
+
+/** The unit a motor plot is drawn in. */
+export function motorPlotUnit(m: MotorTrack, q: MotorPlot): string {
+  const u = m.motion === "rotary" ? "°" : "mm";
+  return q === "vel" ? `${u}/s` : q === "acc" ? `${u}/s²` : u;
+}
+
 export const SEG_SHAPES: SegShape[] = ["linear", "cubic", "quintic", "harmonic", "cycloid"];
 
 /** A segment's progress 0 … 1 at u = 0 … 1 by its shape (cubic and quintic start and stop at rest, quintic also without a jerk; harmonic = half a cosine; cycloidal = no acceleration jump). */

@@ -571,6 +571,29 @@ function edgePoints(h: WeldHost, shape: any): V3[] {
   return out;
 }
 
+/** A member's wall thickness at a flat end face: the distance between its outer and largest inner outline, or 2 × area / perimeter for a solid section (an angle's or channel's leg thickness). */
+export function wallThickness(h: WeldHost, face: any): number {
+  const oc = h.oc;
+  const outer = oc.BRepTools.OuterWire(face);
+  const map = new oc.TopTools_IndexedMapOfShape_1();
+  oc.TopExp.MapShapes_1(face, oc.TopAbs_ShapeEnum.TopAbs_WIRE, map);
+  const wires: any[] = [];
+  for (let i = 1; i <= map.Extent(); i++) { const w = oc.TopoDS.Wire_1(map.FindKey(i)); if (!w.IsSame(outer)) wires.push(w); }
+  const areaOf = (w: any) => { const ff = new oc.BRepBuilderAPI_MakeFace_15(w, true).Face(); const p = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(ff, p, false, false); return Math.abs(p.Mass()); };
+  if (wires.length) {
+    let best = wires[0], ba = areaOf(best);
+    for (const w of wires.slice(1)) { const a = areaOf(w); if (a > ba) { ba = a; best = w; } }
+    const d = new oc.BRepExtrema_DistShapeShape_2(outer, best, oc.Extrema_ExtFlag.Extrema_ExtFlag_MIN, oc.Extrema_ExtAlgo.Extrema_ExtAlgo_Grad, new oc.Message_ProgressRange_1());
+    if (d.IsDone() && d.Value() > 1e-9) return d.Value();
+  }
+  const p = new oc.GProp_GProps_1();
+  oc.BRepGProp.SurfaceProperties_1(face, p, false, false);
+  const a = Math.abs(p.Mass());
+  const lp = new oc.GProp_GProps_1();
+  oc.BRepGProp.LinearProperties(face, lp, false, false);
+  return lp.Mass() > 1e-12 ? 2 * a / lp.Mass() : 0;
+}
+
 /** End cap: a plate on each picked flat end face, `inset` in from its outline, `thickness` outwards. */
 export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames: Record<string, Frame>): Named {
   const oc = h.oc;
@@ -617,7 +640,10 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
       });
       trims.push({ face, tool: { shape, faces, names } });
     }
-    if (f.inset.v > 1e-9) {
+    // Thickness ratio: the inset follows the member's wall (the gap between the end face's outer and inner outline).
+    const ratio = how !== "internal" && f.ratio ? f.ratio.v : 0;
+    const inset = ratio > 0 ? ratio * wallThickness(h, face) : f.inset.v;
+    if (inset > 1e-9) {
       const off = (d: number) => {
         const mk = new oc.BRepOffsetAPI_MakeOffset_3(wire, oc.GeomAbs_JoinType.GeomAbs_Arc, false);
         mk.Perform(d, 0);
@@ -625,8 +651,8 @@ export function endCap(h: WeldHost, f: EndCapFeature, prev: Named | null, frames
         return oc.TopoDS.Wire_1(mk.Shape());
       };
       const a0 = area(wire);
-      let w = off(-f.inset.v);
-      if (area(w) > a0) w = off(f.inset.v);
+      let w = off(-inset);
+      if (area(w) > a0) w = off(inset);
       if (area(w) >= a0) throw new FeatureError("E-WLD-CAP", "The inset is too big for the end face.");
       wire = w;
     }

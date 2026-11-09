@@ -5985,6 +5985,9 @@ try {
     await mp.evaluate(() => window.__sv.motion.seek(0.2));
     const segAt = await pos();
     const segRows = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").segs.map(r => r[2]).join(","));
+    // The motor graph: velocity in °/s, with a curve and the playhead.
+    await setP("select[data-p=mplot]", "vel");
+    const motorPlot = await mp.evaluate(() => { const svg = document.querySelector("#motion .mo-motor-plot svg"); return svg ? [svg.querySelector("text")?.textContent, !!svg.querySelector("polyline"), !!svg.querySelector(".mo-ph"), window.__sv.motion.motorPlot].join("|") : ""; });
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
     await setP("select[data-p=profile]", "expr");
     await setP("input[data-p=expr]", "180*t");
@@ -5992,7 +5995,7 @@ try {
     const exprAt = await pos();
     await setP("input[data-p=expr]", "sin(");
     const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, exprAt, exprBad };
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, motorPlot, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6342,13 +6345,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8691,6 +8694,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(/^Radius/.test(capR.label ?? "") && capR.fillet === true, `weldments: end cap corner fillet (${JSON.stringify(capR)})`);
+    // Use thickness ratio: 0.5 of the SHS 40x40x3 wall = 1.5 mm inset, so a 37 × 37 plate.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInset"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wRatio"]');
+    await settle();
+    const capRt = await mp.evaluate(() => ({ ratio: window.__sv.model.mode().draft?.ratio?.v, field: !!document.querySelector('#mc-pm input[data-num="ratio"]'), inset: !!document.querySelector('#mc-pm input[data-num="inset"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const capRp = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), plate: (l.cutList ?? []).find(c => c.kind === "plate")?.plate }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(capRt.ratio === 0.5 && capRt.field && !capRt.inset && !capRp.bad && JSON.stringify(capRp.plate) === "[37,37,5]", `weldments: end cap thickness ratio (${JSON.stringify({ ...capRt, ...capRp })})`);
     // Thickness direction Inward keeps the overall length: the member is cut back by the plate's 5 mm.
     const memLen = () => mp.evaluate(() => (window.__sv.model.last().cutList ?? []).filter(c => c.kind === "member").reduce((a, c) => a + c.length * c.qty, 0));
     const len0 = await memLen();
@@ -9184,6 +9201,22 @@ try {
     const vt1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(vt0.title === "Vent" && vt0.sketch === "vsk" && /1/.test(vt0.info ?? "") && !vt1.bad && Math.abs(cb1.v - vt1.v - (60 * 25 - 2 * 25) * T) < 1e-3,
       `sheet metal: Vent cuts the boundary less the rib through the plate (${JSON.stringify({ vt0, vt1 })})`);
+    // Forming Tool: click the plate's top face beside the vent, switch to an extruded hole, ✓: a collar T thick and the hole through.
+    await smMenu("Forming Tool");
+    const [ftx, fty] = await scr([10, 25, T]);
+    await mp.mouse.click(ftx, fty);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="tool"]', "xhole");
+    await settle();
+    const ft0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, pts: d?.pts, tool: d?.tool, size: d?.size?.v, h: d?.height?.v, rows: document.querySelectorAll("#mc-pm [data-sm-pt]").length }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const ft1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, forms: l.sheet?.forms?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const ftR = Math.round(5 * T * 10) / 10 / 2, ftH = Math.round(2 * T * 10) / 10;
+    const ftDv = Math.PI * ((ftR + T) ** 2 * ftH - ftR ** 2 * (ftH + T));
+    check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
+      && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
+      `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9830,6 +9863,41 @@ try {
     await dp.waitForTimeout(150);
     const m1 = await marks(), off = await dp.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(v => v.id === id).bolts, m0.id);
     check(off === false && m1.polys.length === 0 && m1.lines === 7 * 2, `drawing: bolt circles off gives plain centre marks (${JSON.stringify({ off, m1 })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: slot centre marks (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A 40 mm long, 10 mm wide slot (end centres at x = ±20) through a 100 × 60 plate.
+    const part = { schema: 1, kind: "part", id: "d_drwslot", name: "Slotted", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        P("c1", -20, 0), P("c2", 20, 0), P("q1", -20, 5), P("q2", -20, -5), P("q3", 20, -5), P("q4", 20, 5),
+        { id: "a1", t: "arc", c: "c1", a: "q1", b: "q2" }, { id: "a2", t: "arc", c: "c2", a: "q3", b: "q4" },
+        { id: "l5", t: "line", a: "q2", b: "q3" }, { id: "l6", t: "line", a: "q4", b: "q1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Slotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre-line segments within the slot's reach, in model mm about the plate centre.
+    const sm = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => Math.abs(q[0]) < 40 && Math.abs(q[1]) < 40 && Math.abs(q[2]) < 40 && Math.abs(q[3]) < 40);
+    });
+    const runs = sm.map(q => Math.hypot(q[2] - q[0], q[3] - q[1])).sort((a, b) => a - b);
+    check(sm.length === 3 && Math.abs(runs[0] - 14) < 0.05 && Math.abs(runs[1] - 14) < 0.05 && Math.abs(runs[2] - 54) < 0.05, `drawing: slot centreline and end centre lines, no crosses (${JSON.stringify(sm)})`);
     await ctx.close();
   }
 
