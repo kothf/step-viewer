@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Quick previews of drawing views** (FR-DRW-016): views of a big model (80 edges or more, or once an exact view took longer than 0.4 s) first show a paler preview from OCCT's polygonal hidden-line removal, then the exact lines replace it. On the CAx-IF test parts the preview comes in about 14 times sooner than the exact view (0.1–0.3 s instead of 1.8–4 s). Dimensions, picking and exports always use the exact lines.
+## [1.298.0] - 2026-11-09
+
+### Added
+
+- **Fully define sketch (FR-SK-045)**: a Fully define sketch button beside an under-defined sketch's status in the sketch panel, and the same item in the right-click menu on empty space. It adds horizontal/vertical relations to lines within 1° of level or plumb, diameters to circles, radii to arcs, then horizontal and vertical dimensions from the origin to the points, keeping only what removes freedom, until the sketch is fully defined. One undo takes it all back.
 
 ## [1.297.0] - 2026-11-09
 
@@ -1755,7 +1760,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.299.0...HEAD
-[1.299.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.299.0
+[1.299.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.299.0
+[1.298.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.298.0
 [1.297.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.297.0
 [1.296.0]: https://github.com/kothf/step-viewer/compare/v1.295.0...v1.296.0
 [1.295.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.295.0
