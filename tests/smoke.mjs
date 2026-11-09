@@ -5811,6 +5811,15 @@ try {
     // Undo takes back the last motion edit; Russian pane has no English left; closing puts pin 2 back.
     const undo = await mp.evaluate(async () => { const a = window.__sv.asm; a.undo(); await new Promise(r => setTimeout(r, 50)); return a.doc.motions[0].duration; });
     await shown(2);
+    // ⧉ duplicates the study (tracks and all) and shows the copy; undo takes it back.
+    const dup = await mp.evaluate(async () => {
+      const m = window.__sv.motion, a = window.__sv.asm, n0 = a.doc.motions.length, src = m.study;
+      document.querySelector('#motion [data-mo="dupstudy"]').click();
+      const copy = m.study, r = { n: a.doc.motions.length - n0, name: copy.name, other: copy.id !== src.id, tracks: copy.tracks.length === src.tracks.length && copy.tracks.length > 0, shown: document.querySelector('#motion [data-mo="name"]').value };
+      a.undo(); await new Promise(r => setTimeout(r, 50));
+      m.studyId = src.id; m.render();
+      return { ...r, undone: a.doc.motions.length === n0 };
+    });
     await mp.click("#lang-btn");
     await mp.waitForTimeout(150);
     const ru = await mp.evaluate(() => {
@@ -6110,13 +6119,14 @@ try {
       `motion study: the timeline zooms in, follows the playhead and fits again (FR-FT-122) (${JSON.stringify(pose.zoomed)})`);
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
+      && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points), explode and orbit wizard, appearance keys, GIF and WebM, undo, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
