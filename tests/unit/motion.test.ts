@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, parsePoints, playTime, pointsAt, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -360,4 +360,25 @@ test("plot export: stand-alone SVG with title, inline styles and no playhead", (
   assert.match(f, /Study &lt;1&gt;: Distance/);
   assert.ok(!f.includes("mo-ph"));
   assert.match(f, /width="900" height="336"/);
+});
+
+test("motor distance and data point profiles", () => {
+  const base: MotorTrack = { id: "m", kind: "motor", mate: "x", motion: "linear", profile: "distance", speed: 0, dist: 20, start: 1, end: 3 };
+  assert.equal(motorAmount(base, 0), 0);
+  assert.equal(motorAmount(base, 2), 10);
+  assert.equal(motorAmount(base, 3), 20);
+  assert.equal(motorAmount(base, 5), 20);
+  assert.ok(motorAmount(base, 1.2) < 0.1 * 20, "starts smoothly");
+  assert.equal(motorAmount({ ...base, flip: true }, 3), -20);
+  const pts = parsePoints("# t, v\n0, 0\n1; 2,5\n2 10\n", 2);
+  assert.deepEqual(pts, [[0, 0], [1, 5], [2, 20]]);
+  assert.equal(parsePoints("0 0"), null);
+  assert.equal(parsePoints("0 0\n0 1"), null);
+  assert.equal(parsePoints("0 0\nx 1"), null);
+  assert.equal(pointsAt(pts!, 0.5), 2.5);
+  assert.equal(pointsAt(pts!, 1.5), 12.5);
+  assert.equal(pointsAt(pts!, 9), 20);
+  const m: MotorTrack = { ...base, profile: "points", pts: pts!, start: 1, end: 3 };
+  assert.equal(motorAmount(m, 2.5), 12.5);
+  assert.equal(motorAmount(m, 0), 0);
 });

@@ -13,7 +13,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, parsePoints, playTime, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -37,6 +37,7 @@ type KeyRef = { track: string; t: number };
 const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
+const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
 const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
@@ -1097,10 +1098,14 @@ export class MotionManager {
       const canRot = !mate || mate.type !== "distance", canLin = !mate || (mate.type !== "angle" && mate.type !== "hinge");
       const rot = tr.motion === "rotary";
       return `<label class="mo-f"><span>${esc(t("Motor"))}</span><select data-p="motion"><option value="rotary"${rot ? " selected" : ""}${canRot ? "" : " disabled"}>${esc(t("Rotary motor"))}</option><option value="linear"${!rot ? " selected" : ""}${canLin ? "" : " disabled"}>${esc(t("Linear motor"))}</option></select></label>`
-        + `<label class="mo-f"><span>${esc(t("Profile"))}</span><select data-p="profile"><option value="constant"${tr.profile === "constant" ? " selected" : ""}>${esc(t("Constant speed"))}</option><option value="oscillate"${tr.profile === "oscillate" ? " selected" : ""}>${esc(t("Oscillating"))}</option></select></label>`
+        + `<label class="mo-f"><span>${esc(t("Profile"))}</span><select data-p="profile">${PROFILES.map(([k, l]) => `<option value="${k}"${tr.profile === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
         + (tr.profile === "oscillate"
           ? field(t("Amplitude"), "amp", fmt(rot ? (tr.amp ?? 0) / DEG : tr.amp ?? 0), rot ? "°" : "mm") + field(t("Frequency"), "freq", fmt(tr.freq ?? 1), t("Hz"))
-          : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
+          : tr.profile === "distance"
+            ? field(rot ? t("Angle") : t("Distance"), "dist", fmt(rot ? (tr.dist ?? 0) / DEG : tr.dist ?? 0), rot ? "°" : "mm")
+            : tr.profile === "points"
+              ? `<label class="mo-f mo-pts"><span>${esc(t("Data points"))}</span><textarea data-p="pts" rows="4" spellcheck="false" aria-label="${esc(t("Time (s) and value per line"))}" title="${esc(t("One row per line: time after the motor start (s), then the value ({u})", { u: rot ? "°" : "mm" }))}">${esc((tr.pts ?? []).map(([a, b]) => `${fmt(a)}, ${fmt(rot ? b / DEG : b)}`).join("\n"))}</textarea></label>`
+              : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
         + field(t("Start"), "start", fmt(tr.start), t("s")) + field(t("End"), "end", fmt(tr.end), t("s"))
         + `<label class="mo-f"><input type="checkbox" data-p="flip"${tr.flip ? " checked" : ""} /><span>${esc(t("Reverse direction"))}</span></label>`;
     }
@@ -1404,6 +1409,17 @@ export class MotionManager {
       if (!this.scaleKeys(ps, Math.min(...ps.map(q => q.t)), v / 100)) { bad(); toast(t("The keys can't be stretched that far."), "warn"); return; }
       this.render(); this.showAt(this.time); return;
     }
+    if (p === "pts" && tr0.kind === "motor") {
+      const pts = parsePoints(raw, tr0.motion === "rotary" ? DEG : 1);
+      if (!pts) { bad(); toast(t("Type at least two rows of time and value, with the times increasing."), "warn"); return; }
+      this.edit(st => {
+        const tr = st.tracks.find(k => k.id === sel.track);
+        if (tr?.kind !== "motor") return;
+        tr.pts = pts;
+        tr.end = Math.max(tr.start, Math.min(st.duration, tr.start + pts[pts.length - 1][0]));
+      });
+      this.render(); this.showAt(this.time); return;
+    }
     const numeric = !["interp", "motion", "profile", "flip", "setcam", "hide", "show", "seq"].includes(p);
     if (numeric && !Number.isFinite(v)) { bad(); return; }
     let newIdx = sel.key;
@@ -1413,7 +1429,12 @@ export class MotionManager {
       if (tr.kind === "motor") {
         const rot = tr.motion === "rotary";
         if (p === "motion") tr.motion = raw as MotorTrack["motion"];
-        else if (p === "profile") tr.profile = raw as MotorTrack["profile"];
+        else if (p === "profile") {
+          tr.profile = raw as MotorTrack["profile"];
+          if (tr.profile === "distance" && tr.dist === undefined) tr.dist = rot ? Math.PI / 2 : 10;
+          if (tr.profile === "points" && !tr.pts) tr.pts = [[0, 0], [Math.max(0.1, (tr.end - tr.start) / 2), rot ? Math.PI : 10], [Math.max(0.2, tr.end - tr.start), 0]];
+        }
+        else if (p === "dist") tr.dist = rot ? v * DEG : v;
         else if (p === "flip") tr.flip = (el as HTMLInputElement).checked || undefined;
         else if (p === "speed") tr.speed = v;
         else if (p === "amp") tr.amp = rot ? v * DEG : v;
