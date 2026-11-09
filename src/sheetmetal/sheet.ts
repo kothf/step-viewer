@@ -82,7 +82,11 @@ export interface SheetState {
 export interface FormMark { pid: string; fid: string; tool: FormTool; c: V2; loop: Seg[]; /** The footprint drawn on the flat pattern. */ mark: Seg[]; pierce?: number }
 
 /** A gusset's rib and groove in folded coordinates: triangles at the near end, swept along `e` by `w` / `wg`. */
-export interface GussetMark { fid: string; bend: string; rib: V3[]; e: V3; w: number; groove: V3[]; wg: number }
+export interface GussetMark {
+  fid: string; bend: string; rib: V3[]; e: V3; w: number; groove: V3[]; wg: number;
+  /** Radii of the rib's / groove's chord edges (0 = sharp): a rounded or filleted tip. */
+  rr?: number; rg?: number;
+}
 
 /** One line of a cross break: raised towards the panel's top face when `up`. */
 export interface CrossLine { pid: string; a: V2; b: V2; side: "top" | "bot"; up: boolean; angle: number; r: number }
@@ -1840,7 +1844,14 @@ export function gussetGeom(st: SheetState, f: SmGussetFeature, shift = 0): Gusse
   // The rib's top wall must clear the bend: its chord at least r + T from the bend's axis.
   const cdist = nc[0] * set + nc[1] * b.r - (k - T);
   if (!(cdist >= b.r + T - 1e-9) || !(nc[0] * G0[0] + nc[1] * G0[1] > k + T * 1e-3)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
-  return { fid: f.id, bend: b.id, rib: [[0, 0], PA, PB].map(q => to3(q as V2)), e: e3, w, groove: [G0, G1, G2].map(q => to3(q, T)), wg: w - 2 * T };
+  const wg = w - 2 * T;
+  let rr = 0, rg = 0;
+  if (f.tip === "round") { rr = w / 2 * 0.995; rg = wg / 2 * 0.995; }
+  else if (f.fillet && f.fillet.v > 0) {
+    if (!(f.fillet.v < w / 2 - 1e-6)) throw new SheetError("E-SM-GUSSETFILLET", "The gusset's edge fillet must be less than half its width.");
+    rr = f.fillet.v; rg = f.fillet.v - T > T * 0.05 ? f.fillet.v - T : 0;
+  }
+  return { fid: f.id, bend: b.id, rib: [[0, 0], PA, PB].map(q => to3(q as V2)), e: e3, w, groove: [G0, G1, G2].map(q => to3(q, T)), wg, rr, rg };
 }
 
 /** Adds a gusset to the sheet state. */

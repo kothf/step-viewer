@@ -713,6 +713,16 @@ test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120
   assert.ok(inside(r4, [48, 4, 10]) && !inside(r, [48, 4, 10]), "the rib wall runs further up the flange");
   assert.equal(code(gus({ count: 3, spacing: { v: 4 } })), "E-SM-GUSSETSPACE");
   assert.equal(code(gus({ count: 0 })), "E-SM-GUSSETCOUNT");
+  // Tip shapes: rounded (a half round across the width) and flat with filleted edges take the top wall's side corners
+  // off and keep its middle; the flat pattern stays the same.
+  for (const over of [{ tip: "round" as const }, { fillet: { v: 1.5 } }]) {
+    const rt = run(doc([...pre, gus(over)]));
+    assert.ok(inside(r, [47.2, 6.9, 6.9]) && !inside(rt, [47.2, 6.9, 6.9]), `${JSON.stringify(over)}: side corner rounded off`);
+    assert.ok(inside(rt, [50, 6.25, 6.25]) && inside(rt, [48, 4, 4]) && !inside(rt, [50, 4, 4]), `${JSON.stringify(over)}: top wall, side wall and groove`);
+    assert.ok(rt.props.volume < r.props.volume && rt.props.volume > r0.props.volume);
+    close(run(doc([...pre, gus(over), flat])).props.volume, run(doc([...pre, flat])).props.volume, 1e-6);
+  }
+  assert.equal(code(gus({ fillet: { v: 3 } })), "E-SM-GUSSETFILLET");
 });
 
 test("sheet metal: normal cut is square to the sheet, across bends too (FR-FT-120)", async () => {

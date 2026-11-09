@@ -366,6 +366,9 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + `<label class="chk pm-chk"><input type="checkbox" data-sm="gd2"${f.depth2 ? " checked" : ""} />${esc(t("Different length on the second face"))}</label>`
           + (f.depth2 ? numField("depth2", t("Second profile length"), f.depth2, "length") : "")
           + numField("width", t("Gusset width"), f.width, "length")
+          + sel("gtip", t("Tip"), [["flat", t("Flat")], ["round", t("Rounded")]], f.tip ?? "flat")
+          + (f.tip === "round" ? "" : `<label class="chk pm-chk"><input type="checkbox" data-sm="gfil"${f.fillet ? " checked" : ""} />${esc(t("Fillet the edges"))}</label>`
+            + (f.fillet ? numField("fillet", t("Edge fillet radius"), f.fillet, "length") : ""))
           + help(t("The rib reaches the profile length along each face from the inside virtual sharp. It keeps the sheet's thickness, with the groove outside; the flat pattern leaves it out.")))
         + group(t("Pattern"), `<label class="pm-field"><span>${esc(t("Number of gussets"))}</span><span class="pm-in"><input type="text" inputmode="numeric" data-sm="gcount" value="${f.count ?? 1}" spellcheck="false" /></span></label>`
           + ((f.count ?? 1) > 1 ? numField("spacing", t("Spacing"), f.spacing ?? { v: 2 * f.width.v }, "length") + help(t("Centre to centre, spread evenly about the position.")) : "")),
@@ -623,6 +626,8 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
       }
       if (f.type === "smgusset") {
         if (key === "gmid") upd(() => { if (val) delete f.at; else f.at = { v: 10 }; }, true);
+        if (key === "gtip") upd(() => { if (val === "round") { f.tip = "round"; delete f.fillet; } else delete f.tip; }, true);
+        if (key === "gfil") upd(() => { if (val) f.fillet = { v: +Math.min(2 * T, f.width.v / 4).toFixed(4) }; else delete f.fillet; }, true);
         if (key === "gd2") upd(() => { if (val) f.depth2 = { v: f.depth.v }; else delete f.depth2; }, true);
         if (key === "gcount") {
           const v = Number(val);

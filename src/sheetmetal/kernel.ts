@@ -80,8 +80,8 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     let out = body;
     marks.forEach((mark, i) => {
       const tag = i ? `${i}` : "";
-      out = api.bool("fuse", out, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib${tag}`), f.id);
-      out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g${tag}`), f.id);
+      out = api.bool("fuse", out, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib${tag}`, mark.rr), f.id);
+      out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g${tag}`, mark.rg), f.id);
     });
     return { body: out, sm: state };
   }
@@ -707,14 +707,32 @@ function footprint(api: SheetApi, M: Mat, loop: Seg[], T: number, tag: string): 
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
 }
 
-/** A prism of a flat polygon given by its 3D corners, swept `w` along `e`. */
-function prism3(api: SheetApi, pts: V3[], e: V3, w: number, tag: string): Named {
+/**
+ * A prism of a flat polygon given by its 3D corners, swept `w` along `e`. With `round` > 0 the edges at both ends of
+ * the side from corner 1 to corner 2 (a gusset's chord) are filleted by it, which rounds the tip across the width.
+ */
+function prism3(api: SheetApi, pts: V3[], e: V3, w: number, tag: string, round = 0): Named {
   const oc = api.oc;
   const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
   const mk = new oc.BRepBuilderAPI_MakeWire_1();
   pts.forEach((q, i) => mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(P(q), P(pts[(i + 1) % pts.length])).Edge()));
   const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
-  const shape = prism(api, face, [e[0] * w, e[1] * w, e[2] * w]);
+  let shape = prism(api, face, [e[0] * w, e[1] * w, e[2] * w]);
+  if (round > 1e-6) {
+    const at = (q: V3, s: number): V3 => [q[0] + e[0] * s, q[1] + e[1] * s, q[2] + e[2] * s];
+    const ends = [[pts[1], pts[2]], [at(pts[1], w), at(pts[2], w)]];
+    const xyz = (v: any): V3 => { const p = oc.BRep_Tool.Pnt(v); return [p.X(), p.Y(), p.Z()]; };
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6 * (1 + w);
+    const fil = new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational);
+    let n = 0;
+    for (const ed of api.sub(shape, "EDGE")) {
+      const a = xyz(oc.TopExp.FirstVertex(ed, true)), b = xyz(oc.TopExp.LastVertex(ed, true));
+      if (ends.some(([p, q]) => (near(a, p) && near(b, q)) || (near(a, q) && near(b, p)))) { fil.Add_2(round, ed); n++; }
+    }
+    try { fil.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (n !== 2 || !fil.IsDone()) throw new SheetError("E-SM-GUSSETFILLET", "The gusset's edge fillet must be less than half its width.");
+    shape = fil.Shape();
+  }
   const faces = api.sub(shape, "FACE");
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
 }
