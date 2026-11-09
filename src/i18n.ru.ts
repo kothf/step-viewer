@@ -382,6 +382,7 @@ export const RU: Record<string, string> = {
   "Pick an edge.": "Укажите ребро.",
   "Unsupported tool": "Инструмент не поддерживается",
   "Click to copy": "Щёлкните, чтобы скопировать",
+  "Click to copy, or drag into a box": "Щёлкните, чтобы скопировать, или перетащите в поле ввода",
   "Dock in the corner": "Закрепить в углу",
   "Float next to the measurement": "Показывать рядом с измерением",
   "Decimal places": "Знаков после запятой",
