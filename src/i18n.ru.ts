@@ -2164,6 +2164,7 @@ export const RU: Record<string, string> = {
   // Drawings: dimensions and annotations
   "Annotate": "Обозначения",
   "Centre marks and centrelines": "Центровые метки и осевые линии",
+  "Bolt circles": "Окружности центров отверстий",
   "Click a second edge or point, or click where the dimension goes. Esc ends.": "Щёлкните второе ребро или точку либо место для размера. Esc — выход.",
   "Click an edge, a circle or a point of a view. Esc ends.": "Щёлкните ребро, окружность или точку вида. Esc — выход.",
   "Click the edge of a hole.": "Щёлкните кромку отверстия.",
