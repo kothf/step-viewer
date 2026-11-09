@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { FormTool, SmFormFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -70,7 +70,12 @@ export interface SheetState {
   faceted?: boolean;
   /** Cross break lines, in flat coordinates on a panel's top or bottom face. */
   crosses?: CrossLine[];
+  /** Forming tools pressed into panels: footprints in flat coordinates (left out of the flat pattern). */
+  forms?: FormMark[];
 }
+
+/** Where a forming tool sits on the flat pattern: its footprint loop and, for an extruded hole, the pre-pierce hole radius. */
+export interface FormMark { pid: string; fid: string; tool: FormTool; c: V2; loop: Seg[]; /** The footprint drawn on the flat pattern. */ mark: Seg[]; pierce?: number }
 
 /** One line of a cross break: raised towards the panel's top face when `up`. */
 export interface CrossLine { pid: string; a: V2; b: V2; side: "top" | "bot"; up: boolean; angle: number; r: number }
@@ -1447,4 +1452,84 @@ export function ventPanel(st: SheetState, pts: V3[]): Panel {
     }
   }
   throw new SheetError("E-SM-VENTFACE", "Sketch the vent on a flat face of the sheet.");
+}
+
+// ---------- forming tools ----------
+
+/** One placed forming tool: the panel, its centre and turn in flat coordinates, and which way it stands out. */
+export interface FormItem { pid: string; M: Mat; c: V2; ang: number; up: boolean; loop: Seg[] }
+
+const rot = (c: V2, a: number, p: V2): V2 => [c[0] + p[0] * Math.cos(a) - p[1] * Math.sin(a), c[1] + p[0] * Math.sin(a) + p[1] * Math.cos(a)];
+
+/** A rounded slot of overall length L and width w along local x, ccw, turned by a about c. */
+export function obroundLoop(c: V2, L: number, w: number, a: number, ent = "f"): Seg[] {
+  const r = w / 2, h = Math.max(0, L / 2 - r);
+  if (h < 1e-9) return [{ ent, kind: "circle", c, r }];
+  const P = (x: number, y: number) => rot(c, a, [x, y]);
+  return [
+    { ent: `${ent}0`, kind: "line", a: P(-h, -r), b: P(h, -r) },
+    { ent: `${ent}1`, kind: "arc", c: P(h, 0), r, a: P(h, -r), b: P(h, r), ccw: true },
+    { ent: `${ent}2`, kind: "line", a: P(h, r), b: P(-h, r) },
+    { ent: `${ent}3`, kind: "arc", c: P(-h, 0), r, a: P(-h, r), b: P(-h, -r), ccw: true },
+  ];
+}
+
+/** A rectangle L × w centred on c along local x, ccw, turned by a. */
+export function rectLoop(c: V2, L: number, w: number, a: number, ent = "f"): Seg[] {
+  const q = [[-L / 2, -w / 2], [L / 2, -w / 2], [L / 2, w / 2], [-L / 2, w / 2]].map(p => rot(c, a, p as V2));
+  return q.map((p, i) => ({ ent: `${ent}${i}`, kind: "line" as const, a: p, b: q[(i + 1) % 4] }));
+}
+
+/** Pre-pierce hole radius of an extruded hole: the collar's neutral length comes out of the flat ring around it. */
+export const piercedRadius = (d: number, h: number, T: number) => d / 2 + T - h;
+
+/**
+ * Checks a forming tool and places it: one item per point, on the picked face's panel, standing out of that face
+ * (or the other one when flipped). Footprints must lie inside the panel.
+ */
+export function formTools(st: SheetState, f: SmFormFeature): { items: FormItem[]; state: SheetState } {
+  const m = /^(.*):(top|bot)$/.exec(f.face?.name ?? "");
+  const panel = m ? st.panels.find(p => p.id === m[1]) : undefined;
+  if (!m || !panel) throw new SheetError("E-SM-FORMFACE", "Pick a flat face of the sheet (its top or bottom).");
+  if (!f.pts.length) throw new SheetError("E-SM-FORMPT", "Click the face to place the forming tool.");
+  const T = st.T, size = f.size.v, w = f.width.v, h = f.height.v, dr = f.draft?.v ?? 0, ang = f.angle?.v ?? 0;
+  if (!(size > 0) || (f.tool !== "dimple" && f.tool !== "xhole" && !(w > 0))) throw new SheetError("E-SM-FORMSIZE", "The forming tool's sizes must be more than 0.");
+  if (!(h > T)) throw new SheetError("E-SM-FORMH", "The form must stand out more than the sheet is thick.");
+  if (!(dr >= 0 && dr < Math.PI / 3)) throw new SheetError("E-SM-FORMDRAFT", "The draft must be between 0° and 60°.");
+  // The inside of a drafted wall: in by T / cos(draft) at the same height, up to h - T.
+  const inside = (r: number) => r - (h - T) * Math.tan(dr) - T / Math.cos(dr);
+  if (f.tool === "dimple" && !(inside(size / 2) > 0)) throw new SheetError("E-SM-FORMDRAFT", "The draft closes the form before its full height.");
+  if (f.tool === "rib" && !(inside(w / 2) > 0)) throw new SheetError("E-SM-FORMDRAFT", "The draft closes the form before its full height.");
+  if (f.tool === "louver" && !(h > T * Math.hypot(1, h / w))) throw new SheetError("E-SM-FORMH", "The form must stand out more than the sheet is thick.");
+  if (f.tool === "rib" && !(size >= w)) throw new SheetError("E-SM-FORMSIZE", "A rib must be at least as long as it is wide.");
+  if (f.tool === "louver" && !(size > 4 * T && w > T)) throw new SheetError("E-SM-FORMSIZE", "A louver must be longer than four thicknesses.");
+  if (f.tool === "xhole" && !(piercedRadius(size, h, T) > 0)) throw new SheetError("E-SM-FORMH", "The extruded hole is too tall for its diameter.");
+  const up = (m[2] === "top") !== !!f.flip;
+  const poly = loopPolygon(panel.outer, 32);
+  const holes = panel.holes.map(x => loopPolygon(x, 32));
+  const items: FormItem[] = [];
+  const marks: FormMark[] = [];
+  f.pts.forEach((c, i) => {
+    const loop = f.tool === "dimple" ? [{ ent: "f", kind: "circle" as const, c, r: size / 2 }]
+      : f.tool === "xhole" ? [{ ent: "f", kind: "circle" as const, c, r: size / 2 + T }]
+      : f.tool === "rib" ? obroundLoop(c, size, w, ang) : rectLoop(c, size, w, ang);
+    const fp = loopPolygon(loop, 32);
+    if (fp.some(p => !inPolygon(p, poly)) || holes.some(hp => fp.some(p => inPolygon(p, hp)) || hp.some(p => inPolygon(p, fp))))
+      throw new SheetError("E-SM-FORMOUT", "A forming tool runs off its face.");
+    items.push({ pid: panel.id, M: panel.M, c, ang, up, loop });
+    // The flat pattern restores the sheet under the form; an extruded hole leaves its pre-pierce hole.
+    // (A louver's opening runs a hair past its front edge.)
+    const restore = f.tool === "xhole" ? [{ ent: "f", kind: "circle" as const, c, r: size / 2 }] : f.tool === "louver" ? rectLoop(c, size, w + T * 0.1, ang) : loop;
+    marks.push({ pid: panel.id, fid: `${f.id}:${i}`, tool: f.tool, c, loop: restore, mark: loop, ...(f.tool === "xhole" ? { pierce: piercedRadius(size, h, T) } : {}) });
+  });
+  return { items, state: { ...st, forms: [...(st.forms ?? []), ...marks] } };
+}
+
+/** The panel point (flat x, y) under a world point on a panel's top or bottom face, if it lies on one. */
+export function flatPointOn(st: SheetState, face: string, p: V3): V2 | null {
+  const m = /^(.*):(top|bot)$/.exec(face);
+  const panel = m ? st.panels.find(x => x.id === m[1]) : undefined;
+  if (!m || !panel) return null;
+  const q = local(panel.M, p);
+  return [q[0], q[1]];
 }

@@ -10,6 +10,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **End cap thickness ratio (FR-FT-121)**: Weldments → End Cap → Offset has SolidWorks' Use thickness ratio: the inset is a multiple of the capped member's wall thickness (0.5 on an SHS 40×40×3 = 1.5 mm in from the edges), so caps on tubes of different walls follow them. On a solid section the wall is taken as 2 × area / perimeter (a flat bar's or a channel leg's thickness); Internal caps keep their clearance.
+## [1.321.0] - 2026-11-09
+
+### Added
+
+- **Forming tools (FR-FT-120)**: Sheet Metal → Forming Tool presses a library form into a flat face of the sheet, like dropping a SolidWorks forming tool on a face: a **Dimple** (round, with drafted walls), an **Embossed rib** (a long rounded rib), a **Louver** (a hood open on one side) or an **Extruded hole** (a hole with a collar). Click the face to place a tool, and click again for more; the positions can also be typed. The form keeps the sheet's thickness and stands out of the picked face, or the other one with Reverse direction. The flat pattern leaves forms out, as SolidWorks does: their outlines go on a FORM_TOOL layer in the DXF, and an extruded hole leaves its pre-pierce hole.
+
+## [1.320.0] - 2026-11-09
+
+### Added
+- Slot centre marks in drawings (FR-DRW-023): a straight slot seen end-on gets a centreline along it, 2 mm past both ends, and a centre line across each rounded end.
+
+### Fixed
+- The rounded ends of a slot were marked as full circles, because their arcs on the top and bottom faces added up to 360°.
+
+## [1.319.0] - 2026-11-09
+
+### Added
+
+- **Measured values into input boxes (FR-MEA-002)**: drag a length, diameter, radius or angle from the measurement card onto a box in a feature panel or any other number box, and it goes in as if typed. A box that already shows the value's unit gets the bare number; another gets number and unit (say 1.5 in in a millimetre box), which the box reads as an expression. Clicking a value still copies it.
+
 ## [1.318.0] - 2026-11-09
 
 ### Added
@@ -1873,6 +1893,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.322.0...HEAD
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
+[1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0
+[1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
+[1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
 [1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
 [1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0

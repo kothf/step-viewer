@@ -4,8 +4,8 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { apply, applyDir, baseFlange, crossBreak, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature, SmVentFeature } from "./types";
+import { apply, applyDir, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import type { SheetFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -47,6 +47,11 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the vent boundary.");
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
     return { body: ventCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
+  }
+  if (f.type === "smform") {
+    if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    const { items, state } = formTools(sm, f);
+    return { body: formBody(api, body, f, sm.T, items), sm: state };
   }
   let res: { state: SheetState; ops: SheetOp[] };
   if (f.type === "smtab") {
@@ -260,7 +265,15 @@ export function flatBody(api: SheetApi, st: SheetState, fid: string, folded: Nam
   let out = parts[0];
   for (const p of parts.slice(1)) out = api.bool("fuse", out, p, fid);
   // A faceted (lofted) sheet isn't made of the panels' prisms, so what was cut out can't be told by volume.
-  const removed = folded && !st.faceted ? removedPieces(api, st, folded, fid) : [];
+  // Forms are left out of the flat pattern: what they took out of a panel isn't cut from it.
+  const keep = new Map<string, Named[]>();
+  for (const m of st.forms ?? []) {
+    const p = st.panels.find(x => x.id === m.pid);
+    if (p) keep.set(p.id, [...(keep.get(p.id) ?? []), footprint(api, p.M, m.loop, st.T, `${fid}:fp`)]);
+  }
+  const removed = folded && !st.faceted ? removedPieces(api, st, folded, fid, keep) : [];
+  // An extruded hole's pre-pierce hole.
+  for (const m of st.forms ?? []) if (m.pierce) removed.push(footprint(api, st.root, [{ ent: "f", kind: "circle", c: m.c, r: m.pierce }], st.T, `${fid}:pp`));
   if (!removed.length) return { body: out };
   for (const r of removed) out = api.bool("cut", out, r, fid);
   return { body: out, edges: topEdges(api, out, st.root, st.T) };
@@ -273,7 +286,7 @@ function volumeOf(api: SheetApi, shape: any): number {
 }
 
 /** What later features took out of each flat panel, moved from the folded panel onto the flat pattern. */
-function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string): Named[] {
+function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string, keep = new Map<string, Named[]>()): Named[] {
   const panels = st.panels.map(p => ({ p, solid: panelSolid(api, p, st.T) }));
   const sheet = panels.reduce((a, x) => a + volumeOf(api, x.solid.shape), 0) + st.bends.reduce((a, b) => a + volumeOf(api, bendSolid(api, b, st.T).shape), 0);
   const body = volumeOf(api, folded.shape);
@@ -282,7 +295,8 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
   const out: Named[] = [];
   for (const { p, solid } of panels) {
     const v = volumeOf(api, solid.shape);
-    const gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    let gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    for (const k of keep.get(p.id) ?? []) gone = api.bool("cut", gone, k, `${fid}:cut`);
     if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
     out.push(moved(api, gone, flatTrsf(api, p.M, st.root)));
   }
@@ -443,4 +457,68 @@ function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, s
     tool = api.bool("cut", tool, ring, f.id);
   });
   return api.bool("cut", body, tool, f.id);
+}
+
+// ---------- forming tools ----------
+
+/** A prism of a flat loop through the sheet (a hair beyond both faces), in a panel's frame. */
+function footprint(api: SheetApi, M: Mat, loop: Seg[], T: number, tag: string): Named {
+  const shape = prism(api, faceOf(api, loop, [], frameOf(M, -T * 0.01)), applyDir(M, [0, 0, T * 1.02]));
+  const faces = api.sub(shape, "FACE");
+  return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
+}
+
+/** A ruled solid through the same loop at two heights, drawn by `at(z)` (the loop at height z) in a frame. */
+function ruled(api: SheetApi, fr: Frame, z0: number, z1: number, at: (z: number) => Seg[]): any {
+  const oc = api.oc;
+  const mk = new oc.BRepOffsetAPI_ThruSections(true, true, 1e-6);
+  for (const z of [z0, z1]) mk.AddWire(wireOf(api, at(z), { ...fr, o: [fr.o[0] + fr.n[0] * z, fr.o[1] + fr.n[1] * z, fr.o[2] + fr.n[2] * z] }));
+  mk.Build(new oc.Message_ProgressRange_1());
+  if (!mk.IsDone()) throw new SheetError("E-SM-FORM", "The forming tool could not be made.");
+  return mk.Shape();
+}
+
+/**
+ * Presses each forming tool into the body: the outer shape is joined on the face it stands out of and the same
+ * shape moved back by the thickness is cut away, so the form keeps the sheet's thickness (measured along the normal).
+ */
+function formBody(api: SheetApi, body: Named, f: SmFormFeature, T: number, items: FormItem[]): Named {
+  const size = f.size.v, w = f.width.v, h = f.height.v, tn = Math.tan(f.draft?.v ?? 0), eps = T * 0.01;
+  let out = body;
+  items.forEach((it, i) => {
+    const sgn = it.up ? 1 : -1;
+    const n = applyDir(it.M, [0, 0, sgn]);
+    const x = applyDir(it.M, [Math.cos(it.ang), Math.sin(it.ang), 0]);
+    const y: V3 = [n[1] * x[2] - n[2] * x[1], n[2] * x[0] - n[0] * x[2], n[0] * x[1] - n[1] * x[0]];
+    // Local frame on the face the form stands out of: z along the form, the tool's centre at the origin.
+    const fr: Frame = { o: apply(it.M, [it.c[0], it.c[1], it.up ? T : 0]), x, y, n };
+    const named = (shape: any, tag: string): Named => { const faces = api.sub(shape, "FACE"); return { shape, faces, names: faces.map((_x, j) => `${f.id}:${i}:${tag}${j}`) }; };
+    let outer: any, inner: any;
+    if (f.tool === "dimple" || f.tool === "rib") {
+      // Side walls drafted inwards by tan(draft) per unit of height.
+      const at = (z: number): Seg[] => { const g = -2 * z * tn; return f.tool === "dimple" ? [{ ent: "f", kind: "circle", c: [0, 0], r: size / 2 + g / 2 }] : obroundLoop([0, 0], size + g, w + g, 0); };
+      outer = ruled(api, fr, 0, h, at);
+      // The inside: walls in by T / cos(draft) at the same height, top down by T (frame moved back by T).
+      const cs = Math.cos(f.draft?.v ?? 0);
+      const inLoop = (z: number): Seg[] => { const g = -2 * (z - T) * tn - 2 * T / cs; return f.tool === "dimple" ? [{ ent: "f", kind: "circle", c: [0, 0], r: size / 2 + g / 2 }] : obroundLoop([0, 0], size + g, w + g, 0); };
+      inner = ruled(api, { ...fr, o: [fr.o[0] - n[0] * T, fr.o[1] - n[1] * T, fr.o[2] - n[2] * T] }, -eps, h, inLoop);
+    } else if (f.tool === "louver") {
+      // A hood rising across the width, open on the +y side; the ends stay closed.
+      const side: Frame = { o: [fr.o[0] - x[0] * size / 2, fr.o[1] - x[1] * size / 2, fr.o[2] - x[2] * size / 2], x: y, y: n, n: x };
+      const tri = (pts: V2[]): Seg[] => pts.map((p, k) => ({ ent: `l${k}`, kind: "line" as const, a: p, b: pts[(k + 1) % pts.length] }));
+      outer = prism(api, faceOf(api, tri([[-w / 2, 0], [w / 2, 0], [w / 2, h]]), [], side), [x[0] * size, x[1] * size, x[2] * size]);
+      const s2: Frame = { ...side, o: [side.o[0] + x[0] * T, side.o[1] + x[1] * T, side.o[2] + x[2] * T] };
+      // The hood's underside: the top moved down so the skin is T thick square to it.
+      const z0 = -T - eps, k = w / h, sft = T * Math.hypot(1, h / w);
+      inner = prism(api, faceOf(api, tri([[-w / 2 + (z0 + sft) * k, z0], [w / 2 + eps, z0], [w / 2 + eps, h - sft + eps / k]]), [], s2), [x[0] * (size - 2 * T), x[1] * (size - 2 * T), x[2] * (size - 2 * T)]);
+    } else {
+      // Extruded hole: a collar of the sheet's thickness round the hole.
+      outer = prism(api, faceOf(api, [{ ent: "f", kind: "circle", c: [0, 0], r: size / 2 + T }], [], fr), [n[0] * h, n[1] * h, n[2] * h]);
+      const lo = -T - eps, fr2: Frame = { ...fr, o: [fr.o[0] + n[0] * lo, fr.o[1] + n[1] * lo, fr.o[2] + n[2] * lo] }, L = h - lo + eps;
+      inner = prism(api, faceOf(api, [{ ent: "f", kind: "circle", c: [0, 0], r: size / 2 }], [], fr2), [n[0] * L, n[1] * L, n[2] * L]);
+    }
+    out = api.bool("fuse", out, named(outer, "o"), f.id);
+    out = api.bool("cut", out, named(inner, "i"), f.id);
+  });
+  return out;
 }
