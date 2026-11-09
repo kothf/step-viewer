@@ -2426,6 +2426,27 @@ try {
     check(conv.lines === 4 && conv.fix === 4 && conv.dof === 0, `model 1.20: Convert entities copies the face's 4 edges into the sketch, fixed (${JSON.stringify(conv)})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // 1.319: a measured value dragged from the readout into a feature's numeric box (FR-MEA-002).
+    await mp.evaluate(() => window.__sv.modeller.editFeature("x"));
+    await mp.waitForSelector('#mc-pm input[data-num="depth"]');
+    const vdPick = await mp.evaluate(() => {
+      const { viewer, handlePick } = window.__sv;
+      const p = viewer.parts.find(q => q.data.edges.some(e => Math.abs(Math.hypot(...e.end.map((v, i) => v - e.start[i])) - 40) < 1e-6));
+      const e = p && p.data.edges.find(e => Math.abs(Math.hypot(...e.end.map((v, i) => v - e.start[i])) - 40) < 1e-6);
+      if (!e) return null;
+      const V3 = p.group.position.constructor;
+      handlePick(null);
+      handlePick({ kind: "vertex", point: viewer.toWorld(p, new V3(...e.start)), part: p, edge: e, px: 0 });
+      handlePick({ kind: "vertex", point: viewer.toWorld(p, new V3(...e.end)), part: p, edge: e, px: 0 });
+      const el = document.querySelector("#readout .val .cp");
+      return el && { text: el.textContent, drag: el.draggable };
+    });
+    await mp.dragAndDrop("#readout .val .cp", '#mc-pm input[data-num="depth"]');
+    const vdBox = await mp.evaluate(() => document.querySelector('#mc-pm input[data-num="depth"]')?.value);
+    await mp.evaluate(() => { window.__sv.handlePick(null); window.__sv.modeller.ok(); });
+    await idle();
+    const vdDrop = { box: vdBox, depth: await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth) };
+    check(vdPick?.drag && /^40\.0+ mm$/.test(vdPick.text) && vdDrop.depth.v === 40 && !vdDrop.depth.expr, `model 1.319: a measured 40 mm dragged from the readout sets the extrude depth to 40 (${JSON.stringify([vdPick, vdDrop])})`);
     await ctx.close();
   }
 
