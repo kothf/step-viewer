@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.317.0] - 2026-11-09
+
+### Fixed
+
+- A reference dimension in a sketch follows the geometry: the property panel, equations and drawings showed the value from when it was placed after a driving dimension changed the sketch.
+- Midpoint (and other relations between a point and a curve) moves the point, not the curve: a free point given a Midpoint on a line goes to its middle instead of the line and everything on it shifting towards the point.
+- Smart Dimension in a sketch takes a model edge clicked at its middle as the edge (it made a midpoint there), so a plate's edges can be dimensioned with one click each.
+- The sketch status line at the top of the view no longer swallows clicks on the geometry under it.
+- Dragging a mated component that can only turn about an axis (a wheel on a shaft) turns it about that axis; it used to stay put. A drag that leaves every component where it was adds no undo step and doesn't mark the assembly modified.
 ## [1.316.0] - 2026-11-09
 
 ### Added
@@ -1851,7 +1860,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.316.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.317.0...HEAD
+[1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
 [1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0
 [1.315.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.315.0
 [1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0

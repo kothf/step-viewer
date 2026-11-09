@@ -5286,6 +5286,9 @@ try {
     await mp.mouse.up();
     await shown(2);
     const drag = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4); });
+    // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
+    const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
+    check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
@@ -7970,6 +7973,45 @@ try {
     await mp.evaluate(() => window.__sv.modeller.cancel());
     await settle();
     check(turned, `model 1.89: middle-drag orbits the view while sketching (${JSON.stringify({ c0, c1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.317: Smart Dimension takes a model edge clicked at its middle, and the sketch status passes clicks through (exam bugs 49, 46) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.waitForTimeout(500);
+    const picks = [];
+    for (const w of [[-20, 0, 5], [0, 10, 5], [-20, 10, 5]]) {
+      await mp.evaluate(() => window.__sv.model.editor().setTool("dim"));
+      const [x, y] = await scr(w);
+      await mp.mouse.move(x + 4, y + 3); await mp.mouse.move(x, y); await mp.mouse.click(x, y);
+      await mp.waitForTimeout(150);
+      picks.push(await mp.evaluate(() => { const ed = window.__sv.model.editor(); return [...ed.selection].map(id => ed.sk.ents.find(e => e.id === id)?.t).join(","); }));
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(80);
+    }
+    check(picks.join("|") === "line|line|point", `model 1.317: Smart Dimension picks model edges at their middle and a model corner (${picks.join("|")})`);
+    const through = await mp.evaluate(() => { const r = document.querySelector("#mc-status").getBoundingClientRect(); const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { w: r.width, el: el?.tagName }; });
+    check(through.w > 0 && through.el === "CANVAS", `model 1.317: clicks on the sketch status line reach the view (${JSON.stringify(through)})`);
     await ctx.close();
   }
 

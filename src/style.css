@@ -667,7 +667,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-i { display: grid; place-items: center; height: 16px; }
 .mc-l { font-size: 11px; white-space: nowrap; }
 .mc-line { display: flex; gap: 8px; align-items: center; }
-.mc-status:not(:empty), .mc-busy { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
+.mc-status:not(:empty), .mc-busy { pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
 .mc-busy { color: var(--muted); }
 /* Confirmation corner (SolidWorks): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
 .mc-confirm { position: absolute; right: 132px; top: 10px; z-index: 4; display: flex; gap: 6px; }
