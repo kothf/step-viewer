@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.302.0] - 2026-11-09
+
+### Added
+
+- **Lofted Bend (FR-FT-120)**: Sheet Metal → Lofted Bend joins two open profiles of lines and arcs, each sketched on its own plane, with a sheet of thickness, like SolidWorks' Lofted-Bend with the Bent method. The sheet is made of flat facets with sharp folds between them (Facets per arc sets how finely arcs are split), so it unfolds exactly: Flatten and the flat pattern DXF show the developed outline with every fold as a bend line (up or down), and drawings get the flat pattern view and bend table. Facets lying in one plane stay one face. Typical uses are transitions such as square-to-round ducts and hoppers.
+
 ## [1.300.0] - 2026-11-09
 
 ### Added
@@ -1760,7 +1766,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.300.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.302.0...HEAD
+[1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
 [1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0
 [1.298.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.298.0
 [1.297.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.297.0
