@@ -1596,7 +1596,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
 | Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
-| Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view (foldable) | Done |
+| Fly-out mini tree while a panel is open | FR-UI-003 | 1.335.0: the panel fills the Features tab, the tree flies out at the top left of the view, folded until opened | Done |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
 | Undo inside an open panel | FR-UI-108 | No | New |
 | Selection box focus moves on by itself | FR-UI-109 | Partly per feature (`focus` fields) | New (rule) |

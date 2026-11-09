@@ -746,6 +746,8 @@ input.drop-val { outline: 2px solid var(--accent) !important; background: var(--
 .mc-treefly-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-treefly > .ft { flex: 1; min-height: 0; padding: 0 4px 6px; border-top: 1px solid var(--line); }
 .mc-treefly .ft-row { min-height: 24px; padding: 2px 8px; }
+/* The fly-out is for picking: no suppress/delete buttons under the pointer while working in the view. */
+.mc-treefly .ft-tools { display: none !important; }
 .pm-head h3 { margin: 2px 0 4px; font-size: 15px; }
 /* The panel scrolls under its title row, so ✓/✕ stay in reach however long the panel is. */
 .pm > .pm-head { position: sticky; top: -8px; z-index: 2; margin: -8px -12px 4px; padding: 8px 12px 4px; background: var(--panel-2); border-bottom: 1px solid transparent; }

@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 
-- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. It is see-through until the pointer is over it, and its title row folds it away (remembered). Starting a command brings the Features tab forward. On phones the tree stays under the panel.
+- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. As in SolidWorks it shows folded to the part name: click the name to open it (remembered). It is see-through until the pointer is over it, and has no suppress or delete buttons, so a click in the view can't remove a feature. Starting a command brings the Features tab forward. On phones the tree stays under the panel.
 
 ## [1.329.0] - 2026-11-09
 

@@ -3976,8 +3976,8 @@ export class ModelController {
   private wasSketch = false;
   private inBar = false;
   private wasCmd = false;
-  /** The fly-out tree is folded to its title row (view-only, kept per browser). */
-  private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") === "0"; } catch { return false; } })();
+  /** The fly-out tree is folded to its title row, as SolidWorks shows it, until opened (kept per browser). */
+  private flyClosed = (() => { try { return localStorage.getItem("mc:flyTree") !== "1"; } catch { return true; } })();
 
   /**
    * Fly-out tree (FR-UI-003, SolidWorks' fly-out FeatureManager): while a panel is open it fills the Features tab,
