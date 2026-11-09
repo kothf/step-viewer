@@ -511,6 +511,7 @@ export class ModelController {
     if (this.store.dirty) journalSave(this.doc, this.fileName);
     if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
+    this.selected = null;
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
@@ -1811,7 +1812,9 @@ export class ModelController {
       if (k === "enter") { stop(); this.ok(); return; }
       // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
       if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
-      if (k === "escape") { stop(); void this.cancel(); }
+      // Esc with nothing left to clear leaves an unchanged sketch; a changed one stays open (✕ discards), so a stray Esc
+      // followed by Enter can't throw the sketch away (exam bug 44).
+      if (k === "escape") { stop(); if (JSON.stringify(this.doc) === m.entry) void this.cancel(); else toast(t("The sketch has changes: ✓ keeps them, ✕ discards them.")); }
       return;
     }
     if (m.kind === "feature" && m.draft.type === "sketch3d") {
@@ -3180,8 +3183,9 @@ export class ModelController {
     const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
       || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
-    if (m.kind !== "none" || !this.selected) return null;
-    const f = this.store?.feature(this.selected);
+    // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
+    if (m.kind !== "none" || !this.selected || !this.store) return null;
+    const f = this.store.feature(this.selected);
     const st = this.last?.statuses.find(x => x.id === f?.id);
     const end = this.doc.rollback ?? this.doc.features.length;
     const i = this.doc.features.findIndex(x => x.id === f?.id);
@@ -3699,10 +3703,11 @@ export class ModelController {
     q.innerHTML = (sk ? "" : btn("filter", t("Filter"), t("Selection filter: faces, edges, vertices (F5)"), !!document.getElementById("mc-filter") || !(SEL_FILTER.faces && SEL_FILTER.edges && SEL_FILTER.vertices)) + `<div class="mc-sep"></div>`)
       + `<span class="mc-fly">${btn("undo", t("Undo"), this.undoTip(), false, !canUndo)}${sk ? "" : `<button class="mc-caret" data-fly="undo" aria-haspopup="menu" title="${esc(t("Undo list"))}" aria-label="${esc(t("Undo list"))}"${busy || !(this.store.canUndo || this.store.canRedo) ? " disabled" : ""}>▾</button>`}</span>`
       + btn("redo", t("Redo"), this.undoTip(true), false, !canRedo)
-      + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) : "")
+      + (sk && m.kind === "sketch" ? this.quickSnapButton(m.editor) + this.sketchToggles(m.editor) : "")
       + (sk ? "" : `<div class="mc-sep"></div><span class="mc-fly">${btn("save", t("Save"), t("Save the part as .mcadprt (Ctrl+S)"))}<button class="mc-caret" data-fly="save" aria-haspopup="menu" title="${esc(t("More save options"))}" aria-label="${esc(t("More save options"))}">▾</button></span>` + btn("step", t("STEP"), t("Export the body as STEP")));
     q.querySelectorAll<HTMLButtonElement>("[data-c]").forEach(b => b.addEventListener("click", () => this.command(b.dataset.c!)));
     q.querySelector<HTMLElement>('[data-fly="undo"]')?.addEventListener("click", e => this.historyMenu(e.currentTarget as HTMLElement));
+    q.querySelectorAll<HTMLButtonElement>("[data-qt]").forEach(b => b.addEventListener("click", () => this.sketchToggle(b.dataset.qt as "grid" | "gridsnap" | "autorels")));
     q.querySelector<HTMLElement>('[data-fly="qsnap"]')?.addEventListener("click", e => {
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
       this.quickSnapMenu(r.left, r.bottom + 4, () => $("#mc-quick").querySelector<HTMLElement>('[data-fly="qsnap"]')?.focus());
@@ -3719,6 +3724,35 @@ export class ModelController {
     const on = ed.quickSnap ? SNAP_KINDS.find(k => k[0] === ed.quickSnap)![1] : null;
     const title = t("Quick snaps: pick one snap type for the next point");
     return `<div class="mc-sep"></div><button class="mc-b mc-qsnap${on ? " on" : ""}" data-fly="qsnap" aria-haspopup="menu" title="${esc(title)}"${on ? ' aria-pressed="true"' : ""}><span class="mc-i" aria-hidden="true">⌖</span><span class="mc-l">${esc(on ? t(on) : t("Quick snaps"))} ▾</span></button>`;
+  }
+
+  /** Grid, snap to grid and automatic relations toggles in the quick access bar while sketching (FR-UI-055). */
+  private sketchToggles(ed: SketchEditor): string {
+    const tg = (k: string, icon: string, label: string, title: string, on: boolean) =>
+      `<button class="mc-b mc-qt${on ? " on" : ""}" data-qt="${k}" title="${esc(title)}" aria-pressed="${on}"><span class="mc-i" aria-hidden="true">${icon}</span><span class="mc-l">${esc(label)}</span></button>`;
+    return tg("grid", "#", t("Grid"), t("Show grid"), ed.grid)
+      + tg("gridsnap", "⌗", t("Snap to grid"), t("Points that snap to nothing else go to the nearest grid point; hold Ctrl to place freely."), ed.gridSnap)
+      + tg("autorels", "⊥", t("Inferences"), t("Lines snap horizontal, vertical, perpendicular, parallel or tangent and keep that relation; hold Ctrl to draw without them."), ed.autoRels);
+  }
+
+  /** Flips one sketch toggle, remembers it, and keeps the quick bar and the sketch panel in step. */
+  private sketchToggle(k: "grid" | "gridsnap" | "autorels") {
+    const m = this.mode;
+    if (m.kind !== "sketch") return;
+    const ed = m.editor;
+    if (k === "grid") ed.setGrid({ show: !ed.grid });
+    else if (k === "gridsnap") ed.setGrid({ snap: !ed.gridSnap, show: ed.gridSnap ? undefined : true });
+    else ed.autoRels = !ed.autoRels;
+    try {
+      localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0");
+      localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0");
+      localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0");
+    } catch { /* private mode */ }
+    const pm = document.getElementById("mc-pm");
+    const box = (a: string, v: boolean) => { const i = pm?.querySelector<HTMLInputElement>(`[data-a=${a}]`); if (i) i.checked = v; };
+    box("grid", ed.grid); box("gridsnap", ed.gridSnap); box("autorels", ed.autoRels);
+    this.renderQuick();
+    $("#mc-quick").querySelector<HTMLElement>(`[data-qt="${k}"]`)?.focus();
   }
 
   private wasSketch = false;
@@ -5724,11 +5758,11 @@ export class ModelController {
     pm.querySelector("[data-a=deldangling]")?.addEventListener("click", () => { ed.deleteItems(ed.danglingRels().map(r => r.id)); this.renderPanel(); });
     pm.querySelector<HTMLInputElement>("[data-a=shownames]")?.addEventListener("change", e => { ed.showNames = (e.target as HTMLInputElement).checked; ed.render(); });
     pm.querySelector<HTMLInputElement>("[data-a=slotdims]")?.addEventListener("change", e => { ed.slotDims = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:slotDims", ed.slotDims ? "1" : "0"); } catch { /* private mode */ } });
-    pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } });
+    pm.querySelector<HTMLInputElement>("[data-a=autorels]")?.addEventListener("change", e => { ed.autoRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:autoRels", ed.autoRels ? "1" : "0"); } catch { /* private mode */ } this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=showrels]")?.addEventListener("change", e => { ed.showRels = (e.target as HTMLInputElement).checked; try { localStorage.setItem("mc:skRels", ed.showRels ? "1" : "0"); } catch { /* private mode */ } ed.render(); });
     const saveGrid = () => { try { localStorage.setItem("mc:skGrid", ed.grid ? "1" : "0"); localStorage.setItem("mc:skGridSnap", ed.gridSnap ? "1" : "0"); localStorage.setItem("mc:skGridStep", String(ed.gridSpacing || "")); } catch { /* private mode */ } };
-    pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); });
-    pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); });
+    pm.querySelector<HTMLInputElement>("[data-a=grid]")?.addEventListener("change", e => { ed.setGrid({ show: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
+    pm.querySelector<HTMLInputElement>("[data-a=gridsnap]")?.addEventListener("change", e => { ed.setGrid({ snap: (e.target as HTMLInputElement).checked }); saveGrid(); this.renderQuick(); });
     pm.querySelector<HTMLInputElement>("[data-a=gridstep]")?.addEventListener("change", e => { const v = Number((e.target as HTMLInputElement).value); ed.setGrid({ spacing: isFinite(v) && v > 0 ? v : 0 }); saveGrid(); });
     pm.querySelectorAll<HTMLInputElement>("[data-snap]").forEach(i => i.addEventListener("change", () => {
       const k = i.dataset.snap as SnapKind;

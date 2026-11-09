@@ -108,15 +108,59 @@ export function posed(rest: Tf, p: { d: V3; r: V3 }): Tf {
   return out;
 }
 
-/** Linear interpolation in [time, value] rows sorted by time; the first and last values are held outside them. */
-export function pointsAt(pts: [number, number][], t: number): number {
-  if (!pts.length) return 0;
+/** How a data point motor joins its rows (SolidWorks: Linear, Cubic spline, Akima). */
+export type PointsFit = "linear" | "cubic" | "akima";
+
+/**
+ * The value of motor data points at `t` seconds: joined by `fit` (linear by default; cubic = natural cubic spline,
+ * akima = Akima's spline, which does not overshoot near steps), the first value before them and the last after.
+ */
+export function pointsAt(pts: [number, number][], t: number, fit: PointsFit = "linear"): number {
+  const n = pts.length;
+  if (!n) return 0;
   if (t <= pts[0][0]) return pts[0][1];
-  for (let i = 1; i < pts.length; i++) {
-    const [t1, v1] = pts[i];
-    if (t <= t1) { const [t0, v0] = pts[i - 1]; return t1 > t0 ? v0 + ((v1 - v0) * (t - t0)) / (t1 - t0) : v1; }
+  if (t >= pts[n - 1][0]) return pts[n - 1][1];
+  let i = 1;
+  while (i < n - 1 && t > pts[i][0]) i++;
+  const [t0, v0] = pts[i - 1], [t1, v1] = pts[i], h = t1 - t0;
+  if (!(h > 0)) return v1;
+  if (fit === "linear" || n < 3) return v0 + ((v1 - v0) * (t - t0)) / h;
+  const d = fit === "cubic" ? splineSlopes(pts) : akimaSlopes(pts);
+  const u = (t - t0) / h, u2 = u * u, u3 = u2 * u;
+  return (2 * u3 - 3 * u2 + 1) * v0 + (u3 - 2 * u2 + u) * h * d[i - 1] + (-2 * u3 + 3 * u2) * v1 + (u3 - u2) * h * d[i];
+}
+
+/** End slopes of the natural cubic spline through the rows (second derivative zero at both ends). */
+function splineSlopes(pts: [number, number][]): number[] {
+  const n = pts.length, h: number[] = [], m: number[] = [];
+  for (let i = 0; i < n - 1; i++) { h.push(pts[i + 1][0] - pts[i][0]); m.push((pts[i + 1][1] - pts[i][1]) / h[i]); }
+  // Tridiagonal system for the slopes d: 2d0 + d1 = 3m0; h_i d_{i-1} + 2(h_{i-1} + h_i) d_i + h_{i-1} d_{i+1} = 3(h_i m_{i-1} + h_{i-1} m_i); d_{n-2} + 2d_{n-1} = 3m_{n-2}.
+  const a: number[] = [], b: number[] = [], c: number[] = [], r: number[] = [];
+  a.push(0); b.push(2); c.push(1); r.push(3 * m[0]);
+  for (let i = 1; i < n - 1; i++) { a.push(h[i]); b.push(2 * (h[i - 1] + h[i])); c.push(h[i - 1]); r.push(3 * (h[i] * m[i - 1] + h[i - 1] * m[i])); }
+  a.push(1); b.push(2); c.push(0); r.push(3 * m[n - 2]);
+  for (let i = 1; i < n; i++) { const w = a[i] / b[i - 1]; b[i] -= w * c[i - 1]; r[i] -= w * r[i - 1]; }
+  const d = new Array<number>(n);
+  d[n - 1] = r[n - 1] / b[n - 1];
+  for (let i = n - 2; i >= 0; i--) d[i] = (r[i] - c[i] * d[i + 1]) / b[i];
+  return d;
+}
+
+/** Akima's slopes: weighted by how much the neighbouring chord slopes change, so a flat run next to a step stays flat. */
+function akimaSlopes(pts: [number, number][]): number[] {
+  const n = pts.length, m: number[] = [];
+  for (let i = 0; i < n - 1; i++) m.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0]));
+  // Two extra chord slopes at each end, extrapolated linearly (Akima 1970): ext[k] = m[k - 2].
+  const mB = m[1] ?? m[0], mL = m[n - 2], mP = m[n - 3] ?? mL;
+  const before = 2 * m[0] - mB, after = 2 * mL - mP;
+  const ext = [2 * before - m[0], before, ...m, after, 2 * after - mL];
+  const d: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const m0 = ext[i], m1 = ext[i + 1], m2 = ext[i + 2], m3 = ext[i + 3];
+    const w1 = Math.abs(m3 - m2), w2 = Math.abs(m1 - m0);
+    d.push(w1 + w2 > 1e-12 ? (w1 * m1 + w2 * m2) / (w1 + w2) : (m1 + m2) / 2);
   }
-  return pts[pts.length - 1][1];
+  return d;
 }
 
 /**
@@ -161,7 +205,7 @@ export function motorAmount(m: MotorTrack, t: number): number {
     const len = m.end - m.start, u = len > 0 ? dt / len : 1;
     return s * (m.dist ?? 0) * u * u * (3 - 2 * u);
   }
-  if (m.profile === "points") return s * pointsAt(m.pts ?? [], dt);
+  if (m.profile === "points") return s * pointsAt(m.pts ?? [], dt, m.fit);
   if (m.profile === "expr") { const v = exprAt(m.expr ?? "0", dt); return Number.isFinite(v) ? s * (m.motion === "rotary" ? (v * Math.PI) / 180 : v) : 0; }
   return s * (m.motion === "rotary" ? (m.speed * 2 * Math.PI) / 60 : m.speed) * dt;
 }

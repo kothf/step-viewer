@@ -372,6 +372,8 @@ export class SketchEditor {
       const h = this.hits(p)[0] ?? null;
       if (!h || h.kind === "origin") {
         if (!e.ctrlKey && !e.shiftKey) this.selection.clear();
+        // The sketch origin can be selected (for Midpoint, Coincident or a dimension to it, exam bug 45); a drag from it still box-selects.
+        if (h) { if ((e.ctrlKey || e.shiftKey) && this.selection.has(ORIGIN)) this.selection.delete(ORIGIN); else this.selection.add(ORIGIN); }
         // Box selection from empty space (FR-SEL-002): left to right takes what is fully inside, right to left what it crosses.
         this.box = { a: p, b: p, x0: e.clientX, base: new Set(this.selection) };
         try { (e.target as Element).setPointerCapture?.(e.pointerId); } catch { /* synthetic event */ }
@@ -1441,7 +1443,9 @@ export class SketchEditor {
       const ax = this.slotAxis(d.pts[0], d.pts[1], d.pts[2])!;
       const w = arcSlotHalfWidth(ax, p);
       if (w < this.px(p) * 2) return;
-      const [oId, c1Id, c2Id] = this.tool === "aslot" ? [d.ids[0], d.ids[1], null]
+      // The centrepoint slot's end lies on the start's radius: it keeps the clicked point when that is on (or within 2 px of) that radius (exam bug 41).
+      const endOn = d.ids[2] && Math.abs(Math.hypot(d.pts[2][0] - ax.o[0], d.pts[2][1] - ax.o[1]) - ax.r) < this.px(p) * 2;
+      const [oId, c1Id, c2Id] = this.tool === "aslot" ? [d.ids[0], d.ids[1], endOn ? d.ids[2] : null]
         : ax.swapped ? [null, d.ids[1], d.ids[0]] : [null, d.ids[0], d.ids[1]];
       const k = arcSlotCorners(ax, w);
       const P = (q: V2, id: string | null) => this.usePoint(q, id, null, rels);
@@ -3387,7 +3391,7 @@ export class SketchEditor {
     // Points.
     const pp: number[] = [], pc: number[] = [];
     const addPt = (p: V2, c: number) => { const w = this.w(p); pp.push(w.x, w.y, w.z); const k = new THREE.Color(c); pc.push(k.r, k.g, k.b); };
-    addPt([0, 0], 0xd9480f);
+    addPt([0, 0], this.selection.has(ORIGIN) ? color(ORIGIN) : 0xd9480f);
     for (const e of this.sk.ents) if (e.t === "point") addPt([e.x, e.y], color(e.id));
     if (d.cursor && !["select", "dim", "hord", "vord", "trim", "fillet", "chamfer", "extend", "split", "offset", "convert", "intersect", "eqn"].includes(this.tool)) addPt(d.cursor, C.pre);
     const pg = new THREE.BufferGeometry();

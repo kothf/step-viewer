@@ -2366,6 +2366,20 @@ try {
       `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
     check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
+    const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+    const qt0 = await qt();
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt1 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    await mp.click('#mc-quick [data-qt="grid"]');
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt2 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    const qt3 = await qt();
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
@@ -3209,6 +3223,18 @@ try {
     const vol = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0 }; });
     const want = (Math.PI / 2 * 50 * 12 + Math.PI * 36) * 5;
     check(vol.ok && Math.abs(vol.v - want) < want * 0.002, `model 1.144: the arc slot extrudes to (π/2·50·12 + π·6²)·5 = ${want.toFixed(1)} mm³ (${JSON.stringify(vol)})`);
+    // The centrepoint arc slot's end click on an existing point keeps that point (exam bug 41).
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q3", t: "point", x: 0, y: 30 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); v.camera.zoom = 1; window.__sv.model.editor().setTool("aslot"); window.__sv.modeller.renderPanel(); });
+    await click([0, 0]); await click([30, 0]); await click([0, 30]); await click([0, 26]);
+    await modify("8"); await modify("30");
+    const endPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, c = sk.ents.find(e => e.t === "arc" && e.cons); return { ends: c ? [c.a, c.b] : null, pts: sk.ents.filter(e => e.t === "point").length }; });
+    check(endPt.ends?.includes("q3"), `model 1.311: a centrepoint arc slot ending on a sketch point uses that point (${JSON.stringify(endPt)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     // A second sketch: 3-point arc slot without dimensions, then a centrepoint straight slot.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: 100, y: 100 }] }); }));
     await idle();
@@ -5880,6 +5906,12 @@ try {
     const ptsEnd = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").end);
     await setP("textarea[data-p=pts]", "1, 0\n0, 5");
     const ptsBad = await mp.evaluate(() => document.querySelector("#motion textarea[data-p=pts]").getAttribute("aria-invalid"));
+    // Cubic spline through 0, 90°, 0 at 0, 0.6, 1.2 s: 0.6875 × 90° at 0.3 s, a whole frame (linear would give 45°).
+    await setP("textarea[data-p=pts]", "0, 0\n0.6, 90\n1.2, 0");
+    await setP("select[data-p=fit]", "cubic");
+    await mp.evaluate(() => window.__sv.motion.seek(0.3));
+    const ptsCubic = await pos();
+    const ptsFit = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").fit);
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
     await setP("select[data-p=profile]", "expr");
     await setP("input[data-p=expr]", "180*t");
@@ -5887,7 +5919,7 @@ try {
     const exprAt = await pos();
     await setP("input[data-p=expr]", "sin(");
     const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, exprAt, exprBad };
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6237,13 +6269,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -6317,9 +6349,14 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features.find(f => f.type === "extrude").depth = { v: 20 }; }));
     await mp.waitForTimeout(150);
     await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    // Return with a feature still selected (exam bug 40: its drag-arrow hook threw every frame and froze the assembly view).
+    await mp.click(`#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude").id)}"]`);
+    const errs40 = errors.length;
     await mp.click("#mc-ret button");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
     await shown(2);
+    const frames40 = await mp.evaluate(() => new Promise(res => { let n = 0; const v = window.__sv.viewer, f = () => n++; v.onRender?.(f); v.controls.dispatchEvent({ type: "change" }); setTimeout(() => res(n), 600); }));
+    check(errors.length === errs40, `asm: Return to assembly with a part feature selected throws nothing (${errors.slice(errs40).join(" | ")}; ${frames40} renders)`);
     await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return d && Math.abs(d.bboxMax[2] - d.bboxMin[2] - 20) < 1e-3; }, boxId, { timeout: 60000 });
     const back = await mp.evaluate(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i].data; return { h: d.bboxMax[2] - d.bboxMin[2], z: d.bboxMin[2], dirty: a.dirty, model: document.querySelector("#app").classList.contains("model"), mates: a.doc.mates.length }; }, boxId);
     await mp.evaluate(() => window.__sv.asm.undo());
@@ -8405,6 +8442,11 @@ try {
     });
     check(/Length/.test(typedLab) && typed.lens[0] === 25 && typed.lens.length === 5 && typed.lens.slice(1).sort().join() === "20,20,40,40" && typed.dims.join() === "20,25,40" && typed.horiz >= 3,
       `commands: sizes typed while drawing place a 25 mm horizontal line and a 40 × 20 rectangle with dimensions (${typedLab}; ${JSON.stringify(typed)})`);
+    // Esc never offers to throw a changed sketch away (exam bug 44): it clears the tool and selection, then only says how to leave.
+    await cp.evaluate(() => document.activeElement?.blur?.());
+    for (let i = 0; i < 3; i++) { await cp.keyboard.press("Escape"); await cp.waitForTimeout(150); }
+    const escKept = await cp.evaluate(() => ({ kind: window.__sv.model.mode().kind, ask: !!document.querySelector("#confirm[open]") }));
+    check(escKept.kind === "sketch" && !escKept.ask, `commands: Esc keeps a changed sketch open without asking to discard it (${JSON.stringify(escKept)})`);
     // Leaving the changed sketch asks first; don't await cancel() (it waits for the answer), answer Discard.
     await cp.evaluate(() => { void window.__sv.modeller.cancel(); });
     await cp.click("#confirm[open] [data-a=ok]");
@@ -9627,6 +9669,50 @@ try {
     const c3 = await centre();
     const longer = c3.some(q => Math.abs(q[1] - midY) < 0.05 && Math.abs(Math.min(q[0], q[2]) - (fr.box[0] - 5)) < 0.05);
     check(sel && ext === 5 && longer, `drawing: select a centreline on its line and change its extension (${JSON.stringify({ sel, ext, longer })})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: bolt circle on evenly spaced holes (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const holes = [0, 1, 2, 3, 4, 5].flatMap(k => [P(`h${k}`, 35 * Math.cos(k * Math.PI / 3), 35 * Math.sin(k * Math.PI / 3)), { id: `c${k}`, t: "circle", c: `h${k}`, r: 4 }]);
+    const part = { schema: 1, kind: "part", id: "d_drwbolt", name: "Flange", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], ents: [P("p1", -60, -60), P("p2", 60, -60), P("p3", 60, 60), P("p4", -60, 60),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        P("o", 0, 0), { id: "cb", t: "circle", c: "o", r: 10 }, ...holes], dims: [] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Flange.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // The top view (views[1]) looks down on the holes: one centre-line circle through them, a radial line per hole, a cross on the bore.
+    const marks = () => dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), cx = p.x + (0 - p.uc) * p.s, cy = p.y + (0 - p.vc) * p.s;
+      const c = window.__sv.drw.prims().filter(q => q.layer === "CENTER");
+      const near = (x, y) => Math.abs(x - cx) < 70 * p.s && Math.abs(y - cy) < 70 * p.s;
+      const polys = c.filter(q => q.t === "p" && near(q.p[0], q.p[1])).map(q => { let lo = Infinity, hi = 0; for (let i = 0; i < q.p.length; i += 2) { const r = Math.hypot(q.p[i] - cx, q.p[i + 1] - cy); lo = Math.min(lo, r); hi = Math.max(hi, r); } return [lo / p.s, hi / p.s]; });
+      const lines = c.filter(q => q.t === "l" && near(q.p[0], q.p[1])).length;
+      return { id: v.id, x: v.x, y: v.y, polys, lines, s: p.s };
+    });
+    const m0 = await marks();
+    check(m0.polys.length === 1 && Math.abs(m0.polys[0][0] - 35) < 0.05 && Math.abs(m0.polys[0][1] - 35) < 0.05 && m0.lines === 6 + 2, `drawing: bolt circle through six evenly spaced holes with radial marks (${JSON.stringify(m0)})`);
+    // Turned off in the view's properties: plain crosses on every hole.
+    const q = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [m0.x + 50 * m0.s, m0.y + 50 * m0.s]);
+    await dp.mouse.click(q[0], q[1]);
+    await dp.waitForSelector('#drw .drw-props [data-v="bolts"]');
+    await dp.uncheck('#drw .drw-props [data-v="bolts"]');
+    await dp.waitForTimeout(150);
+    const m1 = await marks(), off = await dp.evaluate(id => window.__sv.drw.doc().sheets[0].views.find(v => v.id === id).bolts, m0.id);
+    check(off === false && m1.polys.length === 0 && m1.lines === 7 * 2, `drawing: bolt circles off gives plain centre marks (${JSON.stringify({ off, m1 })})`);
     await ctx.close();
   }
 

@@ -772,7 +772,7 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
  * (FR-DRW-023), in the centre line type; detail views clip them to their circle.
  */
 export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3) => P2, n: V3): Prim[] {
-  const segs: { k: "l"; c: 0; p: [number, number, number, number] }[] = [];
+  const segs: Seg2[] = [];
   const ext = 2 / pl.s;
   // Circles seen end-on, grouped by centre and radius (STEP often splits a circle in two arcs).
   const circ = new Map<string, { c: P2; r: number; sp: number }>();
@@ -789,11 +789,30 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     const key = `${g.c[0].toFixed(4)},${g.c[1].toFixed(4)}`;
     marked.set(key, Math.max(marked.get(key) ?? 0, g.r));
   }
-  for (const [key, r] of marked) {
-    if (r * pl.s < 1) continue;
-    const [cx, cy] = key.split(",").map(Number), L = r + ext;
-    segs.push({ k: "l", c: 0, p: [cx - L, cy, cx + L, cy] }, { k: "l", c: 0, p: [cx, cy - L, cx, cy + L] });
+  const holes = [...marked].filter(([, r]) => r * pl.s >= 1).map(([key, r]) => { const [x, y] = key.split(",").map(Number); return { c: [x, y] as P2, r }; });
+  const onBolt = new Set<number>();
+  if (v.bolts !== false) for (const b of boltCircles(holes)) {
+    // Centre-line circle (or arc over the holes) as a polyline, so crop and break views map it like any point.
+    const a0 = b.full ? 0 : b.a0 - (b.r + ext) / b.R, a1 = b.full ? 2 * Math.PI : b.a1 + (b.r + ext) / b.R;
+    const n = Math.max(24, Math.ceil((a1 - a0) / (Math.PI / 36))), p: number[] = [];
+    for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; p.push(b.o[0] + b.R * Math.cos(a), b.o[1] + b.R * Math.sin(a)); }
+    segs.push({ k: "p", c: 0, p });
+    for (const i of b.members) {
+      onBolt.add(i);
+      const h = holes[i], d = unit2([h.c[0] - b.o[0], h.c[1] - b.o[1]]), L = h.r + ext;
+      segs.push({ k: "l", c: 0, p: [h.c[0] - d[0] * L, h.c[1] - d[1] * L, h.c[0] + d[0] * L, h.c[1] + d[1] * L] });
+    }
+    // The pattern centre: a small cross unless a round edge already marks it.
+    if (!holes.some(h => Math.hypot(h.c[0] - b.o[0], h.c[1] - b.o[1]) < 1e-3)) {
+      const L = 2 * ext;
+      segs.push({ k: "l", c: 0, p: [b.o[0] - L, b.o[1], b.o[0] + L, b.o[1]] }, { k: "l", c: 0, p: [b.o[0], b.o[1] - L, b.o[0], b.o[1] + L] });
+    }
   }
+  holes.forEach((h, i) => {
+    if (onBolt.has(i)) return;
+    const [cx, cy] = h.c, L = h.r + ext;
+    segs.push({ k: "l", c: 0, p: [cx - L, cy, cx + L, cy] }, { k: "l", c: 0, p: [cx, cy - L, cx, cy + L] });
+  });
   // Cylinders seen from the side: one centreline per axis over all the cylinders on it.
   const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
   for (const y of topo.cyls) {
@@ -818,8 +837,64 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   }
   const kept = v.kind === "detail" && v.c && v.r ? clipToCircle(segs, v.c, v.r) : segs;
   const out: Prim[] = [];
-  for (const g of kept) if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
+  for (const g of kept) {
+    if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
+    else if (g.k === "p") { const p: number[] = []; for (let i = 0; i + 1 < g.p.length; i += 2) p.push(...toSheet(pl, g.p[i], g.p[i + 1])); out.push({ t: "p", p, pen: "center", layer: "CENTER" }); }
+  }
   return out;
+}
+
+export interface BoltCircle { o: P2; R: number; r: number; members: number[]; full: boolean; a0: number; a1: number }
+
+/**
+ * Bolt circles among end-on holes (FR-DRW-023): 3+ holes of one radius on a common circle whose angular gaps are
+ * whole multiples of the smallest one (a full or partial circular pattern; a square counts, an oblong rectangle does not).
+ * Biggest patterns first, each hole in one. `a0`..`a1` (radians, ccw) spans the holes of a partial pattern.
+ */
+export function boltCircles(holes: { c: P2; r: number }[]): BoltCircle[] {
+  const byR = new Map<string, number[]>();
+  holes.forEach((h, i) => { const k = h.r.toFixed(4); byR.set(k, [...(byR.get(k) ?? []), i]); });
+  const out: BoltCircle[] = [];
+  for (const ids of byR.values()) {
+    if (ids.length < 3 || ids.length > 40) continue;
+    const cands = new Map<string, BoltCircle>();
+    for (let a = 0; a < ids.length; a++) for (let b = a + 1; b < ids.length; b++) for (let c = b + 1; c < ids.length; c++) {
+      const o = circumcentre(holes[ids[a]].c, holes[ids[b]].c, holes[ids[c]].c);
+      if (!o) continue;
+      const R = Math.hypot(holes[ids[a]].c[0] - o[0], holes[ids[a]].c[1] - o[1]), tol = 1e-3 * Math.max(1, R);
+      if (R < 2 * holes[ids[a]].r) continue;
+      const key = `${o[0].toFixed(2)},${o[1].toFixed(2)},${R.toFixed(2)}`;
+      if (cands.has(key)) continue;
+      const members = ids.filter(i => Math.abs(Math.hypot(holes[i].c[0] - o[0], holes[i].c[1] - o[1]) - R) < tol);
+      const ang = members.map(i => { const x = Math.atan2(holes[i].c[1] - o[1], holes[i].c[0] - o[0]); return x < 0 ? x + 2 * Math.PI : x; });
+      const ord = members.map((_, k) => k).sort((p, q) => ang[p] - ang[q]);
+      const gaps = ord.map((k, j) => j + 1 < ord.length ? ang[ord[j + 1]] - ang[k] : ang[ord[0]] + 2 * Math.PI - ang[k]);
+      const big = gaps.indexOf(Math.max(...gaps)), g = Math.min(...gaps);
+      if (g < 1e-3) continue;
+      const even = gaps.every((x, j) => j === big || Math.abs(x / g - Math.round(x / g)) < 0.02);
+      if (!even) continue;
+      const full = gaps.every(x => Math.abs(x - g) < 0.02 * g);
+      const first = ord[(big + 1) % ord.length], last = ord[big];
+      let a0 = ang[first], a1 = ang[last];
+      if (a1 < a0) a1 += 2 * Math.PI;
+      cands.set(key, { o, R, r: holes[ids[a]].r, members: ord.map(k => members[k]), full, a0, a1 });
+    }
+    const used = new Set<number>();
+    for (const b of [...cands.values()].sort((p, q) => q.members.length - p.members.length || q.R - p.R)) {
+      if (b.members.some(i => used.has(i))) continue;
+      b.members.forEach(i => used.add(i));
+      out.push(b);
+    }
+  }
+  return out;
+}
+
+function circumcentre(a: P2, b: P2, c: P2): P2 | null {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  const s = Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), Math.hypot(c[0] - a[0], c[1] - a[1]));
+  if (Math.abs(d) < 1e-6 * s * s) return null;
+  const A = a[0] ** 2 + a[1] ** 2, B = b[0] ** 2 + b[1] ** 2, C = c[0] ** 2 + c[1] ** 2;
+  return [(A * (b[1] - c[1]) + B * (c[1] - a[1]) + C * (a[1] - b[1])) / d, (A * (c[0] - b[0]) + B * (a[0] - c[0]) + C * (b[0] - a[0])) / d];
 }
 
 // ---------- cosmetic threads and sketches (FR-DRW-017) ----------

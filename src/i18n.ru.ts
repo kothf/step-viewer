@@ -1523,6 +1523,7 @@ export const RU: Record<string, string> = {
   "Drawings need a STEP, IGES or BREP model; mesh files have no B-rep.": "Для чертежа нужна модель STEP, IGES или BREP; в сеточных файлах нет B-rep.",
   "Merge points": "Объединить точки",
   "Grid": "Сетка",
+  "Inferences": "Автосвязи",
   "Show grid": "Показать сетку",
   "Snap to grid": "Привязка к сетке",
   "Grid spacing": "Шаг сетки",
@@ -2163,6 +2164,7 @@ export const RU: Record<string, string> = {
   // Drawings: dimensions and annotations
   "Annotate": "Обозначения",
   "Centre marks and centrelines": "Центровые метки и осевые линии",
+  "Bolt circles": "Окружности центров отверстий",
   "Click a second edge or point, or click where the dimension goes. Esc ends.": "Щёлкните второе ребро или точку либо место для размера. Esc — выход.",
   "Click an edge, a circle or a point of a view. Esc ends.": "Щёлкните ребро, окружность или точку вида. Esc — выход.",
   "Click the edge of a hole.": "Щёлкните кромку отверстия.",
@@ -2967,6 +2969,8 @@ export const RU: Record<string, string> = {
   "Constant speed": "Постоянная скорость",
   "Oscillating": "Колебательный",
   "Data points": "Точки данных",
+  "Cubic spline": "Кубический сплайн",
+  "Akima": "Акима",
   "Expression": "Выражение",
   "Expression: {m}": "Выражение: {m}",
   "The expression must give a number at every time.": "Выражение должно давать число в любой момент времени.",
@@ -3795,4 +3799,5 @@ export const RU: Record<string, string> = {
   "Click the points of the polyline.": "Щёлкайте точки ломаной.",
   "Click more points; click the first point to close it, or press Enter to end it.": "Щёлкайте следующие точки; щелчок по первой точке замыкает ломаную, Enter завершает её.",
   "Mark the model's centre of mass; dimensions can measure from it": "Показать центр масс модели; от него можно ставить размеры",
+  "The sketch has changes: ✓ keeps them, ✕ discards them.": "В эскизе есть изменения: ✓ сохраняет их, ✕ отменяет.",
 };
