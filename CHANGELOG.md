@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.353.0] - 2026-11-09
+
+### Added
+
+- **Colour-coded selection boxes (FR-SEL-011)**: the selection boxes of a feature panel each have their own colour (orange, blue, green, purple), shown on the box's left edge; the picks of each box are drawn in the view in its colour, with a small tag naming the box ("Faces to draft", "Neutral plane", "Face set 1"…) when a panel has several. Fillet and chamfer edges, face fillet and full round face sets, draft, shell, delete/move/offset/replace face and split line use it.
+
 ## [1.351.0] - 2026-11-09
 
 ### Added
@@ -2103,7 +2109,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.351.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.353.0...HEAD
+[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.353.0
 [1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
 [1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0

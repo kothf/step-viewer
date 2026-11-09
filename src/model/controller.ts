@@ -186,6 +186,8 @@ const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve"
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+/** Selection box colours (FR-SEL-011), in box order: orange, blue, green, purple (3:1 on the model grey and the background). */
+const BOX_COLORS = [0xe8590c, 0x1971c2, 0x2b8a3e, 0x9c36b5];
 /** Eye icons for the tree's show/hide buttons (FR-HIS-013). */
 const EYE = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.1" fill="currentColor"/></svg>`;
 const EYE_OFF = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.3"/></svg>`;
@@ -3406,9 +3408,7 @@ export class ModelController {
     this.drawWeldSymbols();
     this.drawInstant();
     if (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) {
-      const pos: number[] = [];
-      for (const r of m.draft.edges) { const ed = this.edgeOf(r); if (ed) pushEdge(pos, ed); }
-      this.lines(pos, 0xf08c00, 4);
+      // The picked edges are drawn by drawBoxPicks in the Edges box's colour (FR-SEL-011).
       this.drawRoundPreview(m.draft);
     }
     if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "composite") {
@@ -3427,7 +3427,94 @@ export class ModelController {
     }
     this.drawArrow();
     this.drawFeatureFaces();
+    this.drawBoxPicks();
     this.host.viewer.invalidate();
+  }
+
+  /**
+   * Colour-coded selection boxes (FR-SEL-011): each selection box of the open feature's panel has its own colour,
+   * its picks are drawn in that colour in the view, with a small tag naming the box at the first one.
+   */
+  private boxPicks(d: Feature): { focus: string; label: string; faces?: FaceRef[]; edges?: EdgeRef[]; sel?: string }[] {
+    const pf = (p?: PlaneRef) => (p && "face" in p ? [p.face] : []);
+    switch (d.type) {
+      case "fillet":
+        if (d.kind === "face" || d.kind === "full") return [
+          { focus: "fs1", label: d.kind === "full" ? t("Side face set 1") : t("Face set 1"), faces: d.faces1 ?? [] },
+          ...(d.kind === "full" ? [{ focus: "fc", label: t("Center face set"), faces: d.center ?? [] }] : []),
+          { focus: "fs2", label: d.kind === "full" ? t("Side face set 2") : t("Face set 2"), faces: d.faces2 ?? [] }];
+        return [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "chamfer": return d.mode === "vertex" ? [] : [{ focus: "edges", label: t("Edges"), edges: d.edges, sel: ".pm-count" }];
+      case "draft": return [{ focus: "nplane", label: d.kind === "parting" ? t("Direction of pull") : t("Neutral plane"), faces: pf(d.plane) },
+        d.kind === "parting" ? { focus: "faces", label: t("Parting line"), edges: d.parting ?? [] } : { focus: "faces", label: t("Faces to draft"), faces: d.faces }];
+      case "shell": return [{ focus: "faces", label: t("Faces to remove"), faces: d.faces }, ...(d.multi?.length ? [{ focus: "mthick", label: t("Multi-thickness settings"), faces: d.multi.map(x => ({ name: x.name, ...(x.hint ? { hint: x.hint } : {}) })) }] : [])];
+      case "delface": case "moveface": case "offsurf": case "replaceface": case "split":
+        return [{ focus: "faces", label: t("Faces"), faces: d.faces }];
+      default: return [];
+    }
+  }
+
+  /** The panel's selection boxes take their colours (also after a panel re-render). */
+  private tintBoxes() {
+    const m = this.mode, pm = document.getElementById("mc-pm");
+    pm?.querySelectorAll<HTMLElement>("[data-boxc]").forEach(el => { el.style.removeProperty("--box-c"); delete el.dataset.boxc; });
+    if (m.kind !== "feature" || !pm) return;
+    this.boxPicks(m.draft).forEach((g, k) => {
+      const el = pm.querySelector<HTMLElement>(g.sel ?? `.pm-box[data-focus="${g.focus}"]`);
+      if (el) { el.style.setProperty("--box-c", `#${BOX_COLORS[k % BOX_COLORS.length].toString(16).padStart(6, "0")}`); el.dataset.boxc = String(k); }
+    });
+  }
+
+  private drawBoxPicks() {
+    const m = this.mode;
+    this.tintBoxes();
+    if (m.kind !== "feature") return;
+    const part = this.host.viewer.parts[0], names = this.last?.faceNames;
+    const groups = this.boxPicks(m.draft);
+    groups.forEach((g, k) => {
+      const col = BOX_COLORS[k % BOX_COLORS.length];
+      const css = `#${col.toString(16).padStart(6, "0")}`;
+      let at: V3 | null = null;
+      // Edges in the box's colour (the fillet/chamfer edges keep their usual width).
+      if (g.edges?.length) {
+        const pos: number[] = [];
+        for (const r of g.edges) { const ed = this.edgeOf(r); if (ed) { pushEdge(pos, ed); at ??= ed.mid; } }
+        if (pos.length) this.lines(pos, col, 4);
+      }
+      // Faces: a see-through overlay in the colour.
+      if (g.faces?.length && part && names) {
+        const want = new Set(g.faces.map(f => f.name));
+        const geo = part.mesh.geometry as THREE.BufferGeometry, pos = geo.getAttribute("position"), idx = geo.getIndex();
+        const out: number[] = [];
+        part.data.faces.forEach((fc, i) => {
+          if (!want.has(names[i] ?? "")) return;
+          for (let tri = fc.triStart; tri < fc.triStart + fc.triCount; tri++) for (let q = 0; q < 3; q++) {
+            const vi = idx ? idx.getX(tri * 3 + q) : tri * 3 + q;
+            out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+          }
+          if (!at && fc.center) at = new THREE.Vector3(...fc.center).applyMatrix4(part.mesh.matrixWorld).toArray() as V3;
+        });
+        if (out.length) {
+          const gm = new THREE.BufferGeometry();
+          gm.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+          const mesh = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, side: THREE.DoubleSide }));
+          mesh.applyMatrix4(part.mesh.matrixWorld);
+          mesh.renderOrder = 2310;
+          mesh.raycast = () => {};
+          mesh.userData.boxPick = g.focus;
+          this.decor.add(mesh);
+        }
+      }
+      if (!at || groups.length < 2 && !g.faces?.length) return;
+      const tag = document.createElement("span");
+      tag.className = "mc-callout mc-boxtag";
+      tag.dataset.box = g.focus;
+      tag.style.setProperty("--box-c", css);
+      tag.textContent = g.label;
+      tag.dataset.at = JSON.stringify(at);
+      $("#mc-layer").appendChild(tag);
+    });
+    this.placeCallouts();
   }
 
   /** Standard planes (when picking one) and the reference planes, as see-through squares. */
@@ -5350,6 +5437,8 @@ export class ModelController {
     if (!this.store || m.kind === "none") { pm.hidden = true; pm.innerHTML = ""; return; }
     pm.hidden = false;
     this.noteDraft();
+    // Selection box colours (FR-SEL-011) once the panel's markup is in.
+    queueMicrotask(() => this.tintBoxes());
     const head = (title: string, help: string, ok = false) => (ok ? okHead(title) : `<div class="pm-head"><h3>${esc(title)}</h3></div>`) + `<p class="pm-help muted">${esc(help)}</p>`;
     if (m.kind === "plane") {
       const ed = m.edit, sk = ed ? this.store.feature(ed.id) : undefined;

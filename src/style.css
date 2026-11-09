@@ -1233,3 +1233,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .cm-tip kbd { font: 11px/1.4 var(--mono, ui-monospace, monospace); padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--text); white-space: nowrap; }
 .cm-tip-d { margin-top: 2px; color: var(--muted); }
 .cm-tip-w { margin-top: 3px; color: var(--warn-text); }
+
+/* Colour-coded selection boxes (FR-SEL-011): the box's colour on its left edge and on the tag naming it in the view. */
+.pm-box[data-boxc], .pm-count[data-boxc] { box-shadow: inset 4px 0 0 var(--box-c); padding-left: 10px; }
+.mc-boxtag { position: absolute; pointer-events: none; padding: 1px 6px; border: 1px solid var(--box-c); border-left-width: 4px; border-radius: 4px; background: var(--panel); color: var(--text); font-size: 11px; white-space: nowrap; }
+:root[data-theme="dark"] .mc-boxtag { background: var(--panel); color: var(--text); }

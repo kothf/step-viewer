@@ -2671,6 +2671,25 @@ try {
     const thClick = await mp.evaluate(k => ({ shown: !window.__sv.model.store.doc.bodies?.[k]?.hidden, ghosts: window.__sv.modeller.ghostGroup.visible }), thKey);
     check(thBodies >= 2 && thKey && thHid.hidden && thHid.undo === "Hide body" && thHid.focus && thShown && thGhost && thClick.shown && !thClick.ghosts,
       `model 1.351: Tab hides the body under the cursor (one undo step), Shift+Tab shows it, holding Ctrl+Shift+Tab draws it see-through and a click shows it (${JSON.stringify([thBodies, thKey, thHid, thShown, thGhost, thClick])})`);
+    // 1.353 (FR-SEL-011): colour-coded selection boxes: Draft's neutral plane and faces boxes get their own colours, the picked faces are drawn in the faces box's colour with a tag naming it.
+    await mp.evaluate(() => window.__sv.modeller.command("draft"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="faces"]');
+    await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+      const side = names.find(n => n.startsWith("cpe:") && /side|:l\d|s\d/.test(n)) ?? names.find(n => n.startsWith("cpe:"));
+      d.plane = { std: "XY" }; d.faces = [{ name: side }]; m.focus = "faces"; m.draftChanged();
+    });
+    await idle();
+    await mp.waitForTimeout(100);
+    const bx = await mp.evaluate(() => {
+      const c = sel => getComputedStyle(document.querySelector(sel)).getPropertyValue("--box-c").trim();
+      const tag = document.querySelector('#mc-layer .mc-boxtag[data-box="faces"]');
+      return { plane: c('#mc-pm .pm-box[data-focus="nplane"]'), faces: c('#mc-pm .pm-box[data-focus="faces"]'), mesh: window.__sv.modeller.decor.children.some(o => o.userData.boxPick === "faces"), tag: tag?.textContent, tagC: tag && getComputedStyle(tag).getPropertyValue("--box-c").trim() };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
+      `model 1.353: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
