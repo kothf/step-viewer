@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.285.0] - 2026-11-09
+
+### Added
+
+- **Quick snaps (FR-SK-046)**: while drawing in a sketch, pick one snap type for the next point only: End point, Midpoint, Centre point, Quadrant point, Intersection, Tangent, Perpendicular, Parallel, Nearest or Horizontal/vertical. Pick it from the Quick snaps button in the quick access bar or from the right-click menu (Quick snaps ▸). Only that snap works, in a wider radius, and it keeps its relation: a midpoint or crossing gets a midpoint or intersection relation, and a tangent or perpendicular line gets that relation to the curve. The quick snap clears once the point is placed; Esc clears it sooner.
+- **Snap preferences**: the sketch panel's Snaps section turns each snap type on or off for automatic snapping, and the choice is remembered. Midpoints, quadrants and intersections can now snap automatically too; they start off.
+
 ## [1.282.0] - 2026-11-09
 
 ### Added
@@ -1710,7 +1717,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.282.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.285.0...HEAD
+[1.285.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.285.0
 [1.282.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.282.0
 [1.279.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.279.0
 [1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0
