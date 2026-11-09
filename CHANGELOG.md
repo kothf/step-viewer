@@ -11,6 +11,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: two more motor profiles, as in SolidWorks. **Distance** turns or moves the mate by a set angle or distance between the motor's start and end, starting and stopping smoothly. **Data points** follows rows of time after the motor start and value, typed or pasted from a spreadsheet, in straight lines between them (the motor ends at the last row) (FR-FT-122).
 
+## [1.271.0] - 2026-11-09
+
+### Added
+
+- **Cuts across bends in the flat pattern (FR-FT-120)**: a cut made by an ordinary feature that crosses a bend now shows in the flat pattern and its DXF. The part of the cut inside the bend is unrolled from the bend's neutral surface, so it keeps its true length across the bend strip; before, only the cut's parts on flat faces appeared.
+
 ## [1.269.0] - 2026-11-09
 
 ### Added
@@ -1680,7 +1686,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.274.0...HEAD
-[1.274.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.274.0
+[1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
+[1.271.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.271.0
 [1.269.0]: https://github.com/kothf/step-viewer/compare/v1.268.0...v1.269.0
 [1.268.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.268.0
 [1.266.0]: https://github.com/kothf/step-viewer/compare/v1.263.0...v1.266.0
