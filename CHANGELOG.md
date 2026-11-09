@@ -5,11 +5,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.367.0] - 2026-11-09
+## [1.372.0] - 2026-11-09
 
 ### Added
 
 - **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as SolidWorks' polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
+## [1.371.0] - 2026-11-09
+
+### Added
+
+- **Named views (FR-UI-104)**: the Space orientation picker has a Named views row: type a name and press Save view (or Enter) to store the camera; a click on a named view goes back to it, ✕ deletes it. Parts and assemblies keep their named views in the document (saved with it, left alone by undo and redo); model files keep them for the session.
+- **Heads-up view bar (FR-UI-022)**: with a part or an assembly open, the view commands float at the top centre of the view, as in SolidWorks: Zoom to area, Previous view, the standard views, projection and display style. For model files they stay in the header.
+- **Assembly selection breadcrumbs (FR-SEL-009)**: a click on a component in an assembly shows the chain face › part feature › component › its sub-assemblies › assembly at the top left of the view; a crumb selects that component as in the tree, a right-click opens its menu, Shift+D brings the bar to the cursor and Esc hides it.
+- **Feature values on the model (FR-UI-115)**: a click on a feature in the Features tree shows its dimensions on the model, as a double click on its face does, and both now show the feature's own values too (angle, radius, distance, thickness, spacing, instance count…) in blue labels beside its faces; a click on one opens the Modify box and ✓ changes the feature as one undo step.
+- **Modify box options (FR-UI-114)**: the box has an increment field that sets the step of the arrows, ↑/↓ and the wheel (remembered for lengths, angles and counts); a sketch dimension's name in the title can be retyped to rename it; ⇄ Reverse direction flips an extrude depth or another feature value that has a direction, together with the value, as one undo step.
+
+### Fixed
+
+- The heads-up view bar no longer covers the selection filter and the status line at the top left of the view.
 
 ## [1.365.0] - 2026-11-09
 
@@ -2169,8 +2182,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.367.0...HEAD
-[1.367.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.367.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.372.0...HEAD
+[1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0
+[1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0
 [1.365.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.365.0
 [1.363.0]: https://github.com/kothf/step-viewer/compare/v1.357.0...v1.363.0
 [1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
