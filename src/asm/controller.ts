@@ -28,6 +28,8 @@ import type { Viewer } from "../viewer/Viewer";
 
 export interface AsmHost {
   viewer: Viewer;
+  /** An assembly was saved to a file (File ▸ recent documents). */
+  saved?(name: string, bytes: Uint8Array): void;
   vp: HTMLElement;
   /** Shows the placed components (one part each); `first` fits the view like a newly opened file. */
   show(parts: PartData[], tree: TreeNode, first: boolean): void;
@@ -1997,8 +1999,12 @@ export class AsmController {
     } catch (err) { if ((err as Error).name !== "AbortError") toast(t("Could not save: {err}", { err: (err as Error).message }), true); return; }
     this.savedAt = JSON.stringify(this.doc);
     this.renderAll();
+    this.host.saved?.(this.fileName, bytes);
     toast(t("Saved {name}", { name: this.fileName }), "success");
   }
+
+  /** The open assembly's file name (for the File menu and Pack and Go). */
+  get title() { return this.doc ? this.fileName || `${this.doc.name}${ASM_EXT}` : ""; }
 
   /** The bytes of the open assembly, as saved. */
   bytes() { return this.doc ? packAsm(this.doc, `MöbiusCAD ${this.host.appVersion}`) : null; }

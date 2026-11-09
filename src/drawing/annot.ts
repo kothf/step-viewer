@@ -786,10 +786,11 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     circ.set(key, g);
   }
   const marked = new Map<string, number>();
-  const halves: { c: P2; r: number; m: P2 }[] = [];
+  const halves: { c: P2; r: number; m: P2 }[] = [], arcs: { c: P2; r: number }[] = [];
   for (const g of circ.values()) {
     if (g.sp < 2 * Math.PI - 1e-3) {
       if (Math.abs(g.sp - Math.PI) < 1e-3 && g.r * pl.s >= 1) halves.push({ c: g.c, r: g.r, m: unit2(g.m) });
+      arcs.push({ c: g.c, r: g.r });
       continue;
     }
     const key = `${g.c[0].toFixed(4)},${g.c[1].toFixed(4)}`;
@@ -805,6 +806,22 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     slotKeys.add(key);
     segs.push({ k: "l", c: 0, p: [a[0] - d[0] * L, a[1] - d[1] * L, b[0] + d[0] * L, b[1] + d[1] * L] });
     for (const c of [a, b]) segs.push({ k: "l", c: 0, p: [c[0] - q[0] * L, c[1] - q[1] * L, c[0] + q[0] * L, c[1] + q[1] * L] });
+  }
+  // Arc slots seen end-on: a centre-line arc through both end centres, run past the ends, and a radial line
+  // across each end (the top and bottom outlines give the same slot twice).
+  const used = new Set(straightSlots(halves).flatMap(sl => sl.c.map(c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`)));
+  for (const sl of arcSlots(halves.filter(h => !used.has(`${h.c[0].toFixed(4)},${h.c[1].toFixed(4)}`)), arcs)) {
+    const key = `${sl.o.map(x => x.toFixed(4))}|${sl.R.toFixed(4)}|${sl.a0.toFixed(5)}`;
+    if (slotKeys.has(key)) continue;
+    slotKeys.add(key);
+    const L = sl.r + ext, a0 = sl.a0 - L / sl.R, a1 = sl.a1 + L / sl.R;
+    const n = Math.max(12, Math.ceil((a1 - a0) / (Math.PI / 36))), p: number[] = [];
+    for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; p.push(sl.o[0] + sl.R * Math.cos(a), sl.o[1] + sl.R * Math.sin(a)); }
+    segs.push({ k: "p", c: 0, p });
+    for (const a of [sl.a0, sl.a1]) {
+      const d: P2 = [Math.cos(a), Math.sin(a)], c: P2 = [sl.o[0] + sl.R * d[0], sl.o[1] + sl.R * d[1]];
+      segs.push({ k: "l", c: 0, p: [c[0] - d[0] * L, c[1] - d[1] * L, c[0] + d[0] * L, c[1] + d[1] * L] });
+    }
   }
   const holes = [...marked].filter(([, r]) => r * pl.s >= 1).map(([key, r]) => { const [x, y] = key.split(",").map(Number); return { c: [x, y] as P2, r }; });
   const onBolt = new Set<number>();
@@ -886,6 +903,53 @@ export function straightSlots(halves: { c: P2; r: number; m: P2 }[]): { c: [P2, 
     used.add(i); used.add(best);
     const a = h.c, b = halves[best].c;
     out.push({ c: a[0] < b[0] - 1e-9 || (Math.abs(a[0] - b[0]) <= 1e-9 && a[1] <= b[1]) ? [a, b] : [b, a], r: h.r });
+  }
+  return out;
+}
+
+export interface ArcSlot { o: P2; R: number; r: number; a0: number; a1: number }
+
+/**
+ * Arc slots among end-on half circles (see `straightSlots`): two half circles of one radius r whose diameters lie
+ * on lines through one centre O, at one distance R from it, bulging away from each other along the circle, with a
+ * concentric arc of radius R + r or R - r among `arcs` (so two loose half-round notches don't pair up).
+ * `a0`..`a1` (radians, ccw, a1 > a0) runs from one end centre to the other through the slot.
+ */
+export function arcSlots(halves: { c: P2; r: number; m: P2 }[], arcs: { c: P2; r: number }[]): ArcSlot[] {
+  const out: ArcSlot[] = [], used = new Set<number>();
+  for (let i = 0; i < halves.length; i++) {
+    if (used.has(i)) continue;
+    const h = halves[i];
+    let best: ArcSlot | null = null, bj = -1;
+    for (let j = 0; j < halves.length; j++) {
+      const g = halves[j];
+      if (j === i || used.has(j) || Math.abs(g.r - h.r) > 1e-6 * Math.max(1, h.r)) continue;
+      // Each diameter line passes through O: h.c + s·q_h, q = m turned by 90°.
+      const qh: P2 = [-h.m[1], h.m[0]], qg: P2 = [-g.m[1], g.m[0]];
+      const den = qh[0] * qg[1] - qh[1] * qg[0], dx = g.c[0] - h.c[0], dy = g.c[1] - h.c[1];
+      let o: P2;
+      if (Math.abs(den) >= 1e-6) { const s = (dx * qg[1] - dy * qg[0]) / den; o = [h.c[0] + qh[0] * s, h.c[1] + qh[1] * s]; }
+      // One diameter line through both ends (a half-turn slot): O is midway; parallel apart = a straight slot.
+      else if (Math.abs(dx * qh[1] - dy * qh[0]) < 1e-6 * Math.max(1, Math.hypot(dx, dy))) o = [h.c[0] + dx / 2, h.c[1] + dy / 2];
+      else continue;
+      const Rh = Math.hypot(h.c[0] - o[0], h.c[1] - o[1]), Rg = Math.hypot(g.c[0] - o[0], g.c[1] - o[1]), tol = 1e-4 * Math.max(1, Rh);
+      if (Math.abs(Rh - Rg) > tol || Rh <= h.r + tol) continue;
+      const th = Math.atan2(h.c[1] - o[1], h.c[0] - o[0]), tg = Math.atan2(g.c[1] - o[1], g.c[0] - o[0]);
+      // The slot runs ccw from the end whose middle points clockwise to the end whose middle points ccw.
+      const cw = (t: number, m: P2) => m[0] * Math.sin(t) - m[1] * Math.cos(t) > 0.999;
+      const ccw = (t: number, m: P2) => -m[0] * Math.sin(t) + m[1] * Math.cos(t) > 0.999;
+      let a0: number, a1: number;
+      if (cw(th, h.m) && ccw(tg, g.m)) { a0 = th; a1 = tg; }
+      else if (cw(tg, g.m) && ccw(th, h.m)) { a0 = tg; a1 = th; }
+      else continue;
+      while (a1 <= a0) a1 += 2 * Math.PI;
+      const R = (Rh + Rg) / 2;
+      if (!arcs.some(a => Math.hypot(a.c[0] - o[0], a.c[1] - o[1]) < tol && (Math.abs(a.r - (R + h.r)) < tol || Math.abs(a.r - (R - h.r)) < tol))) continue;
+      if (!best || a1 - a0 < best.a1 - best.a0) { best = { o, R, r: h.r, a0, a1 }; bj = j; }
+    }
+    if (!best) continue;
+    used.add(i); used.add(bj);
+    out.push(best);
   }
   return out;
 }

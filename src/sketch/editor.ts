@@ -27,6 +27,7 @@ import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
 import { gridLines, gridStep, snapToGrid } from "./grid";
+import { stepFor } from "../prefs";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -1700,7 +1701,7 @@ export class SketchEditor {
       at: { x: lr.right, y: lr.top + lr.height / 2 },
       title: `${dim.name}@${this.sk.name}`,
       value,
-      step: dim.t === "angle" ? 1 : u.name === "in" ? 0.1 : 1,
+      step: stepFor(dim.t === "angle" ? "angle" : "length", u.name),
       live: true,
       preview: text => {
         if (this.disposed) return;

@@ -1109,7 +1109,7 @@ try {
 
     await pg.goto(boardUrl);
     await waitBoard();
-    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("[data-open] .open-long").textContent }));
+    const en = await pg.evaluate(() => ({ lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, open: document.querySelector("#file-btn .file-lbl").textContent }));
     // First-use tip on the first board, with Got it / Turn off.
     const tip1 = await pg.evaluate(() => { const h = document.querySelector("#hint"); return { shown: !h.hidden, text: h.textContent, btns: h.querySelectorAll("button").length }; });
     await pg.click("#hint [data-h=ok]");
@@ -1117,11 +1117,11 @@ try {
     await pg.waitForTimeout(100);
     const ru = await pg.evaluate(() => ({
       lang: document.documentElement.lang, btn: document.querySelector("#lang-btn").textContent, label: document.querySelector("#lang-btn").getAttribute("aria-label"),
-      open: document.querySelector("[data-open] .open-long").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
+      open: document.querySelector("#file-btn .file-lbl").textContent, layers: document.querySelector("#gt-layers").textContent, tool: document.querySelector("[data-gtool=smart]").textContent,
       layer: document.querySelector("#g-layers .g-name b")?.textContent, stats: document.querySelector("#g-stats .k")?.textContent, doc: document.querySelector("#doc-status").getAttribute("aria-label"),
     }));
-    check(en.lang === "en" && en.btn === "EN" && en.open === "Open file" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
-    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Открыть файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
+    check(en.lang === "en" && en.btn === "EN" && en.open === "File" && tip1.shown && /Tip/.test(tip1.text) && tip1.btns === 2, `i18n: English by default, first-use tip on the first board (${JSON.stringify([en, tip1.text.slice(0, 30)])})`);
+    check(ru.lang === "ru" && ru.btn === "RU" && ru.label.startsWith("RU") && ru.open === "Файл" && ru.layers === "Слои" && ru.tool === "✦ Умное" && /Медь|Контур|Сверловка|Маска|Шелкография/.test(ru.layer) && ru.stats === "Плата" && /Состояние/.test(ru.doc),
       `i18n: RU switches header, panels, layer names and stats at once (${JSON.stringify(ru)})`);
     // Results and the empty measurement list in Russian, then a scan for anything left in English.
     await pg.evaluate(() => {
@@ -2462,6 +2462,33 @@ try {
     const hvView = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#mc-tree .ft-row.hover")].map(r => r.dataset.id), lit: window.__sv.modeller.hoverGroup.children.length }));
     await mp.mouse.move(5, 5);
     check(hvTree === 1 && hvView.rows.join() === "x" && hvView.lit === 0, `model 1.324: hovering the Extrude1 row lights its faces, hovering its top face marks the row (${JSON.stringify([hvTree, hvView])})`);
+    // 1.329: Preferences (FR-UI-080): coarse image quality and verification rebuild the part, the sketch and mouse pages store their keys.
+    const pfTris = () => mp.evaluate(() => window.__sv.viewer.parts.reduce((n, p) => n + (p.mesh.geometry.attributes.position.count), 0));
+    const pfBefore = await pfTris();
+    await mp.click("#display-btn");
+    await mp.click("#prefs-btn");
+    await mp.waitForSelector("#prefs-dlg[open]");
+    await mp.selectOption('#prefs-dlg [data-p="quality"]', "coarse");
+    await mp.check('#prefs-dlg [data-p="verify"]');
+    await mp.click("#pt-sketch");
+    await mp.uncheck('#prefs-dlg [data-p="autoRels"]');
+    await mp.click("#pt-mouse");
+    await mp.selectOption('#prefs-dlg [data-p="wheel"]', "reverse");
+    await mp.click('#prefs-dlg [data-a="ok"]');
+    await mp.waitForFunction(n => window.__sv.viewer.parts.reduce((k, p) => k + (p.mesh.geometry.attributes.position.count), 0) !== n, pfBefore, { timeout: 30000 }).catch(() => {});
+    await idle();
+    const pfSet = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed, warn: window.__sv.model.last()?.statuses.filter(s => s.code === "warning" || !s.ok).length, open: !!document.querySelector("#prefs-dlg") }));
+    const pfCoarse = await pfTris();
+    // Back to the defaults, page by page.
+    await mp.click("#display-btn");
+    await mp.click("#prefs-btn");
+    await mp.waitForSelector("#prefs-dlg[open]");
+    for (const pg of ["modelling", "sketch", "mouse"]) { await mp.click(`#pt-${pg}`); await mp.click('#prefs-dlg [data-a="reset"]'); }
+    await mp.click('#prefs-dlg [data-a="ok"]');
+    await idle();
+    const pfBack = await mp.evaluate(() => ({ q: localStorage.getItem("mc:quality"), v: localStorage.getItem("mc:verify"), ar: localStorage.getItem("mc:autoRels"), zoom: window.__sv.viewer.controls.zoomSpeed }));
+    check(pfSet.q === "coarse" && pfSet.v === "1" && pfSet.ar === "0" && pfSet.zoom === -1 && pfSet.warn === 0 && !pfSet.open && pfCoarse <= pfBefore && pfBack.q === "normal" && pfBack.v === "0" && pfBack.ar === "1" && pfBack.zoom === 1,
+      `model 1.329: Preferences set coarse quality (${pfBefore} → ${pfCoarse} indices), verification, no automatic relations and reversed wheel zoom, and Defaults restore them (${JSON.stringify([pfSet, pfBack])})`);
     await ctx.close();
   }
 
@@ -9306,6 +9333,35 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Unfold: a flange on the back edge; click the plate's top face as the fixed face, ✓ with all bends: the sheet lies flat.
+    // (The flat volume differs a little from the folded one unless K = 0.5.) Fold, ✓: back as it was.
+    await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "uf", type: "smflange", name: "Edge-Flange6", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l3`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const ufBox = () => mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      return { v: l.props?.volume ?? 0, y: Math.round((hi[1] - lo[1]) * 1000) / 1000, z: Math.round((hi[2] - lo[2]) * 1000) / 1000, unfold: l.sheet?.unfold?.bends.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") };
+    });
+    const uf0 = await ufBox();
+    await smMenu("Unfold");
+    const [ufx, ufy] = await scr([50, 20, T]);
+    await mp.mouse.click(ufx, ufy);
+    await settle();
+    const uf1 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, face: d?.face?.name, bends: d?.bends?.length, all: document.querySelector("#mc-pm [data-sm-bends]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const uf2 = await ufBox();
+    await smMenu("Fold");
+    await mp.click("#mc-ok");
+    await settle();
+    const uf3 = await ufBox();
+    check(uf1.title === "Unfold" && /:p0:top$/.test(uf1.face ?? "") && uf1.bends === 0 && uf1.all === "All bends" && !uf2.bad && uf2.z === T && uf2.unfold === 1 && uf2.y > 50 + 15 && Math.abs(uf2.v - uf0.v) < uf0.v * 0.01
+      && !uf3.bad && uf3.unfold === 0 && Math.abs(uf3.z - uf0.z) < 1e-3 && Math.abs(uf3.v - uf0.v) < 1e-3,
+      `sheet metal: Unfold lays the flange flat about the clicked face and Fold bends it back (${JSON.stringify({ uf0, uf1, uf2, uf3 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -9990,6 +10046,45 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: arc slot centre marks (FR-DRW-023) ---
+  if (inShard(4)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // An 8 mm wide arc slot about (0, -10), centre radius 25 from 30° to 150°, through a 100 × 60 plate.
+    const A = (id, R, deg) => P(id, R * Math.cos(deg * Math.PI / 180), -10 + R * Math.sin(deg * Math.PI / 180));
+    const part = { schema: 1, kind: "part", id: "d_drwaslot", name: "ArcSlotted", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -50, -30), P("p2", 50, -30), P("p3", 50, 30), P("p4", -50, 30),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" },
+        A("o", 0, 0), A("c1", 25, 30), A("c2", 25, 150), A("o1", 29, 30), A("o2", 29, 150), A("i1", 21, 30), A("i2", 21, 150),
+        { id: "k1", t: "arc", c: "c1", a: "i1", b: "o1" }, { id: "k2", t: "arc", c: "c2", a: "o2", b: "i2" },
+        { id: "ao", t: "arc", c: "o", a: "o1", b: "o2" }, { id: "ai", t: "arc", c: "o", a: "i1", b: "i2" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "ArcSlotted.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Top view (views[1]): centre-line prims in model mm about the plate centre.
+    const am = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[1], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      const pts = q => { const o = []; for (let i = 0; i + 1 < q.p.length; i += 2) o.push([U(q.p[i]), W(q.p[i + 1])]); return o; };
+      const near = q => pts(q).every(([x, y]) => Math.abs(x) < 40 && y > -12 && y < 25);
+      const prims = window.__sv.drw.prims().filter(q => q.layer === "CENTER" && (q.t === "l" || q.t === "p")).filter(near);
+      return { lines: prims.filter(q => q.t === "l").map(pts), arcs: prims.filter(q => q.t === "p").map(pts) };
+    });
+    const onR = am.arcs.length === 1 && am.arcs[0].every(([x, y]) => Math.abs(Math.hypot(x, y + 10) - 25) < 0.05);
+    const radial = am.lines.length === 2 && am.lines.every(([[x0, y0], [x1, y1]]) => Math.abs(Math.hypot(x1 - x0, y1 - y0) - 12) < 0.05 && Math.abs(Math.hypot((x0 + x1) / 2, (y0 + y1) / 2 + 10) - 25) < 0.05);
+    check(onR && radial, `drawing: arc slot centre-line arc and radial end lines, no crosses (${JSON.stringify(am).slice(0, 400)})`);
+    await ctx.close();
+  }
+
   // --- Drawings: weld symbol ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -10165,6 +10260,69 @@ try {
     check(!one.par && many.par?.parts === 5 && many.par.workers === 3, `parallel build: 5 parts on 3 kernel workers (${JSON.stringify(many.par)}), none with ?workers=0 (${JSON.stringify(one.par)})`);
     check(JSON.stringify(one.parts) === JSON.stringify(many.parts), `parallel build: every component has the same faces, cylinders, volume and face areas as on one worker (${JSON.stringify(many.parts)} vs ${JSON.stringify(one.parts)})`);
     check(Math.abs(one.props.volume - many.props.volume) < 1e-6 * one.props.volume && one.props.bodies === many.props.bodies, `parallel build: assembly mass properties match (${many.props.volume} vs ${one.props.volume})`);
+  }
+  // File menu (FR-UI-010): the header's File button replaces Open file; shortcuts, recent documents, Pack and Go.
+  if (inShard(2)) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+    const fp = await ctx.newPage();
+    fp.on("pageerror", e => errors.push(e.message));
+    fp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await fp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await fp.goto(`${origin}/index.html?debug&nokernel`);
+    await fp.waitForFunction(() => window.__sv);
+    const menu = () => fp.evaluate(() => {
+      const m = document.querySelector("#file-menu");
+      return { shown: !!m && !m.hidden, items: m ? [...m.querySelectorAll("button[data-f]")].map(b => [b.dataset.f, b.disabled, b.querySelector(".fm-k")?.textContent ?? ""]) : [], focus: document.activeElement?.dataset?.f ?? document.activeElement?.id, expanded: document.querySelector("#file-btn").getAttribute("aria-expanded") };
+    });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => !document.querySelector("#file-menu").hidden);
+    const m0 = await menu();
+    const it0 = Object.fromEntries(m0.items.map(([id, off, k]) => [id, { off, k }]));
+    check(m0.shown && m0.expanded === "true" && m0.focus === "new-part" && it0.open && !it0.open.off && it0.open.k === "Ctrl+O" && it0.save.off && it0["save-as"].off && it0.close.off && it0.print.off && !it0.exit.off && it0.pack && it0.props && it0["save-all"].k === "Ctrl+Alt+S",
+      `File menu: opens under the File button with New/Open/Close/Save/Save as/Save all/Pack and Go/Export/Print/Properties/Exit, document commands off with nothing open (${JSON.stringify(m0)})`);
+    await fp.keyboard.press("ArrowDown");
+    const f1 = await menu();
+    await fp.keyboard.press("Escape");
+    const m1 = await menu();
+    check(f1.focus === "new-asm" && !m1.shown && m1.focus === "file-btn" && m1.expanded === "false", `File menu: arrow keys move, Esc shuts it and focus returns to File (${JSON.stringify([f1.focus, m1])})`);
+    await fp.setInputFiles("#file-input", join(fixtures, "rounded-cube/rounded-cube.step"));
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await fp.click("#file-btn");
+    await fp.waitForFunction(() => document.querySelector("#file-menu [data-f='recent:0']"));
+    const m2 = await menu();
+    const it2 = Object.fromEntries(m2.items.map(([id, off]) => [id, off]));
+    const recentName = await fp.$eval("#file-menu [data-f='recent:0']", b => b.textContent);
+    check(!it2["save-as"] && !it2.close && !it2.print && !it2.export && it2.save && /rounded-cube\.step/.test(recentName), `File menu: an open model enables Save as (a copy), Close, Print and Export and is listed under recent documents (${JSON.stringify([m2.items, recentName])})`);
+    await fp.keyboard.press("Escape");
+    // Ctrl+Alt+N: a new part in its own tab.
+    await fp.keyboard.press("Control+Alt+KeyN");
+    await fp.waitForFunction(() => window.__sv.modeller.active, null, { timeout: 30000 });
+    const tabs = await fp.$$eval("#doc-tabs .dt", d => d.length);
+    check(tabs === 2, `File menu: Ctrl+Alt+N makes a new part beside the open model (${tabs} tabs)`);
+    // Pack and Go: both documents in one zip.
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=pack]");
+    await fp.waitForSelector("#pack-dlg[open]");
+    const boxes = await fp.$$eval("#pack-dlg [data-pk]:not([data-pk=name])", b => b.length);
+    await fp.$$eval("#pack-dlg input[type=checkbox]", bs => bs.forEach(b => { b.checked = true; }));
+    const [dl] = await Promise.all([fp.waitForEvent("download"), fp.click("#pack-dlg [data-a=ok]")]);
+    const zbytes = await readFile(await dl.path());
+    const ztext = zbytes.toString("latin1");
+    check(boxes === 2 && /\.zip$/.test(dl.suggestedFilename()) && ztext.startsWith("PK") && ztext.includes("rounded-cube.step") && /\.mcadprt/.test(ztext), `File menu: Pack and Go lists the open documents and saves them into one .zip (${boxes} boxes, ${dl.suggestedFilename()}, ${zbytes.length} bytes)`);
+    // Ctrl+Alt+W closes the new part; File ▸ Close all closes the model.
+    await fp.keyboard.press("Control+Alt+KeyW");
+    await fp.waitForFunction(() => !window.__sv.modeller.active && document.querySelectorAll("#doc-tabs .dt").length === 1, null, { timeout: 30000 });
+    await fp.click("#file-btn");
+    await fp.click("#file-menu [data-f=close-all]");
+    await fp.waitForFunction(() => !document.querySelectorAll("#doc-tabs .dt").length && !window.__sv.viewer.parts.length, null, { timeout: 30000 });
+    check(true, "File menu: Ctrl+Alt+W closes the part, Close all closes the rest");
+    // A recent document opens again from the menu.
+    await fp.click("#file-btn");
+    await fp.waitForSelector("#file-menu [data-f='recent:0']");
+    await fp.click("#file-menu [data-f='recent:0']");
+    await fp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    check(true, "File menu: a recent document opens again from the list");
+    await ctx.close();
   }
 } catch (err) {
   console.error(err);
