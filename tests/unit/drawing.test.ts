@@ -21,7 +21,7 @@ export async function block() {
     ents: [{ id: "c0", t: "point", x: 10, y: 0 }, { id: "c1", t: "circle", c: "c0", r: 5 }] };
   const r = m.evaluate(doc([rect("s1", 100, 60), { id: "f1", type: "extrude", name: "E", sketch: "s1", op: "boss", end: "blind", depth: { v: 20 } },
     hole, { id: "f2", type: "extrude", name: "C", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } }]));
-  return { oc: await occ(), shape: r.body!.shape };
+  return { oc: await occ(), shape: r.body!.shape, names: r.body!.names };
 }
 
 test("quick preview (polygonal HLR) matches the exact view's outline", async () => {
@@ -858,4 +858,30 @@ test("sheet sketch: entities, pick outlines and horizontal/vertical inference", 
   assert.deepEqual(orthoSnap([0, 0], [20, 0.5]), { p: [20, 0], hv: "h" });
   assert.deepEqual(orthoSnap([0, 0], [0.4, -20]), { p: [0, -20], hv: "v" });
   assert.equal(orthoSnap([0, 0], [10, 10]).hv, null);
+});
+
+test("section views can be dimensioned on their cut faces: cut edges named after the face they cut (FR-DRW-021)", async () => {
+  const { section, topology } = await import("../../src/kernel/drawing");
+  const { dimGeo, edgeRef, projector, refEdge, withCut } = await import("../../src/drawing/annot");
+  const { oc, shape, names } = await block();
+  const map = new oc.TopTools_IndexedMapOfShape_1();
+  oc.TopExp.MapShapes_1(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, map);
+  const namer = (f: any) => { const i = map.FindIndex(f); return i > 0 ? names[i - 1] : null; };
+  const view = { dir: [0, -1, 0] as V3, up: [0, 0, 1] as V3 };
+  const s = section(oc, shape, view, [0, 0, 0], 0.02, undefined, { namer });
+  const cuts = s.cutEdges ?? [];
+  assert.ok(cuts.length >= 8, `cut edges ${cuts.length}`);
+  assert.ok(cuts.every(e => e.k.endsWith("|§") && Math.abs(e.a[1]) < 1e-6 && Math.abs(e.b[1]) < 1e-6), "named, on the plane");
+  // The hole's wall cut gives two lines 10 apart (its diameter), both named after the hole face.
+  const hole = cuts.filter(e => e.t === "l" && Math.abs(e.a[0] - e.b[0]) < 1e-6 && Math.abs(Math.abs(e.a[0] - 10) - 5) < 1e-6);
+  assert.equal(hole.length, 2);
+  assert.equal(hole[0].k, hole[1].k);
+  const facts = withCut({ topo: topology(oc, shape, names) }, s)!;
+  assert.equal(facts.topo.edges.length, topology(oc, shape, names).edges.length + cuts.length);
+  const { P } = projector(view);
+  const dim = { id: "d", t: "dim" as const, view: "v", pos: [10, 30] as [number, number], k: "al" as const, refs: [edgeRef(hole[0], "e"), edgeRef(hole[1], "e")] };
+  const g = dimGeo(dim, P, facts.topo);
+  assert.ok(g && Math.abs(g.value - 10) < 1e-6, `value ${g?.value}`);
+  // Without the section's edges the reference is gone (a plain view of the uncut model).
+  assert.equal(refEdge(dim.refs[0], topology(oc, shape, names)), null);
 });

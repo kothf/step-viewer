@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.308.0] - 2026-11-09
+
+### Added
+
+- **Dimensions on section cut faces** (FR-DRW-021): in a section view (straight, offset, half or broken-out, and details of them) Smart dimension, hole callouts, notes and the other annotations can pick the edges of the hatched cut faces, such as the two walls of a cut hole. Each cut edge is named after the model face the plane cuts through, so its dimension follows the part after a rebuild.
+
 ## [1.307.0] - 2026-11-09
 
 ### Added
@@ -1795,7 +1801,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.307.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.308.0...HEAD
+[1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
 [1.306.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.306.0
 [1.305.0]: https://github.com/kothf/step-viewer/compare/v1.304.0...v1.305.0
