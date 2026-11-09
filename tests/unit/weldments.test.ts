@@ -41,6 +41,8 @@ test("profile library: every size builds; areas match the standard tables", () =
     ["ipe", "200", 28.5], ["ipe", "300", 53.8], ["hea", "200", 53.8], ["flat", "40x5", 2.0], ["bar", "20", 3.14],
     ["uangle", "60x40x5", 4.79], ["uangle", "100x50x8", 11.4], ["uangle", "120x80x10", 19.1], ["heb", "200", 78.1], ["heb", "300", 149],
     ["sqbar", "20", 4.0],
+    ["upe", "100", 12.5], ["upe", "200", 29.0], ["upe", "300", 56.6], ["hem", "100", 53.2], ["hem", "200", 131], ["hem", "300", 303],
+    ["ipn", "100", 10.6], ["ipn", "200", 33.4], ["ipn", "300", 69.0],
   ];
   for (const [type, size, cm2] of table) near(profileArea(profileShape(type, size)!) / 100, cm2, 0.012);
   assert.equal(profileShape("shs", "41x41x3"), null);
