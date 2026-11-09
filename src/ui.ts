@@ -37,6 +37,11 @@ export function toast(msg: string, kind: ToastKind | boolean = "info") {
   for (let i = 0; i < all.length - MAX_TOASTS; i++) all[i].remove();
 }
 
+/** Takes down the toasts showing these messages (an error that a later success made out of date). */
+export function untoast(msgs: string[]) {
+  for (const el of document.querySelectorAll<HTMLElement>("#toasts .toast")) if (msgs.includes(el.dataset.msg ?? "")) el.remove();
+}
+
 // ---------- modal dialogs ----------
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';

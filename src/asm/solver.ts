@@ -90,14 +90,19 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       break;
     case "distance": {
       const v = m.value ?? 0;
-      if (ga.k === "plane" && gb.k === "plane") { parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
+      // Between planes the alignment counts, as in a coincident mate, so Aligned / Anti-aligned picks the side b faces (exam #64).
+      if (ga.k === "plane" && gb.k === "plane") { if (m.align) dirs(sub(da, scale(db0, s))); else parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
       else if (ga.k === "axis" && gb.k === "axis") { parallel(); out.push(axisOff(ga, gb.p) - v); }
       else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, dot(pl.n, sub(ax.p, pl.p)) - sg * v); }
       break;
     }
     case "angle": {
       const b = scale(db0, sg);
-      out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
+      // Signed about the direction kept from when the mate was made (in a's frame), so ±θ differ (exam #72).
+      if (m.about && tfa) {
+        const ax = applyDir(tfa, m.about), c = cross(da, b);
+        out.push(wrap(Math.atan2(dot(c, ax), dot(da, b)) - (m.value ?? 0)) * L);
+      } else out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
       break;
     }
     case "tangent":
@@ -450,7 +455,8 @@ function rank(vs: number[][]): number {
     const v = v0.slice();
     for (const b of basis) { const d = v.reduce((s, x, i) => s + x * b[i], 0); for (let i = 0; i < v.length; i++) v[i] -= d * b[i]; }
     const l = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-    if (l > 1e-6) basis.push(v.map(x => x / l));
+    // Null vectors are unit length over every unknown: a block below 1e-4 is round-off, not a freedom (exam #71).
+    if (l > 1e-4) basis.push(v.map(x => x / l));
   }
   return Math.min(6, basis.length);
 }

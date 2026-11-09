@@ -18,6 +18,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - A mass override on a modelled part scales the moments of inertia with the mass, as SolidWorks does.
 - Multibody modelled parts get exact volume and centre of mass too (only single solids did).
 
+## [1.343.0] - 2026-11-09
+
+### Added
+
+- **Coped cuts on structural members (FR-FT-121)**: Structural Member gets SolidWorks' choice for butted ends. **Simple cut** keeps the flat end square to the face the member stops at; **Coped cut** makes the end follow the shape of the member it stops at, so a round tube meeting another gets its saddle (fish-mouth) end, ready to weld. A weld gap moves the coped end back along the member.
+
+## [1.342.0] - 2026-11-09
+
+### Added
+
+- **Copy and paste features (FR-HIS-014)**: as in SolidWorks, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
+
+## [1.341.0] - 2026-11-09
+
+### Added
+- Centrelines on cones and tori in drawings (FR-DRW-023): a cone, torus or revolved face seen from the side (a taper, a countersink, a groove, an O-ring) gets a centreline on its axis, 2 mm past its ends, like cylinders; a part with no cylinder on that axis now gets one too.
+
+## [1.340.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Sheet Metal Gusset (FR-FT-120): a stiffening rib pressed across a bend, as SolidWorks' Sheet Metal Gusset (flat type). Click the bend to place it, centred or at a distance from the bend's end; the profile length runs along each face from the inside virtual sharp, and the width is the rib's outside width. The rib keeps the sheet's thickness, with the matching groove outside, and the flat pattern leaves it out. Bends with gussets can't be unfolded.
+
+## [1.339.0] - 2026-11-09
+
+### Added
+
+- Angle mates are signed: a new angle mate turns about the direction its two faces make when it is made, so +30° and −30° are different positions and a negative angle can be typed.
+- Assembly Undo and Redo tips name the step ("Undo: Move pin<1>", "Undo: Add Coincident2").
+- The Delete key deletes the mate, component, pattern, exploded view or feature selected in the assembly tree.
+
+### Changed
+
+- Mate: when a new mate cannot be solved from where the parts stand, the solver tries again with the component turned about its own axes (90°, 180°, 270°), so a mate made half a turn away no longer reads as over-defined. When it still fails, the message says the parts may be too far apart; adding a mate takes down that error.
+- Distance mate between flat faces: Aligned / Anti-aligned now picks the side the second face faces, and a negative distance flips the dimension.
+- Move component: Enter applies a box and goes on to the next one; on the last box it closes the panel.
+- Inserted components go into the view, right of its middle, instead of in a line beside the model; they are numbered by their file name, so the first insert of a file is <1>.
+- Save as names the part after its file, so the title, the document tab (without the unsaved mark) and Insert component's list of open documents show that name.
+
+### Fixed
+
+- Save snapshots: a snapshot cut short by closing the page (an empty file) is no longer listed, so Restore no longer fails on it.
+- Tree context menus near the bottom of the window open upwards and stay inside it.
+- Components fixed or locked inside a closed linkage no longer show 1 DOF from round-off.
+- Undo after Move edits shows the restored pose in the Move panel (typed angles of the undone pose are dropped).
+
 ## [1.338.0] - 2026-11-09
 
 ### Added
@@ -2016,7 +2062,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.344.0...HEAD
-[1.344.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.344.0
+[1.344.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.344.0
+[1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0
+[1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
+[1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
+[1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
+[1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
 [1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
 [1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
 [1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0

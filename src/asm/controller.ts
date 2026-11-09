@@ -7,10 +7,11 @@ import { ModelKernel } from "../model/kernelClient";
 import { newPart, uid } from "../model/doc";
 import { PART_EXT, unpackPart } from "../model/file";
 import { t, onLangChange } from "../i18n";
-import { confirmModal, toast } from "../ui";
+import { confirmModal, toast, untoast } from "../ui";
 import { ASM_EXT, packAsm, unpackAsm } from "./file";
 import { IDENTITY, applyDir, applyPoint, compose, fromPose, invert, poseAngles, rotation, translation } from "./math";
 import { activateState, addState, deleteState } from "./states";
+import { stepName } from "./steps";
 import { activateConfig, addConfig, deleteConfig, partUsed } from "./configs";
 import { activate as activatePartConfig } from "../model/configs";
 import { refreshExprs } from "../model/params";
@@ -70,6 +71,9 @@ const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symme
 interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
 
 /** An assembly kept in a document tab while another document is shown. */
+/** The Mate panel's message when a mate cannot be solved even from turned starts. */
+const MATE_FAILS = "This mate cannot be solved with the others: the assembly would be over-defined, or the components stand too far from where the mate puts them. Move them closer and try again.";
+
 export interface AsmTab { doc: AsmDoc; fileName: string; handle: FileSystemFileHandle | null; undo: string[]; redo: string[]; savedAt: string; sel: string | null }
 
 export class AsmController {
@@ -288,6 +292,15 @@ export class AsmController {
     this.rebuild();
   }
 
+  /** The Undo / Redo tip names the step (exam #73). */
+  private undoTip(redo: boolean) {
+    const top = (redo ? this.redoStack : this.undoStack).at(-1);
+    if (!top || !this.doc) return t(redo ? "Redo (Ctrl+Y)" : "Undo (Ctrl+Z)");
+    const other = JSON.parse(top) as AsmDoc;
+    const n = redo ? stepName(this.doc, other) : stepName(other, this.doc);
+    return t(redo ? "Redo: {what} (Ctrl+Y)" : "Undo: {what} (Ctrl+Z)", { what: t(n.key, n.params) });
+  }
+
   undo() { this.step(this.undoStack, this.redoStack); }
   redo() { this.step(this.redoStack, this.undoStack); }
   private step(from: string[], to: string[]) {
@@ -295,6 +308,10 @@ export class AsmController {
     if (!s || !this.doc) return;
     to.push(JSON.stringify(this.doc));
     this.doc = JSON.parse(s);
+    // Typed angles belong to the pose undone; the Move panel shows the restored pose afresh (exam #73).
+    this.typedAngles.clear();
+    const pm = document.getElementById("asm-pm");
+    if (pm && this.moving) delete pm.dataset.id;
     if (this.moving && !this.doc!.components.some(c => c.id === this.moving)) this.moving = null;
     this.renderAll();
     this.rebuild();
@@ -1360,6 +1377,35 @@ export class AsmController {
     this.renderAll();
   }
 
+  /**
+   * Solves with one more mate; when that fails from where the parts stand, tries again with a component of the mate
+   * turned about its own axes (the mates' cylinders, else the world axes through its centre) by 90°, 180° and 270°,
+   * because the solver only finds the nearest solution: a mate made half a turn away is not over-defined (exam #63).
+   */
+  private solveMate(doc: AsmDoc, mate: Mate): SolveResult {
+    const r = this.solveDoc(doc, [mate]);
+    if (r.ok || r.missing.includes(mate.id)) return r;
+    const t0 = performance.now();
+    for (const id of [mate.b.comp, mate.a.comp]) {
+      const c = doc.components.find(x => x.id === id);
+      if (!c || c.fixed) continue;
+      const axes: { o: V3; u: V3 }[] = [];
+      for (const x of [...(doc.mates ?? []), mate]) {
+        if (x.suppressed) continue;
+        for (const ref of [x.a, x.b]) { const g = ref.comp === id ? this.worldGeo(ref) : null; if (g?.k === "axis" && !axes.some(q => Math.abs(new THREE.Vector3(...q.u).dot(new THREE.Vector3(...g.d))) > 0.999 && new THREE.Vector3(...g.p).sub(new THREE.Vector3(...q.o)).cross(new THREE.Vector3(...q.u)).length() < 1e-6)) axes.push({ o: g.p, u: g.d }); }
+      }
+      if (!axes.length) { const o = applyPoint(c.tf, this.centres.get(c.part) ?? [0, 0, 0]); axes.push({ o, u: [0, 0, 1] }, { o, u: [1, 0, 0] }, { o, u: [0, 1, 0] }); }
+      for (const ax of axes) for (const deg of [180, 90, 270]) {
+        if (performance.now() - t0 > 4000) return r;
+        const start: Record<string, Tf> = { [id]: compose(rotation(ax.o, ax.u, (deg * Math.PI) / 180), c.tf) };
+        for (const x of doc.components) start[x.id] ??= x.tf;
+        const rr = this.solveDoc(doc, [mate], start);
+        if (rr.ok) return rr;
+      }
+    }
+    return r;
+  }
+
   /** The draft as a mate, when it has both faces and a type that fits them. */
   private draftMate(): Mate | null {
     const m = this.mating;
@@ -1369,6 +1415,18 @@ export class AsmController {
     const mate: Mate = { id: m.edit ?? uid("m_"), name: old && old.type === m.type ? old.name : `${MATE_LABEL[m.type].replace(/ (\w)/g, (_, c: string) => c.toUpperCase())}${n}`, type: m.type, a: m.a, b: m.b };
     if (m.align) mate.align = m.align;
     if (m.type === "distance" || m.type === "angle") { mate.value = m.value ?? 0; if (m.flip) mate.flip = true; }
+    // Angle: signed about a × b as the faces stand now (kept when edited), so +θ and −θ differ (exam #72).
+    if (m.type === "angle") {
+      if (old?.type === "angle" && old.about) mate.about = old.about;
+      else {
+        const ga = this.worldGeo(m.a), gb = this.worldGeo(m.b), ca = this.anyComp(m.a.comp);
+        if (ga && gb && ca) {
+          const da = ga.k === "plane" ? ga.n : ga.d, db0 = gb.k === "plane" ? gb.n : gb.d, sg = m.flip ? -1 : 1;
+          const c = new THREE.Vector3(...da).cross(new THREE.Vector3(...db0).multiplyScalar(sg));
+          if (c.length() > 1e-6) { c.normalize(); mate.about = applyDir(invert(ca.tf), [c.x, c.y, c.z]); }
+        }
+      }
+    }
     if (m.type === "lock") { const a = this.anyComp(m.a.comp), b = this.anyComp(m.b.comp); if (a && b) mate.rel = compose(invert(a.tf), b.tf); }
     if (m.type === "limitdist" || m.type === "limitangle") { mate.min = m.min ?? 0; mate.max = Math.max(mate.min, m.max ?? mate.min); if (m.flip) mate.flip = true; }
     if (m.type === "symmetric" || m.type === "width" || m.type === "slot" || m.type === "hinge") {
@@ -1404,9 +1462,9 @@ export class AsmController {
     if (!m) return;
     m.problem = undefined;
     if (!mate) { this.previewTfs(this.shownTf); this.renderPanel(); return; }
-    const r = this.solveDoc(this.withoutEdited(), [mate]);
+    const r = this.solveMate(this.withoutEdited(), mate);
     if (r.ok) this.previewTfs(r.tfs);
-    else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t("This mate cannot be solved with the others: the assembly would be over-defined.") : t("The assembly mates cannot all be solved."); }
+    else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t(MATE_FAILS) : t("The assembly mates cannot all be solved."); }
     this.renderPanel();
   }
 
@@ -1417,8 +1475,9 @@ export class AsmController {
     if (!m.a && !m.b) { this.cancelMate(); return; }
     const mate = this.draftMate();
     if (!mate) { toast(t("Pick two faces on different components, and a mate type that fits them."), true); return; }
-    const r = this.solveDoc(this.withoutEdited(), [mate]);
-    if (!r.ok) { m.problem = t("This mate cannot be solved with the others: the assembly would be over-defined."); this.renderPanel(); toast(m.problem, true); return; }
+    const r = this.solveMate(this.withoutEdited(), mate);
+    if (!r.ok) { m.problem = t(MATE_FAILS); this.renderPanel(); toast(m.problem, true); return; }
+    untoast([t(MATE_FAILS), t("This mate cannot be solved with the others: the assembly would be over-defined.")]);
     const edit = m.edit;
     this.mating = edit ? {} : { added: mate.name };
     this.mateOther = null;
@@ -1427,6 +1486,8 @@ export class AsmController {
       d.mates ??= [];
       const i = edit ? d.mates.findIndex(x => x.id === edit) : -1;
       if (i >= 0) d.mates[i] = mate; else d.mates.push(mate);
+      // Where the solve found it (perhaps from a turned start): the document's own solve goes on from there.
+      applySolved(d, r.tfs);
     });
     if (edit) this.cancelMate();
   }
@@ -1588,6 +1649,29 @@ export class AsmController {
   }
 
   /** Adds a component of this part (or sub-assembly) document, named after its file. */
+  /** Deletes what is selected in the tree (the Delete key). */
+  private deleteSelected() {
+    const id = this.selected, d = this.doc;
+    if (!id || !d) return;
+    if (d.mates?.some(x => x.id === id)) void this.deleteMate(id);
+    else if (d.components.some(x => x.id === id)) void this.deleteComponent(id);
+    else if (d.patterns?.some(x => x.id === id)) this.deletePattern(id);
+    else if (d.explodes?.some(x => x.id === id)) this.deleteExplode(id);
+    else if (d.features?.some(x => x.id === id)) this.deleteFeature(id);
+  }
+
+  /** Where a new component goes: beside the middle of the view, so it is on screen to be mated (exam #68). */
+  private insertPoint(): V3 {
+    const v = this.host.viewer, cam = v.camera as THREE.PerspectiveCamera & THREE.OrthographicCamera;
+    const target = v.controls.target;
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+    let half: number;
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) half = (cam.right - cam.left) / (2 * (cam.zoom || 1));
+    else half = cam.position.distanceTo(target) * Math.tan(((cam.fov || 45) * Math.PI) / 360) * (cam.aspect || 1);
+    const p = target.clone().add(right.multiplyScalar(0.45 * half));
+    return [p.x, p.y, p.z];
+  }
+
   insertPart(pd: PartDoc, fileName: string, asm?: AsmDoc) {
     if (!this.doc) return;
     {
@@ -1596,12 +1680,12 @@ export class AsmController {
       const base = f.name.replace(/\.[^.]+$/, "") || pd.name;
       // The same document again shares its source (FR-ASM-005).
       const key = this.sourceKey(pd, asm);
-      const n = this.doc!.components.filter(c => c.part === key).length + 1;
+      // Numbered by the file name, so the first insert of a file is <1> even when it shares a part with another file (exam #70).
+      const n = this.doc!.components.filter(c => c.name.startsWith(`${base}<`)).length + 1;
       const id = uid("c_");
       const firstOne = !this.doc!.components.length;
-      // Later components go beside what is there, along X.
-      const box = this.host.viewer.parts.length ? this.host.viewer.computeBounds() : null;
-      const at: V3 = firstOne || !box ? [0, 0, 0] : [box.max.x + Math.max(10, (box.max.x - box.min.x) * 0.2), 0, 0];
+      // Later components go into the view, right of its middle.
+      const at: V3 = firstOne || !this.host.viewer.parts.length ? [0, 0, 0] : this.insertPoint();
       this.change(d => {
         d.parts[key] ??= { name: base, file: f.name, doc: pd, ...(asm ? { asm } : {}) };
         d.components.push({ id, name: `${base}<${n}>`, part: key, tf: firstOne ? IDENTITY : translation(at), ...(firstOne ? { fixed: true } : {}) });
@@ -2046,6 +2130,15 @@ export class AsmController {
         if (e.key === "Enter") { e.preventDefault(); if (this.mating) this.okMate(); else if (this.patterning) this.okPattern(); else if (this.exploding) this.okExplode(); else if (this.refing) this.okMateRef(); else if (this.featuring) this.okFeature(); else this.closeTools(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.closeTools(); return; }
       }
+      // Delete removes the item selected in the tree (a mate, component, pattern, exploded view or feature) (exam #67).
+      if (this.doc && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !this.picking && !this.moving && this.selected) {
+        const tg = e.target as HTMLElement;
+        if (!tg.closest("input, textarea, select, [contenteditable=true], dialog[open]") && (tg === document.body || tg.closest("#asm-tree") || tg === this.host.viewer.renderer.domElement)) {
+          e.preventDefault();
+          this.deleteSelected();
+          return;
+        }
+      }
       if (!this.doc || !(e.ctrlKey || e.metaKey) || e.altKey) return;
       const tg = e.target as HTMLElement;
       if (tg.closest("input, textarea, select, [contenteditable=true], dialog[open]")) return;
@@ -2212,7 +2305,7 @@ export class AsmController {
     $("#asm-tools").querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
     const q = $("#asm-quick");
     q.hidden = false;
-    q.innerHTML = b("undo", t("Undo"), t("Undo (Ctrl+Z)"), !this.undoStack.length) + b("redo", t("Redo"), t("Redo (Ctrl+Y)"), !this.redoStack.length) + sep
+    q.innerHTML = b("undo", t("Undo"), this.undoTip(false), !this.undoStack.length) + b("redo", t("Redo"), this.undoTip(true), !this.redoStack.length) + sep
       + b("save", t("Save"), t("Save the assembly (.mcadasm)")) + b("step", t("STEP"), t("Export the assembly as STEP, one named part per component"), !n0);
     q.querySelectorAll<HTMLButtonElement>("[data-ac]").forEach(x => x.addEventListener("click", () => this.command(x.dataset.ac!)));
     this.renderStatus();
@@ -2426,6 +2519,12 @@ export class AsmController {
     m.style.left = `${x}px`;
     m.style.top = `${y}px`;
     document.body.appendChild(m);
+    // Kept inside the window: a menu on the tree's last rows opens upwards, and scrolls when taller than the window (exam #66).
+    const r = m.getBoundingClientRect(), H = window.innerHeight, W = window.innerWidth;
+    if (r.height > H - 8) { m.style.maxHeight = `${H - 8}px`; m.style.overflowY = "auto"; }
+    const h = Math.min(r.height, H - 8);
+    if (y + h > H - 4) m.style.top = `${Math.max(4, Math.min(y - h, H - 4 - h))}px`;
+    if (x + r.width > W - 4) m.style.left = `${Math.max(4, W - 4 - r.width)}px`;
     m.querySelectorAll<HTMLButtonElement>("button").forEach(b => b.addEventListener("click", () => { m.remove(); items[Number(b.dataset.i)][1](); }));
     setTimeout(() => document.addEventListener("pointerdown", ev => { if (!m.contains(ev.target as Node)) m.remove(); }, { once: true }), 0);
     m.querySelector<HTMLButtonElement>("button")?.focus();
@@ -2482,7 +2581,14 @@ export class AsmController {
         this.change(d => { const x = d.components.find(k => k.id === c.id); if (x) x.tf = tf; });
       };
       inp.addEventListener("change", apply);
-      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); apply(); this.moving = null; this.renderPanel(); } });
+      // Enter applies and goes on to the next box, as Tab does; on the last one it closes the panel (exam #65).
+      inp.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        apply();
+        const all = [...pm.querySelectorAll<HTMLInputElement>("input[data-pose]")], next = all[all.indexOf(inp) + 1];
+        if (next) { next.focus(); next.select(); } else { this.moving = null; this.renderPanel(); }
+      });
     });
   }
 
@@ -2567,7 +2673,9 @@ export class AsmController {
     const vi = pm.querySelector<HTMLInputElement>("[data-mv]");
     vi?.addEventListener("change", () => {
       const v = Number(vi.value.replace(",", "."));
-      if (!Number.isFinite(v) || v < 0) { vi.setAttribute("aria-invalid", "true"); return; }
+      if (!Number.isFinite(v) || (v < 0 && m.type !== "distance" && m.type !== "angle")) { vi.setAttribute("aria-invalid", "true"); return; }
+      // A negative distance measures to the other side, as Flip dimension does (exam #64); an angle is signed (exam #72).
+      if (m.type === "distance" && v < 0) { m.flip = !m.flip; m.value = -v; vi.value = String(-v); this.previewMate(); return; }
       m.value = m.type === "angle" ? (v * Math.PI) / 180 : v;
       this.previewMate();
     });

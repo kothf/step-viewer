@@ -371,3 +371,26 @@ test("a 50-link hinge chain solves and counts its freedom in well under a second
     assert.ok(full < 4000 && frame < 1500, `solve ${full.toFixed(0)} ms, frame ${frame.toFixed(0)} ms`);
   } finally { delete geos.link; }
 });
+
+test("an angle mate made with a turning direction is signed; a plane distance keeps its alignment (exam #64, #72)", () => {
+  // The pin on the hole, seated, turned about Z so its flat makes ±30° with the plate's side face.
+  const base = solve({ doc: doc([conc, coin]), geo, size: 100 });
+  const d = doc([conc, coin]);
+  d.components[1].tf = compose(rotation([20, 10, 0], [0, 0, 1], 0.1), base.tfs.q);
+  const ang = (v: number): Mate => ({ id: "m4", name: "Angle1", type: "angle", a: { comp: "p", face: "side" }, b: { comp: "q", face: "flat" }, value: (v * Math.PI) / 180, about: [0, 0, 1] });
+  for (const v of [30, -30]) {
+    const r = solve({ doc: { ...d, mates: [conc, coin, ang(v)] }, geo, size: 100 });
+    assert.ok(r.ok, `${v}: ${JSON.stringify(r.bad)}`);
+    const n = applyDir(r.tfs.q, [1, 0, 0]);
+    assert.ok(Math.abs(n[0] - Math.cos((v * Math.PI) / 180)) < 1e-5 && Math.abs(n[1] - Math.sin((v * Math.PI) / 180)) < 1e-5, `${v}: ${n}`);
+    assert.equal(r.dof.q, 0);
+  }
+  // Distance between the plate top (+Z) and the pin's under face: Aligned turns the pin over, Anti-aligned does not.
+  for (const align of ["aligned", "anti"] as const) {
+    const dist: Mate = { id: "m5", name: "Distance1", type: "distance", a: { comp: "p", face: "top" }, b: { comp: "q", face: "under" }, value: 4, align };
+    const r = solve({ doc: doc([conc, dist]), geo, size: 100 });
+    assert.ok(r.ok, align);
+    const nz = applyDir(r.tfs.q, [0, 0, -1])[2], z = applyPoint(r.tfs.q, [0, 0, 10])[2];
+    assert.ok(Math.abs(nz - (align === "aligned" ? 1 : -1)) < 1e-6 && Math.abs(z - 9) < 1e-5, `${align}: n ${nz}, z ${z}`);
+  }
+});

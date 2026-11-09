@@ -1640,6 +1640,14 @@ try {
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
     check(stepBack.ok && stepBack.meshes === 1 && stepBack.faces === 11, `model: STEP export of the body reads back (${JSON.stringify(stepBack)})`);
+    // Save as takes the file's name for the part (exam #69): title and tab show it, with no unsaved mark.
+    const saveAs = await mp.evaluate(async () => {
+      const prev = window.showSaveFilePicker;
+      window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
+      try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc-name").textContent };
+    });
+    check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
     await mp.waitForFunction(() => window.__sv);
     const recov0 = await mp.evaluate(() => document.querySelector("#mc-recover").hidden);
@@ -2512,6 +2520,30 @@ try {
     const ftBack = await mp.evaluate(() => ({ fly: !!document.querySelector("#mc-treefly"), parent: document.querySelector("#mc-tree").parentElement.id, prev: document.querySelector("#mc-tree").previousElementSibling?.id, shown: !document.querySelector("#mc-tree").hidden, full: document.querySelector("#tab-features").classList.contains("pm-full") }));
     check(ftOpen.tab === "true" && ftOpen.full && ftOpen.inView && ftOpen.name && ftOpen.folded && ftBase?.std === "YZ" && ftFold.hidden && ftFold.exp === "false" && ftFold.ls === "0" && !ftBack.fly && ftBack.parent === "tab-features" && ftBack.prev === "ft-search" && ftBack.shown && !ftBack.full,
       `model 1.335: a command panel fills the Features tab, the tree flies out folded over the view, opens, picks a plane and folds again; Cancel puts it back (${JSON.stringify([ftOpen, ftBase, ftFold, ftBack])})`);
+    // 1.342: copy and paste features (FR-HIS-014): Ctrl+C on an extrude, Ctrl+V on the Right plane; Ctrl+drop of the row on a face.
+    await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "cps", type: "sketch", name: "CpSketch", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a", 200, 200), P("b", 220, 200), P("c", 220, 220), P("d", 200, 220), L("l1", "a", "b"), L("l2", "b", "c"), L("l3", "c", "d"), L("l4", "d", "a")] }, { id: "cpe", type: "extrude", name: "CpExtrude", sketch: "cps", op: "boss", end: "blind", depth: { v: 10 } }); }); });
+    await idle();
+    const cpN = await mp.evaluate(() => ({ n: window.__sv.model.store.doc.features.length, vol: window.__sv.model.last().props.volume }));
+    await mp.click('#mc-tree .ft-row[data-id="cpe"]');
+    await mp.keyboard.press("Control+c");
+    await mp.click('#mc-tree .ft-row[data-id="std:YZ"]');
+    await mp.keyboard.press("Control+v");
+    await idle();
+    const cpV = await mp.evaluate(() => { const d = window.__sv.model.store.doc, f = d.features, ex = f.at(-1), sk = f.find(x => x.id === ex.sketch); return { n: f.length, ex: [ex.type, ex.name, ex.depth?.v], sk: [sk?.id !== "cps", sk?.plane?.std, f.indexOf(sk) === f.length - 2], vol: window.__sv.model.last().props.volume, bad: window.__sv.model.last().statuses.filter(s => !s.ok).length, sel: window.__sv.modeller.selected === ex.id }; });
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
+    const cpDrop = await mp.evaluate(() => {
+      const v = window.__sv.viewer, cv = v.renderer.domElement, r = cv.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera);
+      const x = r.left + ((s.x + 1) / 2) * r.width, y = r.top + ((1 - s.y) / 2) * r.height, dt = new DataTransfer();
+      dt.setData("application/x-mcad-feature", "cps");
+      cv.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      cv.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      const f = window.__sv.model.store.doc.features.at(-1);
+      return { type: f.type, face: !!f.plane?.face };
+    });
+    await idle();
+    const cpUndo = await mp.evaluate(() => window.__sv.model.store.undoLabel);
+    check(cpV.n === cpN.n + 2 && /^extrude,Extrude\d+,10$/.test(cpV.ex.join()) && cpV.sk.join() === "true,YZ,true" && near(cpV.vol - cpN.vol, 4000, 1e-3) && !cpV.bad && cpV.sel && cpDrop.type === "sketch" && cpDrop.face && cpUndo === "Paste",
+      `model 1.342: Ctrl+C on an extrude and Ctrl+V on the Right plane paste it with a copy of its sketch (+4000 mm³); Ctrl+drop of a sketch row on a face pastes it there (${JSON.stringify([cpN, cpV, cpDrop, cpUndo])})`);
     await ctx.close();
   }
 
@@ -5353,6 +5385,8 @@ try {
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
     await mp.fill('#asm-pm input[data-pose="x"]', "100");
+    // An inserted part lands where the view looks (exam #67), so its Y is set too.
+    await mp.fill('#asm-pm input[data-pose="y"]', "0");
     await mp.fill('#asm-pm input[data-pose="rz"]', "90");
     await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
     await shown(3);
@@ -5529,6 +5563,61 @@ try {
         && box && lock.lockRot && lock.t0 && lock.dof === 0 && lock.free === 0 && /Fully defined/.test(lock.status) && eye
         && more && items === "iso,front,top,right,normal" && top.z === -1 && top.gone,
         `asm 1.330: Alt+click picks faces behind in Mate, Mate button starts afresh, added note, Lock rotation, DOF status, tree eye, Views ▾ (${JSON.stringify({ o1, o2, front, under, fresh, added, box, lock, eye, more, items, top })})`);
+    }
+    // 1.339 (exam #63-#73): Delete key on a mate, menus kept in the window, Enter steps through the Move panel,
+    // inserts land in the view and are numbered by file, a negative distance flips, undo tips name the step.
+    {
+      await mp.mouse.move(5, 5);
+      const undoTip = await mp.evaluate(() => document.querySelector('[data-ac="undo"]')?.title ?? "");
+      // Delete key: the mate selected in the tree goes, as one undo step.
+      const n0 = await mp.evaluate(() => window.__sv.asm.doc.mates.length);
+      await mp.click("#asm-tree .ft-mate");
+      await mp.keyboard.press("Delete");
+      await mp.waitForTimeout(200);
+      const delKey = await mp.evaluate(() => ({ n: (window.__sv.asm.doc.mates ?? []).length, tip: document.querySelector('[data-ac="undo"]')?.title ?? "" }));
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A context menu opened at the bottom of the window opens upwards, inside it.
+      const menu = await mp.evaluate(() => {
+        const r = document.querySelector("#asm-tree .ft-mate");
+        r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 60, clientY: window.innerHeight - 3 }));
+        const m = document.querySelector("#asm-menu"), b = m?.getBoundingClientRect();
+        const out = { open: !!m, inside: !!b && b.bottom <= window.innerHeight && b.top >= 0 };
+        m?.remove();
+        return out;
+      });
+      // Move panel: Enter applies a box and goes on to the next one.
+      await mp.evaluate(() => { const a = window.__sv.asm; a.moving = a.doc.components[1].id; a.renderPanel(); });
+      await mp.focus("#asm-pm input[data-pose=x]");
+      await mp.keyboard.press("Enter");
+      const enter = await mp.evaluate(() => ({ next: document.activeElement?.dataset?.pose ?? "", open: !!document.querySelector("#asm-pm input[data-pose]") }));
+      await mp.keyboard.press("Escape");
+      // Insert the plate's document under another file name: <1>, standing in the view.
+      const ins = await mp.evaluate(() => {
+        const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        a.insertPart(pd, "other.mcadprt");
+        const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1 };
+      });
+      await shown(3);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A negative distance flips the dimension.
+      const neg = await mp.evaluate(r => {
+        const a = window.__sv.asm;
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } });
+        a.setMateType("distance");
+        const vi = document.querySelector("#asm-pm [data-mv]"), flip0 = !!a.mating.flip;
+        vi.value = "-5";
+        vi.dispatchEvent(new Event("change"));
+        const out = { flipped: !!a.mating.flip !== flip0, value: a.mating.value };
+        a.cancelMate();
+        return out;
+      }, ref);
+      check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
+        `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
     }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
     check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
@@ -6378,11 +6467,11 @@ try {
         a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
       document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
       mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
-      // Sensor: Alert above 10 mm on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
+      // Sensor: Alert above 10.1 mm (10 mm itself is reached at 1 s, within the solver's tolerance) on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
       // shows Out of range at the end, and with Stop playback the trip is the first frame past 1 s.
       m.sel = null; m.selTrace = tr0.id; m.render(); m.showAt(m.time);
       plotAs("dist");
-      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10"; amax.dispatchEvent(new Event("change"));
+      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10.1"; amax.dispatchEvent(new Event("change"));
       const astop = document.querySelector('#motion input[data-tr="astop"]'); astop.checked = true; astop.dispatchEvent(new Event("change"));
       m.seek(2);
       const spans = m.alertSpansOf(tr0.id), sfps = m.study.fps;
@@ -6565,7 +6654,7 @@ try {
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
-      && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && tc.sensor.alert?.max === 10.1 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
       && Object.values(tc.prox).every(v => v === true)
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,
@@ -9168,6 +9257,18 @@ try {
     check(alNone && al.align?.ent === "j3" && al.align?.axis === "h" && !al.bad, `weldments: member profile alignment (${JSON.stringify({ alNone, alOpt, al })})`);
     await mp.evaluate(() => window.__sv.modeller.undo());
     await settle();
+    // Coped cut: the Butt end choice; the line meets the arc tangent-free at a sharp corner, so it butts there.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), bendId);
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wcope"]', "coped");
+    await settle();
+    const copeHelp = await mp.evaluate(() => !!document.querySelector("#mc-pm .pm-help") && [...document.querySelectorAll("#mc-pm .pm-help")].some(e => /saddle/.test(e.textContent)));
+    await mp.click("#mc-ok");
+    await settle();
+    const cp2 = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), coped: f.coped, bodies: l.bodies?.length }; }, bendId);
+    check(copeHelp && cp2.coped === true && !cp2.bad, `weldments: coped cut option on a member (${JSON.stringify({ copeHelp, cp2 })})`);
+    await mp.evaluate(() => window.__sv.modeller.undo());
+    await settle();
     // Trim/Extend End miter: two separate beams that stop short of a corner meet in a mitre.
     await mp.evaluate(() => {
       const P = (id, x, y) => ({ id, t: "point", x, y }); const L = (id, a, b) => ({ id, t: "line", a, b });
@@ -9537,6 +9638,26 @@ try {
     check(cr0.title === "Corner Relief" && cr0.all === "All corners (1)" && cr0.rows === 1 && cr1.corners?.length === 1 && /^cr:b0\+cr:b1$/.test(cr1.corners[0]) && cr1.kind === "circle"
       && !cr2.bad && cr2.v < crv0 - 10 * T,
       `sheet metal: Corner Relief lists the two-bend corner, picks it on a click and cuts a circular relief (${JSON.stringify({ cr0, cr1, cr2, crv0 })})`);
+    // Sheet Metal Gusset: one flange on the front edge; click its bend at the middle, ✓: a rib inside the bend, a groove outside.
+    await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      d.features.push({ id: "gs", type: "smflange", name: "Edge-Flange10", edges: [{ faces: [`${b.id}:p0:top`, `${b.id}:p0:l1`] }], length: { v: 20 }, angle: { v: Math.PI / 2 } });
+    }));
+    await settle();
+    const gsv0 = await mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    await smMenu("Sheet Metal Gusset");
+    const gq = T + R - (R + T) / Math.SQRT2;
+    const [gsx, gsy] = await scr([50, gq, gq]);
+    await mp.mouse.click(gsx, gsy);
+    await settle();
+    const gs0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { title: document.querySelector("#mc-pm h3")?.textContent, bend: d?.bend, at: d?.at, depth: d?.depth?.v, width: d?.width?.v, picked: document.querySelector("#mc-pm [data-sm-bend]")?.textContent }; });
+    await mp.click("#mc-ok");
+    await settle();
+    const gs1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gs0.title === "Sheet Metal Gusset" && gs0.bend === "gs:b0" && gs0.at === undefined && gs0.picked === "Picked bend" && gs0.depth > 0 && gs0.width > 2 * T
+      && !gs1.bad && gs1.n === 1 && Math.abs(gs1.v - gsv0) > 0.01,
+      `sheet metal: Sheet Metal Gusset goes on the clicked bend (${JSON.stringify({ gs0, gs1, gsv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -10292,6 +10413,39 @@ try {
     const long = rl.filter(q => Math.abs(q[1]) < 0.01 && Math.abs(q[3]) < 0.01).map(q => Math.abs(q[2] - q[0]));
     const across = rl.filter(q => Math.abs(q[0] - q[2]) < 0.01 && Math.abs(Math.abs(q[3] - q[1]) - 12) < 0.05);
     check(long.length === 1 && Math.abs(long[0] - 72) < 0.05 && across.length === 4 && rl.length === 5, `drawing: hole row gets one centreline and a line across each hole (${JSON.stringify(rl)})`);
+    await ctx.close();
+  }
+
+  // --- Drawings: centreline on a cone seen from the side (FR-DRW-023) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A frustum Ø40 → Ø20 over 30 mm revolved about the sketch's y axis: a cone and two flat caps, no cylinder.
+    const pts = [P("p0", 0, 0), P("p1", 20, 0), P("p2", 10, 30), P("p3", 0, 30)], ids = pts.map(p => p.id);
+    const part = { schema: 1, kind: "part", id: "d_drwcone", name: "Cone", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [...pts, ...ids.map((a, i) => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }))] },
+      { id: "f1", type: "revolve", name: "Revolve1", sketch: "s1", op: "boss", axis: "l3", angle: { v: 2 * Math.PI } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Cone.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Front view (views[0]): the cone's axis runs vertically through the view, past both ends.
+    const cl = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => q.every(x => Math.abs(x) < 40));
+    });
+    // The 2 mm run past each end is in sheet mm, so in model mm it depends on the view's scale.
+    const axis = cl.filter(q => Math.abs(q[0]) < 0.01 && Math.abs(q[2]) < 0.01 && Math.min(q[1], q[3]) < -0.1 && Math.max(q[1], q[3]) > 30.1);
+    check(axis.length === 1, `drawing: a cone seen from the side gets a centreline on its axis (${JSON.stringify(cl)})`);
     await ctx.close();
   }
 

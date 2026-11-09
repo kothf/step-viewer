@@ -13,6 +13,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
@@ -33,6 +34,8 @@ import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
+/** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
+const FEATURE_DRAG = "application/x-mcad-feature";
 const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
@@ -59,7 +62,7 @@ import { WELD_ICONS, WELD_TOOLS, WELD_TOOL_SET, bindWeldPanel, cutListRows, isWe
 import type { EndCapFeature, GussetFeature } from "../weldments/types";
 import { capDir } from "../weldments/types";
 import { bindSmPanel, smCheck, smDraft, smPanel, SM_BASES, SM_ICONS, SM_TOOLS, SM_TREE_ICONS } from "../sheetmetal/ui";
-import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature } from "../sheetmetal/types";
+import { isSheet, isSheetBase, type SmFlangeFeature, type SmFormFeature, type SmUnfoldFeature, type SmReliefFeature, type SmGussetFeature } from "../sheetmetal/types";
 import { apply as smApply, applyDir as smApplyDir, bendOfFace, reliefCorners, crossBreakLines, flatBendLines, flatPointOn, panelOfFace, placedState, unfoldBendLines } from "../sheetmetal/sheet";
 import { flatDxf } from "../sheetmetal/flat";
 import { modelItems, type ModelItem } from "../drawing/items";
@@ -719,6 +722,47 @@ export class ModelController {
 
   // ---------- commands ----------
 
+  /** The features Ctrl+C took (FR-HIS-014); kept for this window only, like SolidWorks' clipboard. */
+  private clip: Clip | null = null;
+
+  /** Ctrl+C on the selected tree row: a sketch, an extrude or revolve (with its sketch) or a hole. */
+  copyFeature(id = this.selected, quiet = false): boolean {
+    const f = id ? this.store?.feature(id) : undefined;
+    if (!this.store || !f || !canCopy(f)) return false;
+    this.clip = copyClip(this.doc, f.id);
+    if (this.clip && !quiet) toast(t("Copied {name}: select a plane or a flat face and press Ctrl+V.", { name: featureLabel(f.name) }));
+    return !!this.clip;
+  }
+
+  /** The plane a paste or a new sketch goes on: the picked flat face, else the selected plane in the tree. */
+  private targetPlane(): PlaneRef | null {
+    const cp = this.ctxPick?.plane;
+    if (cp) return cp;
+    const fid = this.pickedFace();
+    if (fid != null) return this.planeOfFace(fid);
+    if (this.selected?.startsWith("std:")) return { std: this.selected.slice(4) as "XY" };
+    const pl = this.selected ? this.store?.feature(this.selected) : undefined;
+    return pl?.type === "plane" && !pl.suppressed ? { plane: pl.id } : null;
+  }
+
+  /** Ctrl+V: the copied features on the selected plane or face, as one undo step (FR-HIS-014). */
+  pasteFeature(plane: PlaneRef | null = this.targetPlane()) {
+    if (!this.store || !this.clip) return;
+    if (this.isFrozen(this.doc.features[(this.doc.rollback ?? this.doc.features.length) - 1]?.id ?? "")) { this.frozenToast(); return; }
+    if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+    const { feats, lost } = pasteClip(this.doc, this.clip, plane);
+    this.store.change("Paste", d => {
+      const at = d.rollback ?? d.features.length;
+      d.features.splice(at, 0, ...feats);
+      if (d.rollback != null) d.rollback += feats.length;
+    });
+    this.selected = feats[feats.length - 1].id;
+    this.ctxPick = null;
+    this.host.clearPick();
+    this.renderTree();
+    toast(lost.length ? t("Pasted. References that could not follow: {list}", { list: lost.map(x => t(x)).join("; ") }) : t("Pasted {name}.", { name: featureLabel(feats[feats.length - 1].name) }), lost.length > 0);
+  }
+
   /** Sketch: on the picked flat face or the selected plane; otherwise asks for one. */
   startSketch() {
     if (!this.store) return;
@@ -826,7 +870,7 @@ export class ModelController {
   }
 
   /** Extrude / Cut / Revolve / Fillet / Chamfer: opens the property panel with a draft. */
-  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
+  startFeature(type: "extrude" | "cut" | "revolve" | "fillet" | "chamfer" | "plane" | "axis" | "point" | "csys" | "shell" | "draft" | "mirror" | "lpattern" | "cpattern" | "spattern" | "tpattern" | "hole" | "thread" | "helix" | "sweep" | "sweepcut" | "loft" | "loftcut" | "rib" | "split" | "combine" | "indent" | "intersect" | "bsplit" | "delbody" | "movebody" | "scale" | "delface" | "moveface" | "heal" | "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smrelief" | "smgusset" | "smcross" | "smvent" | "smform" | "smunfold" | "smfold" | "smmiter" | "smswept" | CurveTool | SurfTool | WeldTool) {
     if (!this.store) return;
     // Starting a feature from inside a sketch exits the sketch and uses it (FR-SK-004).
     const fromSketch = this.mode.kind === "sketch" ? this.mode.id : null;
@@ -919,9 +963,9 @@ export class ModelController {
       const sel = this.selected ? sketches.find(s => s.id === this.selected && sketchOpenOk(s)) : undefined;
       const sk = sel ?? sketches.filter(s => !used.has(s.id) && sketchOpenOk(s)).at(-1);
       draft = { id, type: "rib", name: nextName(d, "rib"), sketch: sk?.id ?? "", thickness: { v: 5 }, side: "mid", dir: "parallel" } satisfies RibFeature;
-    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smcross" || type === "smvent" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
+    } else if (type === "smbase" || type === "smloft" || type === "smflange" || type === "smhem" || type === "smbend" || type === "smjog" || type === "smcorner" || type === "smclosed" || type === "smrelief" || type === "smgusset" || type === "smcross" || type === "smvent" || type === "smform" || type === "smunfold" || type === "smfold" || type === "smmiter" || type === "smswept") {
       // Sheet metal (FR-FT-120): src/sheetmetal/ui.ts makes the draft.
-      const smFace = type === "smclosed" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
+      const smFace = type === "smclosed" || type === "smgusset" || type === "smcross" || type === "smform" || type === "smunfold" || type === "smfold" ? this.pickedFace() : null;
       const sm = smDraft(type, { id, doc: d, sketches, used, selected: this.selected, name: ty => nextName(d, ty), edge: smEdge ? this.refOfEdge(smEdge) : null, face: smFace != null ? this.faceRef(smFace) : null, hasBody: !!this.last?.data, sheet: this.last?.sheet });
       if (typeof sm === "string") { toast(sm, true); return; }
       draft = sm;
@@ -1542,7 +1586,7 @@ export class ModelController {
   async save(as = false) {
     if (!this.store) return;
     if (this.mode.kind === "sketch") this.ok();
-    const bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+    let bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
     if (this.vault && !as) {
       // A vaulted part saves into the vault's working copy, and only while checked out here (FR-PDM-081).
       if (this.vault.readOnly) { toast(t("This file is read-only: check it out to save, or use Save as."), true); return; }
@@ -1554,19 +1598,30 @@ export class ModelController {
       return;
     }
     if (as && this.vault) this.setVault(null);
-    const blob = new Blob([bytes], { type: "application/zip" });
+    let blob = new Blob([bytes], { type: "application/zip" });
     const suggested = this.fileName || `${this.doc.name}${PART_EXT}`;
+    // The part takes the name of the file it is saved as, as in SolidWorks (exam #69): its tab, its title and
+    // Insert component's list of open documents then show that name, not "Part1".
+    const named = async (file: string) => {
+      const base = file.replace(/\.[^.]+$/, "");
+      if (!base || base === this.doc.name) return;
+      this.store!.amend(d => { d.name = base; });
+      bytes = await packPart(this.doc, `MöbiusCAD ${this.host.appVersion}`);
+      blob = new Blob([bytes], { type: "application/zip" });
+    };
     const w = window as Window & { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
     try {
       if (w.showSaveFilePicker) {
         if (!this.handle || as) {
           this.handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: "MöbiusCAD part", accept: { "application/zip": [PART_EXT] } }] });
         }
+        await named(this.handle.name);
         const out = await (this.handle as FileSystemFileHandle & { createWritable(): Promise<FileSystemWritableFileStream> }).createWritable();
         await out.write(blob);
         await out.close();
         this.fileName = this.handle.name;
       } else {
+        await named(suggested);
         downloadBlob(blob, suggested);
         this.fileName = suggested;
       }
@@ -1580,6 +1635,9 @@ export class ModelController {
     // Automatic snapshot of every save outside a vault (FR-STO-005).
     void snapshotSave(this.doc.id, bytes);
     this.host.saved?.(this.fileName, bytes);
+    // The title and the document tab drop the unsaved mark and show the file's name.
+    this.host.setDoc(this.docLabel());
+    this.renderTree?.();
     toast(t("Saved {name}", { name: this.fileName }), "success");
   }
 
@@ -1713,6 +1771,22 @@ export class ModelController {
     const canvas = this.host.viewer.renderer.domElement;
     const onCanvas = (e: Event) => e.target === canvas;
     // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
+    // Ctrl+drag of a tree row onto a flat face or a plane pastes a copy there (FR-HIS-014), before the file drop.
+    const featDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(FEATURE_DRAG) && this.mode.kind === "none";
+    vp.addEventListener("dragover", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = e.ctrlKey ? "copy" : "none";
+    }, true);
+    vp.addEventListener("drop", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const id = e.dataTransfer!.getData(FEATURE_DRAG);
+      if (!e.ctrlKey || !id) return;
+      const plane = this.pickRef(e as unknown as PointerEvent);
+      if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+      if (this.copyFeature(id, true)) this.pasteFeature(plane);
+    }, true);
     vp.addEventListener("pointerdown", () => {
       const mb = this.host.viewer.controls.mouseButtons;
       mb.MIDDLE = this.mode.kind === "sketch" || getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
@@ -1770,6 +1844,7 @@ export class ModelController {
       else if (m.kind === "feature" && m.draft.type === "smform") this.placeForm(e, m.draft);
       else if (m.kind === "feature" && (m.draft.type === "smunfold" || m.draft.type === "smfold")) this.pickUnfold(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "smrelief") this.pickRelief(e, m.draft);
+      else if (m.kind === "feature" && m.draft.type === "smgusset") this.pickGusset(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "curve" && m.draft.kind === "projected") this.pickCopy(e);
       else if (m.kind === "feature" && m.draft.type === "sketch3d") this.pick3d(e, m.draft);
       else if (m.kind === "feature" && m.draft.type === "plane") {
@@ -1846,6 +1921,9 @@ export class ModelController {
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
+    // Copy and paste features (FR-HIS-014): Ctrl+C on a tree row, Ctrl+V with a plane or flat face selected.
+    if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "none" && !window.getSelection()?.toString()) { if (this.copyFeature()) stop(); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
@@ -2081,6 +2159,24 @@ export class ModelController {
     if (!p) { toast(t("Pick a flat face of the sheet (its top or bottom).")); return; }
     if (fr.name !== f.face.name) { f.face = fr; f.pts = []; }
     f.pts.push([p[0], p[1]]);
+    this.draftChanged();
+  }
+
+  /** Sheet metal gusset: a click on a bend puts the rib there (centred when the panel says so). */
+  private pickGusset(e: PointerEvent, f: SmGussetFeature) {
+    const hit = this.host.faceAt(e.clientX, e.clientY);
+    const fr = hit ? this.faceRef(hit.faceId) : null;
+    const st = this.last?.sheet;
+    const b = fr && st ? bendOfFace(st, fr.name) : undefined;
+    if (!b || !hit) { toast(t("Pick a bend for the gusset.")); return; }
+    if (f.bend !== b.id) f.bend = b.id;
+    if (f.at) {
+      const l = Math.hypot(b.a1[0] - b.a0[0], b.a1[1] - b.a0[1]), e2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l];
+      const p0 = smApply(b.M, [b.a0[0], b.a0[1], 0]), d = smApplyDir(b.M, [e2[0], e2[1], 0]);
+      const at = (hit.point[0] - p0[0]) * d[0] + (hit.point[1] - p0[1]) * d[1] + (hit.point[2] - p0[2]) * d[2];
+      const w = f.width.v / 2;
+      f.at = { v: Math.round(Math.min(Math.max(at, w), l - w) * 100) / 100 };
+    }
     this.draftChanged();
   }
 
@@ -4483,7 +4579,7 @@ export class ModelController {
       case "extrude": case "cut": case "revolve": case "fillet": case "chamfer": case "plane": case "axis": case "point": case "csys": case "shell": case "draft": case "mirror": case "lpattern": case "cpattern": case "spattern": case "tpattern": case "hole": case "thread": case "helix": case "sweep": case "sweepcut": case "loft": case "loftcut": case "rib": case "split": case "combine": case "indent": case "intersect": case "bsplit": case "delbody": case "movebody": case "scale": case "delface": case "moveface": case "heal": case "planesurf": case "extsurf": case "offsurf": case "knit": case "thicken": case "replaceface": case "revsurf": case "loftsurf": case "trimsurf": case "fillsurf": case "extendsurf": case "untrimsurf": case "sweepsurf": case "xyzcurve": case "compcurve": case "projcurve": case "sketch3d": case "member": case "trimext": case "endcap": case "gusset": case "weldbead": this.lastCmd = this.activeCmd = c; this.startFeature(c); break;
       case "cutlist": this.cutList(); break;
       case "import": this.importBodyFile(); break;
-      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smcross": case "smvent": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
+      case "smbase": case "smloft": case "smflange": case "smhem": case "smbend": case "smjog": case "smcorner": case "smclosed": case "smrelief": case "smgusset": case "smcross": case "smvent": case "smform": case "smunfold": case "smfold": case "smmiter": case "smswept": this.startFeature(c); break;
       case "smflat": this.toggleFlat(); break;
       case "smdxf": this.exportFlatDxf(); break;
       case "recognize": void this.recognizeHoles(); break;
@@ -4639,7 +4735,14 @@ export class ModelController {
     const clearDrop = () => box.querySelectorAll(".drop-before, .drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
     box.querySelectorAll<HTMLElement>('.ft-row[draggable="true"]').forEach(r => {
       const id = r.dataset.id!;
-      r.addEventListener("dragstart", e => { dragId = id; e.dataTransfer?.setData("text/plain", id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; r.classList.add("dragging"); });
+      r.addEventListener("dragstart", e => {
+        dragId = id;
+        e.dataTransfer?.setData("text/plain", id);
+        // Ctrl+drag onto a flat face in the view pastes a copy there (FR-HIS-014).
+        if (canCopy(this.store?.feature(id))) e.dataTransfer?.setData(FEATURE_DRAG, id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+        r.classList.add("dragging");
+      });
       r.addEventListener("dragend", () => { dragId = null; r.classList.remove("dragging"); clearDrop(); });
       r.addEventListener("dragover", e => {
         if (!dragId || dragId === id) return;
@@ -4827,6 +4930,7 @@ export class ModelController {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
+    if (this.clip && (id.startsWith("std:") || (f?.type === "plane" && !f.suppressed))) items.push([t("Paste (Ctrl+V)"), () => this.pasteFeature(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:") || f?.type === "plane") items.push([t("Sketch on this plane"), () => void this.createSketch(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:")) items.push([(this.doc.stdHidden ?? []).includes(id.slice(4) as "XY") ? t("Show") : t("Hide"), () => this.toggleHidden(id)]);
     if (f?.type === "sketch") items.push([this.sketchShown(f) ? t("Hide") : t("Show"), () => this.toggleHidden(f.id)]);
@@ -4834,6 +4938,7 @@ export class ModelController {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
+      if (canCopy(f)) items.push([t("Copy (Ctrl+C)"), () => { this.copyFeature(f.id); }]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
