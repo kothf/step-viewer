@@ -8956,6 +8956,28 @@ try {
     check(mf0.title === "Miter Flange" && mf0.sketch === "s5" && mf0.edges === 2 && !mf1.bad && mf1.mitres === 4 && mf1.size[0] === 110 && mf1.size[1] === 60 && Math.abs(mf1.size[2] - (20 + T)) < 2e-3 && /Miter-Flange1$/.test(mf1.names)
       && mru.title === "Кромка под углом" && !/[A-Za-z]{3}/.test(mru.text.replace(/Enter|Esc|MSG|mm|Sketch5/g, "")),
       `sheet metal: Miter Flange runs a sketched profile along two clicked edges, mitred at their corner; panel in Russian (${JSON.stringify({ mf0, mf1, mru })})`);
+    // Swept Flange: up 12, a tangent arc of radius 8 turning outwards, then on to 10 outwards; the front top edge clicked.
+    await mp.evaluate(() => window.__sv.model.store.change("Swept profile", d => {
+      const b = d.features.find(f => f.type === "smbase");
+      d.features = d.features.filter(f => f.id === "s1" || f.id === b.id);
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features.push({ id: "s7", type: "sketch", name: "Sketch7", plane: { std: "YZ" }, rels: [], dims: [], ents: [P("v1", 0, 0), P("v2", 0, 12), P("vc", -8, 12), P("v3", -8, 20), P("v4", -10, 20),
+        { id: "v5", t: "line", a: "v1", b: "v2" }, { id: "v6", t: "arc", c: "vc", a: "v2", b: "v3" }, { id: "v7", t: "line", a: "v3", b: "v4" }] });
+    }));
+    await settle();
+    await smMenu("Swept Flange");
+    { const [x, y] = await scr([60, 0, T]); await mp.mouse.click(x, y); await settle(); }
+    const sw0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, edges: window.__sv.model.mode().draft?.edges.length }));
+    await mp.click("#mc-ok");
+    await settle();
+    const sw1 = await mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data.positions, lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      const f = window.__sv.model.store.doc.features.find(x => x.type === "smswept");
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), r: l.sheet?.bends.find(b => b.id === `${f?.id}:b1`)?.r, name: f?.name };
+    });
+    check(sw0.title === "Swept Flange" && sw0.sketch === "s7" && sw0.edges === 1 && !sw1.bad && sw1.size[0] === 100 && sw1.size[1] === 60 && Math.abs(sw1.size[2] - (20 + T)) < 2e-3 && sw1.r === 8 && sw1.name === "Swept-Flange1",
+      `sheet metal: Swept Flange makes the sketched tangent arc a bend of its radius (${JSON.stringify({ sw0, sw1 })})`);
     // A slot cut across the front flange's bend: the flat pattern loses the same material, bend part unrolled.
     const across = async withCut => {
       await mp.evaluate(withCut => window.__sv.model.store.change("Slot across bend", d => {
@@ -9537,6 +9559,23 @@ try {
     const rectSel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skw"]'));
     const s3 = await sk();
     check(s2[0]?.pen === "center" && Math.abs(s2[0].pts[0] - 50) < 0.01 && q3 === 1 && s3.some(x => x.k === "rect" && JSON.stringify(x.pts) === "[30,20]") && rectSel, `drawing: sheet sketch line type and length, rectangle picked by its edge (${JSON.stringify({ s2, q3, s3, rectSel })})`);
+    // Centre of mass: tick it on the front view; the symbol sits in the plate's middle, and a dimension from it to the bottom edge reads 10.
+    await dp.keyboard.press("Escape");
+    const cxm = (fr[0] + fr[2]) / 2, cym = (fr[1] + fr[3]) / 2;
+    await clickSheet(fr[0] + (fr[2] - fr[0]) * 0.8, cym + (fr[3] - fr[1]) * 0.2);
+    await dp.waitForTimeout(150);
+    const comBox = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-v="com"]'));
+    if (comBox) { await dp.check('#drw .drw-props [data-v="com"]'); await dp.waitForTimeout(300); }
+    const sym = await dp.evaluate(([x, y]) => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && ((p.t === "a" && Math.abs(p.r - 2) < 1e-9 && Math.hypot(p.o[0] - x, p.o[1] - y) < 0.05) || (p.t === "p" && p.fill && Math.hypot(p.p[0] - x, p.p[1] - y) < 0.05))).length, [cxm, cym]);
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="dim"]');
+    await clickSheet(cxm + 0.3, cym + 0.2);
+    await clickSheet(cxm + 15, fr[1]);
+    await clickSheet(cxm + 30, cym - 3);
+    await dp.waitForTimeout(200);
+    const cdim = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "dim" && x.refs.some(r => r.com)); return a && JSON.parse(JSON.stringify(a)); });
+    const ten = await dp.evaluate(() => window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "10"));
+    check(comBox && sym === 3 && cdim && ten, `drawing: centre of mass point on a view, and a dimension measured from it (${JSON.stringify({ comBox, sym, cdim, ten })})`);
     await ctx.close();
   }
 
