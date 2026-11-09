@@ -1640,6 +1640,14 @@ try {
     const [dlStep] = await Promise.all([mp.waitForEvent("download"), mp.click('[data-c="step"]')]);
     const stepBack = readStep(await readFile(await dlStep.path()));
     check(stepBack.ok && stepBack.meshes === 1 && stepBack.faces === 11, `model: STEP export of the body reads back (${JSON.stringify(stepBack)})`);
+    // Save as takes the file's name for the part (exam #69): title and tab show it, with no unsaved mark.
+    const saveAs = await mp.evaluate(async () => {
+      const prev = window.showSaveFilePicker;
+      window.showSaveFilePicker = async () => ({ name: "bracket.mcadprt", createWritable: async () => ({ write: async () => {}, close: async () => {} }) });
+      try { await window.__sv.modeller.save(true); } finally { window.showSaveFilePicker = prev; }
+      return { name: window.__sv.model.store.doc.name, dirty: window.__sv.model.store.dirty, title: document.querySelector("#doc-name").textContent };
+    });
+    check(saveAs.name === "bracket" && !saveAs.dirty && /bracket\.mcadprt$/.test(saveAs.title), `model: Save as names the part after its file (${JSON.stringify(saveAs)})`);
     await mp.goto(`${origin}/index.html?debug`);
     await mp.waitForFunction(() => window.__sv);
     const recov0 = await mp.evaluate(() => document.querySelector("#mc-recover").hidden);
@@ -5448,6 +5456,61 @@ try {
         && box && lock.lockRot && lock.t0 && lock.dof === 0 && lock.free === 0 && /Fully defined/.test(lock.status) && eye
         && more && items === "iso,front,top,right,normal" && top.z === -1 && top.gone,
         `asm 1.330: Alt+click picks faces behind in Mate, Mate button starts afresh, added note, Lock rotation, DOF status, tree eye, Views ▾ (${JSON.stringify({ o1, o2, front, under, fresh, added, box, lock, eye, more, items, top })})`);
+    }
+    // 1.339 (exam #63-#73): Delete key on a mate, menus kept in the window, Enter steps through the Move panel,
+    // inserts land in the view and are numbered by file, a negative distance flips, undo tips name the step.
+    {
+      await mp.mouse.move(5, 5);
+      const undoTip = await mp.evaluate(() => document.querySelector('[data-ac="undo"]')?.title ?? "");
+      // Delete key: the mate selected in the tree goes, as one undo step.
+      const n0 = await mp.evaluate(() => window.__sv.asm.doc.mates.length);
+      await mp.click("#asm-tree .ft-mate");
+      await mp.keyboard.press("Delete");
+      await mp.waitForTimeout(200);
+      const delKey = await mp.evaluate(() => ({ n: (window.__sv.asm.doc.mates ?? []).length, tip: document.querySelector('[data-ac="undo"]')?.title ?? "" }));
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A context menu opened at the bottom of the window opens upwards, inside it.
+      const menu = await mp.evaluate(() => {
+        const r = document.querySelector("#asm-tree .ft-mate");
+        r.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 60, clientY: window.innerHeight - 3 }));
+        const m = document.querySelector("#asm-menu"), b = m?.getBoundingClientRect();
+        const out = { open: !!m, inside: !!b && b.bottom <= window.innerHeight && b.top >= 0 };
+        m?.remove();
+        return out;
+      });
+      // Move panel: Enter applies a box and goes on to the next one.
+      await mp.evaluate(() => { const a = window.__sv.asm; a.moving = a.doc.components[1].id; a.renderPanel(); });
+      await mp.focus("#asm-pm input[data-pose=x]");
+      await mp.keyboard.press("Enter");
+      const enter = await mp.evaluate(() => ({ next: document.activeElement?.dataset?.pose ?? "", open: !!document.querySelector("#asm-pm input[data-pose]") }));
+      await mp.keyboard.press("Escape");
+      // Insert the plate's document under another file name: <1>, standing in the view.
+      const ins = await mp.evaluate(() => {
+        const a = window.__sv.asm, v = window.__sv.viewer, pd = JSON.parse(JSON.stringify(a.doc.parts[a.doc.components[0].part].doc));
+        a.insertPart(pd, "other.mcadprt");
+        const c = a.doc.components.at(-1), p = new v.camera.position.constructor(c.tf[3], c.tf[7], c.tf[11]).project(v.camera);
+        return { name: c.name, inView: Math.abs(p.x) < 1 && Math.abs(p.y) < 1 };
+      });
+      await shown(3);
+      await mp.evaluate(() => window.__sv.asm.undo());
+      await shown(2);
+      // A negative distance flips the dimension.
+      const neg = await mp.evaluate(r => {
+        const a = window.__sv.asm;
+        a.startMate();
+        Object.assign(a.mating, { a: { comp: a.doc.components[0].id, face: r.top }, b: { comp: a.doc.components[1].id, face: r.bottom } });
+        a.setMateType("distance");
+        const vi = document.querySelector("#asm-pm [data-mv]"), flip0 = !!a.mating.flip;
+        vi.value = "-5";
+        vi.dispatchEvent(new Event("change"));
+        const out = { flipped: !!a.mating.flip !== flip0, value: a.mating.value };
+        a.cancelMate();
+        return out;
+      }, ref);
+      check(/^Undo: .+ \(Ctrl\+Z\)$/.test(undoTip) && delKey.n === n0 - 1 && /^Undo: Delete Concentric1 \(Ctrl\+Z\)$/.test(delKey.tip)
+        && menu.open && menu.inside && enter.next === "y" && enter.open && ins.name === "other<1>" && ins.inView && neg.flipped && neg.value === 5,
+        `asm 1.339: Delete key, menus inside the window, Enter through Move, inserts in view numbered by file, negative distance flips, undo tips (${JSON.stringify({ undoTip, delKey, n0, menu, enter, ins, neg })})`);
     }
     const re = await mp.evaluate(async () => { const b = await window.__sv.asm.bytes(); await window.__sv.asm.openFile({ name: "m.mcadasm", data: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }); return window.__sv.asm.doc.mates?.map(m => m.type).join(); });
     check(pick.a && pick.b && pick.a !== pick.b && pick.type === "concentric" && pick.title === "Mate" && pick.boxes.every(t => /: Cylindrical face$/.test(t)) && pick.moved && pick.picks === 2
