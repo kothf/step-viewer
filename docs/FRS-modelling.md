@@ -1573,7 +1573,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Habit | FRS | 1.85.0 | Class |
 | --- | --- | --- | --- |
 | Middle-drag rotate, Ctrl+middle pan, Shift+middle zoom | FR-UI-020 | Left drag orbits, middle and right drag pan; no preference | Weaker (sketch mode fixed in 1.89.0) |
-| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V only | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
+| Snapping to model geometry and automatic relations while sketching | FR-SK-042, FR-SK-052 | Sketch points, origin, curves, H/V; dotted alignment lines with existing points (1.303.0) | Weaker (model vertices, midpoints and centres snap and stay attached in 1.89.0) |
 | Middle click sets the rotation centre | FR-UI-100 | No | New |
 | Double middle click fits; wheel direction preference | FR-UI-101 | No (F fits; zoom to cursor on) | New |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | No | New |

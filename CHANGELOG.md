@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Sketch grid and Snap to grid (FR-SK-041)**: the sketch panel's new Grid section shows a grid on the sketch plane (every fifth line and the lines through the origin stronger) and can snap points to it. The spacing follows the zoom in 1-2-5 steps unless you type one. With Snap to grid on, a point that snaps to nothing else (no end point, curve or inference) goes to the nearest grid node; a horizontal or vertical inference keeps its line and snaps the other coordinate; hold Ctrl to place freely. Both are off by default and remembered.
+- **Alignment inference (FR-SK-042)**: while drawing, a point whose x or y comes within a few pixels of a sketch point's that the cursor passed over (SolidWorks' woken points, the last four) lines up with it exactly, shown by a dotted line from that point, as in SolidWorks. No relation is added. It follows the Horizontal/vertical snap preference, and Ctrl turns it off with the other inferences.
 
 ## [1.298.0] - 2026-11-09
 

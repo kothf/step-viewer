@@ -90,6 +90,8 @@ export interface SketchHost {
 export type { ModelEdge };
 
 const SNAP_PX = 9;
+/** Pixels within which the cursor lines up with a point's x or y (FR-SK-042). */
+const ALIGN_PX = 6;
 const HV_TOL = (3 * Math.PI) / 180;
 
 type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "spline" | "origin" | "dim" | "rel"; d: number };
@@ -202,6 +204,12 @@ export class SketchEditor {
   private inferEl: HTMLElement | null = null;
   private input: HTMLInputElement | null = null;
   private marker: THREE.Mesh;
+  /** Dotted lines from the points the cursor lines up with (FR-SK-042), drawn while placing. */
+  private alignObj: THREE.LineSegments | null = null;
+  /** The points the last snap lined up with: [source, snapped point]. */
+  aligned: [V2, V2][] = [];
+  /** Points the cursor passed over while drawing ("woken", as in SolidWorks): the ones alignment looks at. */
+  private woke: V2[] = [];
   private dark = false;
 
   constructor(private host: SketchHost, sk: SketchFeature, public frame: Frame) {
@@ -223,6 +231,7 @@ export class SketchEditor {
     this.closeInput(false);
     this.host.viewer.scene.remove(this.group, this.marker);
     this.dropGrid();
+    this.showAlign([]);
     this.clearGroup();
     for (const l of this.labels.values()) l.remove();
     this.labels.clear();
@@ -248,6 +257,8 @@ export class SketchEditor {
     this.closeInput(false);
     this.reattaching = null;
     this.piercing = null;
+    this.showAlign([]);
+    this.woke = [];
     this.tool = tool;
     this.inferLine = null;
     this.setQuickSnap(null);
@@ -691,12 +702,67 @@ export class SketchEditor {
 
   private snapPoint(p: V2, active: boolean, materialize = false): Snap {
     const r = this.snapPointRaw(p, active, materialize);
-    // Snap to grid (FR-SK-041): a point that snapped to nothing else goes to the nearest grid node.
-    if (!this.gridSnap || !active || r.id || r.curve || r.rel || (this.suppressed() && !this.quickSnap) || this.quickSnap) return r;
-    const keep = r.hv === "horizontal" ? "y" : r.hv === "vertical" ? "x" : null;
-    const q = snapToGrid(r.p, this.snapStep(r.p), keep);
-    if (keep === null) this.showMarker(q);
+    if (r.id && this.drawing && !this.woke.some(w => w[0] === r.p[0] && w[1] === r.p[1])) this.woke = [...this.woke, r.p].slice(-4);
+    const free = active && !r.id && !r.curve && !r.rel && !this.suppressed() && !this.quickSnap;
+    if (!free) { this.showAlign([]); return r; }
+    // Alignment with existing points (FR-SK-042): an x or y within the snap radius of a sketch point's
+    // lines up with it, shown by a dotted line from that point; no relation is added.
+    let q: V2 = [r.p[0], r.p[1]];
+    const lock = { x: r.hv === "vertical", y: r.hv === "horizontal" };
+    const lines: [V2, V2][] = [];
+    if (this.drawing && this.snaps.has("hv")) {
+      const a = this.alignAt(q, lock);
+      if (a.x) { q[0] = a.x[0]; lock.x = true; }
+      if (a.y) { q[1] = a.y[1]; lock.y = true; }
+      if (a.x) lines.push([a.x, q]);
+      if (a.y) lines.push([a.y, q]);
+    }
+    // Snap to grid (FR-SK-041): a coordinate that snapped to nothing else goes to the nearest grid line.
+    if (this.gridSnap) {
+      const g = snapToGrid(q, this.snapStep(q));
+      q = [lock.x ? q[0] : g[0], lock.y ? q[1] : g[1]];
+      if (!lock.x && !lock.y) this.showMarker(q);
+    }
+    this.showAlign(lines);
     return { ...r, p: q };
+  }
+
+  /** The nearest woken point (one the cursor passed over while drawing) lined up in x and in y with `p`. */
+  private alignAt(p: V2, lock: { x: boolean; y: boolean }): { x: V2 | null; y: V2 | null } {
+    const tol = this.px(p) * ALIGN_PX;
+    const near = this.px(p) * SNAP_PX * 2;
+    const last = this.draft.pts.at(-1);
+    const pts = this.woke.filter(w => !last || w[0] !== last[0] || w[1] !== last[1]);
+    let bx: V2 | null = null, by: V2 | null = null, dx = tol, dy = tol;
+    for (const s of pts) {
+      // A point next to the cursor is a snap target, not an alignment, and the chain's last point gives H/V instead.
+      if (Math.hypot(s[0] - p[0], s[1] - p[1]) < near) continue;
+      if (!lock.x && Math.abs(s[0] - p[0]) < dx) { dx = Math.abs(s[0] - p[0]); bx = s; }
+      if (!lock.y && Math.abs(s[1] - p[1]) < dy) { dy = Math.abs(s[1] - p[1]); by = s; }
+    }
+    return { x: bx, y: by };
+  }
+
+  /** Draws the dotted alignment lines (or clears them with an empty list). */
+  private showAlign(lines: [V2, V2][]) {
+    this.aligned = lines;
+    if (this.alignObj) {
+      this.host.viewer.scene.remove(this.alignObj);
+      this.alignObj.geometry.dispose();
+      (this.alignObj.material as THREE.Material).dispose();
+      this.alignObj = null;
+    }
+    if (!lines.length) return;
+    const pos: number[] = [];
+    for (const [a, b] of lines) pos.push(...this.w(a).toArray(), ...this.w(b).toArray());
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    const d = this.px(lines[0][1]) * 4;
+    this.alignObj = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: this.dark ? 0x9ec5fe : 0x1c7ed6, dashSize: d, gapSize: d, depthTest: false, transparent: true }));
+    this.alignObj.computeLineDistances();
+    this.alignObj.renderOrder = 3050;
+    this.alignObj.userData.skAlign = true;
+    this.host.viewer.scene.add(this.alignObj);
   }
 
   private snapPointRaw(p: V2, active: boolean, materialize = false): Snap {

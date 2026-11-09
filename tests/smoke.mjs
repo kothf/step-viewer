@@ -2349,6 +2349,21 @@ try {
     await setGridUi("grid", false);
     await mp.waitForTimeout(200);
     const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
+    // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
+    const mmpx = await mp.evaluate(() => window.__sv.model.editor().px([50, 30]));
+    await tool("point");
+    await hover([50, 30]);
+    await hover([70, 31]);
+    const alAt = [83.7, 30 + 3 * mmpx];
+    await hover(alAt);
+    const alHover = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return { n, lines: window.__sv.model.editor().aligned.length }; });
+    await click(alAt);
+    const alPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, pt = sk.ents.filter(e => e.t === "point").at(-1); return { x: pt.x, y: pt.y, rels: sk.rels.length }; });
+    await tool("select");
+    await mp.waitForTimeout(100);
+    const alGone = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return n; });
+    check(alHover.n === 1 && alHover.lines === 1 && near(alPt.y, 30, 1e-9) && near(alPt.x, 83.7, 0.2) && alGone === 0,
+      `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
     check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
