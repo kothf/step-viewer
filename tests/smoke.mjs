@@ -1998,6 +1998,11 @@ try {
     const axMat = await axe();
     await mp.fill("#mat-q", "д16т");
     lib.gost = await matRows();
+    // 1.375.0: a material whose values were checked against a public page links to it.
+    await mp.fill("#mat-q", "S690QL");
+    const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
+    check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
+      `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     await mp.fill("#mat-q", "6061");
     await mp.keyboard.press("ArrowDown");
     await mp.keyboard.press("ArrowUp");
