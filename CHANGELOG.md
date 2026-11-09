@@ -11,6 +11,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: a **Motion segments** motor profile, like SolidWorks' segments motor. Each row is a segment with its end time, end value and shape (linear, cubic, quintic, harmonic or cycloid), and each segment starts where the last one ended, so a cam-like rise, dwell and return takes three rows (FR-FT-122).
 
+## [1.317.0] - 2026-11-09
+
+### Fixed
+
+- A reference dimension in a sketch follows the geometry: the property panel, equations and drawings showed the value from when it was placed after a driving dimension changed the sketch.
+- Midpoint (and other relations between a point and a curve) moves the point, not the curve: a free point given a Midpoint on a line goes to its middle instead of the line and everything on it shifting towards the point.
+- Smart Dimension in a sketch takes a model edge clicked at its middle as the edge (it made a midpoint there), so a plate's edges can be dimensioned with one click each.
+- The sketch status line at the top of the view no longer swallows clicks on the geometry under it.
+- Dragging a mated component that can only turn about an axis (a wheel on a shaft) turns it about that axis; it used to stay put. A drag that leaves every component where it was adds no undo step and doesn't mark the assembly modified.
+## [1.316.0] - 2026-11-09
+
+### Added
+
+- **Mouse gestures (FR-UI-024)**: turn them on in Display ▾ → Mouse gestures…, then press the right button in a part or a sketch, drag in a direction and release to run that direction's command. A radial guide around the press point shows the 4 (or 8) commands and lights the one you point at. By default a part offers Top, Right, Front and Normal to (8 directions add Isometric, Sketch, Extrude and Zoom to fit), and a sketch offers Line, Circle, Dimension and Rectangle (plus Arc, Trim, Fillet and Normal to). Every direction's command can be changed. A right-click without a drag still opens the menu, Esc cancels a gesture, and panning moves to the middle button (Ctrl+middle in a sketch) while gestures are on.
+
 ## [1.315.0] - 2026-11-09
 
 ### Added
@@ -1852,7 +1867,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.318.0...HEAD
-[1.318.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.318.0
+[1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
+[1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
+[1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0
 [1.315.0]: https://github.com/kothf/step-viewer/compare/v1.314.0...v1.315.0
 [1.314.0]: https://github.com/kothf/step-viewer/compare/v1.313.0...v1.314.0
 [1.313.0]: https://github.com/kothf/step-viewer/compare/v1.312.0...v1.313.0

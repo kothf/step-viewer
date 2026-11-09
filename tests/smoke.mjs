@@ -2380,9 +2380,40 @@ try {
     const qt3 = await qt();
     check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
       `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
+    // 1.316: mouse gestures (FR-UI-024): with the preference on, a right-drag shows the guide and runs the slot's command;
+    // a right-click without a drag still opens the sketch menu.
+    await mp.evaluate(() => localStorage.setItem("mc:gestures", JSON.stringify({ on: true, n: 4 })));
+    const vc = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    const rdrag = async (dx, dy, peek) => {
+      await mp.mouse.move(vc[0], vc[1]);
+      await mp.mouse.down({ button: "right" });
+      await mp.mouse.move(vc[0] + dx / 2, vc[1] + dy / 2, { steps: 3 });
+      await mp.mouse.move(vc[0] + dx, vc[1] + dy, { steps: 3 });
+      const seen = peek ? await mp.evaluate(() => ({ items: document.querySelectorAll(".mc-gesture [data-gs]").length, on: document.querySelector(".mc-gesture .on")?.textContent ?? null })) : null;
+      await mp.mouse.up({ button: "right" });
+      await mp.waitForTimeout(150);
+      return seen;
+    };
+    await tool("select");
+    const gs0 = await rdrag(0, -70, true);
+    const gsTool0 = await mp.evaluate(() => window.__sv.model.editor().tool);
+    await rdrag(70, 5);
+    const gsTool1 = await mp.evaluate(() => ({ tool: window.__sv.model.editor().tool, guide: !!document.querySelector(".mc-gesture") }));
+    await rdrag(1, 1);
+    const gsMenu = await mp.evaluate(() => !document.querySelector("#mc-menu").hidden);
+    await mp.keyboard.press("Escape");
+    await tool("select");
+    check(gs0?.items === 4 && gs0.on === "Line" && gsTool0 === "line" && gsTool1.tool === "circle" && !gsTool1.guide && gsMenu,
+      `model 1.316: mouse gestures: right-drag up picks Line, right picks Circle, a right-click still opens the menu (${JSON.stringify([gs0, gsTool0, gsTool1, gsMenu])})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // Part mode: a right-drag up turns to the Top view.
+    await rdrag(0, -70);
+    await mp.waitForTimeout(700);
+    const gsTop = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return [d.x, d.y, d.z]; });
+    check(gsTop[2] > 0.99, `model 1.316: mouse gestures: a right-drag up in the part shows the Top view (${JSON.stringify(gsTop)})`);
+    await mp.evaluate(() => { try { localStorage.removeItem("mc:gestures"); } catch {} });
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a2", 0, -60), P("b2", 40, -60), P("c2", 40, -30), P("d2", 0, -30), { id: "m1", t: "line", a: "a2", b: "b2" }, { id: "m2", t: "line", a: "b2", b: "c2" }, { id: "m3", t: "line", a: "c2", b: "d2" }, { id: "m4", t: "line", a: "d2", b: "a2" }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }, { id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [20, -45, 10] } }, rels: [], dims: [], ents: [] }); }); });
     await idle();
@@ -5255,6 +5286,9 @@ try {
     await mp.mouse.up();
     await shown(2);
     const drag = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4); });
+    // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
+    const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
+    check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
@@ -7945,6 +7979,45 @@ try {
     await mp.evaluate(() => window.__sv.modeller.cancel());
     await settle();
     check(turned, `model 1.89: middle-drag orbits the view while sketching (${JSON.stringify({ c0, c1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.317: Smart Dimension takes a model edge clicked at its middle, and the sketch status passes clicks through (exam bugs 49, 46) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.waitForTimeout(500);
+    const picks = [];
+    for (const w of [[-20, 0, 5], [0, 10, 5], [-20, 10, 5]]) {
+      await mp.evaluate(() => window.__sv.model.editor().setTool("dim"));
+      const [x, y] = await scr(w);
+      await mp.mouse.move(x + 4, y + 3); await mp.mouse.move(x, y); await mp.mouse.click(x, y);
+      await mp.waitForTimeout(150);
+      picks.push(await mp.evaluate(() => { const ed = window.__sv.model.editor(); return [...ed.selection].map(id => ed.sk.ents.find(e => e.id === id)?.t).join(","); }));
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(80);
+    }
+    check(picks.join("|") === "line|line|point", `model 1.317: Smart Dimension picks model edges at their middle and a model corner (${picks.join("|")})`);
+    const through = await mp.evaluate(() => { const r = document.querySelector("#mc-status").getBoundingClientRect(); const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { w: r.width, el: el?.tagName }; });
+    check(through.w > 0 && through.el === "CANVAS", `model 1.317: clicks on the sketch status line reach the view (${JSON.stringify(through)})`);
     await ctx.close();
   }
 

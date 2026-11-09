@@ -42,6 +42,7 @@ import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
+import { gestureDialog } from "./gestureUi";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
@@ -113,6 +114,7 @@ const modeller = new ModelController({
     validateDensity();
   },
   normalTo: n => normalTo(n),
+  view: v => { if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else if (VIEWS[v]) viewer.viewFrom(VIEWS[v]); },
   setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
@@ -2024,6 +2026,8 @@ function normalTo(given?: [number, number, number]) {
   menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); set(false); btn.focus(); } });
   window.addEventListener("resize", () => set(false));
 }
+// Mouse gestures (FR-UI-024): the settings dialog; the part controller reads the stored settings on each right press.
+$("#gestures-btn").addEventListener("click", () => { $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false"); gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))); });
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
 const surfAna = new SurfaceAnalysis(viewer, {
