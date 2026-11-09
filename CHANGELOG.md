@@ -5,6 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.325.0] - 2026-11-09
+
+### Fixed
+
+- Sketch relation glyphs sit beside their line, arc or circle (out along its normal, at the middle) instead of on it, so a click on the curve no longer picks its glyph and Delete no longer removes the relation instead of the curve.
+- Fully define sketch dimensions arc and circle centres and the ends of construction lines first (a slot's centreline), then other curve points, instead of the derived tangent points of a slot's caps.
+- "The sketch is already defined there: added as a reference dimension" is a passing note now, not a warning that stays until closed.
+
 ## [1.318.0] - 2026-11-09
 
 ### Added
@@ -1866,7 +1874,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.318.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.325.0...HEAD
+[1.325.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.325.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
 [1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
 [1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0
