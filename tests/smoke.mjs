@@ -2690,6 +2690,48 @@ try {
     await idle();
     check(bx.plane && bx.faces && bx.plane !== bx.faces && bx.mesh && bx.tag === "Faces to draft" && bx.tagC === bx.faces,
       `model 1.351: Draft's selection boxes have their own colours and the picked face is drawn in the faces box's colour with a "Faces to draft" tag (${JSON.stringify(bx)})`);
+    // 1.353 (FR-UI-109): selection box flow: a one-item box that has just been filled hands focus to the next empty required box, also an earlier one; a panel opens on its first empty box.
+    await mp.evaluate(() => window.__sv.modeller.command("lpattern"));
+    await mp.waitForSelector('#mc-pm .pm-box[data-focus="dir"]');
+    const flow = await mp.evaluate(() => {
+      const m = window.__sv.modeller, d = m.mode.draft, open = m.mode.focus === (d.features.length ? "dir" : "seeds");
+      d.features = []; delete d.dir; m.mode.focus = "dir"; d.dir = { axis: "x" }; m.draftChanged();
+      const after = m.mode.focus;
+      const sel = document.querySelector('#mc-pm .pm-box.focus')?.dataset.focus;
+      const edit = m.openFocus({ type: "csys", id: "c", name: "c", origin: { point: "p" } }, undefined);
+      const keep = m.openFocus({ type: "draft", id: "d", name: "d", plane: { std: "XY" }, faces: [] }, "faces");
+      return { open, after, sel, edit, keep };
+    });
+    await mp.evaluate(() => window.__sv.modeller.exitMode(false));
+    await idle();
+    check(flow.open && flow.after === "seeds" && flow.sel === "seeds" && flow.edit === "cz" && flow.keep === "faces",
+      `model 1.353: selection boxes hand focus on by themselves (${JSON.stringify(flow)})`);
+    // 1.353 (FR-SEL-010): G opens the magnifying glass at the cursor; the wheel inside changes its factor, pointer events inside
+    // reach the view at the magnified point, G or Esc closes it.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.evaluate(() => window.__sv.viewer.renderer.domElement.focus());
+      await mp.keyboard.press("g");
+      await mp.waitForSelector(".mag-lens");
+      await mp.waitForTimeout(150);
+      const lens = await mp.evaluate(() => {
+        const c = document.querySelector(".mag-lens"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+        let lit = 0; for (let i = 3; i < x.length; i += 4) if (x[i]) lit++;
+        return { lit, f: document.querySelector(".mag-ring").dataset.f };
+      });
+      await mp.mouse.wheel(0, -100);
+      await mp.waitForTimeout(50);
+      const f2 = await mp.evaluate(() => document.querySelector(".mag-ring").dataset.f);
+      const probe = mp.evaluate(() => new Promise(res => window.__sv.viewer.renderer.domElement.addEventListener("pointermove", e => res({ x: e.clientX, y: e.clientY }), { once: true })));
+      await mp.mouse.move(vb.x + 50, vb.y);
+      const moved = await probe;
+      await mp.keyboard.press("Escape");
+      const closed = await mp.evaluate(() => !document.querySelector(".mag-lens"));
+      const fac = Number(f2.slice(1));
+      check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
+        `model 1.353: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });

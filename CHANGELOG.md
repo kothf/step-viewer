@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.353.0] - 2026-11-09
+
+### Added
+
+- **Magnifying glass (FR-SEL-010)**: press G over the view for a round inset showing the area round the cursor magnified 4× (the wheel inside it changes the factor from 2× to 16×). Hovering, snapping and clicks inside the lens act on the magnified point, so small edges and vertices are easy to pick. G or Esc closes it; Esc does not leave the command that is open.
+- **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
+
 ## [1.351.0] - 2026-11-09
 
 ### Added
@@ -2104,7 +2111,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.351.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.353.0...HEAD
+[1.353.0]: https://github.com/kothf/step-viewer/compare/v1.351.0...v1.353.0
 [1.351.0]: https://github.com/kothf/step-viewer/compare/v1.350.0...v1.351.0
 [1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0

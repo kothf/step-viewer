@@ -1065,7 +1065,8 @@ export class ModelController {
       : type === "csys" ? ((draft as CsysFeature).origin ? "cz" : "origin")
       : type === "combine" || type === "indent" ? "main" : type === "bsplit" ? "mplane" : type === "delbody" || type === "movebody" || type === "scale" || type === "intersect" ? "bodies"
       : WELD_TOOL_SET.has(type) ? weldFocus(draft) as Focus | undefined : undefined;
-    this.mode = { kind: "feature", draft, index, isNew: true, focus };
+    this.mode = { kind: "feature", draft, index, isNew: true, focus: this.openFocus(draft, focus) };
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -1111,7 +1112,10 @@ export class ModelController {
     if (this.isFrozen(id)) { this.frozenToast(); return; }
     if (f.type === "sketch") { void this.editSketch(id); return; }
     this.exitMode(false);
-    this.mode = { kind: "feature", draft: structuredClone(f), index: i, isNew: false };
+    const draft = structuredClone(f);
+    this.mode = { kind: "feature", draft, index: i, isNew: false, focus: this.openFocus(draft, undefined) };
+    if (!this.mode.focus) delete this.mode.focus;
+    this.flowWas.set(this.mode, this.boxFlow(draft).filter(b => b.filled).map(b => b.focus).join(","));
     this.host.clearPick();
     this.renderAll();
     void this.rebuild();
@@ -2250,7 +2254,52 @@ export class ModelController {
       changed: () => this.draftChanged(),
     };
   }
-  private draftChanged() { this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+  private draftChanged() { this.flowFocus(); this.renderPanel(); this.drawDecor(); void this.rebuild(); }
+
+  /**
+   * FR-UI-109: the required selection boxes of a panel in order. `one` = the box is done with one item (a plane, an
+   * edge, a body), so focus moves on by itself once it has it; boxes that take many items keep focus.
+   */
+  private boxFlow(d: Feature): { focus: Focus; filled: boolean; one: boolean }[] {
+    const seeds = (f: CopyFeature) => f.copy === "faces" ? !!f.faces?.length : f.copy === "bodies" ? !!f.bodies?.length : f.features.length > 0;
+    switch (d.type) {
+      case "plane": return [{ focus: "base", filled: !!d.base, one: true }, ...(d.mode === "angle" ? [{ focus: "axis" as Focus, filled: !!d.axis, one: true }] : [])];
+      case "draft": return [{ focus: "nplane", filled: !!d.plane, one: true }, { focus: "faces", filled: d.kind === "parting" ? !!d.parting?.length : d.faces.length > 0, one: false }];
+      case "hole": return [{ focus: "hplane", filled: !!d.plane, one: true }, ...(d.end === "upto" ? [{ focus: "hupto" as Focus, filled: !!d.upTo, one: true }] : []), { focus: "pts", filled: d.pts.length > 0, one: false }];
+      case "mirror": return [{ focus: "mplane", filled: !!d.plane, one: true }, { focus: "seeds", filled: seeds(d), one: false }];
+      case "lpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.dir, one: true }];
+      case "cpattern": return [{ focus: "seeds", filled: seeds(d), one: false }, { focus: "dir", filled: !!d.axis, one: true }];
+      case "csys": return [{ focus: "origin", filled: !!d.origin, one: true }, { focus: "cz", filled: !!d.z, one: true }, { focus: "cx", filled: !!d.x, one: true }];
+      case "combine": case "indent": return [{ focus: "main", filled: !!d.main, one: true }, { focus: "bodies", filled: d.tools.length > 0, one: false }];
+      case "trimsurf": return [{ focus: "tsurf", filled: !!d.surface, one: true }, { focus: "ttool", filled: !!d.tool, one: true }];
+      case "extrude": return [
+        ...(d.start === "surface" ? [{ focus: "start" as Focus, filled: !!d.startRef, one: true }] : d.start === "vertex" ? [{ focus: "start" as Focus, filled: !!d.startVertex, one: true }] : []),
+        ...(d.end === "upto" || d.end === "offset" ? [{ focus: "upto" as Focus, filled: !!d.upTo, one: true }] : d.end === "vertex" ? [{ focus: "upto" as Focus, filled: !!d.upToVertex, one: true }] : d.end === "body" ? [{ focus: "upbody" as Focus, filled: !!d.upToBody, one: true }] : [])];
+      default: return [];
+    }
+  }
+  private flowWas = new WeakMap<object, string>();
+  /** Moves focus to the next empty required box when the focused one-item box has just been filled (FR-UI-109). */
+  private flowFocus() {
+    const m = this.mode;
+    if (m.kind !== "feature") return;
+    const flow = this.boxFlow(m.draft);
+    const key = flow.filter(b => b.filled).map(b => b.focus).join(",");
+    const was = this.flowWas.get(m);
+    this.flowWas.set(m, key);
+    if (was == null) return;
+    const i = flow.findIndex(b => b.focus === m.focus);
+    if (i < 0 || !flow[i].one || !flow[i].filled || was.split(",").includes(flow[i].focus)) return;
+    const next = flow.slice(i + 1).find(b => !b.filled) ?? flow.slice(0, i).find(b => !b.filled);
+    if (next) m.focus = next.focus;
+  }
+  /** The box a panel opens on (FR-UI-109): the given one, unless it is a filled one-item box, then the first empty required box. */
+  private openFocus(d: Feature, focus: Focus | undefined): Focus | undefined {
+    const flow = this.boxFlow(d);
+    const cur = flow.find(b => b.focus === focus);
+    if (focus && (!cur || !cur.filled || !cur.one)) return focus;
+    return flow.find(b => !b.filled)?.focus ?? focus;
+  }
 
   /** A plane reference in words: "Top (XY)", "Plane1", "Face of Extrude1". */
   /** What a click in the view sets while an extrude is edited (FR-FT-012/013). */
