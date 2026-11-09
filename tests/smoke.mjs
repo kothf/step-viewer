@@ -5825,6 +5825,9 @@ try {
       let gl = null; window.__sv.viewer.scene.traverse(o => { if (o.userData?.gapLine === gt.id) gl = o; });
       const gpa = gl?.geometry.getAttribute("position");
       prox.line = !!gpa && (gv[0] < 1e-6 || Math.abs(Math.hypot(gpa.getX(1) - gpa.getX(0), gpa.getY(1) - gpa.getY(0), gpa.getZ(1) - gpa.getZ(0)) - gv[0]) < 1e-3);
+      // Its plot saves as a stand-alone SVG (English, no playhead line).
+      const gsvg = m.plotSvgFile(m.study.traces.find(x => x.id === gt.id));
+      prox.svg = !!document.querySelector('#motion button[data-tr="svg"]') && gsvg.startsWith("<?xml") && gsvg.includes("<polyline") && !gsvg.includes("mo-ph");
       m.deleteTrace(gt.id);
       const trace = { prox, sensor, mateVal, relative, pickedTrace, n: path.length, want: 2 * m.study.fps + 1, start: path[0].map((v, k) => v - o[k]), end: path.at(-1).map((v, k) => v - o[k]), len, plot, row, speedPlot, accelPlot, anglePlot, angleOk, angleEnd, lines };
       for (const x of [...m.study.traces]) m.deleteTrace(x.id);

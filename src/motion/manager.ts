@@ -3,7 +3,7 @@
 // a WebM video or an animated GIF of the view. Frames are solved in order with the assembly's mate solver
 // (each from the one before, so linkages do not flip) and cached until the study or the assembly changes.
 import { makeGrip } from "../resize";
-import { t, onLangChange } from "../i18n";
+import { t, onLangChange, withLang } from "../i18n";
 import { toast } from "../ui";
 import { uid } from "../model/doc";
 import * as THREE from "three";
@@ -18,7 +18,7 @@ import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
 import { clashCsv, clashItems, pairKey, type ClashItem } from "./interfere";
-import { GAP_PLOTS, gapCsv, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
+import { GAP_PLOTS, gapCsv, plotFile, MATE_PLOTS, TRACE_COLORS, TRACE_PLOTS, accels, alertSpans, outOfRange, tripFrame, mateCsv, mateMeasures, pathLength, plotSvg, plotUnit, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries, type TracePlot } from "./trace";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, TracePath, Track } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string, r: ParentNode = document) => r.querySelector(s) as T;
@@ -637,6 +637,13 @@ export class MotionManager {
     return c.items.flatMap(it => it.spans.map(([a]) => Math.round(a * this.study.fps)));
   }
 
+  /** The selected result's plot as a stand-alone SVG file, titled with its name and plotted quantity. */
+  plotSvgFile(x: TracePath): string {
+    const svg = /<svg[\s\S]*<\/svg>/.exec(this.plotBody(x, Math.round(this.time * this.study.fps)))?.[0] ?? "";
+    const label = /aria-label="([^"]*)"/.exec(svg)?.[1]?.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") ?? "";
+    return plotFile(svg, `${this.study.name}: ${label}`);
+  }
+
   private plotBody(x: TracePath, i: number): string {
     if (x.gap) return this.gapPlotHtml(x, i);
     if (x.mate) return this.matePlotHtml(x, i);
@@ -699,6 +706,7 @@ export class MotionManager {
         + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
         + this.alertFields(x)
         + `<button class="btn small" data-tr="csv" title="${esc(t("Save the distances as CSV (time, distance)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
         + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
         + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
     }
@@ -708,6 +716,7 @@ export class MotionManager {
         + `<label class="mo-f"><span>${esc(t("Colour"))}</span><input type="color" data-tr="color" value="${esc(x.color)}" /></label>`
         + this.alertFields(x)
         + `<button class="btn small" data-tr="csv" title="${esc(t("Save the values as CSV (time, distance, angle)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
         + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
         + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
     }
@@ -718,6 +727,7 @@ export class MotionManager {
       + `<span class="muted">${esc(t("Path length {l} mm", { l: fmt(pathLength(pts)) }))}</span>`
       + this.alertFields(x)
       + `<button class="btn small" data-tr="csv" title="${esc(t("Save the path as CSV (time, X, Y, Z, speed, acceleration, angle)"))}">CSV</button>`
+        + `<button class="btn small" data-tr="svg" title="${esc(t("Save the plot as an SVG image"))}">SVG</button>`
       + `<button class="btn small" data-tr="del">${esc(t("Delete"))}</button>`
       + `<div class="mo-trace-plot">${this.plotHtml(x, i)}</div>`;
   }
@@ -1196,6 +1206,10 @@ export class MotionManager {
       this.setTrace(this.selTrace!, x => { const a = { ...(x.alert ?? {}) }; if (v) a.stop = true; else delete a.stop; if (a.min === undefined && a.max === undefined && !a.stop) delete x.alert; else x.alert = a; });
     });
     on("button[data-tr=del]", "click", () => { if (this.selTrace) this.deleteTrace(this.selTrace); });
+    on("button[data-tr=svg]", "click", () => {
+      const x = this.traces.find(k => k.id === this.selTrace);
+      if (x) download(new Blob([withLang("en", () => this.plotSvgFile(x))], { type: "image/svg+xml" }), `${this.fileBase()}-${x.gap ? "proximity" : x.mate ? "mate" : "trace"}.svg`);
+    });
     on("button[data-tr=csv]", "click", () => {
       const x = this.traces.find(k => k.id === this.selTrace);
       if (x?.gap) download(new Blob([gapCsv(this.gapValues(x.id), this.study.fps)], { type: "text/csv" }), `${this.fileBase()}-proximity.csv`);

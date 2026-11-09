@@ -5,7 +5,7 @@ import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
 import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, playTime, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
-import { accels, alertSpans, gapCsv, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
+import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
 import { frameName, frameTimes } from "../../src/motion/frames";
 import type { MotionStudy, MotorTrack } from "../../src/motion/types";
@@ -350,4 +350,14 @@ test("image sequence: frame names sort in order and times cover the study", () =
   assert.equal(ts[0], 0);
   assert.equal(ts[30], 1);
   assert.deepEqual(frameTimes(0, 24), [0, 0]);
+});
+
+test("plot export: stand-alone SVG with title, inline styles and no playhead", () => {
+  const f = plotFile(plotSvg([0, 1, 2, 3], 10, 0.15, "mm", "#f00", "Distance"), "Study <1>: Distance");
+  assert.ok(f.startsWith("<?xml"));
+  assert.match(f, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  assert.match(f, /<polyline points=/);
+  assert.match(f, /Study &lt;1&gt;: Distance/);
+  assert.ok(!f.includes("mo-ph"));
+  assert.match(f, /width="900" height="336"/);
 });
