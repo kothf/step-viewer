@@ -23,6 +23,7 @@ import { evalSheet } from "../sheetmetal/kernel";
 import { SheetError, type SheetState } from "../sheetmetal/sheet";
 import { isSheet } from "../sheetmetal/types";
 import { evalWeld, isWeld, type WeldHost } from "../weldments/kernel";
+import { eigenSym3 } from "../tools/inertia";
 
 export class FeatureError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -3949,7 +3950,7 @@ export class Modeller {
 
   /** The helpers sheet metal (src/sheetmetal) builds its solids with. */
   private sheetApi() {
-    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this) };
+    return { oc: this.oc, bool: this.bool.bind(this), segEdge: (s: Seg, fr: Frame) => this.segEdge(s, fr), sub: this.sub.bind(this), centroid: this.centroid.bind(this), face: (b: Named | null, r: FaceRef) => this.resolveFace(b, r), edge: (b: Named | null, r: EdgeRef) => this.resolveEdge(b, r) };
   }
 
   /** Triangles of the body in occt-import-js's layout (one range per B-rep face, in face order). */
@@ -4018,23 +4019,4 @@ export function parentOf(f: Feature): string | null {
   return f.type === "extrude" || f.type === "revolve" ? f.sketch : null;
 }
 
-/** Eigenvalues (ascending) and unit eigenvectors of a symmetric 3×3 matrix (Jacobi rotations). */
-export function eigenSym3(m: number[][]): { values: number[]; vectors: number[][] } {
-  const a = m.map(r => [...r]);
-  const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-  for (let sweep = 0; sweep < 50; sweep++) {
-    const off = Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]);
-    if (off < 1e-14 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]) + 1e-300)) break;
-    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
-      if (Math.abs(a[p][q]) < 1e-300) continue;
-      const th = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
-      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
-      for (let k = 0; k < 3; k++) { const x = a[k][p], y = a[k][q]; a[k][p] = c * x - s * y; a[k][q] = s * x + c * y; }
-      for (let k = 0; k < 3; k++) { const x = a[p][k], y = a[q][k]; a[p][k] = c * x - s * y; a[q][k] = s * x + c * y; }
-      for (let k = 0; k < 3; k++) { const x = v[k][p], y = v[k][q]; v[k][p] = c * x - s * y; v[k][q] = s * x + c * y; }
-    }
-  }
-  const order = [0, 1, 2].sort((i, j) => a[i][i] - a[j][j]);
-  return { values: order.map(i => a[i][i]), vectors: order.map(i => [v[0][i], v[1][i], v[2][i]]) };
-}
+export { eigenSym3 };

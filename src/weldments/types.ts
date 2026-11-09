@@ -44,6 +44,8 @@ export interface MemberFeature {
   mergeArcs?: boolean;
   /** Merge miter trimmed bodies: segments meeting at a mitred corner (no weld gap) become one body. */
   mergeMiter?: boolean;
+  /** Coped cut: a butted member's end follows the shape of the member it stops at (a saddle on a round tube) instead of a flat cut square to its face. */
+  coped?: boolean;
   /**
    * Alignment (SolidWorks' Align): the profile's vertical (`axis` "v") or horizontal ("h") axis points along this
    * straight sketch line, square to each segment, before the rotation angle; for every group. Absent: a 2D path

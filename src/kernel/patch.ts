@@ -35,7 +35,7 @@ const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 /** Writes exact values into the part. Returns false when nothing could be used. */
 export function applyPatch(d: PartData, p: PartPatch): boolean {
   if (!p.ok) return false;
-  if (p.volume !== undefined && d.closed) { d.volume = p.volume; if (p.com) d.com = p.com; }
+  if (p.volume !== undefined && d.closed) { d.volume = p.volume; if (p.com) d.com = p.com; if (p.inertia) d.inertia = p.inertia; }
   if (p.area !== undefined) d.area = p.area;
   p.faces?.forEach((fp, i) => { const f = d.faces[i]; if (fp && f) patchFace(f, fp); });
   p.edges?.forEach((ep, i) => { const e = d.edges[i]; if (ep && e) patchEdge(e, ep); });
