@@ -511,6 +511,15 @@ export class Viewer {
     this.views.push(v);
     if (this.views.length > 20) this.views.shift();
   }
+  /** The camera as a named view stores it (FR-UI-104): where it will be once a running move ends. */
+  getView(): { t: [number, number, number]; p: [number, number, number]; h: number } {
+    const v = this.viewEnd();
+    return { t: v.t.toArray(), p: v.p.toArray(), h: v.h };
+  }
+  /** Goes to a stored camera (Previous view comes back from it). */
+  setView(v: { t: [number, number, number]; p: [number, number, number]; h: number }, animate = true) {
+    this.animateTo(new THREE.Vector3(...v.t), new THREE.Vector3(...v.p), animate, v.h);
+  }
   /** A camera move is still running. */
   get animating() { return !!this.anim; }
   get canGoBack() { return this.views.length > 0; }

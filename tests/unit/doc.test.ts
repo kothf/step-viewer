@@ -73,3 +73,17 @@ test("save and open keep every feature type (planes, holes, bodies, imports…)"
   const odd = await packPart({ ...s.doc, features: [{ id: "z", type: "warp", name: "Warp1" } as never] }, "test");
   await assert.rejects(unpackPart(odd.buffer as ArrayBuffer), /Unknown feature type "warp"/);
 });
+
+test("named views stay through undo and redo and are saved with the part (FR-UI-104)", async () => {
+  const s = new DocStore(newPart());
+  s.change("Add sketch", d => { d.features.push({ id: "s1", type: "sketch", name: nextName(d, "sketch"), plane: { std: "XY" }, ents: [], rels: [], dims: [] }); });
+  s.amend(d => { d.views = [{ name: "Front close", t: [0, 0, 0], p: [0, -100, 0], h: 50 }]; });
+  assert.equal(s.dirty, true);
+  s.undo();
+  assert.equal(s.doc.features.length, 0);
+  assert.equal(s.doc.views?.[0].name, "Front close");
+  s.redo();
+  assert.equal(s.doc.views?.length, 1);
+  const back = await unpackPart((await packPart(s.doc, "test")).buffer as ArrayBuffer);
+  assert.deepEqual(back.views, s.doc.views);
+});

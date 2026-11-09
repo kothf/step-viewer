@@ -1,4 +1,5 @@
 import "./style.css";
+import type { NamedView } from "./model/types";
 import { bindCommandTips } from "./tooltip";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
@@ -2099,7 +2100,53 @@ const nav = bindNavigation({
     const r = viewer.renderer.domElement.getBoundingClientRect();
     return snapper.pick(x - r.left, y - r.top)?.point.clone() ?? faceUnder(x - r.left, y - r.top)?.point ?? null;
   },
+  // Named views (FR-UI-104): a part or an assembly keeps them in its document; a model file for this session.
+  namedViews: () => {
+    if (modeller.active) return modeller.namedViews();
+    if (asm.active) return asm.namedViews();
+    const key = state.fileKey || state.fileName;
+    if (!key) return null;
+    const list = () => sessionViews.get(key) ?? [];
+    return {
+      list: () => [...list()],
+      save: v => sessionViews.set(key, [...list().filter(x => x.name !== v.name), v]),
+      remove: name => sessionViews.set(key, list().filter(x => x.name !== name)),
+    };
+  },
 });
+const sessionViews = new Map<string, NamedView[]>();
+// Heads-up view bar (FR-UI-022): with a part or an assembly open, the view commands float at the top centre of the
+// view (as in SolidWorks): Zoom to area, Previous view, the standard views, projection and display style. The
+// header's own groups are moved there (their buttons and handlers stay the same) and go back for model files.
+{
+  const hud = document.createElement("div");
+  hud.id = "hud";
+  hud.className = "hud";
+  hud.setAttribute("role", "toolbar");
+  hud.setAttribute("aria-label", t("View"));
+  hud.hidden = true;
+  hud.innerHTML = `<div class="seg" role="group"><button type="button" data-hud="area" title="${t("Zoom to area")}" aria-label="${t("Zoom to area")}">⬚</button>`
+    + `<button type="button" data-hud="prev" title="${t("Previous view (Alt+Z)")}" aria-label="${t("Previous view (Alt+Z)")}">↶</button></div>`;
+  hud.querySelector('[data-hud="area"]')!.addEventListener("click", () => nav.startZoomArea());
+  hud.querySelector('[data-hud="prev"]')!.addEventListener("click", () => nav.previousView());
+  $("#viewport").append(hud);
+  const moved = ["#views", "#projection", "#display-mode"].map(sel => { const el = $(sel), mark = document.createComment(sel); el.before(mark); return { el, mark }; });
+  const sync = () => {
+    const app = $("#app"), on = (app.classList.contains("model") || app.classList.contains("asm")) && !app.classList.contains("gerber");
+    if (on === !hud.hidden) return;
+    hud.hidden = !on;
+    for (const { el, mark } of moved) { if (on) hud.append(el); else mark.after(el); }
+    requestAnimationFrame(fitToolbar);
+  };
+  new MutationObserver(sync).observe($("#app"), { attributes: true, attributeFilter: ["class"] });
+  sync();
+  onLangChange(() => {
+    for (const [k, label] of [["area", "Zoom to area"], ["prev", "Previous view (Alt+Z)"]] as const) {
+      const b = hud.querySelector<HTMLElement>(`[data-hud="${k}"]`)!;
+      b.title = t(label); b.setAttribute("aria-label", t(label));
+    }
+  });
+}
 void nav;
 /** Normal to the sketch plane, or the selected flat face; again flips to the other side. */
 let lastNormal: THREE.Vector3 | null = null;

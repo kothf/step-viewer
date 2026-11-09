@@ -5,6 +5,8 @@
 // The document (DocStore) is the source of truth; every rebuild sends it to the
 // kernel worker and shows the returned body with the viewer's own pipeline, so
 // the measuring tools work on modelled parts unchanged.
+import type { NamedView } from "./types";
+import type { NamedViews } from "../viewer/navigation";
 import * as THREE from "three";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
@@ -135,6 +137,14 @@ type BodyFeature = IntersectFeature | CombineFeature | IndentFeature | SplitBody
 /** A fillet or chamfer has what it needs to preview: edges, or the face sets of a face fillet / full round. */
 /** FR-UI-110: the panel fields shown as value callouts on the model, in this order, and the features that have handles instead. */
 const VALUE_KEYS = ["thickness", "depth", "distance", "offset", "angle", "radius", "spacing", "count", "spacing2", "count2", "pitch", "height", "length", "factor"];
+/** Feature values shown with its dimensions on the model (FR-UI-115): key, quantity, English label. */
+const INSTANT_VALUES: [string, "length" | "angle" | "count", string][] = [
+  ["angle", "angle", "Angle"], ["angle2", "angle", "Angle"], ["radius", "length", "Radius"], ["diameter", "length", "Diameter"],
+  ["distance", "length", "Distance"], ["distance2", "length", "Distance"], ["thickness", "length", "Thickness"], ["depth", "length", "Depth"],
+  ["offset", "length", "Offset"], ["spacing", "length", "Spacing"], ["count", "count", "Instances"], ["spacing2", "length", "Spacing"],
+  ["count2", "count", "Instances"], ["pitch", "length", "Pitch"], ["height", "length", "Height"], ["length", "length", "Length"]];
+/** Features with a `flip` the Modify box can reverse. */
+const FLIP_TYPES = new Set(["extrude", "revolve", "plane", "moveface", "draft", "lpattern"]);
 const VALUE_CALLOUT_SKIP = new Set(["extrude", "revolve", "fillet", "chamfer", "endcap", "gusset", "smflange", "sketch", "sketch3d"]);
 const roundReady = (f: FilletFeature | ChamferFeature) => f.type === "fillet" && f.kind
   ? !!f.faces1?.length && !!f.faces2?.length && (f.kind !== "full" || !!f.center?.length)
@@ -1519,6 +1529,18 @@ export class ModelController {
   }
 
   /** The shown body under a screen point. */
+  /** The part's named views (FR-UI-104): stored in the document, out of the undo history. */
+  namedViews(): NamedViews | null {
+    const st = this.store;
+    if (!st) return null;
+    const set = (list: NamedView[]) => { st.amend(d => { if (list.length) d.views = list; else delete d.views; }); this.host.setDoc(this.docLabel()); };
+    return {
+      list: () => [...(st.doc.views ?? [])],
+      save: v => set([...(st.doc.views ?? []).filter(x => x.name !== v.name), v]),
+      remove: name => set((st.doc.views ?? []).filter(x => x.name !== name)),
+    };
+  }
+
   bodyAt(x: number, y: number): string | null {
     const hit = this.host.faceAt(x, y), bodies = this.last?.bodies ?? [];
     if (!hit) return null;
@@ -2206,7 +2228,7 @@ export class ModelController {
     if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
     if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
-    if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
+    if (k === "escape" && this.instant && this.mode.kind === "none" && !document.querySelector("#mc-menu:not([hidden])")) { stop(); this.hideInstant(); return; }
     const m = this.mode;
     // S: the shortcut bar at the cursor (SolidWorks habit, FR-UI-023).
     if (k === "s" && !e.shiftKey && (m.kind === "sketch" || m.kind === "none")) { stop(); this.showShortcutBar(); return; }
@@ -4859,6 +4881,23 @@ export class ModelController {
     return items.filter(it => (sk && it.src.startsWith(`${sk}:`)) || it.src === `${f.id}:depth`);
   }
 
+  /** A feature's own values shown beside its dimensions (FR-UI-115): angles, radii, thicknesses, counts… */
+  private featureValues(f: Feature): { key: string; q: "length" | "angle" | "count"; label: string }[] {
+    if (f.type === "sketch" || f.type === "sketch3d" || f.suppressed) return [];
+    const g = f as unknown as Record<string, unknown>, out: { key: string; q: "length" | "angle" | "count"; label: string }[] = [];
+    for (const [key, q, label] of INSTANT_VALUES) {
+      if (f.type === "extrude" && key === "depth") continue;
+      // The revolve angle has its own drag handle with the value on it.
+      if (f.type === "revolve" && key === "angle") continue;
+      if (key === "depth" && typeof g.end === "string" && g.end !== "blind") continue;
+      const v = g[key];
+      if (q === "count" ? typeof v === "number" : !!v && typeof v === "object" && typeof (v as Num).v === "number") out.push({ key, q, label: t(label) });
+    }
+    return out;
+  }
+
+  private hasInstant(f: Feature) { return this.instantItems(f).length > 0 || this.featureValues(f).length > 0; }
+
   /** Double-click on the model: the dimensions of the feature that made the face or edge show on it, as in SolidWorks. */
   showInstant(x: number, y: number) {
     if (!this.store || !this.last || this.mode.kind !== "none") return;
@@ -4868,7 +4907,7 @@ export class ModelController {
     const f = id ? this.store.feature(id) : undefined;
     if (!f || f.suppressed) { this.hideInstant(); return; }
     this.hideShortcutBar();
-    if (!this.instantItems(f).length) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
+    if (!this.hasInstant(f)) { this.hideInstant(); toast(t("{name} has no dimensions to show on the model.", { name: f.name })); return; }
     this.instant = f.id;
     this.selected = f.id;
     this.renderTree();
@@ -4915,6 +4954,25 @@ export class ModelController {
       layer.appendChild(el);
     }
     this.lines(pos, dark ? 0x8ab4ff : 0x1d4ed8, 1.4);
+    // The feature's own values (angle, radius, thickness, count…) stacked by the middle of its faces.
+    const at = this.calloutPoint(f), g = f as unknown as Record<string, unknown>;
+    if (at) this.featureValues(f).forEach((fv, row) => {
+      const v = g[fv.key] as Num | number;
+      const el = document.createElement("span");
+      el.className = "mc-callout mc-ival";
+      el.dataset.at = JSON.stringify(at);
+      el.dataset.row = String(row);
+      el.dataset.v = fv.key;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mc-handle";
+      b.dataset.src = `${f.id}:${fv.key}`;
+      b.textContent = `${fv.label}: ${typeof v === "number" ? v : fv.q === "angle" ? `${trimNum(v.v * 180 / Math.PI, dec)}°` : trimNum(v.v * fu, dec)}`;
+      b.title = t("{name}: click to change", { name: fv.label });
+      b.addEventListener("click", ev => { ev.stopPropagation(); this.editInstant(`${f.id}:${fv.key}`, b); });
+      el.append(b);
+      layer.appendChild(el);
+    });
     this.placeCallouts();
   }
 
@@ -4925,26 +4983,42 @@ export class ModelController {
     const f = this.store.feature(fid);
     if (!f) return;
     const fu = UNITS[units.current].f;
-    let num: Num, title: string;
+    let num: Num, title: string, q: "length" | "angle" | "count" = "length";
+    const fv = f.type === "extrude" && key === "depth" ? undefined : this.featureValues(f).find(x => x.key === key);
     if (key === "depth" && f.type === "extrude") { num = f.depth; title = `${t("Depth")}@${f.name}`; }
-    else if (f.type === "sketch") {
+    else if (fv) {
+      const raw = (f as unknown as Record<string, unknown>)[key] as Num | number;
+      num = typeof raw === "number" ? { v: raw } : raw;
+      q = fv.q;
+      title = `${fv.label}@${f.name}`;
+    } else if (f.type === "sketch") {
       const d = f.dims.find(x => x.id === key);
       if (!d) return;
       num = d.val;
       title = `${d.name}@${f.name}`;
     } else return;
-    const value = num.expr ?? trimNum(num.v * fu, 6);
-    // The document with the typed value, or an error.
+    const value = num.expr ?? (q === "count" ? String(num.v) : trimNum(q === "angle" ? num.v * 180 / Math.PI : num.v * fu, 6));
+    const canFlip = FLIP_TYPES.has(f.type) && (key === "depth" || key === "distance" || key === "offset" || key === "angle" || key === "spacing");
+    let flipped = false;
+    // The document with the typed value (and the direction reversed, when asked), or an error.
     const docWith = (text: string): PartDoc | string | null => {
       let v: number;
-      try { v = evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
-      catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
-      if (!(v > 0)) return t("The value must be more than 0.");
-      const val: Num = isPlain(text) ? { v } : { v, expr: text.trim() };
-      if (Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
+      if (q === "count") {
+        v = Number(text.trim());
+        if (!Number.isInteger(v) || v < 1) return t("Enter a whole number of 1 or more.");
+        if (v === num.v && !flipped) return null;
+      } else {
+        try { v = q === "angle" ? evaluate(text, "angle", "deg", evalVars(this.doc, units.current).values) : evaluate(text, "length", units.current, evalVars(this.doc, units.current).values); }
+        catch (err) { return t((err as ExprError).key ?? String(err), (err as ExprError).params); }
+        if (!(v > 0)) return t("The value must be more than 0.");
+      }
+      const val: Num = q === "count" || isPlain(text) ? { v } : { v, expr: text.trim() };
+      if (!flipped && q !== "count" && Math.abs(v - num.v) < 1e-12 && (num.expr ?? "") === (val.expr ?? "")) return null;
       const d = structuredClone(this.doc);
       const g = d.features.find(x => x.id === fid)!;
-      if (g.type === "extrude") g.depth = val;
+      if (flipped) { const gf = g as { flip?: boolean }; if (gf.flip) delete gf.flip; else gf.flip = true; }
+      if (fv) (g as unknown as Record<string, unknown>)[key] = q === "count" ? v : val;
+      else if (g.type === "extrude") g.depth = val;
       else if (g.type === "sketch") {
         g.dims.find(x => x.id === key)!.val = val;
         if (solve(g).status !== "ok") return t("That value cannot be reached with the other relations and dimensions.");
@@ -4958,7 +5032,10 @@ export class ModelController {
       at: { x: r.right, y: r.top + r.height / 2 },
       title,
       value,
-      step: stepFor("length", units.current),
+      step: q === "count" ? 1 : stepFor(q, units.current),
+      incKey: q,
+      // Reverse direction (FR-UI-114) for features that have one: previewed with the value, kept by ✓.
+      ...(canFlip ? { reverse: () => { flipped = !flipped; } } : {}),
       preview: text => {
         const d = docWith(text);
         if (typeof d === "string") { toast(d, "error"); return; }
@@ -5522,6 +5599,8 @@ export class ModelController {
         // Equations is not geometry to select: a click opens it.
         if (id === "equations") { this.editEquations(); return; }
         if (id === "configs") { this.editConfigs(); return; }
+        // A feature picked in the tree shows its dimensions and values on the model, as in SolidWorks (FR-UI-115).
+        if (mm.kind === "none") { const f = this.store!.feature(id); this.instant = f && !f.suppressed && this.hasInstant(f) ? id : null; }
         this.selected = id;
         this.renderTree();
         this.drawDecor();

@@ -786,6 +786,7 @@ export const RU: Record<string, string> = {
   "Set the values; the view shows the result. ✓ or Enter keeps it, ✕ or Esc cancels.": "Задайте значения; в окне виден результат. ✓ или Enter применяет, ✕ или Esc отменяет.",
   "Editing: ✓ or Enter applies the change, ✕ or Esc cancels.": "Редактирование: ✓ или Enter применяет изменение, ✕ или Esc отменяет.",
   "The value must be more than 0.": "Значение должно быть больше 0.",
+  "Enter a whole number of 1 or more.": "Введите целое число не меньше 1.",
   "Over defined": "Переопределён",
   "Fully defined": "Полностью определён",
   "Under defined, {n} DOF": "Недоопределён, степеней свободы: {n}",
@@ -3825,6 +3826,7 @@ export const RU: Record<string, string> = {
   "Increase": "Увеличить",
   "Decrease": "Уменьшить",
   "Rebuild with this value": "Перестроить с этим значением",
+  "Increment": "Шаг",
   "Rebuild": "Перестроить",
   "{name} has no dimensions to show on the model.": "У {name} нет размеров для показа на модели.",
   "{name}: click to change": "{name}: нажмите, чтобы изменить",
@@ -4208,4 +4210,12 @@ export const RU: Record<string, string> = {
   "Selection breadcrumbs": "Цепочка выбора",
   // FR-UI-110: value callouts
   "Click to type the value": "Щёлкните, чтобы ввести значение",
+  // FR-UI-104: named views
+  "Named views": "Именованные виды",
+  "View name": "Имя вида",
+  "View {n}": "Вид {n}",
+  "Save view": "Сохранить вид",
+  "View \"{name}\" saved.": "Вид «{name}» сохранён.",
+  // FR-UI-022: heads-up view bar
+  "Previous view (Alt+Z)": "Предыдущий вид (Alt+Z)",
 };

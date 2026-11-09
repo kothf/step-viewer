@@ -104,7 +104,7 @@ export class DocStore {
     const s = this.undoStack.pop();
     if (!s) return;
     this.redoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepViews(JSON.parse(s.doc));
     this.emit("undo");
   }
 
@@ -112,8 +112,14 @@ export class DocStore {
     const s = this.redoStack.pop();
     if (!s) return;
     this.undoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepViews(JSON.parse(s.doc));
     this.emit("redo");
+  }
+
+  /** Named views are view data (FR-UI-104, FR-UND-004): undo and redo keep the current ones. */
+  private keepViews(d: PartDoc) {
+    if (this.doc.views?.length) d.views = this.doc.views; else delete d.views;
+    return d;
   }
 
   get dirty() { return JSON.stringify(this.doc) !== this.savedAt; }
