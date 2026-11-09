@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.326.0] - 2026-11-09
+
+### Added
+- Arc slot centre marks in drawings (FR-DRW-023): an arc slot seen end-on gets a centre-line arc through its end centres, 2 mm past both ends, and a radial centre line across each rounded end.
+
 ## [1.320.0] - 2026-11-09
 
 ### Added
@@ -1880,7 +1885,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.320.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.326.0...HEAD
+[1.326.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.326.0
 [1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
 [1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
