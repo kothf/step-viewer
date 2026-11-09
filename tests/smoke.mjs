@@ -5876,7 +5876,14 @@ try {
     const ptsEnd = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").end);
     await setP("textarea[data-p=pts]", "1, 0\n0, 5");
     const ptsBad = await mp.evaluate(() => document.querySelector("#motion textarea[data-p=pts]").getAttribute("aria-invalid"));
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad };
+    // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
+    await setP("select[data-p=profile]", "expr");
+    await setP("input[data-p=expr]", "180*t");
+    await mp.evaluate(() => window.__sv.motion.seek(0.5));
+    const exprAt = await pos();
+    await setP("input[data-p=expr]", "sin(");
+    const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6226,13 +6233,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8998,6 +9005,17 @@ try {
     const bc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, segs: l.sheet?.panels[0].outer.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(bc0.title === "Break Corner" && bc0.edges?.length === 1 && /:p0:l1\|.*:p0:l2$/.test(bc0.edges[0]) && !bc1.bad && bc1.segs === 5 && Math.abs(bcv0 - bc1.v - 50 * T) < 1e-3,
       `sheet metal: Break Corner chamfers the picked thickness edge's corner, in the flat outline too (${JSON.stringify({ bc0, bc1, bcv0 })})`);
+    // Cross Break: click the plate's top face, ✓: two diagonals, the solid stays as it is.
+    await smMenu("Cross Break");
+    const [cbx, cby] = await scr([30, 20, T]);
+    await mp.mouse.click(cbx, cby);
+    await settle();
+    const cb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, faces: window.__sv.model.mode().draft?.faces.map(f => f.name) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const cb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(cb0.title === "Cross Break" && cb0.faces?.length === 1 && /:p0:top$/.test(cb0.faces[0]) && !cb1.bad && cb1.n === 2 && Math.abs(cb1.v - bc1.v) < 1e-6,
+      `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ cb0, cb1 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");

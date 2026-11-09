@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, parsePoints, playTime, pointsAt, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, orbitKeys, parsePoints, playTime, pointsAt, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -381,4 +381,16 @@ test("motor distance and data point profiles", () => {
   const m: MotorTrack = { ...base, profile: "points", pts: pts!, start: 1, end: 3 };
   assert.equal(motorAmount(m, 2.5), 12.5);
   assert.equal(motorAmount(m, 0), 0);
+});
+
+test("motor expression profile", () => {
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  near(exprValue("30*sin(2*pi*t)", 0.25), 30);
+  near(exprValue("10*t^2", 2), 40);
+  assert.throws(() => exprValue("sin(", 0));
+  const m: MotorTrack = { id: "m", kind: "motor", mate: "x", motion: "rotary", profile: "expr", speed: 0, expr: "90*t", start: 1, end: 3 };
+  near(motorAmount(m, 2), Math.PI / 2);
+  near(motorAmount(m, 0), 0);
+  near(motorAmount({ ...m, motion: "linear", flip: true }, 3), -180);
+  assert.equal(motorAmount({ ...m, expr: "oops(" }, 2), 0);
 });

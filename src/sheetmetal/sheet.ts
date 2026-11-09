@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { BendCalc, BendPosition, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -68,7 +68,12 @@ export interface SheetState {
   folds?: SheetFold[];
   /** The folded solid is a faceted shell (lofted bend), not the panels' prisms and bends. */
   faceted?: boolean;
+  /** Cross break lines, in flat coordinates on a panel's top or bottom face. */
+  crosses?: CrossLine[];
 }
+
+/** One line of a cross break: raised towards the panel's top face when `up`. */
+export interface CrossLine { pid: string; a: V2; b: V2; side: "top" | "bot"; up: boolean; angle: number; r: number }
 
 /** A sharp fold line between two facets of a lofted bend: towards the top face when `up`. */
 export interface SheetFold { a: V2; b: V2; up: boolean; angle: number }
@@ -1347,4 +1352,48 @@ export function loftedBend(f: SmLoftFeature, sk1: SketchFeature, fr1: Frame, sk2
   });
   const mesh: SheetMesh = { bot: pts, top, tris: tris.map((t, j) => ({ v: t, pid: pidOf(j) })), sides };
   return { state: st, ops: [{ kind: "mesh", mesh }] };
+}
+
+// ---------- cross break ----------
+
+/**
+ * Cross break: two lines corner to corner across each picked flat face. The first joins the two outline points
+ * farthest apart, the second the points farthest out on either side of it; the solid stays as it is.
+ */
+export function crossBreak(st: SheetState, f: SmCrossFeature): { state: SheetState; ops: SheetOp[] } {
+  const angle = f.angle.v, r = f.radius.v;
+  if (!(angle > 0 && angle < Math.PI / 2)) throw new SheetError("E-SM-CROSSANG", "The cross break angle must be between 0° and 90°.");
+  if (!(r >= 0)) throw new SheetError("E-SM-R", "The bend radius can't be negative.");
+  if (!f.faces.length) throw new SheetError("E-SM-CROSSFACE", "Pick a flat face of the sheet (its top or bottom).");
+  const out: CrossLine[] = [...(st.crosses ?? [])];
+  for (const fr of f.faces) {
+    const m = /^(.*):(top|bot)$/.exec(fr.name);
+    const panel = m ? st.panels.find(p => p.id === m[1]) : undefined;
+    if (!m || !panel) throw new SheetError("E-SM-CROSSFACE", "Pick a flat face of the sheet (its top or bottom).");
+    const side = m[2] as "top" | "bot";
+    const poly = loopPolygon(panel.outer, 16);
+    let p = poly[0], q = poly[0], best = -1;
+    for (let i = 0; i < poly.length; i++) for (let j = i + 1; j < poly.length; j++) { const dd = d2(poly[i], poly[j]); if (dd > best) { best = dd; p = poly[i]; q = poly[j]; } }
+    const L = d2(p, q);
+    if (!(L > 1e-9)) throw new SheetError("E-SM-CROSSFACE", "Pick a flat face of the sheet (its top or bottom).");
+    const left = (x: V2) => ((q[0] - p[0]) * (x[1] - p[1]) - (q[1] - p[1]) * (x[0] - p[0])) / L;
+    let a = poly[0], b = poly[0];
+    for (const x of poly) { if (left(x) > left(a)) a = x; if (left(x) < left(b)) b = x; }
+    if (left(a) < L * 1e-3 || left(b) > -L * 1e-3) throw new SheetError("E-SM-CROSSFACE", "Pick a flat face of the sheet (its top or bottom).");
+    const up = (side === "top") !== !!f.flip;
+    out.push({ pid: panel.id, a: p, b: q, side, up, angle, r }, { pid: panel.id, a, b, side, up, angle, r });
+  }
+  return { state: { ...st, crosses: out }, ops: [] };
+}
+
+/** Cross break lines in world coordinates: on the panel faces when folded, on the flat pattern's top when flat. */
+export function crossBreakLines(st: SheetState, flat: boolean): { a: V3; b: V3; up: boolean }[] {
+  return (st.crosses ?? []).flatMap(c => {
+    if (flat) return [{ a: apply(st.root, [c.a[0], c.a[1], st.T]), b: apply(st.root, [c.b[0], c.b[1], st.T]), up: c.up }];
+    const p = st.panels.find(x => x.id === c.pid);
+    if (!p) return [];
+    // A hair off the face so the lines aren't hidden in it.
+    const z = c.side === "top" ? st.T * 1.01 : -st.T * 0.01;
+    return [{ a: apply(p.M, [c.a[0], c.a[1], z]), b: apply(p.M, [c.b[0], c.b[1], z]), up: c.up }];
+  });
 }

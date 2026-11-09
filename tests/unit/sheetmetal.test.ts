@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -480,4 +480,26 @@ test("sheet metal: lofted bend unfolds its facets exactly (FR-FT-120)", async ()
   // A second base feature is refused.
   const two = m.evaluate(doc([rect("s", 0, 0, 10, 10), base(), ...sq, loft()])).statuses.find(x => x.id === "lb");
   assert.ok(two && !two.ok);
+});
+
+test("sheet metal: cross break marks a flat face corner to corner (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const cb = (over: Partial<SmCrossFeature> = {}): SmCrossFeature => ({ id: "x", type: "smcross", name: "Cross-Break1", faces: [{ name: "b:p0:top" }], radius: { v: 0.5 }, angle: { v: Math.PI / 180 }, ...over });
+  const r = run(doc([s, base(), cb()]));
+  close(r.props.volume, 100 * 50 * 2);
+  const cr = r.sheet!.crosses!;
+  assert.equal(cr.length, 2);
+  // The two diagonals of the plate.
+  const len = (c: typeof cr[number]) => Math.hypot(c.b[0] - c.a[0], c.b[1] - c.a[1]);
+  for (const c of cr) close(len(c), Math.hypot(100, 50), 1e-9);
+  assert.ok(cr.every(c => c.up && c.side === "top"));
+  assert.ok(run(doc([s, base(), cb({ flip: true })])).sheet!.crosses!.every(c => !c.up));
+  // Flat pattern DXF: the two lines on their own layer; the flattened part keeps them.
+  assert.equal(flatDrawing(r.sheet!).entities.filter(e => e.layer === "CROSS_BREAK").length, 2);
+  assert.equal(run(doc([s, base(), cb(), flat])).sheet!.crosses!.length, 2);
+  // A side face or a bad angle fails.
+  assert.equal(m.evaluate(doc([s, base(), cb({ faces: [{ name: "b:p0:sl1" }] })])).statuses.find(x => x.id === "x")!.ok, false);
+  assert.equal(m.evaluate(doc([s, base(), cb({ angle: { v: Math.PI / 2 } })])).statuses.find(x => x.id === "x")!.ok, false);
 });
