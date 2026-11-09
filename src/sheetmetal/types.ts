@@ -252,8 +252,25 @@ export interface SmReliefFeature {
   ratio?: number;
 }
 
-export type SheetFeature = SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smrelief", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+/**
+ * Sheet metal gusset: a stiffening rib pressed across a bend (SolidWorks' Sheet Metal Gusset, flat type). The rib
+ * stands inside the bend, a triangle `depth` along each face from their virtual sharp, `width` wide; the outside gets
+ * the matching groove, so the walls keep the sheet's thickness. The flat pattern leaves it out.
+ */
+export interface SmGussetFeature {
+  id: string; type: "smgusset"; name: string; suppressed?: boolean;
+  /** The bend (`<feature>:b<n>`). */
+  bend: string;
+  /** Centre of the rib along the bend from its start end; absent = the middle. */
+  at?: Num;
+  /** Profile length along each face from the inside virtual sharp. */
+  depth: Num;
+  /** Rib width (outside). */
+  width: Num;
+}
+
+export type SheetFeature = SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
