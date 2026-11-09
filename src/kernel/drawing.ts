@@ -359,7 +359,8 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
 export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
 export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string }
-export interface Topo { edges: MEdge[]; cyls: MCyl[] }
+/** `com`: the shape's centre of mass (uniform density), for a drawing's centre of mass point; absent for sheets. */
+export interface Topo { edges: MEdge[]; cyls: MCyl[]; com?: V3 }
 
 /** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
 export function topology(oc: any, shape: any, names?: string[]): Topo {
@@ -417,7 +418,14 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     if (v1 > v0) cyls.push({ o, ax, r, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
   }
   emap.delete(); fmap.delete();
-  return { edges, cyls };
+  let com: V3 | undefined;
+  try {
+    const g = new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(shape, g, true, false, false);
+    if (Math.abs(g.Mass()) > 1e-9) { const c = g.CentreOfMass(); com = [c.X(), c.Y(), c.Z()]; }
+    g.delete();
+  } catch { /* no volume */ }
+  return com ? { edges, cyls, com } : { edges, cyls };
 }
 
 // ---------- geometry compare (FR-PDM-050) ----------
