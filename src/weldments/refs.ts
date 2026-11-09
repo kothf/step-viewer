@@ -5,6 +5,7 @@ export function weldRefs(f: Feature, faces: string[], features: string[]) {
   if (f.type === "member") {
     for (const s of f.segs) if (!features.includes(s.sketch)) features.push(s.sketch);
     if (f.profile === "sketch" && f.psketch && !features.includes(f.psketch)) features.push(f.psketch);
+    if (f.align && !features.includes(f.align.sketch)) features.push(f.align.sketch);
   }
   if (f.type === "trimext") { faces.push(...f.bodies.map(x => x.name)); if (f.boundary) faces.push(f.boundary.name); if (f.plane && "plane" in f.plane && !features.includes(f.plane.plane)) features.push(f.plane.plane); if (f.plane && "face" in f.plane) faces.push(f.plane.face.name); }
   if (f.type === "endcap") faces.push(...f.faces.map(x => x.name));

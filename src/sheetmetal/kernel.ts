@@ -4,7 +4,7 @@
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
-import { cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -59,6 +59,13 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the vent boundary.");
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
     return { body: ventCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
+  }
+  if (f.type === "smgusset") {
+    if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    const { state, mark } = gussetSheet(sm, f);
+    let out = api.bool("fuse", body, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib`), f.id);
+    out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g`), f.id);
+    return { body: out, sm: state };
   }
   if (f.type === "smrelief") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
@@ -309,10 +316,12 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
   // Nothing taken out: the folded body is exactly the panels and bends.
   if (Math.abs(body - sheet) <= sheet * 1e-7) return [];
   const out: Named[] = [];
+  // Gussets are pressed, not cut: their grooves stay out of the flat pattern.
+  const grooves = (st.gussets ?? []).map(g => grooveOf(api, g, fid));
   for (const { p, solid } of panels) {
     const v = volumeOf(api, solid.shape);
     let gone = api.bool("cut", solid, folded, `${fid}:cut`);
-    for (const k of keep.get(p.id) ?? []) gone = api.bool("cut", gone, k, `${fid}:cut`);
+    for (const k of [...keep.get(p.id) ?? [], ...grooves]) gone = api.bool("cut", gone, k, `${fid}:cut`);
     if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
     out.push(moved(api, gone, flatTrsf(api, p.M, st.root)));
   }
@@ -320,7 +329,8 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
   for (const b of st.bends) {
     const solid = bendSolid(api, b, st.T);
     const v = volumeOf(api, solid.shape);
-    const gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    let gone = api.bool("cut", solid, folded, `${fid}:cut`);
+    for (const k of grooves) gone = api.bool("cut", gone, k, `${fid}:cut`);
     if (volumeOf(api, gone.shape) <= v * 1e-6) continue;
     out.push(...unrolled(api, st, b, gone, fid));
   }
@@ -483,6 +493,21 @@ function footprint(api: SheetApi, M: Mat, loop: Seg[], T: number, tag: string): 
   const faces = api.sub(shape, "FACE");
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
 }
+
+/** A prism of a flat polygon given by its 3D corners, swept `w` along `e`. */
+function prism3(api: SheetApi, pts: V3[], e: V3, w: number, tag: string): Named {
+  const oc = api.oc;
+  const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
+  const mk = new oc.BRepBuilderAPI_MakeWire_1();
+  pts.forEach((q, i) => mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(P(q), P(pts[(i + 1) % pts.length])).Edge()));
+  const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
+  const shape = prism(api, face, [e[0] * w, e[1] * w, e[2] * w]);
+  const faces = api.sub(shape, "FACE");
+  return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
+}
+
+/** A gusset's groove, as the flat pattern leaves it out. */
+const grooveOf = (api: SheetApi, g: GussetMark, fid: string) => prism3(api, g.groove, g.e, g.wg, `${fid}:gk`);
 
 /**
  * Corner relief: each outline (flat coordinates) is cut from every panel it overlaps, where the panel lies, and from

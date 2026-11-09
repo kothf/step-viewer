@@ -104,6 +104,11 @@ export interface Mate {
   t0?: [Tf, Tf];
   /** Concentric: b may not turn about the shared axis relative to a (SolidWorks' Lock rotation). */
   lockRot?: boolean;
+  /**
+   * Angle: the direction (in a's part coordinates) the angle turns about, a × b when the mate was made. With it the
+   * angle is signed (−180..180°), so +θ and −θ are different positions; without it, 0..180° (exam #72).
+   */
+  about?: V3;
   /** Lock only: hold just the orientation ("rot") or just the travel along `along` (in a's coordinates, "slide"); motion study motors use these. */
   keep?: "rot" | "slide";
   along?: V3;

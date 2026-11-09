@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import { cutList, type WeldHost } from "../../src/weldments/kernel";
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
-import type { Feature, PartDoc, SketchFeature, SkEnt, V2, Sketch3dFeature } from "../../src/model/types";
+import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { MemberFeature } from "../../src/weldments/types";
 import { cutKey } from "../../src/weldments/types";
 import { occ } from "./occ";
@@ -96,6 +96,31 @@ test("structural members: a mitred rectangular frame and its cut list (FR-FT-121
   const ib = run(m, doc([open, { ...butt, profile: "ipe", size: "200", anchor: "b", angle: { v: Math.PI / 2 }, corner: "none" }]));
   assert.equal(ib.info.length, 2);
   near(ib.volume, profileArea(profileShape("ipe", "200")!) * 800, 2e-4);
+
+  // Alignment: an RHS 80x40 along X on XY has its vertical axis on Z by default; aligning that axis with a
+  // 3D sketch line along Y lays it on its side, so its Y and Z sizes swap.
+  const oc = await occ();
+  const size = (shape: any): V3 => {
+    const b = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(shape, b, false);
+    const lo = b.CornerMin(), hi = b.CornerMax();
+    return [hi.X() - lo.X(), hi.Y() - lo.Y(), hi.Z() - lo.Z()].map(v => Math.round(v * 10) / 10) as V3;
+  };
+  const bar = poly("x", [[0, 0], [500, 0]], false);
+  const ax: Sketch3dFeature = { id: "ax", type: "sketch3d", name: "3DSketch1", rels: [], dims: [], pts: [{ id: "P", p: [0, 0, 0] }, { id: "Q", p: [0, 300, 0] }, { id: "R", p: [300, 0, 0] }], segs: [{ id: "ly", t: "line", pts: ["P", "Q"] }, { id: "lx", t: "line", pts: ["P", "R"] }] };
+  const rhs: MemberFeature = { id: "r", type: "member", name: "Structural Member1", profile: "rhs", size: "80x40x4", segs: lines(bar), corner: "none" };
+  const base = size(run(m, doc([bar, ax, rhs])).body!.shape);
+  const upY = size(run(m, doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "ly", axis: "v" } }])).body!.shape);
+  assert.deepEqual([upY[0], upY[1], upY[2]], [base[0], base[2], base[1]]);
+  assert.notDeepEqual(base[1], base[2]);
+  // Its horizontal axis along Y is the usual placement; a line along the member itself changes nothing.
+  assert.deepEqual(size(run(m, doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "ly", axis: "h" } }])).body!.shape), base);
+  assert.deepEqual(size(run(m, doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "lx", axis: "v" } }])).body!.shape), base);
+  // The rotation angle turns the aligned profile on: 90° brings it back.
+  assert.deepEqual(size(run(m, doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "ly", axis: "v" }, angle: { v: Math.PI / 2 } }])).body!.shape), base);
+  // A lost alignment line is an error, not a silent fallback.
+  const lost = m.evaluate(doc([bar, ax, { ...rhs, align: { sketch: "ax", ent: "gone", axis: "v" } }])).statuses.find(x => !x.ok);
+  assert.match(lost?.message ?? "", /alignment line/);
 });
 
 test("trim/extend, end caps, gussets and weld beads (FR-FT-121)", async () => {
