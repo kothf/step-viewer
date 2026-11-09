@@ -2968,6 +2968,8 @@ export const RU: Record<string, string> = {
   "Constant speed": "Постоянная скорость",
   "Oscillating": "Колебательный",
   "Data points": "Точки данных",
+  "Cubic spline": "Кубический сплайн",
+  "Akima": "Акима",
   "Expression": "Выражение",
   "Expression: {m}": "Выражение: {m}",
   "The expression must give a number at every time.": "Выражение должно давать число в любой момент времени.",
