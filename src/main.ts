@@ -1964,6 +1964,8 @@ $$("#views button").forEach(b => b.addEventListener("click", () => {
 }));
 /** World box of the picked face, edge or parts, for Zoom to selection (FR-UI-103). */
 function selectionBox(): THREE.Box3 | null {
+  const sk = modeller.sketchSelectionBox();
+  if (sk) return sk;
   const s = state.selection;
   const b = new THREE.Box3();
   if (s?.face) {

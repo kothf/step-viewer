@@ -483,6 +483,56 @@ export class SketchEditor {
   }
 
   /**
+   * The sketch right-click menu (FR-SK-045), for a right-click without movement at `e`: rows of
+   * [label, action, icon], null = separator. An item under the cursor that is not selected becomes the selection.
+   * With the line tool in the middle of a chain the chain ends at once (as a double-click) and null comes back.
+   */
+  contextMenu(e: { clientX: number; clientY: number }): ([string, () => void, string?] | null)[] | null {
+    const d = this.draft;
+    if (this.tool === "line" && d.pts.length) { this.doubleClick(); this.statusHint(); return null; }
+    const rows: ([string, () => void, string?] | null)[] = [];
+    const sep = () => { if (rows.length && rows.at(-1) !== null) rows.push(null); };
+    if ((this.tool === "spline" || this.tool === "sspline") && d.pts.length >= 2) rows.push([t("End chain"), () => this.drawClick(d.pts.at(-1)!, { detail: 2 })]);
+    if (d.pts.length || this.dimDraft.picks.length) rows.push([t("Cancel drawing"), () => this.setTool(this.tool), "✕"]);
+    if (this.tool !== "select") rows.push([t("Select"), () => this.setTool("select")]);
+    else {
+      const p = this.uv(e as PointerEvent);
+      const h = p ? this.hits(p)[0] : undefined;
+      if (h && h.kind !== "dim" && h.kind !== "rel" && !this.selection.has(h.id)) { this.selection = new Set([h.id]); this.render(); this.emitSel(); }
+    }
+    if (!this.selection.size) return rows;
+    sep();
+    const ids = [...this.selection];
+    const one = ids.length === 1 ? this.ent(ids[0]) : undefined;
+    if (one && (one.t === "line" || one.t === "arc") && !one.cons) rows.push([t("Select chain"), () => this.select(this.chainOf(one.id).segs.map(s => s.id))]);
+    const curves = ids.map(id => this.ent(id)).filter(x => x && x.t !== "point");
+    if (curves.length) rows.push([curves.every(x => x!.cons) ? t("Normal geometry") : t("Construction geometry"), () => this.toggleConstruction()]);
+    const rels = this.validRelations();
+    if (rels.length) { sep(); for (const k of rels) rows.push([t(REL_NAME[k]), () => this.addRelation(k), REL_GLYPH[k]]); }
+    if (this.canMerge()) rows.push([t("Merge points"), () => this.mergePoints()]);
+    sep();
+    rows.push([t("Delete"), () => this.deleteSelection(), "🗑"]);
+    rows.push([t("Zoom to selection"), () => { const b = this.selectionBox(); if (b) this.host.viewer.fit(true, b); }]);
+    return rows;
+  }
+
+  /** World box of the selected sketch items, with a margin (Zoom to selection while sketching). */
+  selectionBox(): THREE.Box3 | null {
+    const b = new THREE.Box3();
+    for (const id of this.selection) {
+      const e = id === ORIGIN ? null : this.ent(id);
+      if (id === ORIGIN) b.expandByPoint(this.w([0, 0]));
+      else if (!e) continue;
+      else if (e.t === "circle") { const c = this.pt(e.c); for (const s of [[1, 0], [-1, 0], [0, 1], [0, -1]]) b.expandByPoint(this.w([c[0] + s[0] * e.r, c[1] + s[1] * e.r])); }
+      else if (e.t === "point") b.expandByPoint(this.w([e.x, e.y]));
+      else for (const q of refPts(e)) b.expandByPoint(this.w(this.pt(q)));
+    }
+    if (b.isEmpty()) return null;
+    const s = b.getSize(new THREE.Vector3());
+    return b.expandByScalar(Math.max(s.x, s.y, s.z, 1) * 0.1);
+  }
+
+  /**
    * What a dragged point would join (FR-SK-043): another point or the origin (coincident), else a curve (on curve).
    * Points and curves of the entities that use the dragged point are left out, so a line never folds onto itself.
    */
