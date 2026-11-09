@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.307.0] - 2026-11-09
+
+### Added
+
+- **Cross Break (FR-FT-120)**: Sheet Metal → Cross Break marks flat faces of the sheet with two crossed lines from corner to corner, the shallow stiffening break used on large panels, like SolidWorks' Cross-Break. Click the top or bottom faces, set the break radius and angle, and Reverse direction to raise it the other way. The lines are drawn on the model and on the flattened part, and the flat pattern DXF gets them on a CROSS_BREAK layer; the solid itself stays flat, as in SolidWorks.
+
 ## [1.304.0] - 2026-11-09
 
 ### Added
@@ -1779,7 +1785,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.304.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.307.0...HEAD
+[1.307.0]: https://github.com/kothf/step-viewer/compare/v1.304.0...v1.307.0
 [1.304.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.304.0
 [1.303.0]: https://github.com/kothf/step-viewer/compare/v1.302.0...v1.303.0
 [1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
