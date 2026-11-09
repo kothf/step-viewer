@@ -3991,4 +3991,6 @@ export const RU: Record<string, string> = {
   "That document is no longer in the recent list.": "Этого документа больше нет в списке последних.",
   "Title, part number, material and other properties of the document": "Название, обозначение, материал и другие свойства документа",
   "Zip file name": "Имя файла .zip",
+  "Show the feature tree": "Показать дерево конструирования",
+  "Fold the feature tree": "Свернуть дерево конструирования",
 };
