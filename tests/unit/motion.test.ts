@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, type Geo } from "../../src/asm/solver";
 import { IDENTITY, applyDir, applyPoint, compose, invert, translation } from "../../src/asm/math";
-import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, orbitKeys, parsePoints, playTime, pointsAt, valueAt } from "../../src/motion/evaluate";
+import { axisLock, cameraAt, ease, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, exprValue, motorAmount, orbitKeys, parsePoints, parseSegments, playTime, pointsAt, SEG_SHAPES, segmentsAt, segShape, valueAt } from "../../src/motion/evaluate";
 import { encodeGif, indexPixels, lzw, palette, unlzw } from "../../src/motion/gif";
 import { accels, alertSpans, gapCsv, plotFile, mateCsv, outOfRange, tripFrame, mateMeasures, pathLength, plotSvg, rates, relativeFrames, speeds, traceAngles, traceCsv, tracePoints, traceSeries } from "../../src/motion/trace";
 import type { AsmDoc, Mate } from "../../src/asm/types";
@@ -423,4 +423,24 @@ test("motor expression profile", () => {
   near(motorAmount(m, 0), 0);
   near(motorAmount({ ...m, motion: "linear", flip: true }, 3), -180);
   assert.equal(motorAmount({ ...m, expr: "oops(" }, 2), 0);
+});
+
+test("motor segments: shapes, chaining and parsing", () => {
+  const near = (a: number, b: number, e = 1e-9) => assert.ok(Math.abs(a - b) < e, `${a} ≉ ${b}`);
+  for (const k of SEG_SHAPES) { near(segShape(k, 0), 0); near(segShape(k, 1), 1); near(segShape(k, 0.5), 0.5); }
+  near(segShape("cubic", 0.25), 0.15625);
+  near(segShape("harmonic", 1 / 3), 0.25);
+  near(segShape("cycloid", 0.25), 0.25 - 1 / (2 * Math.PI));
+  // Rise 0 → 10 by 1 s (cycloid), dwell to 2 s, return by 3 s (linear), then held.
+  const segs = parseSegments("1, 10, cycloidal\n2; 10\n3, 0, l # back");
+  assert.deepEqual(segs, [[1, 10, "cycloid"], [2, 10, "linear"], [3, 0, "linear"]]);
+  near(segmentsAt(segs!, 0.5), 5); near(segmentsAt(segs!, 1.5), 10); near(segmentsAt(segs!, 2.5), 5);
+  near(segmentsAt(segs!, 9), 0); near(segmentsAt(segs!, -1), 0);
+  assert.equal(parseSegments("1, 5, spiral"), null);
+  assert.equal(parseSegments("1, 5\n1, 6"), null);
+  assert.equal(parseSegments("0, 5"), null);
+  assert.equal(parseSegments(""), null);
+  assert.deepEqual(parseSegments("2, 90, h", Math.PI / 180), [[2, Math.PI / 2, "harmonic"]]);
+  const m = { id: "m", kind: "motor", mate: "x", motion: "linear", profile: "segments", speed: 0, start: 1, end: 4, segs, flip: true } as const;
+  near(motorAmount({ ...m, segs: segs! }, 1.5), -5);
 });

@@ -636,7 +636,12 @@ export function solve(sk: SketchFeature, drag?: Drag): SolveResult {
   const sys = build(sk);
   const err = newton(sys, scale);
   const ok = err <= TOL * scale * 1e3;
-  if (ok) writeBack(sk, sys);
+  if (ok) {
+    writeBack(sk, sys);
+    // Reference dimensions keep the value the geometry has now, so the property panel, equations and
+    // drawings never show the value from when they were placed.
+    for (const d of sk.dims) if (d.driven) { const v = measureDim(sk, d); if (Number.isFinite(v) && v !== d.val.v) d.val = { ...d.val, v }; }
+  }
   const { rank, pinned } = analyse(sys);
   const defined = new Set<string>();
   for (const [id, vars] of sys.entVars) if (vars.every(v => pinned[v])) defined.add(id);
@@ -683,9 +688,31 @@ export function tryAdd(sk: SketchFeature, item: { rel?: SkRel; dim?: SkDim }): {
   const next: SketchFeature = structuredClone(sk);
   if (item.rel) next.rels.push(item.rel);
   if (item.dim) next.dims.push(item.dim);
+  if (item.rel) holdOthers(next, item.rel);
   const result = solve(next);
   if (result.status !== "ok") return { ok: false, redundant: false, sketch: sk, result };
   return { ok: true, redundant: result.dof === before.dof && !item.dim?.driven, sketch: next, result };
+}
+
+/**
+ * A new relation between points and curves moves the points, as in SolidWorks: a free point given a
+ * Midpoint on a line goes to the middle instead of the line (and what hangs on it) shifting towards it.
+ * Solves once with every other point held; when that works, those positions are the start of the real
+ * solve, which then has nothing left to move. Otherwise the usual least-movement solve decides.
+ */
+function holdOthers(sk: SketchFeature, rel: SkRel) {
+  const ent = new Map(sk.ents.map(e => [e.id, e] as const));
+  const movers = rel.e.filter(id => id !== ORIGIN && ent.get(id)?.t === "point");
+  if (!movers.length || movers.length === rel.e.length) return;
+  const held = sk.ents.filter(e => e.t === "point" && !movers.includes(e.id)).map(e => e.id);
+  const trial: SketchFeature = structuredClone(sk);
+  trial.rels.push({ id: "__hold", t: "fix", e: held });
+  if (solve(trial).status !== "ok") return;
+  const moved = new Map(trial.ents.map(e => [e.id, e] as const));
+  for (const e of sk.ents) {
+    const m = moved.get(e.id);
+    if (e.t === "point" && m?.t === "point") { e.x = m.x; e.y = m.y; }
+  }
 }
 
 function analyseOnly(sk: SketchFeature) {

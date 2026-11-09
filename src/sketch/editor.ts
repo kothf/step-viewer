@@ -1506,7 +1506,9 @@ export class SketchEditor {
   private dimClick(p: V2, e: PointerEvent) {
     const dd = this.dimDraft;
     // With one item picked, a click on another item (in the sketch or on the model) dimensions the pair.
-    const other = dd.dim && dd.picks.length === 1 ? this.hits(p).find(x => x.id !== dd.picks[0].id) ?? (this.hits(p).length ? undefined : this.modelSnapAt(p, false)) : undefined;
+    // Smart Dimension takes a model edge whole, as SolidWorks does: its midpoint is not offered.
+    const modelPick = () => { const ms = this.modelSnapAt(p, false); return ms?.at === "mid" ? { ...ms, p, at: "on" as const } : ms; };
+    const other = dd.dim && dd.picks.length === 1 ? this.hits(p).find(x => x.id !== dd.picks[0].id) ?? (this.hits(p).length ? undefined : modelPick()) : undefined;
     if (other) dd.dim = null;
     if (dd.dim) {
       // Otherwise the next click places the dimension and asks for its value.
@@ -1519,7 +1521,7 @@ export class SketchEditor {
     let h = this.hits(p)[0];
     if (!h) {
       // A model vertex or edge: converted as construction geometry with an On edge relation, then dimensioned.
-      const ms = this.modelSnapAt(p, false);
+      const ms = modelPick();
       if (ms) {
         const r = this.materialize(ms);
         const id = r.id ?? r.curve;

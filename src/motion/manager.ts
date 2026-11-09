@@ -14,7 +14,7 @@ import type { AsmController } from "../asm/controller";
 import type { Mate, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
 import type { Viewer } from "../viewer/Viewer";
-import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, parsePoints, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
+import { AXIS_MATES, VALUE_MATES, axisLock, cameraAt, explodeKeys, fadeKeys, frameAt, poseAt, posed, frameCount, motorAmount, orbitKeys, exprValue, parsePoints, parseSegments, playTime, type PointsFit, sortKeys, valueAt } from "./evaluate";
 import { encodeGif } from "./gif";
 import { frameName, frameTimes } from "./frames";
 import { zip } from "../model/zip";
@@ -39,7 +39,7 @@ const same = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 
 /** Key interpolations, as SolidWorks' key point menu lists them. */
 const FITS: [PointsFit, string][] = [["linear", "Linear"], ["cubic", "Cubic spline"], ["akima", "Akima"]];
-const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["expr", "Expression"]];
+const PROFILES: [MotorTrack["profile"], string][] = [["constant", "Constant speed"], ["distance", "Distance"], ["oscillate", "Oscillating"], ["points", "Data points"], ["segments", "Motion segments"], ["expr", "Expression"]];
 const INTERPS: [Interp, string][] = [["linear", "Linear"], ["snap", "Snap (jump)"], ["easein", "Ease in"], ["easeout", "Ease out"], ["ease", "Ease in/out"]];
 const MAX_ZOOM = 64;
 const interpOf = (raw: string): Interp | undefined => (INTERPS.some(([v]) => v === raw) && raw !== "linear" ? raw as Interp : undefined);
@@ -1126,6 +1126,8 @@ export class MotionManager {
             : tr.profile === "points"
               ? `<label class="mo-f mo-pts"><span>${esc(t("Data points"))}</span><textarea data-p="pts" rows="4" spellcheck="false" aria-label="${esc(t("Time (s) and value per line"))}" title="${esc(t("One row per line: time after the motor start (s), then the value ({u})", { u: rot ? "°" : "mm" }))}">${esc((tr.pts ?? []).map(([a, b]) => `${fmt(a)}, ${fmt(rot ? b / DEG : b)}`).join("\n"))}</textarea></label>`
                 + `<label class="mo-f"><span>${esc(t("Interpolation"))}</span><select data-p="fit">${FITS.map(([k, l]) => `<option value="${k}"${(tr.fit ?? "linear") === k ? " selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>`
+              : tr.profile === "segments"
+                ? `<label class="mo-f mo-pts"><span>${esc(t("Motion segments"))}</span><textarea data-p="segs" rows="4" spellcheck="false" translate="no" aria-label="${esc(t("End time (s), end value and shape per line"))}" title="${esc(t("One row per segment: its end time after the motor start (s), its end value ({u}) and its shape: linear, cubic, quintic, harmonic or cycloid. Each segment starts where the last one ended, the first at 0.", { u: rot ? "°" : "mm" }))}">${esc((tr.segs ?? []).map(([a, b, k]) => `${fmt(a)}, ${fmt(rot ? b / DEG : b)}, ${k}`).join("\n"))}</textarea></label>`
               : tr.profile === "expr"
                 ? `<label class="mo-f"><span>${esc(t("Expression"))}</span><input type="text" data-p="expr" class="mo-expr" spellcheck="false" translate="no" value="${esc(tr.expr ?? "")}" title="${esc(t("Displacement ({u}) as a formula in t, the seconds after the motor start; sin and cos take radians", { u: rot ? "°" : "mm" }))}" /><span class="muted">${esc(rot ? "°" : "mm")}</span></label>`
                 : field(t("Speed"), "speed", fmt(tr.speed), rot ? t("rpm") : t("mm/s")))
@@ -1440,6 +1442,17 @@ export class MotionManager {
       this.edit(st => { const tr = st.tracks.find(k => k.id === sel.track); if (tr?.kind === "motor") tr.expr = src; });
       this.render(); this.showAt(this.time); return;
     }
+    if (p === "segs" && tr0.kind === "motor") {
+      const segs = parseSegments(raw, tr0.motion === "rotary" ? DEG : 1);
+      if (!segs) { bad(); toast(t("Type one row per segment: end time, end value and shape, with the times increasing."), "warn"); return; }
+      this.edit(st => {
+        const tr = st.tracks.find(k => k.id === sel.track);
+        if (tr?.kind !== "motor") return;
+        tr.segs = segs;
+        tr.end = Math.max(tr.start, Math.min(st.duration, tr.start + segs[segs.length - 1][0]));
+      });
+      this.render(); this.showAt(this.time); return;
+    }
     if (p === "pts" && tr0.kind === "motor") {
       const pts = parsePoints(raw, tr0.motion === "rotary" ? DEG : 1);
       if (!pts) { bad(); toast(t("Type at least two rows of time and value, with the times increasing."), "warn"); return; }
@@ -1464,6 +1477,7 @@ export class MotionManager {
           tr.profile = raw as MotorTrack["profile"];
           if (tr.profile === "distance" && tr.dist === undefined) tr.dist = rot ? Math.PI / 2 : 10;
           if (tr.profile === "expr" && !tr.expr) tr.expr = rot ? "90*sin(2*pi*t)" : "10*sin(2*pi*t)";
+          if (tr.profile === "segments" && !tr.segs) { const L = Math.max(0.3, tr.end - tr.start); tr.segs = [[L / 3, rot ? Math.PI / 2 : 10, "cycloid"], [(2 * L) / 3, rot ? Math.PI / 2 : 10, "linear"], [L, 0, "cycloid"]]; }
           if (tr.profile === "points" && !tr.pts) tr.pts = [[0, 0], [Math.max(0.1, (tr.end - tr.start) / 2), rot ? Math.PI : 10], [Math.max(0.2, tr.end - tr.start), 0]];
         }
         else if (p === "fit") { if (raw === "cubic" || raw === "akima") tr.fit = raw; else delete tr.fit; }

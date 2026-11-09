@@ -5307,6 +5307,9 @@ try {
     await mp.mouse.up();
     await shown(2);
     const drag = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return [t[3], t[7], t[11]].map(v => Math.round(v * 1e4) / 1e4); });
+    // ...but it turns about the axis it may still turn about, as a wheel does (exam bug 51).
+    const turn = await mp.evaluate(() => { const t = window.__sv.asm.doc.components[1].tf; return { ang: Math.round(Math.atan2(t[4], t[0]) * 1000) / 1000, z: t[10] }; });
+    check(Math.abs(turn.ang) > 0.05 && Math.abs(turn.z - 1) < 1e-6, `asm 1.317: dragging a pin with only its turn free turns it about its axis (${JSON.stringify(turn)})`);
     // Delete the coincident mate from the tree: the pin can slide along the axis again.
     await mp.hover("#asm-tree .ft-mate >> nth=1");
     await mp.click('#asm-tree .ft-mate >> nth=1 >> [data-a="del"]');
@@ -5964,6 +5967,12 @@ try {
     await mp.evaluate(() => window.__sv.motion.seek(0.3));
     const ptsCubic = await pos();
     const ptsFit = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").fit);
+    // Motion segments: a harmonic rise to 90° over 0.6 s is a quarter of the way (22.5°) at 0.2 s, a whole frame.
+    await setP("select[data-p=profile]", "segments");
+    await setP("textarea[data-p=segs]", "0.6, 90, harmonic\n1.2, 0, cyc");
+    await mp.evaluate(() => window.__sv.motion.seek(0.2));
+    const segAt = await pos();
+    const segRows = await mp.evaluate(() => window.__sv.motion.study.tracks.find(x => x.kind === "motor").segs.map(r => r[2]).join(","));
     // Expression: 180*t degrees, so 90° at 0.5 s; text that doesn't parse is refused.
     await setP("select[data-p=profile]", "expr");
     await setP("input[data-p=expr]", "180*t");
@@ -5971,7 +5980,7 @@ try {
     const exprAt = await pos();
     await setP("input[data-p=expr]", "sin(");
     const exprBad = await mp.evaluate(() => [document.querySelector("#motion input[data-p=expr]").getAttribute("aria-invalid"), window.__sv.motion.study.tracks.find(x => x.kind === "motor").expr]);
-    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, exprAt, exprBad };
+    const motorProf = { dist, ptsAt, ptsEnd, ptsBad, ptsCubic, ptsFit, segAt, segRows, exprAt, exprBad };
     // Animation wizard: explode over the study, and rotate the model (camera keys).
     const cam0 = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
     await mp.evaluate(() => { const m = window.__sv.motion; m.edit(s => { s.tracks = s.tracks.filter(k => k.kind !== "motor"); }); m.wizard("explode"); m.wizard("orbit"); m.seek(5); });
@@ -6321,13 +6330,13 @@ try {
     check(keys.n === 1 && JSON.stringify(keys.keys) === "[[0,10],[5,40]]" && keys.rows === 2
       && Math.abs(mid.z - 15) < 0.01 && Math.abs(end.z - 30) < 0.01 && Math.abs(Math.abs(turn.rz) - Math.PI) < 0.01 && Math.abs(turn.z - 3) < 0.01
       && dup.n === 1 && dup.other && dup.tracks && dup.undone && / \(2\)$/.test(dup.name) && dup.shown === dup.name
-      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
+      && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
       && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -7991,6 +8000,45 @@ try {
     await mp.evaluate(() => window.__sv.modeller.cancel());
     await settle();
     check(turned, `model 1.89: middle-drag orbits the view while sketching (${JSON.stringify({ c0, c1 })})`);
+    await ctx.close();
+  }
+
+  // --- 1.317: Smart Dimension takes a model edge clicked at its middle, and the sketch status passes clicks through (exam bugs 49, 46) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const mp = await ctx.newPage();
+    mp.on("pageerror", e => errors.push(e.message));
+    mp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await mp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await mp.goto(`${origin}/index.html?debug`);
+    await mp.waitForFunction(() => window.__sv);
+    const idle = () => mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last(), null, { timeout: 120000 });
+    const settle = async () => { await mp.waitForTimeout(150); await idle(); await mp.waitForTimeout(150); await idle(); };
+    const scr = w => mp.evaluate(w => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const q = new v.camera.position.constructor(...w).project(v.camera); return [((q.x + 1) / 2) * r.width + r.left, ((1 - q.y) / 2) * r.height + r.top]; }, w);
+    await mp.click("#new-part");
+    await mp.waitForFunction(() => window.__sv.model?.store);
+    await mp.evaluate(() => window.__sv.model.store.change("Plate", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y }), Ln = (id, a, b) => ({ id, t: "line", a, b });
+      d.features.push({ id: "b", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("b1", -20, -10), P("b2", 20, -10), P("b3", 20, 10), P("b4", -20, 10), Ln("bl1", "b1", "b2"), Ln("bl2", "b2", "b3"), Ln("bl3", "b3", "b4"), Ln("bl4", "b4", "b1")] },
+        { id: "e", type: "extrude", name: "Boss-Extrude1", sketch: "b", op: "boss", end: "blind", depth: { v: 5 } },
+        { id: "k", type: "sketch", name: "Sketch2", plane: { face: { name: "e:end" } }, rels: [], dims: [], ents: [] });
+    }));
+    await settle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("k"));
+    await settle();
+    await mp.waitForTimeout(500);
+    const picks = [];
+    for (const w of [[-20, 0, 5], [0, 10, 5], [-20, 10, 5]]) {
+      await mp.evaluate(() => window.__sv.model.editor().setTool("dim"));
+      const [x, y] = await scr(w);
+      await mp.mouse.move(x + 4, y + 3); await mp.mouse.move(x, y); await mp.mouse.click(x, y);
+      await mp.waitForTimeout(150);
+      picks.push(await mp.evaluate(() => { const ed = window.__sv.model.editor(); return [...ed.selection].map(id => ed.sk.ents.find(e => e.id === id)?.t).join(","); }));
+      await mp.keyboard.press("Escape"); await mp.waitForTimeout(80);
+    }
+    check(picks.join("|") === "line|line|point", `model 1.317: Smart Dimension picks model edges at their middle and a model corner (${picks.join("|")})`);
+    const through = await mp.evaluate(() => { const r = document.querySelector("#mc-status").getBoundingClientRect(); const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { w: r.width, el: el?.tagName }; });
+    check(through.w > 0 && through.el === "CANVAS", `model 1.317: clicks on the sketch status line reach the view (${JSON.stringify(through)})`);
     await ctx.close();
   }
 
