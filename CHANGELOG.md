@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.314.0] - 2026-11-09
+
+### Added
+
+- **Vent (FR-FT-120)**: Sheet Metal → Vent cuts ventilation openings through a flat face of the sheet from one sketch on it, like SolidWorks' Vent. The largest closed loop is the boundary; lines that end on it are ribs and circles inside it are spars, both kept as material of the width you set (Rib width, Spar width). The openings show in the flattened part and its DXF like any other cut.
+
 ## [1.309.0] - 2026-11-09
 
 ### Added
@@ -1807,7 +1813,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.309.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.314.0...HEAD
+[1.314.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.314.0
 [1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
