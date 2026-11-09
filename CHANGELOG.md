@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Coincident mate between two flat faces: the first guess is face to face; when that cannot be solved and the aligned one can (a part that cannot turn over, such as a die block on a pin), the panel takes Aligned instead of refusing the mate. A choice made in the panel stays.
 - Screw mates: moving the nut (a distance mate, a drag) now turns the screw. The solver measured axis offsets × the assembly size, which made its damping swamp the screw's gentle turn, so a handwheel driving a fork could not move; offsets are now in mm, the screw keeps its turn count within a step, and the damping adapts (Levenberg–Marquardt).
 - Overall size of a modelled part is taken from the exact geometry (a Ø15 cylinder read 14.995 × 14.998 from its mesh).
+
 ## [1.356.0] - 2026-11-09
 
 ### Added
