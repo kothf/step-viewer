@@ -6134,9 +6134,22 @@ try {
       document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true }));
       const moved = m.study.tracks.find(k => k.kind === "look").keys.map(k => k.t);
       const label = document.querySelector(`#motion [data-track="${tr.id}"] .mo-kind`)?.textContent;
+      // Colour keys: red at the start, blue at the end, purple between; the own colour comes back with the track.
+      const own = p().material.color.getHexString();
+      const setKey = (i, c) => {
+        m.sel = { track: tr.id, key: i }; m.render();
+        const box = document.querySelector("#motion input[data-p=cuse]"); box.checked = true; box.dispatchEvent(new Event("change", { bubbles: true }));
+        const inp = document.querySelector("#motion input[data-p=c]"); inp.value = c; inp.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      setKey(0, "#ff0000"); setKey(1, "#0000ff");
+      const lastT = m.study.tracks.find(k => k.kind === "look").keys[1].t;
+      m.seek(0); const c0 = p().material.color.getHexString();
+      m.seek(lastT / 2); const cMid = p().material.color.getHSL({}).h;
+      const swatch = document.querySelectorAll("#motion .mo-key.colored").length;
       m.deleteTrack(tr.id);
       m.seek(5);
-      return { listed, half, end, moved, label, back: { op: p().opacity, vis: p().visible } };
+      const color = { c0, purple: cMid > 0.7 && cMid < 0.95, swatch, back: p().material.color.getHexString() === own };
+      return { listed, half, end, moved, label, color, back: { op: p().opacity, vis: p().visible } };
     });
     // Recording: a GIF of a 1 s study and a WebM video.
     const rec = await mp.evaluate(async () => {
@@ -6464,10 +6477,10 @@ try {
       && Math.abs(Math.abs(dist.rz) - Math.PI / 2) < 0.01 && Math.abs(Math.abs(ptsAt.rz) - Math.PI / 4) < 0.01 && ptsEnd === 1 && ptsBad === "true" && Math.abs(Math.abs(ptsCubic.rz) - 0.6875 * Math.PI / 2) < 0.01 && ptsFit === "cubic" && Math.abs(Math.abs(segAt.rz) - Math.PI / 8) < 0.01 && segRows === "harmonic,cycloid" && motorPlot === "°/s|true|true|vel" && Math.abs(Math.abs(exprAt.rz) - Math.PI / 2) < 0.01 && exprBad[0] === "true" && exprBad[1] === "180*t"
       && Math.abs(exploded.x - 50) < 0.01
       && look.listed && Math.abs(look.half.op - 0.5) < 0.02 && look.half.vis && look.half.mat && !look.end.vis && look.label === "Appearance"
-      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
+      && Math.abs(look.moved[1] - (5 - 1 / 30)) < 1e-6 && look.back.op === 1 && look.back.vis && look.color.c0 === "ff0000" && look.color.purple && look.color.swatch === 2 && look.color.back && Math.abs(Math.hypot(cam1.p[0] - cam1.t[0], cam1.p[1] - cam1.t[1]) - Math.hypot(cam0[0] - cam1.t[0], cam0[1] - cam1.t[1])) < 1e-3 * Math.hypot(...cam0)
       && rec.gif === "GIF89a" && rec.gifSize > 1000 && rec.pngs.pk === "PK" && rec.pngs.n === rec.pngs.want && /_0001\.png$/.test(rec.pngs.name) && rec.webm === "1a45dfa3" && rec.webmSize > 1000 && undo === 5
       && !ru.bad.length && ru.title === "Исследование движения" && Math.abs(back.z) < 0.01 && Math.abs(back.x) < 0.01,
-      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
+      `motion study: mate keys, rotary motor (constant, distance, data points with cubic spline, motion segments, motor graph, expression), explode and orbit wizard, appearance keys with colours, GIF and WebM, undo, duplicate study, Russian (FR-FT-122) (${JSON.stringify({ keys, mid, end, turn, motorProf, dup, exploded, cam1, look, rec, undo, ru, back })})`);
     await ctx.close();
   }
 
@@ -8940,6 +8953,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
+    // From/to length: a continuous bead only 50 mm along the loop (defaults: from the start, 50 long); the symbol gives the length.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInter"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wLen"]', "span");
+    await settle();
+    const spf = await mp.evaluate(() => ({ n: document.querySelectorAll('#mc-pm [data-num="span.start"], #mc-pm [data-num="span.len"], #mc-pm input[data-k="wSpanFlip"]').length, t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent }));
+    await mp.click("#mc-ok");
+    await settle();
+    const spb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => c.length) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(spf.n === 3 && spf.t === "◺ z4 50" && !spb.bad && spb.beads.length === 1 && Math.abs(spb.beads[0] - 50) < 0.2, `weldments: from/to length fillet bead (${JSON.stringify({ ...spf, ...spb })})`);
     check(symFlags === "○ ⚑ ◺ z4 50 (100)", `weldments: all-around and field weld flags on the symbol (${symFlags})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();
