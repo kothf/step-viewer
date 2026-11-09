@@ -9548,6 +9548,23 @@ try {
     const rectSel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skw"]'));
     const s3 = await sk();
     check(s2[0]?.pen === "center" && Math.abs(s2[0].pts[0] - 50) < 0.01 && q3 === 1 && s3.some(x => x.k === "rect" && JSON.stringify(x.pts) === "[30,20]") && rectSel, `drawing: sheet sketch line type and length, rectangle picked by its edge (${JSON.stringify({ s2, q3, s3, rectSel })})`);
+    // Centre of mass: tick it on the front view; the symbol sits in the plate's middle, and a dimension from it to the bottom edge reads 10.
+    await dp.keyboard.press("Escape");
+    const cxm = (fr[0] + fr[2]) / 2, cym = (fr[1] + fr[3]) / 2;
+    await clickSheet(fr[0] + (fr[2] - fr[0]) * 0.8, cym + (fr[3] - fr[1]) * 0.2);
+    await dp.waitForTimeout(150);
+    const comBox = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-v="com"]'));
+    if (comBox) { await dp.check('#drw .drw-props [data-v="com"]'); await dp.waitForTimeout(300); }
+    const sym = await dp.evaluate(([x, y]) => window.__sv.drw.prims().filter(p => p.layer === "ANNOT" && ((p.t === "a" && Math.abs(p.r - 2) < 1e-9 && Math.hypot(p.o[0] - x, p.o[1] - y) < 0.05) || (p.t === "p" && p.fill && Math.hypot(p.p[0] - x, p.p[1] - y) < 0.05))).length, [cxm, cym]);
+    await dp.keyboard.press("Escape");
+    await dp.click('#drw [data-a="dim"]');
+    await clickSheet(cxm + 0.3, cym + 0.2);
+    await clickSheet(cxm + 15, fr[1]);
+    await clickSheet(cxm + 30, cym - 3);
+    await dp.waitForTimeout(200);
+    const cdim = await dp.evaluate(() => { const a = (window.__sv.drw.doc().sheets[0].annots ?? []).find(x => x.t === "dim" && x.refs.some(r => r.com)); return a && JSON.parse(JSON.stringify(a)); });
+    const ten = await dp.evaluate(() => window.__sv.drw.prims().some(p => p.t === "t" && p.layer === "ANNOT" && p.s === "10"));
+    check(comBox && sym === 3 && cdim && ten, `drawing: centre of mass point on a view, and a dimension measured from it (${JSON.stringify({ comBox, sym, cdim, ten })})`);
     await ctx.close();
   }
 
