@@ -12,6 +12,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - **Instant 2D (FR-SK-067)**: a selected driving dimension in a sketch shows a round handle at its moving end. Dragging it changes the value in steps that suit the zoom (Shift: ten times finer), with a ruler of snap ticks along the drag, and the sketch follows as it solves. Releasing is one undo step; Esc during the drag puts the value back. Dimensions given by an equation have no handle.
 - **Dimension placement lock (FR-SK-068)**: while placing a dimension, a right-click locks the type it shows (horizontal, vertical or aligned), so the text can be placed anywhere; the preview label turns solid with a lock, and another right-click frees it. Esc still cancels only the placement.
 
+## [1.276.0] - 2026-11-09
+
+### Added
+
+- **Sketch on the drawing sheet**: Line, Rectangle, Circle and Polyline on the Annotation tab (and in Annotate ▾) draw on the sheet itself, as SolidWorks lets you sketch in a drawing. Clicks snap to the model's corners and circle centres in a view, and run horizontal or vertical when close to it; a polyline ends with Enter or closes on its first point. Select an entity to give it an ISO 128 line type (thin, visible, centre, hidden or phantom) or type its length, width and height, or diameter. Entities export to PDF, SVG and DXF on the layer of their line type.
 ## [1.275.0] - 2026-11-09
 
 ### Added
@@ -1700,7 +1705,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.278.0...HEAD
-[1.278.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.278.0
+[1.278.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.278.0
+[1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0
 [1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
 [1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
 [1.271.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.271.0

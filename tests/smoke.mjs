@@ -7866,7 +7866,7 @@ try {
     await ap.click('#drw-pane-annot [data-an="note"]');
     const mode = await ap.evaluate(() => window.__sv.drw.mode());
     await ap.keyboard.press("Escape");
-    check(tab.views && !tab.annot && tab.n === 21 && mode === "note", `drawing: annotation tab shows the 21 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
+    check(tab.views && !tab.annot && tab.n === 25 && mode === "note", `drawing: annotation tab shows the 25 annotation tools; Note starts the note command (${JSON.stringify([tab, mode])})`);
     // 1.82.0 break view (FR-DRW-015): select the first front view, leave out u = −25…15 mm; it closes up to a 6 mm gap.
     const fv = await ap.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views[0]; const pl = window.__sv.drw.placement(v.id); return { id: v.id, x: v.x, y: v.y, s: pl.s, w: pl.box[2] - pl.box[0], uc: pl.uc }; });
     const clickAt = async (x, y) => { const q = await ap.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]); await ap.mouse.click(q[0], q[1]); };
@@ -9407,6 +9407,29 @@ try {
     const d2 = await dt(), q2 = await prims();
     const area = q2.some(p => p.t === "a" && p.pen === "phantom"), sz = q2.some(p => p.t === "t" && p.s === "Ø8");
     check(d2?.kind === "area" && d2.size === "Ø8" && area && sz, `drawing: datum target area: phantom circle, hatching and its size in the frame (${JSON.stringify({ d2, area, sz })})`);
+    // Sheet sketch: a line drawn off the views snaps horizontal; a centre line type and a typed length.
+    await dp.keyboard.press("Escape");
+    const sk = () => dp.evaluate(() => (window.__sv.drw.doc().sheets[0].annots ?? []).filter(x => x.t === "sk").map(x => JSON.parse(JSON.stringify(x))));
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skline"]');
+    await clickSheet(30, 30);
+    await clickSheet(70, 30.6);
+    await dp.waitForTimeout(150);
+    const s1 = await sk();
+    const skPanel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skpen"]'));
+    check(s1.length === 1 && s1[0].k === "line" && s1[0].pts[1] === 0 && Math.abs(s1[0].pts[0] - 40) < 0.5 && skPanel, `drawing: sheet sketch line, snapped horizontal (${JSON.stringify({ s1, skPanel })})`);
+    if (skPanel) {
+      await dp.selectOption('#drw .drw-props [data-d="skpen"]', "center"); await dp.waitForTimeout(150);
+      await dp.fill('#drw .drw-props [data-d="sklen"]', "50"); await dp.press('#drw .drw-props [data-d="sklen"]', "Enter"); await dp.waitForTimeout(150);
+    }
+    const s2 = await sk(), q3 = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.layer === "CENTER" && p.t === "l" && Math.abs(p.p[1] - p.p[3]) < 1e-6 && Math.abs(Math.abs(p.p[2] - p.p[0]) - 50) < 0.01).length);
+    // Rectangle: two corners, picked again by clicking its edge.
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="skrect"]');
+    await clickSheet(30, 50); await clickSheet(60, 70);
+    await dp.waitForTimeout(150);
+    await dp.keyboard.press("Escape"); await clickSheet(45, 70.3); await dp.waitForTimeout(150);
+    const rectSel = await dp.evaluate(() => !!document.querySelector('#drw .drw-props [data-d="skw"]'));
+    const s3 = await sk();
+    check(s2[0]?.pen === "center" && Math.abs(s2[0].pts[0] - 50) < 0.01 && q3 === 1 && s3.some(x => x.k === "rect" && JSON.stringify(x.pts) === "[30,20]") && rectSel, `drawing: sheet sketch line type and length, rectangle picked by its edge (${JSON.stringify({ s2, q3, s3, rectSel })})`);
     await ctx.close();
   }
 
