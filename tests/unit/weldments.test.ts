@@ -3,10 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
-import { cutList, pierceSpots, type WeldHost } from "../../src/weldments/kernel";
+import { cutList, gussetEnds, pierceSpots, type WeldHost } from "../../src/weldments/kernel";
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
-import type { MemberFeature } from "../../src/weldments/types";
+import type { GussetFeature, MemberFeature } from "../../src/weldments/types";
 import { cutKey, splitSubs } from "../../src/weldments/types";
 import { occ } from "./occ";
 
@@ -336,6 +336,20 @@ test("gusset faces on the two picked faces are named for the leg arrows (FR-FT-1
   near(centroid(m, r.body!.faces[on1[0].i])[2], 10);
   near(centroid(m, r.body!.faces[on2[0].i])[0], 20);
   near(r.volume - base.volume, 0.5 * 50 * 70 * 5, 1e-6);
+  // Polygonal profile: the same flat at both ends, a flat of its own at face 2, or the sloping edge at a profile angle.
+  const area = (d3: number, d4: number) => 50 * 70 - 0.5 * (50 - d4) * (70 - d3);
+  const vol = (gf: object) => run(m, doc([sk, plate, k, mem, { ...g, shape: "poly", d3: { v: 10 }, ...gf } as Feature])).volume - base.volume;
+  near(vol({}), area(10, 10) * 5, 1e-6);
+  near(vol({ d4: { v: 20 } }), area(10, 20) * 5, 1e-6);
+  near(vol({ polyAngle: { v: Math.PI / 3 } }), area(10, 50 - 60 / Math.tan(Math.PI / 3)) * 5, 1e-6);
+  near(vol({ polyAngle: { v: Math.atan2(60, 40) } }), area(10, 10) * 5, 1e-6);
+  assert.deepEqual(gussetEnds({ ...g, shape: "poly", d3: { v: 10 }, d4: { v: 20 } } as GussetFeature), { d3: 10, d4: 20 });
+  // Too shallow an angle runs the sloping edge past face 2: the feature fails.
+  assert.ok(!m.evaluate(doc([sk, plate, k, mem, { ...g, shape: "poly", d3: { v: 10 }, polyAngle: { v: 0.5 } } as Feature])).statuses.find(x => x.id === "g")!.ok);
+  // Unequal chamfer of the inner corner: 8 along face 1, 12 along face 2.
+  const tri = 0.5 * 50 * 70 * 5;
+  near(run(m, doc([sk, plate, k, mem, { ...g, chamfer: { v: 8 } } as Feature])).volume - base.volume, tri - 0.5 * 8 * 8 * 5, 1e-6);
+  near(run(m, doc([sk, plate, k, mem, { ...g, chamfer: { v: 8 }, chamfer2: { v: 12 } } as Feature])).volume - base.volume, tri - 0.5 * 8 * 12 * 5, 1e-6);
 });
 
 test("curved members: arcs of the path sketch are revolved, tangent joints stay open, a corner at an arc is mitred (FR-FT-121)", async () => {

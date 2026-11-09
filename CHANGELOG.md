@@ -5,13 +5,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.374.0] - 2026-11-10
+## [1.375.0] - 2026-11-10
 
 ### Changed
 
 - **Material values checked (FR-MAT-001)**: the density, elastic modulus, yield and tensile strength of the library's materials were compared with public pages of the standards' tables, producers' data sheets and handbooks. 47 materials now show **Checked against:** with a link to the page in the Material dialog; the others keep only their named source.
 - Corrected: die cast aluminium A380 density 2.74 → 2.71 g/cm³; cast bronze CuSn12-C 8.6 → 8.7 g/cm³ and 100 → 97 GPa; gunmetal CuSn5Zn5Pb5-C 8.8 → 8.7 g/cm³; sintered silicon carbide 3.1 → 3.15 g/cm³; gold 79 → 78 GPa; aluminium bronze CuAl10Ni5Fe4 115 → 120 GPa; ASTM A500 Grade B shaped tube yield 315 → 317 MPa (46 ksi); Inconel 718 tensile 1241 → 1276 MPa (185 ksi, ASTM B637).
 - Cast aluminium EN AC-42100 T6 is named **sand cast**, which is what its 190 / 230 MPa are. The EN 10083 source says which size each condition is for (normalized ≤ 16 mm, quenched and tempered 16–40 mm), and the EN 10088 source that the sheet values are for hot rolled plate.
+
+## [1.374.0] - 2026-11-09
+
+### Added
+
+- **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as SolidWorks' polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
 
 ## [1.373.0] - 2026-11-10
 
@@ -2203,7 +2209,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.374.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.375.0...HEAD
+[1.375.0]: https://github.com/kothf/step-viewer/compare/v1.374.0...v1.375.0
 [1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
 [1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0

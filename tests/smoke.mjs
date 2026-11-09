@@ -1998,11 +1998,11 @@ try {
     const axMat = await axe();
     await mp.fill("#mat-q", "д16т");
     lib.gost = await matRows();
-    // 1.374.0: a material whose values were checked against a public page links to it.
+    // 1.375.0: a material whose values were checked against a public page links to it.
     await mp.fill("#mat-q", "S690QL");
     const refLink = await mp.evaluate(() => { const l = document.querySelector("#mat-dlg .mat-src a"); return l && { href: l.href, text: l.textContent, rel: l.rel }; });
     check(!!refLink && /^https:\/\/shop\.macsteel\.co\.za\//.test(refLink.href) && refLink.text === "shop.macsteel.co.za" && /noopener/.test(refLink.rel),
-      `model 1.374: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
+      `model 1.375: a checked material shows the page its values were checked against (${JSON.stringify(refLink)})`);
     await mp.fill("#mat-q", "6061");
     await mp.keyboard.press("ArrowDown");
     await mp.keyboard.press("ArrowUp");
@@ -9750,6 +9750,36 @@ try {
     await settle();
     const glBad = await mp.evaluate(() => window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";"));
     check(gLoc.loc === "start" && gLoc.side === "both" && gLoc.off === 10 && gLoc.field && !glBad, `weldments: gusset location offset and thickness side (${JSON.stringify({ gLoc, glBad })})`);
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    // Polygonal gusset: the other end by profile angle starts at the symmetric profile's angle; 60° then moves the flat at
+    // face 2; an unequal chamfer of the inner corner takes its own distance along face 2.
+    const gVol = () => mp.evaluate(() => window.__sv.model.last().props?.volume ?? 0);
+    const gv0 = await gVol();
+    await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wshape"]', "poly");
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wpolyEnd"]', "angle");
+    await settle();
+    const gp0 = await mp.evaluate(() => { const d = window.__sv.model.mode().draft; return { d1: d.d1.v, d2: d.d2.v, d3: d.d3?.v, a: d.polyAngle?.v, field: !!document.querySelector('#mc-pm [data-num="polyAngle"]') }; });
+    await mp.fill('#mc-pm input[data-num="polyAngle"]', "60");
+    await mp.press('#mc-pm input[data-num="polyAngle"]', "Tab");
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer"]');
+    await settle();
+    await mp.click('#mc-pm input[data-k="wChamfer2"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="chamfer2"]', "12");
+    await mp.press('#mc-pm input[data-num="chamfer2"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const gp1 = await mp.evaluate(() => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === "g5"); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), a: f.polyAngle?.v, c: f.chamfer?.v, c2: f.chamfer2?.v, t: f.thickness.v, v: l.props?.volume ?? 0 }; });
+    const gd4 = gp0.d1 - (gp0.d2 - gp0.d3) / Math.tan(Math.PI / 3);
+    const gWant = ((gp0.d1 * gp0.d2 - 0.5 * (gp0.d1 - gd4) * (gp0.d2 - gp0.d3) - 0.5 * 5 * 12) - 0.5 * gp0.d1 * gp0.d2) * gp1.t;
+    check(gp0.field && Math.abs(gp0.a - Math.atan2(gp0.d2 - gp0.d3, gp0.d1 - gp0.d3)) < 1e-9 && !gp1.bad && Math.abs(gp1.a - Math.PI / 3) < 1e-9 && gp1.c === 5 && gp1.c2 === 12 && Math.abs(gp1.v - gv0 - gWant) < 1e-3 * Math.abs(gWant),
+      `weldments: polygonal gusset by profile angle, unequal chamfer (${JSON.stringify({ gp0, gp1, dv: gp1.v - gv0, gWant })})`);
     await mp.evaluate(() => window.__sv.model.store.undo());
     await settle();
     // A curved member: a line, a tangent quarter arc and a line; the arc is listed as such and revolved, its cut length is the arc length.

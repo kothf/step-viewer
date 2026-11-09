@@ -76,7 +76,7 @@ test("section hatching follows the library category of a material", () => {
   assert.equal(materialPattern("Titanium Grade 2"), "ansi31");
 });
 
-test("checked references name library materials and are plain https pages; corrected values (1.374.0)", () => {
+test("checked references name library materials and are plain https pages; corrected values (1.375.0)", () => {
   const keys = Object.keys(CHECKED);
   assert.ok(keys.length >= 40, `only ${keys.length} checked`);
   for (const k of keys) {
