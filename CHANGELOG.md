@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.278.0] - 2026-11-09
+
+### Added
+
+- **Instant 2D (FR-SK-067)**: a selected driving dimension in a sketch shows a round handle at its moving end. Dragging it changes the value in steps that suit the zoom (Shift: ten times finer), with a ruler of snap ticks along the drag, and the sketch follows as it solves. Releasing is one undo step; Esc during the drag puts the value back. Dimensions given by an equation have no handle.
+- **Dimension placement lock (FR-SK-068)**: while placing a dimension, a right-click locks the type it shows (horizontal, vertical or aligned), so the text can be placed anywhere; the preview label turns solid with a lock, and another right-click frees it. Esc still cancels only the placement.
+
 ## [1.275.0] - 2026-11-09
 
 ### Added
@@ -1692,7 +1699,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.275.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.278.0...HEAD
+[1.278.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.278.0
 [1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
 [1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
 [1.271.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.271.0
