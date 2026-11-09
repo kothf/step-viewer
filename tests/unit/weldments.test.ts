@@ -533,3 +533,23 @@ test("sub-weldments split cut list items by their bodies", () => {
   // A body listed by two sub-weldments sits in the first.
   assert.deepEqual(splitSubs(items, [{ id: "x", name: "X", bodies: ["a"] }, { id: "y", name: "Y", bodies: ["a"] }]).filter(c => c.sub).map(c => c.sub), ["x"]);
 });
+
+test("fillet bead on both sides of a plate standing on another (FR-FT-121)", async () => {
+  const m = new Modeller(await occ());
+  const s1 = poly("s", [[-100, -100], [100, -100], [100, 100], [-100, 100]], true);
+  const base: Feature = { id: "p", type: "extrude", name: "Extrude1", sketch: "s", op: "boss", end: "blind", depth: { v: 10 } };
+  const s2 = poly("t", [[-5, -50], [5, -50], [5, 50], [-5, 50]], true);
+  const stem: Feature = { id: "st", type: "extrude", name: "Extrude2", sketch: "t", op: "boss", end: "blind", depth: { v: 80 }, merge: false } as Feature;
+  const r0 = run(m, doc([s1, base, s2, stem]));
+  const side = r0.body!.names.map((n, i) => ({ n, c: centroid(m, r0.body!.faces[i]) })).find(x => x.n.startsWith("st:") && Math.abs(x.c[0] - 5) < 1e-6)!;
+  const bead: Feature = { id: "w", type: "weldbead", name: "Fillet Bead1", faces1: [{ name: side.n, hint: side.c }], faces2: [{ name: "p:end" }], size: { v: 4 }, tangent: false };
+  const one = run(m, doc([s1, base, s2, stem, bead]));
+  near(one.cut.find(c => c.kind === "bead")!.length!, 100, 1e-3);
+  const both = run(m, doc([s1, base, s2, stem, { ...bead, both: true } as Feature]));
+  const beads = both.cut.filter(c => c.kind === "bead");
+  near(beads.reduce((a, c) => a + c.length!, 0), 200, 1e-3);
+  near(both.volume - r0.volume, 2 * 8 * 100, 1e-3);
+  // The second bead sits on the plate's other side.
+  const xs = both.body!.names.map((n, i) => ({ n, c: centroid(m, both.body!.faces[i]) })).filter(x => x.n.startsWith("w:") && x.n.endsWith(":face")).map(x => Math.sign(x.c[0]));
+  assert.deepEqual(xs.sort(), [-1, 1]);
+});
