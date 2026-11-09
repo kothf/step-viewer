@@ -8645,6 +8645,11 @@ try {
     await mp.click('#mc-pm input[data-k="wField"]');
     await settle();
     const symFlags = await mp.evaluate(() => document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent);
+    // Unequal legs: unticking Equal leg lengths gives a second leg (1.5 × the first) and the symbol shows both.
+    await mp.click('#mc-pm input[data-k="wEqual"]');
+    await settle();
+    const uneq = await mp.evaluate(() => ({ n: document.querySelectorAll('#mc-pm [data-num="size"], #mc-pm [data-num="size2"]').length, t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent, bad: window.__sv.model.last().statuses.filter(s => !s.ok).map(s => s.message).join(";") }));
+    check(uneq.n === 2 && uneq.t === "○ ⚑ ◺ z4×6 50 (100)" && !uneq.bad, `weldments: unequal leg fillet bead (${JSON.stringify(uneq)})`);
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
