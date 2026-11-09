@@ -480,6 +480,14 @@ export class AsmController {
     pm.querySelectorAll<HTMLElement>("[data-pair]").forEach(b => b.addEventListener("click", () => { it.sel = it.sel === Number(b.dataset.pair) ? -1 : Number(b.dataset.pair); this.drawOverlay(); this.renderPanel(); }));
   }
 
+  /** Density (g/cm³) of the part material of shown part `i` (FR-MAT-002 assembly mass properties); null when its part has no material. */
+  partDensity(i: number): number | null {
+    const c = this.anyComp(this.shownIds[i] ?? null);
+    if (!c) return null;
+    const e = this.expanded?.doc.parts[c.part] ?? this.doc?.parts[c.part];
+    return e?.doc?.material?.density ?? null;
+  }
+
   /** BOM rows (FR-ASM-024): one per part, in the order first used, with quantity and mass. */
   /** BOM type: top level (sub-assemblies as one row) or parts only (flattened, FR-ASM-024). */
   bomMode: "top" | "parts" = "top";

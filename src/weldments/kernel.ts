@@ -349,7 +349,14 @@ export function member(h: WeldHost, f: MemberFeature, doc: PartDoc, prev: Named 
       const nm = `${base}:${k ? "end" : "start"}`;
       // A mitre gap is split between the two ends, measured square to the mitre plane.
       if (e.kind === "miter") body = bool(h, "cut", body, halfBox(h, sub(P, mul(e.n, gap / 2)), e.n, big, nm), f.id);
-      if (e.kind === "trimmed") {
+      if (e.kind === "trimmed" && f.coped) {
+        // Coped cut: the end follows the other member's outer shape (a round tube's saddle), cut by its filled
+        // profile run well past both its ends; a weld gap moves the cut back along this member.
+        const o = segs[e.other], op = pls[e.other], run = 4 * (op.R + pl.R);
+        const back = mul(outAt(i, k as 0 | 1), -gap);
+        const t = prism(h, op, add(sub(o.a, mul(o.w, run)), back), add(add(o.b, mul(o.w, run)), back), nm, true);
+        body = bool(h, "cut", body, { ...t, names: t.faces.map(() => nm) }, f.id);
+      } else if (e.kind === "trimmed") {
         // Cut square to the other member's face that looks at this one (the plane holds its axis).
         const o = segs[e.other], op = pls[e.other];
         const din = outAt(i, k as 0 | 1);

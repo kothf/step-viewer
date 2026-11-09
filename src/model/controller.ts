@@ -3036,6 +3036,16 @@ export class ModelController {
     this.host.setCsys?.({ name: featureLabel(f.name), src, o: fr.o, x: fr.x, z: fr.n }, true);
   }
 
+  /** The part's coordinate system features that are built (not suppressed or rolled back), with their frames. */
+  csysList(): { id: string; name: string; o: V3; x: V3; z: V3 }[] {
+    if (!this.store || !this.last) return [];
+    const end = this.doc.rollback ?? this.doc.features.length;
+    return this.doc.features.slice(0, end).flatMap(f => {
+      const fr = f.type === "csys" && !f.suppressed ? this.last!.frames[f.id] : undefined;
+      return fr ? [{ id: f.id, name: featureLabel(f.name), o: fr.o, x: fr.x, z: fr.n }] : [];
+    });
+  }
+
   /** Makes a coordinate system feature the measurement and export frame, or goes back to the global one. */
   useCsys(id: string | null) {
     if (!id) { this.host.setCsys?.(null); return; }

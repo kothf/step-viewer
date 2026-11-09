@@ -10,6 +10,7 @@
 // 9 MB and would slow every type check down.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { covOfTensor, type Sym } from "../tools/inertia";
 
 export type V3 = [number, number, number];
 
@@ -55,6 +56,8 @@ export interface PartPatch {
   volume?: number;
   area?: number;
   com?: V3;
+  /** Covariance about `com` for unit density (src/tools/inertia.ts). */
+  inertia?: Sym;
   faces?: (FacePatch | null)[];
   edges?: (EdgePatch | null)[];
 }
@@ -272,13 +275,27 @@ export class Kernel {
       oc.BRepGProp.SurfaceProperties_1(m.shape, props, false, false);
       out.area = props.Mass();
     }
-    if (m.solid && m.shape.ShapeType() === oc.TopAbs_ShapeEnum.TopAbs_SOLID) {
+    if (m.solid && this.allSolid(m.shape)) {
       const vp = new oc.GProp_GProps_1();
       oc.BRepGProp.VolumeProperties_1(m.shape, vp, true, false, false);
       const vol = vp.Mass();
-      if (vol !== 0) { out.volume = Math.abs(vol); out.com = P(vp.CentreOfMass()); }
+      if (vol !== 0) {
+        out.volume = Math.abs(vol); out.com = P(vp.CentreOfMass());
+        const mi = vp.MatrixOfInertia();
+        out.inertia = covOfTensor([0, 1, 2].map(r => [0, 1, 2].map(c => mi.Value(r + 1, c + 1) * Math.sign(vol))));
+      }
     }
     return out;
+  }
+
+  /** A solid, or a compound (multibody part) made only of solids. */
+  private allSolid(shape: any): boolean {
+    const oc = this.oc, T = oc.TopAbs_ShapeEnum, t = shape.ShapeType();
+    if (t === T.TopAbs_SOLID) return true;
+    if (t !== T.TopAbs_COMPOUND && t !== T.TopAbs_COMPSOLID) return false;
+    let n = 0;
+    for (const it = new oc.TopoDS_Iterator_2(shape, true, true); it.More(); it.Next(), n++) if (!this.allSolid(it.Value())) return false;
+    return n > 0;
   }
 
   private face(face: any): FacePatch | null {
