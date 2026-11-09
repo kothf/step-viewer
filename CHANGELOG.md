@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.356.0] - 2026-11-09
+
+### Added
+- Insert Bends and Convert to Sheet Metal follow walls that don't touch the fixed face (FR-FT-120): Insert Bends finds the next wall across each wall's far edge (a hat section's brims, a Z section's flanges) and bends it too, the right way round; Convert to Sheet Metal does the same for each wall far edge you pick, so a box can become a C channel with lips.
+- Corner Relief at return flanges and three-bend corners (FR-FT-120): a flange off a flange's end (a return) now makes a corner with that flange's bend, and where it meets a two-bend corner the relief covers all three bend zones. The panel names three-bend corners.
+- Sheet Metal Gusset tip shapes (FR-FT-120): a Rounded tip (a half round across the rib's width) or a flat tip with filleted edges; the groove follows, and the flat pattern still leaves the gusset out.
+
 ## [1.349.0] - 2026-11-09
 
 ### Added
@@ -2082,7 +2089,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.349.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.356.0...HEAD
+[1.356.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.356.0
 [1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0
 [1.348.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.348.0
 [1.346.0]: https://github.com/kothf/step-viewer/compare/v1.344.0...v1.346.0

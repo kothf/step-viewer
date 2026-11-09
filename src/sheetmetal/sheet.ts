@@ -400,24 +400,44 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
  * sharp) and angle, material inside so the outer faces stay where the solid's were; flanges meeting at a corner are
  * mitred `gap` apart (the rip). Panels `<fid>:p<i + 1>`, bends `<fid>:b<i>`.
  */
-export function convertFlanges(prev: SheetState, items: { faces: [string, string]; length: number; angle: number }[], fid: string, gap: number): { state: SheetState; ops: SheetOp[] } {
+export function convertFlanges(prev: SheetState, items: { faces: [string, string]; length: number; angle: number; more?: ConvertLevel[] }[], fid: string, gap: number): { state: SheetState; ops: SheetOp[] } {
   const st = clone(prev);
-  const r = st.R;
+  const r = st.R, T = st.T;
   const corners = flangeCorners(st, items.map(x => x.faces));
   const ops: SheetOp[] = [];
+  let extra = 0;
   items.forEach((it, i) => {
-    if (!(it.angle > 1e-6 && it.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
-    const d = outerSetback(st.T, it.angle, r);
-    const s = it.length - d;
-    const E = 2 * (s + d + bendAllowance(st, it.angle, r) + 2 * st.T);
+    // Every wall in the chain: the first one's length runs from the fixed face's edge, as do the later lines, all on
+    // the first bend's outside; later bends turning the same way have it outside too, the others inside.
+    const levels: ConvertLevel[] = [{ angle: it.angle, L: it.length, same: true, up: true }, ...(it.more ?? [])];
+    for (const x of levels) if (!(x.angle > 1e-6 && x.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
+    const back = levels.map(x => x.same ? outerSetback(T, x.angle, r) : innerSetback(x.angle, r));
+    const flat = levels.map((x, k) => x.L - back[k]);
+    levels.forEach((_x, k) => {
+      if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-CONVSHORT", "A wall is too short for its bends.");
+    });
+    const E = 2 * (flat[0] + back[0] + bendAllowance(st, it.angle, r) + 2 * T);
+    let pid = `${fid}:p${i + 1}`;
     ops.push(...addFlange(st, it.faces, {
-      angle: it.angle, r, s, d, off0: 0, off1: 0, flip: false,
+      angle: it.angle, r, s: flat[0], d: back[0], off0: 0, off1: 0, flip: false,
       ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
-    }, `${fid}:p${i + 1}`, `${fid}:b${i}`));
+    }, pid, `${fid}:b${i}`));
+    for (let k = 1; k < levels.length; k++) {
+      const x = levels[k];
+      const next = `${fid}:p${items.length + 1 + extra}`;
+      // On the tip, the panel's top is the side the first bend turned to.
+      ops.push(...addFlange(st, [`${pid}:tip`, `${pid}:top`], { angle: x.angle, r, s: flat[k], d: back[k], off0: 0, off1: 0, flip: !x.up }, next, `${fid}:b${items.length + extra}`));
+      extra++;
+      pid = next;
+    }
   });
   for (const [i, j] of corners) mitre(st, `${fid}:p${i + 1}`, `${fid}:p${j + 1}`, gap);
   return { state: st, ops };
 }
+
+/** A wall further along a converted chain: its length (between virtual sharps, on the first bend's outside), its bend
+ * angle, whether it turns the same way as the first bend (`same`) and towards the previous panel's top (`up`). */
+export interface ConvertLevel { angle: number; L: number; same: boolean; up: boolean }
 
 /** Pairs [i, j] of picked edges where edge i ends where edge j starts on the same face. */
 function flangeCorners(st: SheetState, picks: [string, string][]): [number, number][] {

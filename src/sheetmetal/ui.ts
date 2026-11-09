@@ -433,7 +433,8 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
       body: group(t("Fixed face"), `<p class="pm-count" data-sm-face>${esc(f.face.name ? t("1 face") : t("click a flat face of the solid"))}</p>`)
         + group(t("Bend edges"), `<p class="pm-count" data-sm-edges>${esc(f.edges.length ? t("{n} edge|{n} edges", { n: f.edges.length }) : t("click straight edges of the fixed face"))}</p>`
           + (f.edges.length ? `<button class="btn small" data-sm="clear">${esc(t("Clear edges"))}</button>` : "")
-          + help(t("Each bend edge joins the fixed face to a flat face, which becomes a flange as long and at the angle the solid has. Other edges between converted faces are ripped.")))
+          + help(t("Each bend edge joins the fixed face to a flat face, which becomes a flange as long and at the angle the solid has. Other edges between converted faces are ripped."))
+          + help(t("Pick a wall's far edge too to bend the face across it as one more wall.")))
         + group(t("Sheet metal parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + numField("radius", t("Bend radius"), f.radius, "length")
           + `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`)
         + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length")),

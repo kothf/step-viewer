@@ -805,6 +805,15 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   const hu = run(doc([s, box, hs, hole, conv({ edges: [edge("l1"), edge("l3")] })]));
   close(hu.props.volume, 100 * flatW * 2 - 2 * 50 * Math.PI, 1e-5);
   close(run(doc([s, box, hs, hole, conv({ edges: [edge("l1"), edge("l3")] }), flat])).props.volume, 100 * flatW * 2 - 2 * 50 * Math.PI, 1e-5);
+  // A wall's far edge picked too: the face across it (the box's top) becomes a second wall off the first, an L turned
+  // into a C; it is bent the same way, and the flat pattern keeps the volume.
+  const cl = conv({ edges: [edge("l1"), { faces: ["e:end", "e:side:sl1"] }] });
+  const c2 = run(doc([s, box, cl]));
+  assert.equal(c2.sheet!.bends.length, 2);
+  close(c2.size[0], 100, 1e-6); close(c2.size[1], 60, 1e-6); close(c2.size[2], 40, 1e-6);
+  const inC = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(c2.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inC([50, 30, 39]) && inC([50, 30, 1]) && inC([50, 1, 20]) && !inC([50, 30, 20]), "bottom, wall and top, hollow inside");
+  close(run(doc([s, box, cl, flat])).props.volume, c2.props.volume, 1e-5);
   // A bend edge off the fixed face, or a curved fixed face, fails.
   assert.equal(m.evaluate(doc([s, box, conv({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })])).statuses.find(x => x.id === "c")!.ok, false);
 });
@@ -834,5 +843,19 @@ test("sheet metal: insert bends into a thin-walled U profile (FR-FT-120)", async
   const flatB = 60 - 2 * (10 + T) + 2 * (40 - (10 + T) + (Math.PI / 2) * (10 + T / 2));
   close(big.props.volume, 100 * flatB * T, 1e-5);
   // An inside face has no face behind it at the wall's thickness... it finds the outside one, but no sharp outside edges.
-  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);
+  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);  // A hat section: walls down from the top, brims turning outwards at their feet. The brims don't touch the fixed face;
+  // they are found across the walls' far edges and bent the other way. Mid-line 37 + 2 × 37 + 2 × 21.5, each 90° bend
+  // takes 2(r + T/2) off it and adds a quarter circle of r + T/2.
+  const hp: [number, number][] = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
+  const hat: SketchFeature = { ...u, id: "h", ents: [...hp.map((p, i): SkEnt => ({ id: `hp${i}`, t: "point", x: p[0], y: p[1] })), ...hp.map((_p, i): SkEnt => ({ id: `hl${i}`, t: "line", a: `hp${i}`, b: `hp${(i + 1) % hp.length}` }))] };
+  const hex: Feature = { ...ex, id: "he", sketch: "h" };
+  const hins = ins({ face: { name: "he:side:hl8" } });
+  const hr = run(doc([hat, hex, hins]));
+  assert.equal(hr.sheet!.bends.length, 4, "two walls and two brims");
+  const hatW = 154 + 4 * ((Math.PI / 2 - 2) * (2 + T / 2));
+  close(hr.props.volume, 100 * hatW * T, 1e-5);
+  close(hr.size[0], 80, 1e-6); close(hr.size[1], 40, 1e-6);
+  const hf = run(doc([hat, hex, hins, flat]));
+  close(hf.props.volume, 100 * hatW * T, 1e-5);
+  close(hf.size[0] + hf.size[1] + hf.size[2] - 100 - T, hatW, 1e-6);
 });
