@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.309.0] - 2026-11-09
+
+### Added
+
+- **More weldment profiles (FR-FT-121).** The Structural Member library adds UPE parallel flange channels (EN 10365, 80 to 300), HEM heavy H-beams (EN 10365, 100 to 300) and IPN tapered flange I-beams (DIN 1025-1, 80 to 300, 14 % flange slope); cut list items are named UPE, HEM and IPN.
+
 ## [1.308.0] - 2026-11-09
 
 ### Added
@@ -1801,7 +1807,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.308.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.309.0...HEAD
+[1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
 [1.306.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.306.0
