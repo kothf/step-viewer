@@ -17,6 +17,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - The FRS gap tables (`docs/FRS-modelling.md`) now mark the habits and features built since 1.85.0 as done, with the release that brought each.
 =======
 
+## [1.349.0] - 2026-11-09
+
+### Added
+- Hole callouts read from the geometry (FR-DRW-022): on a model with no Hole feature (a STEP file, a cut extrude), a hole callout now counts the holes of that size entered from the same side ("4× Ø6.6 THRU"), and adds the counterbore (⌴Ø11 ↧6.4) or countersink (⌵Ø13.44 × 90°) found from the coaxial cylinders and cones. The depth is measured from the entry face to the end of the drill, without its point; THRU now means open at both ends rather than as long as the part. Hole tables list each hole without the count.
+
+## [1.348.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Normal Cut (FR-FT-120): SolidWorks' Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
+- Sheet Metal → Convert to Sheet Metal (FR-FT-120): turn a solid into a sheet metal part, as SolidWorks' Convert to Sheet Metal. Click the face that stays fixed, then the straight edges of it to bend along; each face across a bend edge becomes a flange as long and at the angle the solid has, with the thickness inside the solid, so the part keeps its outside size. Edges between converted faces are ripped and mitred (Rip gap). Holes and shaped ends of the converted faces carry over, in the flat pattern too. It starts a sheet metal part like a base flange.
+- Corner Relief options (FR-FT-120): an Obround relief (rounded as far as it goes, keeping the clearance round the face's own corner) and Add fillet corners with a radius for rectangular reliefs; both follow into the flat pattern.
+- Sheet Metal Gusset options (FR-FT-120): a different profile length on the second face, and several gussets along the bend, spaced centre to centre about the position.
+- Sheet Metal → Insert Bends (FR-FT-120): turn a thin-walled solid (a shelled box, a bent section) into sheet metal, as SolidWorks' Insert Bends. Click an outside face to stay fixed; its sharp edges to other flat walls become bends of the given radius, the thickness is the walls' own, and corners between walls are ripped. Holes in the walls carry over.
+
 ## [1.346.0] - 2026-11-09
 
 ### Changed
@@ -2080,7 +2095,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.350.0...HEAD
-[1.350.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.350.0
+[1.350.0]: https://github.com/kothf/step-viewer/compare/v1.349.0...v1.350.0
+[1.349.0]: https://github.com/kothf/step-viewer/compare/v1.348.0...v1.349.0
+[1.348.0]: https://github.com/kothf/step-viewer/compare/v1.346.0...v1.348.0
 [1.346.0]: https://github.com/kothf/step-viewer/compare/v1.344.0...v1.346.0
 [1.344.0]: https://github.com/kothf/step-viewer/compare/v1.343.0...v1.344.0
 [1.343.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.343.0

@@ -229,10 +229,10 @@ export function viewConfig(sheet: Sheet, v: DrawingView, depth = 0): string | un
 
 /** The components an assembly view shows alone: its own list, else its parent's up to the model view; absent = all. */
 /** The topology a component-only view draws on: edges and cylinders of its components (face names `<comp>@<face>`). */
-export function topoOnly<T extends { edges: { k: string }[]; cyls: { f?: string }[]; revs?: { f?: string }[] }>(topo: T, only?: string[]): T {
+export function topoOnly<T extends { edges: { k: string }[]; cyls: { f?: string }[]; revs?: { f?: string }[]; holes?: { f?: string }[] }>(topo: T, only?: string[]): T {
   if (!only?.length) return topo;
   const mine = (k?: string) => { const i = k ? k.indexOf("@") : -1, c = i > 0 ? k!.slice(0, i) : null; return !!c && only.some(x => c === x || c.startsWith(x + "/")); };
-  return { ...topo, edges: topo.edges.filter(e => mine(e.k)), cyls: topo.cyls.filter(c => mine(c.f)), ...(topo.revs ? { revs: topo.revs.filter(c => mine(c.f)) } : {}) };
+  return { ...topo, edges: topo.edges.filter(e => mine(e.k)), cyls: topo.cyls.filter(c => mine(c.f)), ...(topo.revs ? { revs: topo.revs.filter(c => mine(c.f)) } : {}), ...(topo.holes ? { holes: topo.holes.filter(c => mine(c.f)) } : {}) };
 }
 
 export function viewOnly(sheet: Sheet, v: DrawingView, depth = 0): string[] | undefined {
