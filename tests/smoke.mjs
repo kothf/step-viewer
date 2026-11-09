@@ -9469,6 +9469,20 @@ try {
     check(ft0.title === "Forming Tool" && /:p0:top$/.test(ft0.face ?? "") && ft0.pts?.length === 1 && Math.hypot(ft0.pts[0][0] - 10, ft0.pts[0][1] - 25) < 1 && ft0.tool === "xhole" && ft0.rows === 1
       && !ft1.bad && ft1.forms === 1 && Math.abs(ft1.v - vt1.v - ftDv) < 1e-3,
       `sheet metal: Forming Tool places an extruded hole where the face is clicked (${JSON.stringify({ ft0, ft1, ftDv, v0: vt1.v })})`);
+    // Normal Cut: a Ø8 circle sketched on the bottom face (XY); Reverse direction sends it into the sheet, linked to thickness.
+    await mp.evaluate(() => window.__sv.model.store.change("Cut sketch", d => {
+      d.features.push({ id: "nsk", type: "sketch", name: "Sketch10", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "nc0", t: "point", x: 90, y: 10 }, { id: "nc", t: "circle", c: "nc0", r: 4 }] });
+    }));
+    await settle();
+    await smMenu("Normal Cut");
+    const nc0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, sketch: window.__sv.model.mode().draft?.sketch, end: document.querySelector('#mc-pm select[data-sm="end"]')?.value }));
+    await mp.click('#mc-pm input[data-k="flip"]');
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const nc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(nc0.title === "Normal Cut" && nc0.sketch === "nsk" && nc0.end === "thick" && !nc1.bad && Math.abs(ft1.v - nc1.v - 16 * Math.PI * T) < 1e-3,
+      `sheet metal: Normal Cut cuts the sketched circle through the sheet (${JSON.stringify({ nc0, nc1, v0: ft1.v })})`);
     // Unfold: a flange on the back edge; click the plate's top face as the fixed face, ✓ with all bends: the sheet lies flat.
     // (The flat volume differs a little from the folded one unless K = 0.5.) Fold, ✓: back as it was.
     await mp.evaluate(() => window.__sv.model.store.change("Flange", d => {

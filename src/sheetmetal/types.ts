@@ -186,6 +186,22 @@ export interface SmVentFeature {
   spar: Num;
 }
 
+/**
+ * Normal cut (SolidWorks' Extruded Cut with Normal cut): a closed sketch is projected along its normal onto the
+ * sheet's mid-surface, and each piece it lands on is cut square to the sheet there, panels and bends alike, so the
+ * flat pattern gets clean openings. End: link to thickness (default: as deep as the sheet), blind or through all.
+ */
+export interface SmCutFeature {
+  id: string; type: "smcut"; name: string; suppressed?: boolean;
+  sketch: string;
+  /** Absent = link to thickness. */
+  end?: "blind" | "through";
+  /** Blind depth from the sketch plane. */
+  depth?: Num;
+  /** Cut along the sketch normal (default: against it, into the material). */
+  flip?: boolean;
+}
+
 /** The forming tools of the library (FR-FT-120): a round dimple, an embossed rib, a louver and an extruded hole. */
 export type FormTool = "dimple" | "rib" | "louver" | "xhole";
 
@@ -269,8 +285,8 @@ export interface SmGussetFeature {
   width: Num;
 }
 
-export type SheetFeature = SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+export type SheetFeature = SmCutFeature | SmGussetFeature | SmReliefFeature | SmUnfoldFeature | SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcut", "smform", "smunfold", "smfold", "smrelief", "smgusset", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);

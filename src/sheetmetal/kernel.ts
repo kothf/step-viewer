@@ -3,9 +3,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
-import { inPolygon, loopPolygon, polyArea, type Seg } from "../sketch/profile";
+import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
 import { gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
-import type { SheetFeature, SmFormFeature, SmVentFeature } from "./types";
+import type { SheetFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
 export interface SheetApi {
@@ -59,6 +59,12 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-SKETCH", "Pick a sketch with the vent boundary.");
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
     return { body: ventCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
+  }
+  if (f.type === "smcut") {
+    const sk = doc.features.find(x => x.id === f.sketch);
+    if (!sk || sk.type !== "sketch") throw new SheetError("E-SM-NCUTSK", "Pick a sketch with a closed profile for the cut.");
+    if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
+    return { body: normalCut(api, body, f, sm, sk, frameOfSketch(sk)), sm };
   }
   if (f.type === "smgusset") {
     if (!body) throw new SheetError("E-SM-NOBASE", "Make a base flange first.");
@@ -343,6 +349,20 @@ function removedPieces(api: SheetApi, st: SheetState, folded: Named, fid: string
  * is mapped onto the bend's flat strip (along the bend line, and turned angle × radius across it).
  */
 function unrolled(api: SheetApi, st: SheetState, b: Bend, gone: Named, fid: string): Named[] {
+  const T = st.T;
+  const out: Named[] = [];
+  for (const outer of neutralLoops(api, st, b, gone.shape)) {
+    try {
+      const shape = prism(api, faceOf(api, outer, [], frameOf(st.root, -T * 0.01)), applyDir(st.root, [0, 0, T * 1.02]));
+      const faces = api.sub(shape, "FACE");
+      out.push({ shape, faces, names: faces.map((_f, i) => `${fid}:u${i}`) });
+    } catch { /* a sliver that makes no face */ }
+  }
+  return out;
+}
+
+/** The outlines, in flat coordinates, of the pieces of a bend's neutral surface lying inside a solid. */
+function neutralLoops(api: SheetApi, st: SheetState, b: Bend, solid: any): Seg[][] {
   const oc = api.oc, T = st.T;
   const l = Math.hypot(b.a1[0] - b.a0[0], b.a1[1] - b.a0[1]);
   const e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l], o: V2 = [e[1], -e[0]];
@@ -357,7 +377,7 @@ function unrolled(api: SheetApi, st: SheetState, b: Bend, gone: Named, fid: stri
   const edge = new oc.BRepBuilderAPI_MakeEdge_3(P(w(n0, zn)), P(w(n1, zn))).Edge();
   const c = w(b.a0, zc);
   const surf = new oc.BRepPrimAPI_MakeRevol_1(edge, new oc.gp_Ax1_2(P(c), new oc.gp_Dir_4(ua[0], ua[1], ua[2])), b.angle, false).Shape();
-  const common = new oc.BRepAlgoAPI_Common_3(surf, gone.shape, new oc.Message_ProgressRange_1());
+  const common = new oc.BRepAlgoAPI_Common_3(surf, solid, new oc.Message_ProgressRange_1());
   if (!common.IsDone()) return [];
   // World point on the neutral surface → flat pattern point.
   const s3 = applyDir(b.M, [0, 0, b.up ? -1 : 1]), e3 = applyDir(b.M, [e[0], e[1], 0]);
@@ -388,15 +408,10 @@ function unrolled(api: SheetApi, st: SheetState, b: Bend, gone: Named, fid: stri
     const ccw = polyArea(pts) >= 0 ? pts : [...pts].reverse();
     return ccw.map((a, i) => ({ ent: `u${i}`, kind: "line", a, b: ccw[(i + 1) % ccw.length] }) as Seg);
   };
-  const out: Named[] = [];
+  const out: Seg[][] = [];
   for (const fc of api.sub(common.Shape(), "FACE")) {
     const outer = loopOf(oc.BRepTools.OuterWire(fc));
-    if (!outer.length) continue;
-    try {
-      const shape = prism(api, faceOf(api, outer, [], frameOf(st.root, -T * 0.01)), applyDir(st.root, [0, 0, T * 1.02]));
-      const faces = api.sub(shape, "FACE");
-      out.push({ shape, faces, names: faces.map((_f, i) => `${fid}:u${i}`) });
-    } catch { /* a sliver that makes no face */ }
+    if (outer.length) out.push(outer);
   }
   return out;
 }
@@ -483,6 +498,69 @@ function ventCut(api: SheetApi, body: Named, f: SmVentFeature, st: SheetState, s
     tool = api.bool("cut", tool, ring, f.id);
   });
   return api.bool("cut", body, tool, f.id);
+}
+
+/** Lines, arcs and circles wound the other way. */
+const reversed = (l: Seg[]): Seg[] => [...l].reverse().map(x => x.kind === "line" ? { ...x, a: x.b, b: x.a } : x.kind === "arc" ? { ...x, a: x.b, b: x.a, ccw: !x.ccw } : x);
+const wound = (l: Seg[], ccw: boolean): Seg[] => (polyArea(loopPolygon(l)) >= 0) === ccw ? l : reversed(l);
+
+/**
+ * Normal cut (FR-FT-120): the sketch's regions swept along its normal (as deep as the sheet, blind or through all)
+ * are met with each panel's and bend's mid-surface; each panel piece is pushed through the sheet square to the
+ * panel, each bend piece is unrolled onto the bend's flat strip and wrapped back, so it is cut radially.
+ */
+function normalCut(api: SheetApi, body: Named, f: SmCutFeature, st: SheetState, sk: SketchFeature, fr: Frame): Named {
+  const oc = api.oc, T = st.T;
+  const prof = sketchProfile(sk);
+  if (prof.error || !prof.faces.length) throw new SheetError("E-SM-NCUTSK", "Pick a sketch with a closed profile for the cut.");
+  // The sheet's reach, for Through all.
+  let size = T;
+  const reach = (p: V3) => { size = Math.max(size, Math.hypot(...sub3(p, fr.o))); };
+  for (const p of st.panels) for (const q of loopPolygon(p.outer, 8)) { reach(apply(p.M, [q[0], q[1], 0])); reach(apply(p.M, [q[0], q[1], T])); }
+  for (const b of st.bends) for (const q of [b.a0, b.a1]) reach(apply(b.M, [q[0], q[1], b.up ? T + b.r * 2 + T : -b.r * 2 - T]));
+  const L = f.end === "through" ? 2 * size + T : f.end === "blind" ? f.depth?.v ?? 0 : T;
+  if (!(L > 0)) throw new SheetError("E-SM-NCUTD", "The depth must be more than 0.");
+  const s = (f.flip ? 1 : -1) * L;
+  const d: V3 = [fr.n[0] * s, fr.n[1] * s, fr.n[2] * s];
+  let tool: Named | null = null;
+  prof.faces.forEach((r, i) => {
+    const shape = prism(api, faceOf(api, wound(r.outer, true), r.holes.map(h => wound(h, false)), fr), d);
+    const faces = api.sub(shape, "FACE");
+    const piece: Named = { shape, faces, names: faces.map((_x, k) => `${f.id}:p${i}_${k}`) };
+    tool = tool ? api.bool("fuse", tool, piece, f.id) : piece;
+  });
+  const reg = tool! as Named;
+  const pieces: Named[] = [];
+  const tinyA = T * T * 1e-6;
+  const areaOf = (fc: any) => { const g = new oc.GProp_GProps_1(); oc.BRepGProp.SurfaceProperties_1(fc, g, false, false); return g.Mass(); };
+  st.panels.forEach((p, i) => {
+    const mid = faceOf(api, p.outer, p.holes, frameOf(p.M, T / 2));
+    const common = new oc.BRepAlgoAPI_Common_3(mid, reg.shape, new oc.Message_ProgressRange_1());
+    if (!common.IsDone()) return;
+    for (const fc of api.sub(common.Shape(), "FACE")) {
+      if (areaOf(fc) <= tinyA) continue;
+      // The mid-surface piece moved to just below the panel and pushed a little past its top.
+      const tr = new oc.gp_Trsf_1();
+      const z = applyDir(p.M, [0, 0, -T * 0.51]);
+      tr.SetTranslation_1(new oc.gp_Vec_4(z[0], z[1], z[2]));
+      const face = new oc.BRepBuilderAPI_Transform_2(fc, tr, true).Shape();
+      const shape = prism(api, face, applyDir(p.M, [0, 0, T * 1.02]));
+      const faces = api.sub(shape, "FACE");
+      pieces.push({ shape, faces, names: faces.map((_x, k) => `${f.id}:n${i}_${k}`) });
+    }
+  });
+  st.bends.forEach((b, i) => {
+    const strip = stripSolid(api, b, b.M, T);
+    neutralLoops(api, st, b, reg.shape).forEach((loop, j) => {
+      const piece = api.bool("common", strip, footprint(api, b.M, loop, T, `${f.id}:b${i}_${j}:`), f.id);
+      if (volumeOf(api, piece.shape) <= tinyA * T) return;
+      pieces.push(...wrapped(api, T, b, piece, b.M, `${f.id}:w${i}_${j}`));
+    });
+  });
+  if (!pieces.length) throw new SheetError("E-SM-NCUTMISS", "The cut misses the sheet: reverse the direction, or cut deeper or through all.");
+  let out = body;
+  for (const p of pieces) out = api.bool("cut", out, p, f.id);
+  return out;
 }
 
 // ---------- forming tools ----------

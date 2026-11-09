@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Modeller } from "../../src/kernel/model";
 import type { Feature, PartDoc, SketchFeature, SkEnt } from "../../src/model/types";
-import type { SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
+import type { SmCutFeature, SmGussetFeature, SmReliefFeature, SmUnfoldFeature, SmFormFeature, SmVentFeature, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmFlatFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "../../src/sheetmetal/types";
 import { flatLoops, flatSize, bendAllowance, reliefCorners } from "../../src/sheetmetal/sheet";
 import { flatDrawing } from "../../src/sheetmetal/flat";
 import { loopPolygon, polyArea } from "../../src/sketch/profile";
@@ -693,4 +693,31 @@ test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120
   assert.equal(code(gus({ at: { v: 99 } })), "E-SM-GUSSETPOS");
   const unf: SmUnfoldFeature = { id: "u", type: "smunfold", name: "Unfold1", bends: [] };
   assert.equal(m.evaluate(doc([...pre, gus(), unf])).statuses.find(x => x.id === "u")?.code, "E-SM-UNFOLDGUSSET");
+});
+
+test("sheet metal: normal cut is square to the sheet, across bends too (FR-FT-120)", async () => {
+  oc ??= await occ();
+  m ??= new Modeller(oc);
+  const s = rect("s", 0, 0, 100, 50);
+  const plate = 100 * 50 * 2;
+  const cut = (over: Partial<SmCutFeature> = {}): SmCutFeature => ({ id: "x", type: "smcut", name: "Normal-Cut1", sketch: "k", ...over });
+  // Link to thickness from the bottom face (XY): reversed so it goes into the sheet; a Ø10 hole.
+  const hole: SketchFeature = { id: "k", type: "sketch", name: "k", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "kc0", t: "point", x: 50, y: 30 }, { id: "kc", t: "circle", c: "kc0", r: 5 }] };
+  close(run(doc([s, base(), hole, cut({ flip: true })])).props.volume, plate - 50 * Math.PI, 1e-6);
+  // The default direction runs away from the sheet and misses it.
+  assert.equal(m.evaluate(doc([s, base(), hole, cut()])).statuses.find(x => x.id === "x")!.ok, false);
+  // A 90° flange up on the y = 0 edge; a slot x 40..60, y < 2 cut up through all from z = 0 ends inside the bend,
+  // where the neutral surface (radius 3 about y = z = 4) passes y = 2: the bend is cut radially there.
+  const fl: SmFlangeFeature = { id: "f", type: "smflange", name: "Edge-Flange1", edges: [{ faces: ["b:p0:top", "b:p0:sl1"] }], length: { v: 30 }, angle: { v: Math.PI / 2 } };
+  const ba = (Math.PI / 2) * 3;
+  const flatLen = 50 - 4 + ba + 26;
+  const slot = rect("k", 40, -5, 60, 2);
+  const gone = 20 * 2 * (3 * (Math.PI / 2 - Math.asin(2 / 3)) + 26);
+  const folded = run(doc([s, base(), fl, slot, cut({ end: "through", flip: true })]));
+  close(folded.props.volume, 100 * flatLen * 2 - gone, 2e-4);
+  // The flat pattern loses the same (the cut ends square on the neutral surface).
+  const fp = run(doc([s, base(), fl, slot, cut({ end: "through", flip: true }), flat]));
+  close(fp.props.volume, 100 * flatLen * 2 - gone, 2e-4);
+  // Blind 1 from z = 0 reaches no mid-surface of the bend or flange.
+  assert.equal(m.evaluate(doc([s, base(), fl, slot, cut({ end: "blind", depth: { v: 0.5 }, flip: true })])).statuses.find(x => x.id === "x")!.ok, false);
 });
