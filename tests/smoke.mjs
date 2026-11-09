@@ -5280,6 +5280,8 @@ try {
     await mp.click("#asm-tree .ft-comp >> nth=1");
     await mp.click('#asm-tools [data-ac="move"]');
     await mp.fill('#asm-pm input[data-pose="x"]', "100");
+    // An inserted part lands where the view looks (exam #67), so its Y is set too.
+    await mp.fill('#asm-pm input[data-pose="y"]', "0");
     await mp.fill('#asm-pm input[data-pose="rz"]', "90");
     await mp.press('#asm-pm input[data-pose="rz"]', "Enter");
     await shown(3);
@@ -6360,11 +6362,11 @@ try {
         a180: mv.angle.every(v => Math.abs(Math.abs(v) - 180) < 1e-6), mrow, msvg, angle: mAngle.plot, read: /°/.test(mAngle.read) && /mm/.test(mAngle.read) };
       document.querySelector(`#motion [data-mo="tdel:${mt.id}"]`)?.click();
       mateVal.gone = !m.study.traces.some(x => x.id === mt.id);
-      // Sensor: Alert above 10 mm on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
+      // Sensor: Alert above 10.1 mm (10 mm itself is reached at 1 s, within the solver's tolerance) on the distance from start (the pin rises 20 mm over 2 s) marks the frames after 1 s,
       // shows Out of range at the end, and with Stop playback the trip is the first frame past 1 s.
       m.sel = null; m.selTrace = tr0.id; m.render(); m.showAt(m.time);
       plotAs("dist");
-      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10"; amax.dispatchEvent(new Event("change"));
+      const amax = document.querySelector('#motion input[data-tr="amax"]'); amax.value = "10.1"; amax.dispatchEvent(new Event("change"));
       const astop = document.querySelector('#motion input[data-tr="astop"]'); astop.checked = true; astop.dispatchEvent(new Event("change"));
       m.seek(2);
       const spans = m.alertSpansOf(tr0.id), sfps = m.study.fps;
@@ -6547,7 +6549,7 @@ try {
       && tc.mateVal.angle === "angle" && tc.mateVal.read && tc.mateVal.gone
       && tc.interfere.found && tc.interfere.starts > 0 && Math.abs(tc.interfere.ends - 2) < 1e-9 && tc.interfere.listed >= 1 && tc.interfere.bands >= 1
       && Math.abs(tc.interfere.sought - tc.interfere.starts) < 1e-9 && tc.interfere.withTouching >= tc.interfere.all0 && tc.interfere.ignoredAfter === 0 && tc.interfere.closed && tc.interfere.clashAll === false && tc.interfere.stopTrip && tc.interfere.stopOff
-      && tc.sensor.alert?.max === 10 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
+      && tc.sensor.alert?.max === 10.1 && tc.sensor.alert?.stop === true && tc.sensor.one && tc.sensor.fromOk && Math.abs(tc.sensor.to - 2) < 1e-9
       && Object.values(tc.prox).every(v => v === true)
       && tc.sensor.bands === 1 && tc.sensor.out && tc.sensor.trip === tc.sensor.want
       && tc.interfere.seq.box && tc.interfere.seq.before === false && tc.interfere.seq.after === true,

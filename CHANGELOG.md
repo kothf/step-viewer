@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Save as names the part after its file, so the title, the document tab (without the unsaved mark) and Insert component's list of open documents show that name.
 
 ### Fixed
+- Save snapshots: a snapshot cut short by closing the page (an empty file) is no longer listed, so Restore no longer fails on it.
 
 - Tree context menus near the bottom of the window open upwards and stay inside it.
 - Components fixed or locked inside a closed linkage no longer show 1 DOF from round-off.
