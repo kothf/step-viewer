@@ -2732,6 +2732,31 @@ try {
       check(lens.lit > 200 && lens.f === "×4" && fac === 5 && Math.abs(moved.x - (vb.x + 50 / fac)) < 1.5 && Math.abs(moved.y - vb.y) < 1.5 && closed,
         `model 1.353: G opens the magnifying glass, the wheel changes its factor, a move inside reaches the view at the magnified point and Esc closes it (${JSON.stringify({ lens, f2, moved, vb, closed })})`);
     }
+    // 1.353 (FR-SEL-009): a pick shows breadcrumbs (face → feature → sketch → body → part); hovering a crumb lights it up,
+    // a click selects its tree row, Shift+D brings the crumbs to the cursor, Esc hides them.
+    {
+      const vb = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return { x: r.left + ((s.x + 1) / 2) * r.width, y: r.top + ((1 - s.y) / 2) * r.height }; });
+      await mp.evaluate(() => { const m = window.__sv.modeller; m.selected = null; m.renderTree(); m.drawDecor(); });
+      await mp.mouse.click(vb.x, vb.y);
+      await mp.waitForSelector("#mc-crumbs", { timeout: 5000 }).catch(() => {});
+      const crumbs = await mp.evaluate(() => [...document.querySelectorAll("#mc-crumbs .mc-crumb")].map(b => b.dataset.id ?? "·" + b.textContent));
+      const feat = crumbs.find(c => c !== "part" && !c.startsWith("·") && !c.startsWith("body:"));
+      let hov = null, picked = null;
+      if (feat) {
+        await mp.hover(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        hov = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+        await mp.click(`#mc-crumbs .mc-crumb[data-id="${feat}"]`);
+        picked = await mp.evaluate(() => ({ sel: window.__sv.modeller.selected, row: document.querySelector("#mc-tree .ft-row.sel")?.dataset.id }));
+      }
+      await mp.mouse.move(vb.x - 40, vb.y + 30);
+      await mp.keyboard.press("Shift+D");
+      const near = await mp.evaluate(p => { const r = document.querySelector("#mc-crumbs")?.getBoundingClientRect(); return r && { at: document.querySelector("#mc-crumbs").classList.contains("at-cursor"), dx: Math.round(r.left - p.x), dy: Math.round(r.top - p.y), w: Math.round(r.width) }; }, { x: vb.x - 40, y: vb.y + 30 });
+      await mp.keyboard.press("Escape");
+      const gone = await mp.evaluate(() => !document.querySelector("#mc-crumbs"));
+      check(crumbs[0]?.startsWith("·") && feat && crumbs.some(c => c.startsWith("body:")) && crumbs.at(-1) === "part" && hov > 0 && picked?.sel === feat && picked.row === feat
+        && near?.at && near.dx <= 12 && near.dx + near.w >= 0 && near.dy >= 0 && near.dy < 40 && gone,
+        `model 1.353: picking a face shows breadcrumbs up to the part; a crumb lights up on hover and selects its row, Shift+D brings them to the cursor, Esc hides them (${JSON.stringify({ crumbs, hov, picked, near, gone })})`);
+    }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
     const pvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), s = new (v.camera.position.constructor)(210, 210, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });

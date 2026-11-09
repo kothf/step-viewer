@@ -1244,3 +1244,11 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .mag-lens { background: var(--bg); }
 .mag-ring { box-sizing: border-box; border: 2px solid var(--accent, #1971c2); box-shadow: 0 2px 12px rgb(0 0 0 / 0.35); }
 .mag-ring::after { content: attr(data-f); position: absolute; right: 22px; bottom: 14px; font: 600 11px/1 system-ui, sans-serif; padding: 2px 5px; border-radius: 4px; background: var(--panel, #fff); color: var(--text); }
+
+/* Selection breadcrumbs (FR-SEL-009) */
+.mc-crumbs { pointer-events: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: 100%; padding: 3px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); font-size: 12px; }
+.mc-crumb { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 0; border-radius: 5px; background: none; color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.mc-crumb.here { cursor: default; color: var(--muted); }
+.mc-crumb[data-id]:hover, .mc-crumb[data-id]:focus-visible { background: var(--accent-soft); color: var(--accent-text); }
+.mc-crumb-sep { color: var(--muted); }
+.mc-crumbs.at-cursor, .mc-confirm.at-cursor { position: fixed; right: auto; z-index: 30; max-width: 60vw; }

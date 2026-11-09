@@ -11,6 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **Magnifying glass (FR-SEL-010)**: press G over the view for a round inset showing the area round the cursor magnified 4× (the wheel inside it changes the factor from 2× to 16×). Hovering, snapping and clicks inside the lens act on the magnified point, so small edges and vertices are easy to pick. G or Esc closes it; Esc does not leave the command that is open.
 - **Selection box flow (FR-UI-109)**: once a selection box that takes one item (a plane, an axis, an edge, a body) has it, focus moves to the next empty required box of the panel by itself, also back to an earlier one left empty (a linear pattern's direction picked before its seeds); boxes that take many items (fillet edges, faces to draft) keep focus. A panel opens on its first empty required box, also when an existing feature is edited.
+- **Selection breadcrumbs (FR-SEL-009)**: after picking a face or an edge of a part, a bar at the top left of the view shows the chain up to the part (face or edge → feature → its sketch → body → part; a picked plane → part). Hovering a crumb lights it up in the view, a click selects it as in the Features tree, a right-click opens its tree menu. Shift+D brings the breadcrumbs, or the ✓/✕ corner while a command is open, to the cursor (D stays the distance tool); Esc hides them.
 
 ## [1.351.0] - 2026-11-09
 

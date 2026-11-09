@@ -573,6 +573,7 @@ export class ModelController {
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
+    document.getElementById("mc-crumbs")?.remove();
     this.syncFlyTree();
     this.renderEmpty();
     this.renderQuick();
@@ -2128,6 +2129,11 @@ export class ModelController {
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
     if (e.key === "F5") { stop(); this.toggleFilterBar(); return; }
+    // Esc closes the magnifying glass first (FR-SEL-010; its own listener takes it).
+    if (k === "escape" && document.querySelector(".mag-lens")) return;
+    // Shift+D: breadcrumbs and the confirmation corner to the cursor (FR-SEL-009; D stays the distance tool).
+    if (k === "d" && e.shiftKey && this.pointerIn && (document.getElementById("mc-crumbs") || this.mode.kind !== "none")) { stop(); this.crumbsToCursor(); return; }
+    if (k === "escape" && this.mode.kind === "none") this.hideCrumbs();
     if (k === "escape" && document.querySelector("#mc-sbar, #mc-cbar")) { stop(); this.hideShortcutBar(); return; }
     if (k === "escape" && this.instant && this.mode.kind === "none") { stop(); this.hideInstant(); return; }
     const m = this.mode;
@@ -4520,6 +4526,8 @@ export class ModelController {
         : m.kind === "feature" ? t("Set the values in the panel; the view shows the result.") : "";
     }
     $("#mc-confirm").hidden = m.kind === "none";
+    if (m.kind !== "none") document.getElementById("mc-crumbs")?.remove();
+    if (m.kind !== this.crumbMode) { this.crumbMode = m.kind; this.crumbAt = null; this.placeCrumbs(); }
     $("#mc-ok").title = m.kind === "sketch" ? t("Exit sketch (Enter)") : t("OK (Enter)");
     $("#mc-ok").setAttribute("aria-label", $("#mc-ok").title);
     const btn = (id: string, label: string, title: string, on = false, dis = false) =>
@@ -4742,6 +4750,93 @@ export class ModelController {
     });
   }
 
+  /** Where Shift+D put the breadcrumbs and the confirmation corner (FR-SEL-009); null = their usual places. */
+  private crumbAt: { x: number; y: number } | null = null;
+  private crumbMode = "none";
+
+  /**
+   * Selection breadcrumbs (FR-SEL-009): after a pick, the chain from the picked face or edge up to the part (face →
+   * feature → sketch → body → part) at the top left of the view. Hovering a crumb lights it up, a click selects it as
+   * in the tree, a right-click opens its tree menu.
+   */
+  private showCrumbs(pick: { edge?: EdgeInfo; faceId?: number; plane?: PlaneRef } | null) {
+    const list: { id: string; icon: string; label: string }[] = [];
+    if (this.mode.kind === "none" && this.store && this.last && pick) {
+      const fid = pick.edge ? pick.edge.faces[0] : pick.faceId;
+      if (fid != null) {
+        list.push({ id: "", icon: pick.edge ? "╱" : "▱", label: pick.edge ? t("Edge") : t("Face") });
+        const f = this.store.feature(this.last.faceNames[fid]?.split(":")[0] ?? "");
+        if (f) {
+          list.push({ id: f.id, icon: f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type] ?? "•", label: featureLabel(f.name) });
+          const sk = "sketch" in f && typeof f.sketch === "string" ? this.store.feature(f.sketch) : undefined;
+          if (sk) list.push({ id: sk.id, icon: ICONS.sketch, label: featureLabel(sk.name) });
+        }
+        let at = 0;
+        for (const b of this.last.bodies ?? []) {
+          const n = b.faces ?? 0;
+          if (fid >= at && fid < at + n) { list.push({ id: `body:${b.key}`, icon: "▣", label: this.bodyName(b.key) }); break; }
+          at += n;
+        }
+      } else if (pick.plane && ("std" in pick.plane || "plane" in pick.plane)) {
+        list.push({ id: "std" in pick.plane ? `std:${pick.plane.std}` : pick.plane.plane, icon: ICONS.plane, label: this.refLabel(pick.plane) });
+      }
+      if (list.length) list.push({ id: "part", icon: ICONS.part, label: this.displayName() });
+    }
+    let el = document.getElementById("mc-crumbs");
+    if (!list.length) { el?.remove(); if (this.mode.kind === "none") this.crumbAt = null; return; }
+    if (!el) {
+      el = document.createElement("nav");
+      el.id = "mc-crumbs";
+      el.className = "mc-crumbs";
+      el.setAttribute("aria-label", t("Selection breadcrumbs"));
+      $("#mc-bar").append(el);
+    }
+    el.innerHTML = list.map((c, i) => (i ? `<span class="mc-crumb-sep" aria-hidden="true">›</span>` : "")
+      + `<button class="mc-crumb${c.id ? "" : " here"}"${c.id ? ` data-id="${esc(c.id)}"` : ` aria-current="true"`} translate="no"><span aria-hidden="true">${esc(c.icon)}</span>${esc(c.label)}</button>`).join("");
+    this.placeCrumbs();
+    el.querySelectorAll<HTMLElement>(".mc-crumb[data-id]").forEach(b => {
+      const id = b.dataset.id!;
+      b.addEventListener("pointerenter", () => this.setHover(id, "tree"));
+      b.addEventListener("pointerleave", () => { if (this.hoverId === id) this.setHover(null, "tree"); });
+      b.addEventListener("click", () => this.selectRow(id));
+      b.addEventListener("contextmenu", e => { e.preventDefault(); this.selectRow(id); this.openMenu(id, e.clientX, e.clientY); });
+    });
+  }
+
+  private hideCrumbs() { this.showCrumbs(null); }
+
+  /** Selects a Features tree row as a click on it would (opening folded folders on the way). */
+  private selectRow(id: string) {
+    this.setHover(null, "tree");
+    this.selected = id;
+    if (id.startsWith("body:")) this.closedFolders.delete("bodies");
+    this.renderTree();
+    this.drawDecor();
+    document.querySelector(`#mc-tree .ft-row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** Shift+D: the breadcrumbs and the confirmation corner come to the cursor (FR-SEL-009). */
+  private crumbsToCursor() {
+    if (!this.pointer) return;
+    this.crumbAt = { ...this.pointer };
+    this.placeCrumbs();
+  }
+
+  private placeCrumbs() {
+    const vr = this.host.vp.getBoundingClientRect(), at = this.crumbAt;
+    for (const el of [document.getElementById("mc-crumbs"), document.getElementById("mc-confirm")]) {
+      if (!el) continue;
+      el.classList.toggle("at-cursor", !!at);
+      if (!at) { el.style.left = el.style.top = ""; continue; }
+      const crumbs = el.id === "mc-crumbs", w = el.offsetWidth || 120, h = el.offsetHeight || 40;
+      // The crumbs sit just below-right of the cursor, the corner just above-right, both kept inside the view.
+      const x = Math.max(vr.left + 4, Math.min(at.x + 12, vr.right - w - 4));
+      const y = Math.max(vr.top + 4, Math.min(at.y + (crumbs ? 16 : -h - 12), vr.bottom - h - 4));
+      el.style.left = `${x}px`; el.style.top = `${y}px`;
+    }
+  }
+
+
   /** The S-key shortcut bar: the commands for the current mode in a small bar at the cursor. */
   showShortcutBar() {
     const m = this.mode;
@@ -4811,6 +4906,7 @@ export class ModelController {
         items.push(["sketch", t("Sketch")], ["normal", t("Normal to")]);
       }
     }
+    this.showCrumbs(this.ctxPick);
     const seen = new Set<string>();
     const list = items.filter(([c]) => !seen.has(c) && !!seen.add(c));
     if (list.length) this.popBar("mc-cbar", t("Context toolbar"), list, at, true);
