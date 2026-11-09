@@ -2366,6 +2366,20 @@ try {
       `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
     check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
+    const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+    const qt0 = await qt();
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt1 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    await mp.click('#mc-quick [data-qt="grid"]');
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt2 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    const qt3 = await qt();
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
@@ -3209,6 +3223,18 @@ try {
     const vol = await mp.evaluate(() => { const r = window.__sv.model.last(); return { ok: r.statuses.every(s => s.ok), v: r.props?.volume ?? 0 }; });
     const want = (Math.PI / 2 * 50 * 12 + Math.PI * 36) * 5;
     check(vol.ok && Math.abs(vol.v - want) < want * 0.002, `model 1.144: the arc slot extrudes to (π/2·50·12 + π·6²)·5 = ${want.toFixed(1)} mm³ (${JSON.stringify(vol)})`);
+    // The centrepoint arc slot's end click on an existing point keeps that point (exam bug 41).
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s3", type: "sketch", name: "Sketch3", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q3", t: "point", x: 0, y: 30 }] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("s3"));
+    await mp.waitForTimeout(1200);
+    await mp.evaluate(() => { const v = window.__sv.viewer; v.fit(false); v.camera.zoom = 1; window.__sv.model.editor().setTool("aslot"); window.__sv.modeller.renderPanel(); });
+    await click([0, 0]); await click([30, 0]); await click([0, 30]); await click([0, 26]);
+    await modify("8"); await modify("30");
+    const endPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, c = sk.ents.find(e => e.t === "arc" && e.cons); return { ends: c ? [c.a, c.b] : null, pts: sk.ents.filter(e => e.t === "point").length }; });
+    check(endPt.ends?.includes("q3"), `model 1.311: a centrepoint arc slot ending on a sketch point uses that point (${JSON.stringify(endPt)})`);
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     // A second sketch: 3-point arc slot without dimensions, then a centrepoint straight slot.
     await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [{ id: "q2", t: "point", x: 100, y: 100 }] }); }));
     await idle();
@@ -6323,9 +6349,14 @@ try {
     await mp.evaluate(() => window.__sv.model.store.change("Depth", d => { d.features.find(f => f.type === "extrude").depth = { v: 20 }; }));
     await mp.waitForTimeout(150);
     await mp.waitForFunction(() => document.querySelector("#mc-busy").hidden && window.__sv.model.last()?.props, null, { timeout: 120000 });
+    // Return with a feature still selected (exam bug 40: its drag-arrow hook threw every frame and froze the assembly view).
+    await mp.click(`#mc-tree .ft-row[data-id="${await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.type === "extrude").id)}"]`);
+    const errs40 = errors.length;
     await mp.click("#mc-ret button");
     await mp.waitForFunction(() => window.__sv.asm.doc && document.querySelector("#app").classList.contains("asm"));
     await shown(2);
+    const frames40 = await mp.evaluate(() => new Promise(res => { let n = 0; const v = window.__sv.viewer, f = () => n++; v.onRender?.(f); v.controls.dispatchEvent({ type: "change" }); setTimeout(() => res(n), 600); }));
+    check(errors.length === errs40, `asm: Return to assembly with a part feature selected throws nothing (${errors.slice(errs40).join(" | ")}; ${frames40} renders)`);
     await mp.waitForFunction(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i]?.data; return d && Math.abs(d.bboxMax[2] - d.bboxMin[2] - 20) < 1e-3; }, boxId, { timeout: 60000 });
     const back = await mp.evaluate(id => { const a = window.__sv.asm, i = a.shownIds.indexOf(id), d = window.__sv.viewer.parts[i].data; return { h: d.bboxMax[2] - d.bboxMin[2], z: d.bboxMin[2], dirty: a.dirty, model: document.querySelector("#app").classList.contains("model"), mates: a.doc.mates.length }; }, boxId);
     await mp.evaluate(() => window.__sv.asm.undo());
@@ -8411,6 +8442,11 @@ try {
     });
     check(/Length/.test(typedLab) && typed.lens[0] === 25 && typed.lens.length === 5 && typed.lens.slice(1).sort().join() === "20,20,40,40" && typed.dims.join() === "20,25,40" && typed.horiz >= 3,
       `commands: sizes typed while drawing place a 25 mm horizontal line and a 40 × 20 rectangle with dimensions (${typedLab}; ${JSON.stringify(typed)})`);
+    // Esc never offers to throw a changed sketch away (exam bug 44): it clears the tool and selection, then only says how to leave.
+    await cp.evaluate(() => document.activeElement?.blur?.());
+    for (let i = 0; i < 3; i++) { await cp.keyboard.press("Escape"); await cp.waitForTimeout(150); }
+    const escKept = await cp.evaluate(() => ({ kind: window.__sv.model.mode().kind, ask: !!document.querySelector("#confirm[open]") }));
+    check(escKept.kind === "sketch" && !escKept.ask, `commands: Esc keeps a changed sketch open without asking to discard it (${JSON.stringify(escKept)})`);
     // Leaving the changed sketch asks first; don't await cancel() (it waits for the answer), answer Discard.
     await cp.evaluate(() => { void window.__sv.modeller.cancel(); });
     await cp.click("#confirm[open] [data-a=ok]");
