@@ -11,6 +11,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - **More weldment profiles (FR-FT-121).** The Structural Member library adds UPE parallel flange channels (EN 10365, 80 to 300), HEM heavy H-beams (EN 10365, 100 to 300) and IPN tapered flange I-beams (DIN 1025-1, 80 to 300, 14 % flange slope); cut list items are named UPE, HEM and IPN.
 
+## [1.308.0] - 2026-11-09
+
+### Added
+
+- **Dimensions on section cut faces** (FR-DRW-021): in a section view (straight, offset, half or broken-out, and details of them) Smart dimension, hole callouts, notes and the other annotations can pick the edges of the hatched cut faces, such as the two walls of a cut hole. Each cut edge is named after the model face the plane cuts through, so its dimension follows the part after a rebuild.
+
+## [1.307.0] - 2026-11-09
+
+### Added
+
+- **Cross Break (FR-FT-120)**: Sheet Metal → Cross Break marks flat faces of the sheet with two crossed lines from corner to corner, the shallow stiffening break used on large panels, like SolidWorks' Cross-Break. Click the top or bottom faces, set the break radius and angle, and Reverse direction to raise it the other way. The lines are drawn on the model and on the flattened part, and the flat pattern DXF gets them on a CROSS_BREAK layer; the solid itself stays flat, as in SolidWorks.
+
+## [1.306.0] - 2026-11-09
+
+### Added
+
+- Motion studies: motors get SolidWorks' **Expression** profile. The angle (degrees) or distance (mm) is typed as a formula in `t`, the seconds after the motor start, such as `30*sin(2*pi*t)` (sin and cos take radians). Text that doesn't give a number is refused with the reason (FR-FT-122).
+
 ## [1.305.0] - 2026-11-09
 
 ### Added
@@ -63,7 +81,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Cut list item material (FR-FT-121).** Each item in the weldment Cut List dialog can have its own material, as in SolidWorks: its mass, the total and the CSV (new Material column) follow that material's density. Items left on Part material use the part's material, as before.
-
 
 ## [1.290.0] - 2026-11-09
 
@@ -1791,7 +1808,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.309.0...HEAD
-[1.309.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.309.0
+[1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
+[1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
+[1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
+[1.306.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.306.0
 [1.305.0]: https://github.com/kothf/step-viewer/compare/v1.304.0...v1.305.0
 [1.304.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.304.0
 [1.303.0]: https://github.com/kothf/step-viewer/compare/v1.302.0...v1.303.0

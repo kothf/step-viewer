@@ -4,6 +4,7 @@ import { compose, fromPose, rotation, translation } from "../asm/math";
 import type { Geo } from "../asm/solver";
 import type { Mate, MateType, Tf } from "../asm/types";
 import type { V3 } from "../model/types";
+import { evaluate } from "../model/expr";
 import type { CamKey, Interp, Key, MotionStudy, MotorTrack, PoseKey, Track } from "./types";
 
 /** Mates whose value a key track or a motor changes. */
@@ -138,6 +139,19 @@ export function parsePoints(text: string, scale = 1): [number, number][] | null 
   return out.length >= 2 ? out : null;
 }
 
+/**
+ * An expression motor's displacement (degrees or mm, as typed) at `t` seconds after its start. Trigonometry takes
+ * radians, as in SolidWorks equations (`30*sin(2*pi*t)`). Throws an ExprError on bad text.
+ */
+export function exprValue(src: string, t: number): number {
+  return evaluate(src, "number", "mm", { t: { v: t, unit: true } });
+}
+
+/** `exprValue`, NaN instead of an error (the study keeps playing; the panel reports the error). */
+function exprAt(src: string, t: number): number {
+  try { return exprValue(src, t); } catch { return NaN; }
+}
+
 /** How far a motor has driven at `t`: radians (rotary) or mm (linear). */
 export function motorAmount(m: MotorTrack, t: number): number {
   const dt = clamp(t, m.start, Math.max(m.start, m.end)) - m.start;
@@ -148,6 +162,7 @@ export function motorAmount(m: MotorTrack, t: number): number {
     return s * (m.dist ?? 0) * u * u * (3 - 2 * u);
   }
   if (m.profile === "points") return s * pointsAt(m.pts ?? [], dt);
+  if (m.profile === "expr") { const v = exprAt(m.expr ?? "0", dt); return Number.isFinite(v) ? s * (m.motion === "rotary" ? (v * Math.PI) / 180 : v) : 0; }
   return s * (m.motion === "rotary" ? (m.speed * 2 * Math.PI) / 60 : m.speed) * dt;
 }
 

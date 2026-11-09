@@ -24,16 +24,18 @@ export interface MateTrack { id: string; kind: "mate"; mate: string; keys: Key[]
  * Constant: `speed` in rpm (rotary) or mm/s (linear). Oscillating: `amp` in radians or mm at `freq` Hz.
  * Distance: `dist` (radians or mm) reached at `end` along a smooth step (SolidWorks distance motor).
  * Data points: `pts` = [seconds after `start`, radians or mm] rows, linear between them, ends held.
+ * Expression: `expr` = the displacement (degrees or mm) as a formula in `t`, seconds after `start` (SolidWorks expression motor).
  */
 export interface MotorTrack {
   id: string;
   kind: "motor";
   mate: string;
   motion: "rotary" | "linear";
-  profile: "constant" | "oscillate" | "distance" | "points";
+  profile: "constant" | "oscillate" | "distance" | "points" | "expr";
   speed: number;
   dist?: number;
   pts?: [number, number][];
+  expr?: string;
   amp?: number;
   freq?: number;
   start: number;
