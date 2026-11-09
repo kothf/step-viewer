@@ -166,6 +166,24 @@ export class MotionManager {
     this.showAt(0);
   }
 
+  /** A copy of the shown study with all its tracks, keys and results, shown next (SolidWorks: Duplicate on the study tab). */
+  duplicateStudy() {
+    const src = this.study, names = new Set(this.studies.map(x => x.name));
+    let k = 2, name = `${src.name} (${k})`;
+    while (names.has(name)) name = `${src.name} (${++k})`;
+    const s: MotionStudy = { ...JSON.parse(JSON.stringify(src)), id: uid("ms_"), name };
+    this.stop();
+    this.asm.changeMotions(d => {
+      d.motions ??= [];
+      if (!src.id) d.motions.push({ ...JSON.parse(JSON.stringify(src)), id: uid("ms_") });
+      d.motions.push(s);
+    });
+    this.studyId = s.id;
+    this.sel = null;
+    this.render();
+    this.showAt(this.time);
+  }
+
   deleteStudy() {
     const id = this.study.id;
     this.stop();
@@ -1030,7 +1048,7 @@ export class MotionManager {
       + `<h2 class="mo-title">${esc(t("Motion study"))}</h2>`
       + `<label class="mo-f"><select data-mo="study" aria-label="${esc(t("Study"))}">${studyOpts}</select></label>`
       + `<label class="mo-f"><span>${esc(t("Name"))}</span><input type="text" data-mo="name" value="${esc(s.name)}" translate="no" spellcheck="false" /></label>`
-      + ib("new", "＋", t("New motion study")) + ib("delstudy", "🗑", t("Delete motion study"), s.id ? "" : " disabled")
+      + ib("new", "＋", t("New motion study")) + ib("dupstudy", "⧉", t("Duplicate motion study")) + ib("delstudy", "🗑", t("Delete motion study"), s.id ? "" : " disabled")
       + `<label class="mo-f"><span>${esc(t("Duration"))}</span><input type="text" inputmode="decimal" data-mo="duration" value="${esc(fmt(s.duration))}" class="mo-n" /><span class="muted">${esc(t("s"))}</span></label>`
       + `<label class="mo-f"><span>fps</span><select data-mo="fps">${[15, 24, 30, 60].map(v => `<option${v === s.fps ? " selected" : ""}>${v}</option>`).join("")}</select></label>`
       + `<span class="mo-sp"></span>` + ib("close", "✕", t("Close motion study"))
@@ -1167,6 +1185,7 @@ export class MotionManager {
       if (a === "close") this.hide();
       else if (a === "new") this.newStudy();
       else if (a === "delstudy") this.deleteStudy();
+      else if (a === "dupstudy") this.duplicateStudy();
       else if (a === "play") this.play();
       else if (a === "stop") this.stop();
       else if (a === "start") this.seek(0);
