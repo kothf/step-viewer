@@ -8953,6 +8953,20 @@ try {
     await mp.click("#mc-cancel");
     await settle();
     check(sym.t === "◺ z4 50 (100)" && sym.mode === "feature" && sym.id === "w5", `weldments: weld symbol on the bead (${JSON.stringify(sym)})`);
+    // From/to length: a continuous bead only 50 mm along the loop (defaults: from the start, 50 long); the symbol gives the length.
+    await mp.evaluate(() => window.__sv.modeller.editFeature("w5"));
+    await settle();
+    await mp.click('#mc-pm input[data-k="wInter"]');
+    await settle();
+    await mp.selectOption('#mc-pm select[data-k="wLen"]', "span");
+    await settle();
+    const spf = await mp.evaluate(() => ({ n: document.querySelectorAll('#mc-pm [data-num="span.start"], #mc-pm [data-num="span.len"], #mc-pm input[data-k="wSpanFlip"]').length, t: document.querySelector('#mc-layer .wld-sym[data-weld="w5"]')?.textContent }));
+    await mp.click("#mc-ok");
+    await settle();
+    const spb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), beads: (l.cutList ?? []).filter(c => c.kind === "bead").map(c => c.length) }; });
+    await mp.evaluate(() => window.__sv.model.store.undo());
+    await settle();
+    check(spf.n === 3 && spf.t === "◺ z4 50" && !spb.bad && spb.beads.length === 1 && Math.abs(spb.beads[0] - 50) < 0.2, `weldments: from/to length fillet bead (${JSON.stringify({ ...spf, ...spb })})`);
     check(symFlags === "○ ⚑ ◺ z4 50 (100)", `weldments: all-around and field weld flags on the symbol (${symFlags})`);
     await mp.evaluate(() => window.__sv.modeller.editFeature("g5"));
     await settle();

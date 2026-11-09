@@ -259,6 +259,9 @@ export function weldPanel(f: WeldFeature, ctx: WeldCtx, focus: string | undefine
         + chk("wEqual", !f.size2, t("Equal leg lengths")) + chk("wTangent", f.tangent !== false, t("Tangent propagation"))
         + chk("wSymbol", f.symbol !== false, t("Show weld symbol"))
         + (f.symbol !== false ? chk("wAround", !!f.around, t("Weld all around")) + chk("wField", !!f.field, t("Field weld")) : "")
+        + sel("wLen", t("Bead length"), [["full", t("Full length")], ["span", t("From/to length")]], f.span ? "span" : "full")
+        + (f.span ? numField("span.start", t("Start offset"), f.span.start, "length") + numField("span.len", t("Length"), f.span.len, "length")
+          + chk("wSpanFlip", !!f.span.flip, t("Start from the other end")) + help(t("The bead runs this length from the start offset along each run of edges.")) : "")
         + chk("wInter", !!f.inter, t("Intermittent weld"))
         + (f.inter ? numField("inter.len", t("Weld length"), f.inter.len, "length") + numField("inter.pitch", t("Pitch"), f.inter.pitch, "length")
           + chk("wStagger", !!f.inter.stagger, t("Staggered")) + help(t("Welds of this length every pitch, centre to centre, from the start of each run of edges. Staggered starts every other run half a pitch on.")) : ""))
@@ -338,6 +341,8 @@ export function weldChange(f: WeldFeature, k: string, val: string | boolean, ctx
   if (f.type === "weldbead" && k === "wSymbol") return () => { if (val) delete f.symbol; else f.symbol = false; };
   if (f.type === "weldbead" && k === "wAround") return () => { if (val) f.around = true; else delete f.around; };
   if (f.type === "weldbead" && k === "wField") return () => { if (val) f.field = true; else delete f.field; };
+  if (f.type === "weldbead" && k === "wLen") return () => { if (val === "span") f.span ??= { start: { v: 0 }, len: { v: 50 } }; else delete f.span; };
+  if (f.type === "weldbead" && k === "wSpanFlip") return () => { if (!f.span) return; if (val) f.span.flip = true; else delete f.span.flip; };
   if (f.type === "weldbead" && k === "wInter") return () => { if (val) f.inter = { len: { v: 50 }, pitch: { v: 100 } }; else delete f.inter; };
   if (f.type === "weldbead" && k === "wStagger") return () => { if (!f.inter) return; if (val) f.inter.stagger = true; else delete f.inter.stagger; };
   return null;
@@ -462,7 +467,7 @@ export function weldPick(ctx: WeldCtx, e: PointerEvent, f: WeldFeature, focus: s
 export function weldSymbol(f: WeldBeadFeature): string {
   const n = (v: number) => String(Math.round(v * 100) / 100);
   const it = f.inter;
-  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : "");
+  return (f.around ? "○ " : "") + (f.field ? "⚑ " : "") + `◺ z${n(f.size.v)}${f.size2 && Math.abs(f.size2.v - f.size.v) > 1e-9 ? `×${n(f.size2.v)}` : ""}` + (it ? ` ${n(it.len.v)}${it.stagger ? " Z" : ""} (${n(Math.max(it.pitch.v, it.len.v))})` : f.span ? ` ${n(f.span.len.v)}` : "");
 }
 
 /** The weld symbols to show: shown, built beads up to the rollback bar; the one being edited from its draft. */
