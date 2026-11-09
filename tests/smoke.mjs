@@ -3904,6 +3904,22 @@ try {
     check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
+    await ready();
+    // Smart dimension on the section's cut faces (FR-DRW-021): the hole's two cut walls are 16 apart.
+    {
+      const cutN = await dp.evaluate(i => (window.__sv.drw.proj(i)?.cutEdges ?? []).filter(e => e.k.endsWith("|§")).length, sec.id);
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [8, -8]) { const [cx, cy] = await at(sec.id, u, 10); await dp.mouse.move(cx, cy + 2); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); }
+      const [px, py] = await at(sec.id, 0, 32);
+      await dp.mouse.move(px + 3, py); await dp.mouse.move(px, py); await dp.mouse.click(px, py);
+      await dp.keyboard.press("Escape");
+      const cutDims = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "dim" && a.view === i).map(a => ({ k: a.k, refs: a.refs.map(r => r.e) })), sec.id);
+      const cutTexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s));
+      check(cutN >= 8 && cutDims.length === 1 && cutDims[0].refs.every(e => e?.endsWith("|§")) && cutTexts.includes("16"),
+        `drawing: a section view is dimensioned on its cut faces: the hole's cut walls give 16 (${cutN} cut edges, ${JSON.stringify(cutDims)})`);
+      await dp.keyboard.press("Control+z");
+      await ready();
+    }
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
     await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
@@ -8543,14 +8559,14 @@ try {
     await settle();
     // The wider library: an unequal angle, an HEB beam and a square bar build and name their cut list items.
     const lib = [];
-    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"]]) {
+    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"], ["upe", "120", "UPE 120"], ["ipn", "140", "IPN 140"], ["hem", "120", "HEM 120"]]) {
       await mp.evaluate(([type, size]) => window.__sv.model.store.change("Profile", d => { const m = d.features.find(f => f.type === "member"); m.profile = type; m.size = size; }), [type, size]);
       await settle();
       lib.push(await mp.evaluate(name => { const l = window.__sv.model.last(); return { name, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), found: (l.cutList ?? []).some(c => c.kind === "member" && c.desc === name) }; }, name));
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
     }
-    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB and square bar profiles (${JSON.stringify(lib)})`);
+    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB, square bar, UPE, IPN and HEM profiles (${JSON.stringify(lib)})`);
     // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
@@ -8808,7 +8824,7 @@ try {
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|HEB|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|UPE|IPE|IPN|HEA|HEB|HEM|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 
@@ -8989,6 +9005,17 @@ try {
     const bc1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, segs: l.sheet?.panels[0].outer.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(bc0.title === "Break Corner" && bc0.edges?.length === 1 && /:p0:l1\|.*:p0:l2$/.test(bc0.edges[0]) && !bc1.bad && bc1.segs === 5 && Math.abs(bcv0 - bc1.v - 50 * T) < 1e-3,
       `sheet metal: Break Corner chamfers the picked thickness edge's corner, in the flat outline too (${JSON.stringify({ bc0, bc1, bcv0 })})`);
+    // Cross Break: click the plate's top face, ✓: two diagonals, the solid stays as it is.
+    await smMenu("Cross Break");
+    const [cbx, cby] = await scr([30, 20, T]);
+    await mp.mouse.click(cbx, cby);
+    await settle();
+    const cb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, faces: window.__sv.model.mode().draft?.faces.map(f => f.name) }));
+    await mp.click("#mc-ok");
+    await settle();
+    const cb1 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.crosses?.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(cb0.title === "Cross Break" && cb0.faces?.length === 1 && /:p0:top$/.test(cb0.faces[0]) && !cb1.bad && cb1.n === 2 && Math.abs(cb1.v - bc1.v) < 1e-6,
+      `sheet metal: Cross Break marks the clicked flat face with two diagonals, solid unchanged (${JSON.stringify({ cb0, cb1 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");

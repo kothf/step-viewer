@@ -5,7 +5,7 @@
 // with their parent. Lines come from the drawing worker (exact HLR).
 import fontUrl from "dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url";
 import type { MEdge, Projection, ViewDir } from "../kernel/drawing";
-import { AUTO_LAYERS, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
+import { AUTO_LAYERS, withCut, clineSegs, cloudPrims, dimGeo, factsCtx, holeEdges, ringDist, holeRows, dimPrims, dimText, edgeFoot, edgeRef, holeText, placeItems, projector, refEdge, refPoint, sheetNotes, useProps, useStyle, viewAnnots, type AnnotCtx } from "./annot";
 import type { PartDoc } from "../model/types";
 import type { AsmDoc } from "../asm/types";
 import { BOM_COLS, autoBalloons, compOfKey, sheetBom, subsOf, type Bom } from "./bom";
@@ -1060,12 +1060,14 @@ export class DrawingWorkspace {
   private ctx(sh: Sheet = this.sheet): AnnotCtx {
     const f = this.facts;
     if (this.store) { useStyle(this.doc.style); useProps(this.fields(sh) as unknown as Record<string, string>); }
-    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = c && this.kernel.configs.get(c); return g ? factsCtx(g) : null; } };
+    return { ...factsCtx(f), dec: lang() === "ru" ? "," : ".", label: (s, p) => t(s, p), bom: this.bomFor(sh), forView: v => { const c = viewConfig(sh, v), g = (c && this.kernel.configs.get(c)) || null, pr = this.kernel.cache.get(viewReq(sh, v).key); return pr?.cutEdges?.length ? factsCtx(withCut(g ?? f, pr)) : g ? factsCtx(g) : null; } };
   }
 
   /** The model facts a view draws on: its part configuration's (FR-DRW-010) once built, else the loaded model's. */
   private factsOf(view: string, sh = this.sheet): ModelFacts | null {
-    const v = findView(sh, view), c = v && viewConfig(sh, v), f = (c && this.kernel.configs.get(c)) || this.facts, only = v && viewOnly(sh, v);
+    const v = findView(sh, view), c = v && viewConfig(sh, v), only = v && viewOnly(sh, v);
+    // A section view also measures its cut faces' edges (FR-DRW-021).
+    const f = withCut((c && this.kernel.configs.get(c)) || this.facts, v ? this.kernel.cache.get(viewReq(sh, v).key) : null);
     return f && only ? { ...f, topo: topoOnly(f.topo, only) } : f;
   }
 

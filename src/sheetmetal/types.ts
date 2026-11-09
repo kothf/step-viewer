@@ -147,6 +147,19 @@ export interface SmTabFeature {
   sketch: string;
 }
 
+/** Cross break: an X of shallow bend lines across a flat face that stiffens it; the solid is unchanged. */
+export interface SmCrossFeature {
+  id: string; type: "smcross"; name: string; suppressed?: boolean;
+  /** Top or bottom faces of panels (`<panel>:top|bot`). */
+  faces: FaceRef[];
+  /** Inside radius of the break lines. */
+  radius: Num;
+  /** Break angle. */
+  angle: Num;
+  /** Break the other way (default: raised towards the picked face). */
+  flip?: boolean;
+}
+
 /** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
  * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
 export interface SmLoftFeature {
@@ -164,8 +177,8 @@ export interface SmLoftFeature {
   facets?: number;
 }
 
-export type SheetFeature = SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+export type SheetFeature = SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
