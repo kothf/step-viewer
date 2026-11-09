@@ -40,6 +40,27 @@ test("AT-P4-1: concentric + coincident leaves the pin one rotation", () => {
   assert.equal(r2.dof.q, 0);
 });
 
+test("free counts a linkage once; Lock rotation on Concentric takes the turn (exam #58, #59)", () => {
+  const r = solve({ doc: doc([conc, coin]), geo, size: 100 });
+  assert.equal(r.free, 1);
+  // Unmated floating components count 6 each.
+  assert.equal(solve({ doc: doc([]), geo, size: 100 }).free, 6);
+  // The pin already concentric and seated (the solved pose), then the turn locked from there.
+  const d = doc([conc, coin]);
+  d.components[1].tf = r.tfs.q;
+  const locked: Mate = { ...conc, lockRot: true, t0: [IDENTITY, r.tfs.q] };
+  const r2 = solve({ doc: { ...d, mates: [locked, coin] }, geo, size: 100 });
+  assert.ok(r2.ok);
+  assert.equal(r2.dof.q, 0);
+  assert.equal(r2.free, 0);
+  // Started turned 0.4 rad about the axis, the pin turns back to where the mate was made.
+  d.components[1].tf = compose(rotation([20, 10, 0], [0, 0, 1], 0.4), r.tfs.q);
+  const r3 = solve({ doc: { ...d, mates: [locked, coin] }, geo, size: 100 });
+  assert.ok(r3.ok);
+  const x = applyDir(r3.tfs.q, [1, 0, 0]), x0 = applyDir(r.tfs.q, [1, 0, 0]);
+  assert.ok(Math.hypot(x[0] - x0[0], x[1] - x0[1], x[2] - x0[2]) < 1e-5, String(x));
+});
+
 test("axes fitted to a tessellation (off by 1e-5 rad) still solve with flat-face mates (exam bug 28)", () => {
   const tilt = 1.5e-5, saved = geos.pin.shank;
   geos.pin.shank = { k: "axis", p: [0, 0, 0], d: [Math.sin(tilt), 0, Math.cos(tilt)], r: 3 };

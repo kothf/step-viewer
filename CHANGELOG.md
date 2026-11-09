@@ -5,6 +5,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.331.0] - 2026-11-09
+
+### Added
+
+- **From/to length fillet beads (FR-FT-121)**: Fillet Bead gets SolidWorks' Bead length choice. **From/to length** welds only part of each run of edges: from the Start offset for the Length you type, or measured from the other end with Start from the other end. The weld symbol shows the length (◺ z4 50), the cut list gives the welded length, and an intermittent weld fills just that stretch.
+## [1.330.0] - 2026-11-09
+
+### Added
+
+- Mate: Alt+click picks the face behind the one under the cursor, and again cycles through every face there, so faces hidden behind others can be mated (Select Other).
+- Concentric mate: Lock rotation, which stops the second component turning about the shared axis.
+- The assembly status shows the free degrees of freedom of the whole assembly ("Under defined, 1 DOF"; a linkage that moves as one counts once), and the selected component's own.
+- Header below 1600 px: a ▾ button beside Fit lists the standard views that no longer fit.
+
+### Changed
+
+- Mate panel: after ✓ adds a mate the panel says what was added and that ✓ again closes it; the Mate button with faces picked starts a new mate instead of closing the panel.
+- Assembly tree: the show/hide button is always shown (faint until hovered), so hidden components are easy to find and show.
+- Motion study: Play first calculates the frames still to solve a few at a time, showing "Calculating frame k of n" and keeping the page responsive; Play or Pause again cancels. A big assembly's first Play froze the page for minutes.
 ## [1.329.0] - 2026-11-09
 
 ### Added
@@ -1938,7 +1957,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.329.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.331.0...HEAD
+[1.331.0]: https://github.com/kothf/step-viewer/compare/v1.330.0...v1.331.0
+[1.330.0]: https://github.com/kothf/step-viewer/compare/v1.329.0...v1.330.0
 [1.329.0]: https://github.com/kothf/step-viewer/compare/v1.328.0...v1.329.0
 [1.328.0]: https://github.com/kothf/step-viewer/compare/v1.327.0...v1.328.0
 [1.327.0]: https://github.com/kothf/step-viewer/compare/v1.326.0...v1.327.0

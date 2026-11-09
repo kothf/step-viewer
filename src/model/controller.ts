@@ -5257,7 +5257,7 @@ export class ModelController {
         try { v = evaluate(inp.value, q, q === "angle" ? "deg" : unit, evalVars(this.doc, unit).values); }
         catch (err) { inp.setAttribute("aria-invalid", "true"); toast(t((err as ExprError).key ?? String(err), (err as ExprError).params), true); return; }
         // Helix start angle and taper may be 0 or negative.
-        if (!(v > 0) && !(key === "start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
+        if (!(v > 0) && !(key === "start" || key === "span.start" || key === "taper" || key === "twist" || ((key === "angle" || /^groups\.\d+\.angle$/.test(key)) && f.type === "member") || /^vpitch\.0\.h$/.test(key)) && !(key === "clearance" && f.type === "indent" && v === 0)) { inp.setAttribute("aria-invalid", "true"); toast(t("The value must be more than 0."), true); return; }
         inp.removeAttribute("aria-invalid");
         const n: Num = isPlain(inp.value) ? { v } : { v, expr: inp.value.trim() };
         // "thin.t" and "draft.angle" live one level down, "vpitch.0.h" two.
