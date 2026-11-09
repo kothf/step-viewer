@@ -10,6 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Merge miter trimmed bodies (FR-FT-121).** Structural Member adds **Merge miter trimmed bodies**, as in SolidWorks: the members at each mitred corner are fused into one body, so a welded frame of four mitred tubes is one body, listed once in the cut list with the lengths of its segments added up. With a weld gap the mitred ends don't touch and stay separate bodies. The box shows when a corner of the member is mitred.
+## [1.303.0] - 2026-11-09
+
+### Added
+
+- **Sketch grid and Snap to grid (FR-SK-041)**: the sketch panel's new Grid section shows a grid on the sketch plane (every fifth line and the lines through the origin stronger) and can snap points to it. The spacing follows the zoom in 1-2-5 steps unless you type one. With Snap to grid on, a point that snaps to nothing else (no end point, curve or inference) goes to the nearest grid node; a horizontal or vertical inference keeps its line and snaps the other coordinate; hold Ctrl to place freely. Both are off by default and remembered.
+- **Alignment inference (FR-SK-042)**: while drawing, a point whose x or y comes within a few pixels of a sketch point's that the cursor passed over (SolidWorks' woken points, the last four) lines up with it exactly, shown by a dotted line from that point, as in SolidWorks. No relation is added. It follows the Horizontal/vertical snap preference, and Ctrl turns it off with the other inferences.
+
+## [1.302.0] - 2026-11-09
+
+### Added
+
+- **Lofted Bend (FR-FT-120)**: Sheet Metal → Lofted Bend joins two open profiles of lines and arcs, each sketched on its own plane, with a sheet of thickness, like SolidWorks' Lofted-Bend with the Bent method. The sheet is made of flat facets with sharp folds between them (Facets per arc sets how finely arcs are split), so it unfolds exactly: Flatten and the flat pattern DXF show the developed outline with every fold as a bend line (up or down), and drawings get the flat pattern view and bend table. Facets lying in one plane stay one face. Typical uses are transitions such as square-to-round ducts and hoppers.
 
 ## [1.300.0] - 2026-11-09
 
@@ -1767,7 +1779,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.305.0...HEAD
-[1.305.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.305.0
+[1.305.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.305.0
+[1.303.0]: https://github.com/kothf/step-viewer/compare/v1.302.0...v1.303.0
+[1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
 [1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0
 [1.298.0]: https://github.com/kothf/step-viewer/compare/v1.297.0...v1.298.0
 [1.297.0]: https://github.com/kothf/step-viewer/compare/v1.296.0...v1.297.0

@@ -26,6 +26,7 @@ import { inPolygon, textPath } from "./profile";
 import { quadCorners, perimeterCircle, type PerimItem } from "./shapes";
 import { conicBezier, conicShoulder, entBezier, eqBezier, hasControl, parabolaFrom, rhoAt, styleBezier, type CurveEq } from "./conic";
 import { DEFAULT_SNAPS, SNAP_KINDS, arcCurve, intersections, perpendicularFoot, quadrants, tangentPoints, type SnapCurve, type SnapKind } from "./snaps";
+import { gridLines, gridStep, snapToGrid } from "./grid";
 import { arcSlotCorners, arcSlotEnts, arcSlotHalfWidth, arcSlotOutline, centreArcAxis, threePointArcAxis, type ArcSlotAxis } from "./slots";
 
 /** Points an entity refers to (its ends, centre, axis points). */
@@ -89,6 +90,8 @@ export interface SketchHost {
 export type { ModelEdge };
 
 const SNAP_PX = 9;
+/** Pixels within which the cursor lines up with a point's x or y (FR-SK-042). */
+const ALIGN_PX = 6;
 const HV_TOL = (3 * Math.PI) / 180;
 
 type Hit = { id: string; kind: "point" | "line" | "circle" | "arc" | "ellipse" | "spline" | "origin" | "dim" | "rel"; d: number };
@@ -180,6 +183,14 @@ export class SketchEditor {
   showRels = true;
   /** Snap types on while drawing (FR-SK-046 preferences, localStorage `mc:skSnaps`). */
   snaps = new Set<SnapKind>(DEFAULT_SNAPS);
+  /** Sketch grid (FR-SK-041): shown, points snap to its nodes, and its spacing in mm (0 = automatic from the zoom). */
+  grid = false;
+  gridSnap = false;
+  gridSpacing = 0;
+  private gridObj: THREE.LineSegments | null = null;
+  private gridKey = "";
+  /** The spacing the grid was last drawn with (what Snap to grid rounds to). */
+  gridAt = 0;
   /** Quick snap (FR-SK-046): the one snap type the next point uses; cleared once the point is placed. */
   quickSnap: SnapKind | null = null;
   /** Called when the quick snap changes (set, used or cancelled), so the bar can show it. */
@@ -193,6 +204,12 @@ export class SketchEditor {
   private inferEl: HTMLElement | null = null;
   private input: HTMLInputElement | null = null;
   private marker: THREE.Mesh;
+  /** Dotted lines from the points the cursor lines up with (FR-SK-042), drawn while placing. */
+  private alignObj: THREE.LineSegments | null = null;
+  /** The points the last snap lined up with: [source, snapped point]. */
+  aligned: [V2, V2][] = [];
+  /** Points the cursor passed over while drawing ("woken", as in SolidWorks): the ones alignment looks at. */
+  private woke: V2[] = [];
   private dark = false;
 
   constructor(private host: SketchHost, sk: SketchFeature, public frame: Frame) {
@@ -213,6 +230,8 @@ export class SketchEditor {
   dispose() {
     this.closeInput(false);
     this.host.viewer.scene.remove(this.group, this.marker);
+    this.dropGrid();
+    this.showAlign([]);
     this.clearGroup();
     for (const l of this.labels.values()) l.remove();
     this.labels.clear();
@@ -238,6 +257,8 @@ export class SketchEditor {
     this.closeInput(false);
     this.reattaching = null;
     this.piercing = null;
+    this.showAlign([]);
+    this.woke = [];
     this.tool = tool;
     this.inferLine = null;
     this.setQuickSnap(null);
@@ -607,7 +628,144 @@ export class SketchEditor {
   // ---------- snapping ----------
 
   /** Snaps a cursor point to points, the origin, curves and horizontal/vertical from the last point. */
+  // ---------- grid (FR-SK-041) ----------
+
+  /** The part of the sketch plane the view shows (corners and middle of the canvas), or null when edge-on. */
+  private visibleBox(): [V2, V2] | null {
+    const r = this.host.viewer.renderer.domElement.getBoundingClientRect();
+    const xs: number[] = [], ys: number[] = [];
+    for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]]) {
+      const q = this.uv({ clientX: r.left + fx * r.width, clientY: r.top + fy * r.height } as PointerEvent);
+      if (!q) return null;
+      xs.push(q[0]); ys.push(q[1]);
+    }
+    return [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]];
+  }
+
+  /** The spacing Snap to grid uses now: the drawn one, else worked out at a point. */
+  private snapStep(p: V2): number {
+    if (this.gridAt > 0) return this.gridAt;
+    const box = this.visibleBox();
+    return gridStep(this.gridSpacing, this.px(p), box ?? [p, p]);
+  }
+
+  private dropGrid() {
+    if (!this.gridObj) return;
+    this.host.viewer.scene.remove(this.gridObj);
+    this.gridObj.geometry.dispose();
+    (this.gridObj.material as THREE.Material).dispose();
+    this.gridObj = null;
+  }
+
+  /** Draws (or removes) the grid for the current view; runs on every render, rebuilding only when the view moved. */
+  private syncGrid() {
+    if (!this.grid) { if (this.gridObj) { this.dropGrid(); this.gridKey = ""; this.gridAt = 0; } return; }
+    const box = this.visibleBox();
+    if (!box) { this.dropGrid(); this.gridKey = ""; return; }
+    const mid: V2 = [(box[0][0] + box[1][0]) / 2, (box[0][1] + box[1][1]) / 2];
+    const step = gridStep(this.gridSpacing, this.px(mid), box);
+    // Pad by a few steps so small pans need no rebuild.
+    const pad = step * 4, k = (v: number) => Math.floor(v / pad);
+    const key = `${step}|${k(box[0][0])}|${k(box[0][1])}|${k(box[1][0])}|${k(box[1][1])}|${this.dark ? 1 : 0}`;
+    if (key === this.gridKey && this.gridObj) return;
+    this.gridKey = key;
+    this.gridAt = step;
+    const lo: V2 = [Math.floor(box[0][0] / pad) * pad, Math.floor(box[0][1] / pad) * pad];
+    const hi: V2 = [Math.ceil(box[1][0] / pad + 1) * pad, Math.ceil(box[1][1] / pad + 1) * pad];
+    const pos: number[] = [], col: number[] = [];
+    const bg = this.dark ? [0.09, 0.1, 0.12] : [1, 1, 1], ink = this.dark ? [0.75, 0.8, 0.88] : [0.35, 0.4, 0.5];
+    const mix = (a: number) => bg.map((b, i) => b + (ink[i] - b) * a);
+    for (const [a, b, major] of gridLines([lo, hi], step)) {
+      const c = mix(major ? 0.32 : 0.14);
+      for (const q of [a, b]) { const w = this.w(q); pos.push(w.x, w.y, w.z); col.push(...c); }
+    }
+    this.dropGrid();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    this.gridObj = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.9 }));
+    this.gridObj.renderOrder = 2990;
+    this.gridObj.userData.skGrid = true;
+    this.host.viewer.scene.add(this.gridObj);
+  }
+
+  /** Shows or hides the grid, sets Snap to grid and the spacing (mm, 0 = automatic). */
+  setGrid(o: { show?: boolean; snap?: boolean; spacing?: number }) {
+    if (o.show !== undefined) this.grid = o.show;
+    if (o.snap !== undefined) this.gridSnap = o.snap;
+    if (o.spacing !== undefined) this.gridSpacing = Math.max(0, o.spacing || 0);
+    this.gridKey = "";
+    this.gridAt = 0;
+    this.syncGrid();
+    this.host.viewer.invalidate();
+  }
+
   private snapPoint(p: V2, active: boolean, materialize = false): Snap {
+    const r = this.snapPointRaw(p, active, materialize);
+    if (r.id && this.drawing && !this.woke.some(w => w[0] === r.p[0] && w[1] === r.p[1])) this.woke = [...this.woke, r.p].slice(-4);
+    const free = active && !r.id && !r.curve && !r.rel && !this.suppressed() && !this.quickSnap;
+    if (!free) { this.showAlign([]); return r; }
+    // Alignment with existing points (FR-SK-042): an x or y within the snap radius of a sketch point's
+    // lines up with it, shown by a dotted line from that point; no relation is added.
+    let q: V2 = [r.p[0], r.p[1]];
+    const lock = { x: r.hv === "vertical", y: r.hv === "horizontal" };
+    const lines: [V2, V2][] = [];
+    if (this.drawing && this.snaps.has("hv")) {
+      const a = this.alignAt(q, lock);
+      if (a.x) { q[0] = a.x[0]; lock.x = true; }
+      if (a.y) { q[1] = a.y[1]; lock.y = true; }
+      if (a.x) lines.push([a.x, q]);
+      if (a.y) lines.push([a.y, q]);
+    }
+    // Snap to grid (FR-SK-041): a coordinate that snapped to nothing else goes to the nearest grid line.
+    if (this.gridSnap) {
+      const g = snapToGrid(q, this.snapStep(q));
+      q = [lock.x ? q[0] : g[0], lock.y ? q[1] : g[1]];
+      if (!lock.x && !lock.y) this.showMarker(q);
+    }
+    this.showAlign(lines);
+    return { ...r, p: q };
+  }
+
+  /** The nearest woken point (one the cursor passed over while drawing) lined up in x and in y with `p`. */
+  private alignAt(p: V2, lock: { x: boolean; y: boolean }): { x: V2 | null; y: V2 | null } {
+    const tol = this.px(p) * ALIGN_PX;
+    const near = this.px(p) * SNAP_PX * 2;
+    const last = this.draft.pts.at(-1);
+    const pts = this.woke.filter(w => !last || w[0] !== last[0] || w[1] !== last[1]);
+    let bx: V2 | null = null, by: V2 | null = null, dx = tol, dy = tol;
+    for (const s of pts) {
+      // A point next to the cursor is a snap target, not an alignment, and the chain's last point gives H/V instead.
+      if (Math.hypot(s[0] - p[0], s[1] - p[1]) < near) continue;
+      if (!lock.x && Math.abs(s[0] - p[0]) < dx) { dx = Math.abs(s[0] - p[0]); bx = s; }
+      if (!lock.y && Math.abs(s[1] - p[1]) < dy) { dy = Math.abs(s[1] - p[1]); by = s; }
+    }
+    return { x: bx, y: by };
+  }
+
+  /** Draws the dotted alignment lines (or clears them with an empty list). */
+  private showAlign(lines: [V2, V2][]) {
+    this.aligned = lines;
+    if (this.alignObj) {
+      this.host.viewer.scene.remove(this.alignObj);
+      this.alignObj.geometry.dispose();
+      (this.alignObj.material as THREE.Material).dispose();
+      this.alignObj = null;
+    }
+    if (!lines.length) return;
+    const pos: number[] = [];
+    for (const [a, b] of lines) pos.push(...this.w(a).toArray(), ...this.w(b).toArray());
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    const d = this.px(lines[0][1]) * 4;
+    this.alignObj = new THREE.LineSegments(g, new THREE.LineDashedMaterial({ color: this.dark ? 0x9ec5fe : 0x1c7ed6, dashSize: d, gapSize: d, depthTest: false, transparent: true }));
+    this.alignObj.computeLineDistances();
+    this.alignObj.renderOrder = 3050;
+    this.alignObj.userData.skAlign = true;
+    this.host.viewer.scene.add(this.alignObj);
+  }
+
+  private snapPointRaw(p: V2, active: boolean, materialize = false): Snap {
     this.marker.visible = false;
     // Ctrl held (or automatic relations off): the point goes where the cursor is, with no relation (FR-SK-052).
     if (!active || (this.suppressed() && !this.quickSnap)) return { p, id: null, curve: null, hv: null };
@@ -3572,6 +3730,7 @@ export class SketchEditor {
 
   private placeLabels() {
     if (this.disposed) return;
+    this.syncGrid();
     if (this.grip) { const [x, y] = this.screen(JSON.parse(this.grip.dataset.pos ?? "[0,0]") as V2); this.grip.style.left = `${x}px`; this.grip.style.top = `${y}px`; }
     for (const el of this.labels.values()) {
       const p = JSON.parse(el.dataset.pos ?? "[0,0]") as V2;

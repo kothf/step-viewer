@@ -6,14 +6,15 @@ import { t } from "../i18n";
 import type { EdgeRef, FaceRef, Feature, Num, PartDoc, SketchFeature } from "../model/types";
 import { sketchPath, sketchProfile } from "../sketch/profile";
 import { flatSize, type SheetState } from "./sheet";
-import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
+import { GAUGE_TABLES, gaugeRow, type SheetFeature, type SmLoftFeature, type SmBaseFeature, type SmClosedFeature, type SmCornerFeature, type SmFlangeFeature, type SmHemFeature, type SmJogFeature, type SmMiterFeature, type SmSketchBendFeature, type SmTabFeature } from "./types";
 
-export type SmTool = "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept" | "smflat" | "smdxf";
+export type SmTool = "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept" | "smflat" | "smdxf";
 
 
 /** The Sheet metal flyout's commands. */
 export const SM_TOOLS = (): [SmTool, string, string][] => [
   ["smbase", t("Base Flange/Tab"), t("Base flange: a flat plate from a closed sketch, or a bent flange from an open chain of lines")],
+  ["smloft", t("Lofted Bend"), t("Lofted bend: join two open profiles of lines and arcs, sketched on two planes, with a sheet of flat facets that unfolds exactly")],
   ["smflange", t("Edge Flange"), t("Edge flange: a bend and a flange on straight edges of the sheet")],
   ["smmiter", t("Miter Flange"), t("Miter flange: run a sketched profile of lines along edges of the sheet, mitred at corners")],
   ["smswept", t("Swept Flange"), t("Swept flange: run a sketched profile of lines and tangent arcs along edges of the sheet; each arc is a bend of its own radius")],
@@ -27,12 +28,13 @@ export const SM_TOOLS = (): [SmTool, string, string][] => [
 ];
 
 /** Default feature names (translated in the tree like the others). */
-export const SM_BASES = ["Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
-export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
+export const SM_BASES = ["Lofted-Bend", "Base-Flange", "Edge-Flange", "Hem", "Sketched-Bend", "Jog", "Tab", "Break-Corner", "Closed-Corner", "Miter-Flange", "Swept-Flange", "Flat-Pattern"];
+export const SM_TREE_ICONS: Record<string, string> = { smbase: "▬", smloft: "⏢", smflange: "⌐", smhem: "⊃", smbend: "⌙", smjog: "⎍", smtab: "▭", smcorner: "◿", smclosed: "⌟", smmiter: "⌐", smswept: "⌒", smflat: "▭" };
 
 const S = (body: string) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 export const SM_ICONS: Record<string, string> = {
   smbase: S('<path d="M2 10l4-3h8l-4 3z" fill="currentColor" fill-opacity=".25"/><path d="M2 10v1.6l4-3M10 10v1.6l4-3"/>'),
+  smloft: S('<path d="M2 13h12M4.5 4h7"/><path d="M2 13l2.5-9M14 13l-2.5-9M6 13l1-9M10 13l-1-9" stroke-dasharray="1.6 1.4"/>'),
   smflange: S('<path d="M2 12h8a2 2 0 0 0 2-2V3"/><path d="M2 14h8a4 4 0 0 0 4-4V3"/>'),
   smmiter: S('<path d="M2 13h6V8h5"/><path d="M8 13l3-3M13 8l-2 2" stroke-dasharray="1.6 1.4"/>'),
   smswept: S('<path d="M2 13h4a3 3 0 0 0 3-3V8a3 3 0 0 1 3-3h2"/>'),
@@ -72,11 +74,24 @@ const sweptChain = (s: SketchFeature) => {
   if (p.error || p.closed || !p.segs.length || p.segs[0].kind !== "line" || p.segs.at(-1)!.kind !== "line") return false;
   return p.segs.every((x, i) => x.kind === "line" || (x.kind === "arc" && p.segs[i - 1]?.kind === "line" && p.segs[i + 1]?.kind === "line"));
 };
+/** An open chain of lines and arcs (lofted bend profiles). */
+const loftChain = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && !p.closed && p.segs.length > 0 && p.segs.every(x => x.kind === "line" || x.kind === "arc"); };
 const oneLine = (s: SketchFeature) => { const p = sketchPath(s); return !p.error && p.segs.length === 1 && p.segs[0].kind === "line"; };
 
 /** A new sheet metal feature, or the message to show when it can't start yet. */
-export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
-  const base = c.doc.features.find((f): f is SmBaseFeature => f.type === "smbase");
+export function smDraft(type: "smbase" | "smloft" | "smflange" | "smhem" | "smbend" | "smjog" | "smcorner" | "smclosed" | "smmiter" | "smswept", c: DraftCtx): Feature | string {
+  const base = c.doc.features.find(f => f.type === "smbase" || f.type === "smloft");
+  if (type === "smloft") {
+    if (base) return t("This part already has a base flange.");
+    // The selected open profile first, then the last unused ones (sketch the two profiles, then Lofted-Bend).
+    const open = c.sketches.filter(s => loftChain(s));
+    const sel = c.selected ? open.find(s => s.id === c.selected) : undefined;
+    const rest = open.filter(s => s !== sel && !c.used.has(s.id));
+    const pick = sel ? [sel, rest.at(-1)] : rest.slice(-2);
+    if (!pick[0] || !pick[1]) return t("Sketch two open profiles of lines and arcs on two planes first.");
+    const [a, b] = c.sketches.indexOf(pick[0]) < c.sketches.indexOf(pick[1]) ? [pick[0], pick[1]] : [pick[1], pick[0]];
+    return { id: c.id, type: "smloft", name: c.name("smloft"), sketch1: a.id, sketch2: b.id, thickness: { v: 2 }, radius: { v: 2 }, k: 0.5 } satisfies SmLoftFeature;
+  }
   if (type === "smbase") {
     if (base) {
       // With a base flange, a closed sketch on a face of the sheet makes a tab (SolidWorks' Base Flange/Tab).
@@ -121,6 +136,7 @@ export function smDraft(type: "smbase" | "smflange" | "smhem" | "smbend" | "smjo
 /** Why ✓ can't keep the draft yet (null: it can). */
 export function smCheck(f: Feature): string | null {
   if (f.type === "smbase" && !f.sketch) return t("Pick a sketch for the base flange.");
+  if (f.type === "smloft" && (!f.sketch1 || !f.sketch2 || f.sketch1 === f.sketch2)) return t("Pick two different sketches for the lofted bend.");
   if (f.type === "smtab" && !f.sketch) return t("Pick a closed sketch for the tab.");
   if ((f.type === "smbend" || f.type === "smjog") && !f.sketch) return t("Pick a sketch with the bend line.");
   if ((f.type === "smflange" || f.type === "smhem") && !f.edges.length) return t("Pick the edges for the flange.");
@@ -172,6 +188,23 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
             : calc === "ba" ? numField("ba", t("Bend allowance"), f.ba ?? { v: 3 }, "length") : numField("bd", t("Bend deduction"), f.bd ?? { v: 3 }, "length")))
         + group(t("Auto relief"), sel("relief", t("Type"), [["rect", t("Rectangular")], ["none", t("None")]], f.relief === "none" ? "none" : "rect")
           + (f.relief === "none" ? "" : `<label class="pm-field"><span>${esc(t("Relief ratio"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="ratio" value="${esc(String(f.reliefRatio ?? 0.5))}" spellcheck="false" /></span></label>`)),
+    };
+  }
+  if (f.type === "smloft") {
+    const open = k.sketches.filter(s => loftChain(s) || s.id === f.sketch1 || s.id === f.sketch2);
+    const pick = (key: "sketch1" | "sketch2", label: string) => `<label class="pm-field"><span>${esc(label)}</span><select data-k="${key}">${open.map(s => `<option value="${s.id}"${s.id === f[key] ? " selected" : ""}>${esc(k.label(s.name))}</option>`).join("")}</select></label>`;
+    const st = k.sheet, folds = st?.folds?.length;
+    return {
+      title: t("Lofted Bend"),
+      body: group(t("Profiles"), pick("sketch1", t("Profile 1")) + pick("sketch2", t("Profile 2"))
+        + help(t("Two open chains of lines and arcs, each on its own plane. Their ends are matched start to start; the sheet runs between them.")))
+        + group(t("Manufacturing method"), `<label class="pm-field"><span>${esc(t("Facets per arc"))}</span><span class="pm-in"><input type="text" inputmode="numeric" data-sm="facets" value="${esc(String(f.facets ?? 8))}" spellcheck="false" /></span></label>`
+          + help(t("Bent: the sheet is made of flat facets with sharp folds between them, drawn as bend lines in the flat pattern."))
+          + (folds != null ? `<p class="pm-count" data-sm-folds>${esc(t("{n} fold|{n} folds", { n: folds }))}</p>` : ""))
+        + group(t("Sheet metal parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + chk("reverse", f.reverse, t("Reverse direction"))
+          + numField("radius", t("Bend radius"), f.radius, "length")
+          + `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`
+          + help(t("The profiles are the sheet's inside face; the bend radius is used by flanges added later."))),
     };
   }
   if (f.type === "smflange") {
@@ -284,6 +317,14 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
     }
     el.addEventListener("change", () => {
       const val = el instanceof HTMLInputElement && el.type === "checkbox" ? el.checked : el.value;
+      if (f.type === "smloft") {
+        const v = Number(String(val).replace(",", "."));
+        const ok = key === "k" ? v >= 0 && v <= 1 : Number.isInteger(v) && v >= 1 && v <= 64;
+        if (!Number.isFinite(v) || !ok) { el.setAttribute("aria-invalid", "true"); toastBad(key === "k" ? t("The K-factor must be between 0 and 1.") : t("Use a whole number of facets from 1 to 64.")); return; }
+        el.removeAttribute("aria-invalid");
+        upd(() => { if (key === "k") f.k = v; else if (v === 8) delete f.facets; else f.facets = v; });
+        return;
+      }
       if (f.type === "smbase") {
         if (key === "gauge") {
           upd(() => {

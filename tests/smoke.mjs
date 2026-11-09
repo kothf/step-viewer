@@ -2328,6 +2328,47 @@ try {
       `model 1.298: Fully define sketch adds H/V relations, a diameter and origin dimensions until DOF 0, one undo step (${fd0}, ${JSON.stringify(fd1)}, ${fd2})`);
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
+    // 1.303: sketch grid (FR-SK-041): Show grid draws it; Snap to grid at 10 mm puts free line ends on grid nodes.
+    await mp.evaluate(() => window.__sv.model.store.change("Sketch", d => { d.features.push({ id: "gr", type: "sketch", name: "SketchGR", plane: { std: "XY" }, rels: [], dims: [], ents: [] }); }));
+    await idle();
+    await mp.evaluate(() => window.__sv.modeller.editSketch("gr"));
+    await mp.waitForTimeout(800);
+    const setGridUi = (a, v) => mp.evaluate(([a, v]) => { const i = document.querySelector(`#mc-pm [data-a=${a}]`); if (!i) return; if (i.type === "checkbox") i.checked = v; else i.value = v; i.dispatchEvent(new Event("change", { bubbles: true })); }, [a, v]);
+    await setGridUi("grid", true);
+    await mp.waitForTimeout(200);
+    const grid0 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n += o.geometry.attributes.position.count / 2; }); return n; });
+    await setGridUi("gridsnap", true);
+    await setGridUi("gridstep", "10");
+    await tool("line");
+    await click([21.5, 8.7]);
+    await click([48.6, 31.2]);
+    await mp.keyboard.press("Escape");
+    await mp.waitForTimeout(150);
+    const grid1 = await mp.evaluate(() => { const ed = window.__sv.model.editor(), sk = ed.sk, ln = sk.ents.find(e => e.t === "line"), P = id => sk.ents.find(e => e.id === id); return { ui: { show: ed.grid, snap: ed.gridSnap, step: ed.gridSpacing }, a: ln && [P(ln.a).x, P(ln.a).y], b: ln && [P(ln.b).x, P(ln.b).y], ls: localStorage.getItem("mc:skGridStep") }; });
+    await setGridUi("gridsnap", false);
+    await setGridUi("grid", false);
+    await mp.waitForTimeout(200);
+    const grid2 = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skGrid) n++; }); return n; });
+    // Alignment inference (FR-SK-042): a point 3 px off the line end's y lines up with it, with a dotted line and no relation.
+    const mmpx = await mp.evaluate(() => window.__sv.model.editor().px([50, 30]));
+    await tool("point");
+    await hover([50, 30]);
+    await hover([70, 31]);
+    const alAt = [83.7, 30 + 3 * mmpx];
+    await hover(alAt);
+    const alHover = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return { n, lines: window.__sv.model.editor().aligned.length }; });
+    await click(alAt);
+    const alPt = await mp.evaluate(() => { const sk = window.__sv.model.editor().sk, pt = sk.ents.filter(e => e.t === "point").at(-1); return { x: pt.x, y: pt.y, rels: sk.rels.length }; });
+    await tool("select");
+    await mp.waitForTimeout(100);
+    const alGone = await mp.evaluate(() => { let n = 0; window.__sv.viewer.scene.traverse(o => { if (o.userData?.skAlign) n++; }); return n; });
+    check(alHover.n === 1 && alHover.lines === 1 && near(alPt.y, 30, 1e-9) && near(alPt.x, 83.7, 0.2) && alGone === 0,
+      `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
+    check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
+      `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
+    await mp.evaluate(() => window.__sv.modeller.ok());
+    await idle();
     // Convert entities: the top face of a block into a sketch on it, four fixed lines.
     await mp.evaluate(() => { const P = (id, x, y) => ({ id, t: "point", x, y }); window.__sv.model.store.change("Block", d => { d.features.push({ id: "s2", type: "sketch", name: "Sketch2", plane: { std: "XY" }, rels: [], dims: [], ents: [P("a2", 0, -60), P("b2", 40, -60), P("c2", 40, -30), P("d2", 0, -30), { id: "m1", t: "line", a: "a2", b: "b2" }, { id: "m2", t: "line", a: "b2", b: "c2" }, { id: "m3", t: "line", a: "c2", b: "d2" }, { id: "m4", t: "line", a: "d2", b: "a2" }] }, { id: "x", type: "extrude", name: "Extrude1", sketch: "s2", op: "boss", end: "blind", depth: { v: 10 } }, { id: "s3", type: "sketch", name: "Sketch3", plane: { face: { name: "x:end", hint: [20, -45, 10] } }, rels: [], dims: [], ents: [] }); }); });
     await idle();
@@ -9024,6 +9065,40 @@ try {
     const xbWant = T * 20 * (10 - (R + T) + (Math.PI / 2) * (R + 0.42 * T) + 20 - (R + T));
     check(!xb0.bad && !xb1.bad && Math.abs(xb0.v - xb1.v - xbWant) / xbWant < 1e-3,
       `sheet metal: a cut across a bend is unrolled in the flat pattern (${JSON.stringify({ xb0, xb1, xbWant })})`);
+    // Lofted Bend: a corner of two lines on XY lofted to a quarter circle 50 up; both profiles sketched, then the command.
+    await mp.evaluate(() => window.__sv.model.store.change("Loft profiles", d => {
+      const P = (id, x, y) => ({ id, t: "point", x, y });
+      d.features = [
+        { id: "q1", type: "sketch", name: "Sketch8", plane: { std: "XY" }, rels: [], dims: [], ents: [P("q1a", 60, 0), P("q1b", 60, 60), P("q1c", 0, 60), { id: "q1l", t: "line", a: "q1a", b: "q1b" }, { id: "q1m", t: "line", a: "q1b", b: "q1c" }] },
+        { id: "qp", type: "plane", name: "Plane1", base: { std: "XY" }, mode: "offset", offset: { v: 50 } },
+        { id: "q2", type: "sketch", name: "Sketch9", plane: { plane: "qp" }, rels: [], dims: [], ents: [P("q2c", 0, 0), P("q2a", 30, 0), P("q2b", 0, 30), { id: "q2r", t: "arc", c: "q2c", a: "q2a", b: "q2b" }] },
+      ];
+    }));
+    await settle();
+    await smMenu("Lofted Bend");
+    const lb0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, s1: window.__sv.model.mode().draft?.sketch1, s2: window.__sv.model.mode().draft?.sketch2 }));
+    await mp.click("#mc-ok");
+    await settle();
+    const lbState = () => mp.evaluate(() => {
+      const l = window.__sv.model.last(), P = l.data?.positions ?? [], lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i++) { lo[i % 3] = Math.min(lo[i % 3], P[i]); hi[i % 3] = Math.max(hi[i % 3], P[i]); }
+      const f = window.__sv.model.store.doc.features.find(x => x.type === "smloft");
+      return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), size: hi.map((h, i) => Math.round((h - lo[i]) * 1000) / 1000), folds: l.sheet?.folds?.length ?? 0, v: l.props?.volume ?? 0, name: f?.name };
+    });
+    const lb1 = await lbState();
+    await smMenu("Flatten");
+    const lb2 = await lbState();
+    await smMenu("Flatten");
+    await mp.click("#lang-btn");
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smloft").id));
+    await settle();
+    const lbru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm .pm-count, #mc-pm button")].map(e => e.textContent).join("|") }));
+    await mp.evaluate(() => window.__sv.modeller.cancel());
+    await mp.click("#lang-btn");
+    check(lb0.title === "Lofted Bend" && lb0.s1 === "q1" && lb0.s2 === "q2" && !lb1.bad && lb1.folds >= 8 && lb1.size[2] >= 50 && lb1.size[2] < 56 && lb1.name === "Lofted-Bend1"
+      && !lb2.bad && lb1.v > 0 && Math.abs(lb2.v - lb1.v) / lb1.v < 5e-3
+      && lbru.title === "Сгиб по сечениям" && !/[A-Za-z]{3}/.test(lbru.text.replace(/Enter|Esc|mm|Sketch8|Sketch9/g, "")),
+      `sheet metal: Lofted Bend joins two sketched profiles with folded facets; flat pattern keeps the volume; panel in Russian (${JSON.stringify({ lb0, lb1, lb2, lbru })})`);
     await ctx.close();
   }
 
