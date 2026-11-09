@@ -3320,6 +3320,32 @@ try {
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
       return { mid: m && ax ? [m.x, m.y, P(ax.a).x, P(ax.b).x].map(v => Math.round(v * 1000) / 1000) : null, dims: sk.dims.map(d => `${d.t}:${d.val.v}`).join(","), ok: ed.info.status };
     });
+    // Fully define dimensions the slot from its centreline ends and arc centres, not the cap tangent points (exam bug 48).
+    const fdSlot = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk0 = ed.sk, n0 = sk0.dims.length;
+      ed.fullyDefine();
+      const sk = ed.sk, key = new Set(sk.ents.flatMap(e => e.t === "arc" || e.t === "circle" ? [e.c] : e.t === "line" && e.cons ? [e.a, e.b] : []));
+      const added = sk.dims.slice(n0).filter(d => (d.t === "hdistance" || d.t === "vdistance") && d.e[1] !== "q2");
+      return { n: added.length, onKey: added.filter(d => key.has(d.e[1])).length, dof: ed.info.dof };
+    });
+    // Relation glyphs sit beside their curves: points along each arc and line are the curve, not a glyph (exam bug 47).
+    const onGlyph = await mp.evaluate(() => {
+      const ed = window.__sv.model.editor(), sk = ed.sk, P = id => { const e = sk.ents.find(x => x.id === id); return [e.x, e.y]; };
+      const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(), w = ed.frame;
+      const scr = p => { const q = new v.camera.position.constructor(w.o[0] + w.x[0] * p[0] + w.y[0] * p[1], w.o[1] + w.x[1] * p[0] + w.y[1] * p[1], w.o[2] + w.x[2] * p[0] + w.y[2] * p[1]).project(v.camera); return [r.left + ((q.x + 1) / 2) * r.width, r.top + ((1 - q.y) / 2) * r.height]; };
+      const ids = new Set(sk.rels.flatMap(x => x.e));
+      const mids = sk.ents.filter(e => ids.has(e.id) && (e.t === "line" || e.t === "arc")).flatMap(e => [0.15, 0.3, 0.5, 0.7, 0.85].map(u => {
+        if (e.t === "line") { const a = P(e.a), b = P(e.b); return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+        const c = P(e.c), a = P(e.a), b = P(e.b), rr = Math.hypot(a[0] - c[0], a[1] - c[1]), a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+        let sw = Math.atan2(b[1] - c[1], b[0] - c[0]) - a0; while (sw <= 0) sw += 2 * Math.PI;
+        return [c[0] + rr * Math.cos(a0 + sw * u), c[1] + rr * Math.sin(a0 + sw * u)];
+      }));
+      return { n: mids.length, hit: mids.map(scr).filter(([x, y]) => document.elementFromPoint(x, y)?.classList.contains("sk-rel")).length, glyphs: document.querySelectorAll(".sk-rel").length };
+    });
+    check(onGlyph.n > 4 && onGlyph.glyphs > 0 && onGlyph.hit === 0, `model 1.325: relation glyphs leave the curves clickable (${JSON.stringify(onGlyph)})`);
+    check(fdSlot.n > 0 && fdSlot.onKey === fdSlot.n && fdSlot.dof === 0, `model 1.325: Fully define dimensions slot centres, not tangent points (${JSON.stringify(fdSlot)})`);
+    await mp.keyboard.press("Control+z");
+    await mp.waitForTimeout(200);
     check(a3.arcs === 5 && a3.dims === 0 && a3.ok === "ok" && !a3.box && a3.off === false && a3.saved === "0", `model 1.144: 3-point arc slot with Add dimensions off (${JSON.stringify(a3)})`);
     check(cs.mid && cs.mid[0] === 15 && cs.mid[1] === 15 && cs.mid[2] === 0 && cs.mid[3] === 30 && cs.dims === "diameter:8,distance:30" && cs.ok === "ok",
       `model 1.144: Centerpoint straight slot stays centred on its first click as the length changes (${JSON.stringify(cs)})`);
