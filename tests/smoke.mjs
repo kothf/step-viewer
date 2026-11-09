@@ -2366,6 +2366,20 @@ try {
       `model 1.303: after passing over a line end, a point placed 3 px off its height lines up with it, shown by a dotted line (${JSON.stringify(alHover)}, ${JSON.stringify(alPt)}, ${alGone})`);
     check(grid0 > 10 && grid1.ui.show && grid1.ui.snap && grid1.ui.step === 10 && grid1.a && near(grid1.a[0], 20, 1e-9) && near(grid1.a[1], 10, 1e-9) && near(grid1.b[0], 50, 1e-9) && near(grid1.b[1], 30, 1e-9) && grid1.ls === "10" && grid2 === 0,
       `model 1.303: sketch grid is drawn, and Snap to grid at 10 mm puts line ends on grid nodes (${grid0}, ${JSON.stringify(grid1)}, ${grid2})`);
+    // 1.310: quick bar toggles while sketching (FR-UI-055): Grid, Snap to grid and Inferences flip the editor and the panel boxes.
+    const qt = () => mp.evaluate(() => { const ed = window.__sv.model.editor(), q = k => document.querySelector(`#mc-quick [data-qt="${k}"]`), c = a => document.querySelector(`#mc-pm [data-a=${a}]`)?.checked;
+      return { has: ["grid", "gridsnap", "autorels"].every(k => !!q(k)), grid: ed.grid, snap: ed.gridSnap, auto: ed.autoRels, pressed: q("grid")?.getAttribute("aria-pressed"), box: c("grid"), sbox: c("gridsnap"), abox: c("autorels") }; });
+    const qt0 = await qt();
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt1 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    await mp.click('#mc-quick [data-qt="grid"]');
+    await mp.click('#mc-quick [data-qt="gridsnap"]');
+    const qt2 = await qt();
+    await mp.click('#mc-quick [data-qt="autorels"]');
+    const qt3 = await qt();
+    check(qt0.has && !qt0.grid && !qt0.snap && qt0.auto && qt1.grid && qt1.snap && qt1.pressed === "true" && qt1.box && qt1.sbox && !qt2.grid && !qt2.snap && !qt2.auto && qt2.pressed === "false" && !qt2.box && !qt2.abox && qt3.auto && qt3.abox,
+      `model 1.310: quick bar Grid / Snap to grid / Inferences toggles follow the editor and the sketch panel (${JSON.stringify([qt0, qt1, qt2, qt3])})`);
     await mp.evaluate(() => { try { localStorage.removeItem("mc:skGridStep"); } catch {} });
     await mp.evaluate(() => window.__sv.modeller.ok());
     await idle();
@@ -3916,6 +3930,22 @@ try {
     check(Math.round(dragged.x - sec.x) === -10 && Math.abs(dragged.y - sec.y) < 1e-9 && flipped.look === 1 && flipped.x > front.x && Math.abs(flipped.y - sec.y) < 1e-9,
       `drawing: a section view slides only along its direction; Flip direction puts it on the other side (${dragged.x - sec.x},${dragged.y - sec.y}; flipped x ${flipped.x}, look ${flipped.look})`);
     await dp.keyboard.press("Control+z");
+    await ready();
+    // Smart dimension on the section's cut faces (FR-DRW-021): the hole's two cut walls are 16 apart.
+    {
+      const cutN = await dp.evaluate(i => (window.__sv.drw.proj(i)?.cutEdges ?? []).filter(e => e.k.endsWith("|§")).length, sec.id);
+      await dp.click('#drw [data-a="dim"]');
+      for (const u of [8, -8]) { const [cx, cy] = await at(sec.id, u, 10); await dp.mouse.move(cx, cy + 2); await dp.mouse.move(cx, cy); await dp.mouse.click(cx, cy); }
+      const [px, py] = await at(sec.id, 0, 32);
+      await dp.mouse.move(px + 3, py); await dp.mouse.move(px, py); await dp.mouse.click(px, py);
+      await dp.keyboard.press("Escape");
+      const cutDims = await dp.evaluate(i => window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "dim" && a.view === i).map(a => ({ k: a.k, refs: a.refs.map(r => r.e) })), sec.id);
+      const cutTexts = await dp.evaluate(() => window.__sv.drw.prims().filter(p => p.t === "t" && p.layer === "ANNOT").map(p => p.s));
+      check(cutN >= 8 && cutDims.length === 1 && cutDims[0].refs.every(e => e?.endsWith("|§")) && cutTexts.includes("16"),
+        `drawing: a section view is dimensioned on its cut faces: the hole's cut walls give 16 (${cutN} cut edges, ${JSON.stringify(cutDims)})`);
+      await dp.keyboard.press("Control+z");
+      await ready();
+    }
     // Detail: centre on the hole in the top view (it snaps to the circle's centre), radius 15, then place: 2:1, clipped, with its circle and label.
     await dp.click('#drw [data-a="detail"]'); await dp.click('#drw [data-det="circle"]');
     [x, y] = await at(top.id, 10.6, 0.5);
@@ -8559,14 +8589,14 @@ try {
     await settle();
     // The wider library: an unequal angle, an HEB beam and a square bar build and name their cut list items.
     const lib = [];
-    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"]]) {
+    for (const [type, size, name] of [["uangle", "75x50x6", "L 75x50x6"], ["heb", "120", "HEB 120"], ["sqbar", "30", "SQ 30"], ["upe", "120", "UPE 120"], ["ipn", "140", "IPN 140"], ["hem", "120", "HEM 120"]]) {
       await mp.evaluate(([type, size]) => window.__sv.model.store.change("Profile", d => { const m = d.features.find(f => f.type === "member"); m.profile = type; m.size = size; }), [type, size]);
       await settle();
       lib.push(await mp.evaluate(name => { const l = window.__sv.model.last(); return { name, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), found: (l.cutList ?? []).some(c => c.kind === "member" && c.desc === name) }; }, name));
       await mp.evaluate(() => window.__sv.model.store.undo());
       await settle();
     }
-    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB and square bar profiles (${JSON.stringify(lib)})`);
+    check(lib.every(x => x.found && !x.bad), `weldments: unequal angle, HEB, square bar, UPE, IPN and HEM profiles (${JSON.stringify(lib)})`);
     // The end cap's thickness arrow: dragging it outwards thickens the plate.
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), capId);
     await settle();
@@ -8824,7 +8854,7 @@ try {
     await settle();
     const ru = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, text: [...document.querySelectorAll("#mc-pm legend, #mc-pm label, #mc-pm .pm-help, #mc-pm option")].map(e => e.textContent).join("|") }));
     await mp.evaluate(() => window.__sv.modeller.cancel());
-    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|IPE|HEA|HEB|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
+    check(ru.title === "Элемент конструкции" && !/[A-Za-z]{3}/.test(ru.text.replace(/SHS|RHS|CHS|UPN|UPE|IPE|IPN|HEA|HEB|HEM|EN|DIN|Enter|Esc/g, "")), `weldments: Structural Member panel in Russian (${JSON.stringify(ru)})`);
     await ctx.close();
   }
 

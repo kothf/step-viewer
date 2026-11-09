@@ -30,6 +30,9 @@ export interface Projection {
   shade?: number[];
   /** A quick polygonal preview (`projectPoly`): drawn, never measured. */
   preview?: boolean;
+  /** Section views: the cut faces' edges as model edges (model coordinates), each named `<model face>|§` after the
+   * face the plane cut through, so dimensions can measure the section and find the edge again after a rebuild. */
+  cutEdges?: MEdge[];
 }
 /** A view direction: `dir` points from the model towards the viewer; `up` is the sheet's +y. */
 export interface ViewDir { dir: V3; up: V3 }
@@ -300,7 +303,7 @@ function shapeList(oc: any, l: any): any[] {
  * spanned by `e` and `m`, run through the model square to that plane; values of 1e8 or more stand for "beyond the
  * model". Cut faces lying on any of `planes` (n · p) are hatched. `keep` is drawn whole (components left uncut).
  */
-export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any } = {}): Projection {
+export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, poly?: number[], opts: { stair?: { o: V3; e: V3; m: V3; pts: number[]; planes: number[] }; keep?: any; namer?: (face: any) => string | null } = {}): Projection {
   const { x, y, n } = viewAxes(view);
   const info = shapeInfo(oc, shape);
   const [lo, hi] = info.box;
@@ -368,6 +371,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
   // Faces on the cutting plane: their wires, flattened into the view's axes.
   const cut: number[][] = [], cutOf: number[] = [];
   const A = oc.TopAbs_ShapeEnum, d0 = dot(p, n);
+  const capEdges = new oc.TopTools_IndexedMapOfShape_1();
   for (const ex = new oc.TopExp_Explorer_2(rest, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
     const f = oc.TopoDS.Face_1(ex.Current());
     const ad = new oc.BRepAdaptor_Surface_2(f, true);
@@ -377,6 +381,7 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
     const ld = lp.X() * n[0] + lp.Y() * n[1] + lp.Z() * n[2];
     if (!(st ? st.planes : [d0]).some(d => Math.abs(ld - d) <= 1e-5)) continue;
     const owner = owned.find(o => o.f.IsSame(f))?.i ?? -1;
+    if (opts.namer) oc.TopExp.MapShapes_1(f, A.TopAbs_EDGE, capEdges);
     for (const wx = new oc.TopExp_Explorer_2(f, A.TopAbs_WIRE, A.TopAbs_SHAPE); wx.More(); wx.Next()) {
       const loop: number[] = [];
       for (const it = new oc.BRepTools_WireExplorer_2(oc.TopoDS.Wire_1(wx.Current())); it.More(); it.Next()) {
@@ -393,7 +398,43 @@ export function section(oc: any, shape: any, view: ViewDir, p: V3, tol = 0.02, p
       if (loop.length >= 6) { cut.push(loop); cutOf.push(owner); }
     }
   }
-  return { ...proj, cut, cutOf };
+  const cutEdges = opts.namer ? sectionEdges(oc, shape, cutter, capEdges, opts.namer) : undefined;
+  capEdges.delete();
+  return cutEdges ? { ...proj, cut, cutOf, cutEdges } : { ...proj, cut, cutOf };
+}
+
+/** The cut faces' edges as model edges, each named after the input face it lies on (`<name>|§`); unnamed ones are left out. */
+function sectionEdges(oc: any, shape: any, cutter: any, capEdges: any, namer: (face: any) => string | null): MEdge[] {
+  const A = oc.TopAbs_ShapeEnum, T = oc.GeomAbs_CurveType, n = capEdges.Extent();
+  if (!n) return [];
+  const name: (string | null)[] = new Array(n + 1).fill(null);
+  for (const ex = new oc.TopExp_Explorer_2(shape, A.TopAbs_FACE, A.TopAbs_SHAPE); ex.More(); ex.Next()) {
+    const of = ex.Current(), nm = namer(of);
+    if (!nm) continue;
+    let pieces = shapeList(oc, cutter.Modified(of));
+    if (!pieces.length && !cutter.IsDeleted(of)) pieces = [of];
+    for (const pc of pieces) for (const ix = new oc.TopExp_Explorer_2(pc, A.TopAbs_EDGE, A.TopAbs_SHAPE); ix.More(); ix.Next()) {
+      const k = capEdges.FindIndex(ix.Current());
+      if (k > 0 && !name[k]) name[k] = nm;
+    }
+  }
+  const xyz = (q: any): V3 => [q.X(), q.Y(), q.Z()];
+  const out: MEdge[] = [];
+  for (let i = 1; i <= n; i++) {
+    if (!name[i]) continue;
+    const e = oc.TopoDS.Edge_1(capEdges.FindKey(i));
+    let ad: any;
+    try { ad = new oc.BRepAdaptor_Curve_2(e); } catch { continue; }
+    const u0 = ad.FirstParameter(), u1 = ad.LastParameter();
+    if (!(u1 > u0) || oc.BRep_Tool.Degenerated(e)) continue;
+    const k = `${name[i]}|§`, a = xyz(ad.Value(u0)), b = xyz(ad.Value(u1)), m = xyz(ad.Value((u0 + u1) / 2)), ty = ad.GetType();
+    if (ty === T.GeomAbs_Line) out.push({ k, t: "l", a, b, m });
+    else if (ty === T.GeomAbs_Circle) {
+      const ci = ad.Circle();
+      out.push({ k, t: "c", a, b, m, c: xyz(ci.Location()), ax: xyz(ci.Axis().Direction()), r: ci.Radius(), sp: Math.min(2 * Math.PI, u1 - u0) });
+    } else out.push({ k, t: "o", a, b, m });
+  }
+  return out;
 }
 
 // ---------- model topology for dimensions and centre marks (FR-DRW-021/023) ----------

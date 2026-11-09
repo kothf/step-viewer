@@ -14,6 +14,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Esc in a sketch with nothing left to clear no longer offers to discard a changed sketch (a stray Esc then Enter lost the work); it says how to keep or discard the changes. An unchanged sketch still closes on Esc.
 - The sketch origin can be selected with a click (for Midpoint, Coincident or a dimension to it); a drag from it still box-selects.
 
+## [1.310.0] - 2026-11-09
+
+### Added
+
+- **Sketch toggles on the quick access bar (FR-UI-055)**: while sketching, the quick access bar has Grid, Snap to grid and Inferences (automatic relations) buttons next to Quick snaps, so they can be switched without opening the sketch panel. They stay in step with the panel's check boxes and are remembered; turning Snap to grid on also shows the grid.
+
+## [1.309.0] - 2026-11-09
+
+### Added
+
+- **More weldment profiles (FR-FT-121).** The Structural Member library adds UPE parallel flange channels (EN 10365, 80 to 300), HEM heavy H-beams (EN 10365, 100 to 300) and IPN tapered flange I-beams (DIN 1025-1, 80 to 300, 14 % flange slope); cut list items are named UPE, HEM and IPN.
+
+## [1.308.0] - 2026-11-09
+
+### Added
+
+- **Dimensions on section cut faces** (FR-DRW-021): in a section view (straight, offset, half or broken-out, and details of them) Smart dimension, hole callouts, notes and the other annotations can pick the edges of the hatched cut faces, such as the two walls of a cut hole. Each cut edge is named after the model face the plane cuts through, so its dimension follows the part after a rebuild.
+
 ## [1.307.0] - 2026-11-09
 
 ### Added
@@ -1805,7 +1823,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.311.0...HEAD
-[1.311.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.311.0
+[1.311.0]: https://github.com/kothf/step-viewer/compare/v1.310.0...v1.311.0
+[1.310.0]: https://github.com/kothf/step-viewer/compare/v1.309.0...v1.310.0
+[1.309.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.309.0
+[1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
 [1.306.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.306.0
 [1.305.0]: https://github.com/kothf/step-viewer/compare/v1.304.0...v1.305.0
