@@ -82,7 +82,11 @@ export interface SheetState {
 export interface FormMark { pid: string; fid: string; tool: FormTool; c: V2; loop: Seg[]; /** The footprint drawn on the flat pattern. */ mark: Seg[]; pierce?: number }
 
 /** A gusset's rib and groove in folded coordinates: triangles at the near end, swept along `e` by `w` / `wg`. */
-export interface GussetMark { fid: string; bend: string; rib: V3[]; e: V3; w: number; groove: V3[]; wg: number }
+export interface GussetMark {
+  fid: string; bend: string; rib: V3[]; e: V3; w: number; groove: V3[]; wg: number;
+  /** Radii of the rib's / groove's chord edges (0 = sharp): a rounded or filleted tip. */
+  rr?: number; rg?: number;
+}
 
 /** One line of a cross break: raised towards the panel's top face when `up`. */
 export interface CrossLine { pid: string; a: V2; b: V2; side: "top" | "bot"; up: boolean; angle: number; r: number }
@@ -396,24 +400,44 @@ export function edgeFlange(prev: SheetState, f: SmFlangeFeature): { state: Sheet
  * sharp) and angle, material inside so the outer faces stay where the solid's were; flanges meeting at a corner are
  * mitred `gap` apart (the rip). Panels `<fid>:p<i + 1>`, bends `<fid>:b<i>`.
  */
-export function convertFlanges(prev: SheetState, items: { faces: [string, string]; length: number; angle: number }[], fid: string, gap: number): { state: SheetState; ops: SheetOp[] } {
+export function convertFlanges(prev: SheetState, items: { faces: [string, string]; length: number; angle: number; more?: ConvertLevel[] }[], fid: string, gap: number): { state: SheetState; ops: SheetOp[] } {
   const st = clone(prev);
-  const r = st.R;
+  const r = st.R, T = st.T;
   const corners = flangeCorners(st, items.map(x => x.faces));
   const ops: SheetOp[] = [];
+  let extra = 0;
   items.forEach((it, i) => {
-    if (!(it.angle > 1e-6 && it.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
-    const d = outerSetback(st.T, it.angle, r);
-    const s = it.length - d;
-    const E = 2 * (s + d + bendAllowance(st, it.angle, r) + 2 * st.T);
+    // Every wall in the chain: the first one's length runs from the fixed face's edge, as do the later lines, all on
+    // the first bend's outside; later bends turning the same way have it outside too, the others inside.
+    const levels: ConvertLevel[] = [{ angle: it.angle, L: it.length, same: true, up: true }, ...(it.more ?? [])];
+    for (const x of levels) if (!(x.angle > 1e-6 && x.angle < Math.PI - 1e-3)) throw new SheetError("E-SM-CONVANGLE", "The faces at a bend edge must meet at an angle between 0° and 180°.");
+    const back = levels.map(x => x.same ? outerSetback(T, x.angle, r) : innerSetback(x.angle, r));
+    const flat = levels.map((x, k) => x.L - back[k]);
+    levels.forEach((_x, k) => {
+      if (!(flat[k] - (back[k + 1] ?? 0) > 1e-6)) throw new SheetError("E-SM-CONVSHORT", "A wall is too short for its bends.");
+    });
+    const E = 2 * (flat[0] + back[0] + bendAllowance(st, it.angle, r) + 2 * T);
+    let pid = `${fid}:p${i + 1}`;
     ops.push(...addFlange(st, it.faces, {
-      angle: it.angle, r, s, d, off0: 0, off1: 0, flip: false,
+      angle: it.angle, r, s: flat[0], d: back[0], off0: 0, off1: 0, flip: false,
       ext0: corners.some(c => c[1] === i) ? E : 0, ext1: corners.some(c => c[0] === i) ? E : 0,
-    }, `${fid}:p${i + 1}`, `${fid}:b${i}`));
+    }, pid, `${fid}:b${i}`));
+    for (let k = 1; k < levels.length; k++) {
+      const x = levels[k];
+      const next = `${fid}:p${items.length + 1 + extra}`;
+      // On the tip, the panel's top is the side the first bend turned to.
+      ops.push(...addFlange(st, [`${pid}:tip`, `${pid}:top`], { angle: x.angle, r, s: flat[k], d: back[k], off0: 0, off1: 0, flip: !x.up }, next, `${fid}:b${items.length + extra}`));
+      extra++;
+      pid = next;
+    }
   });
   for (const [i, j] of corners) mitre(st, `${fid}:p${i + 1}`, `${fid}:p${j + 1}`, gap);
   return { state: st, ops };
 }
+
+/** A wall further along a converted chain: its length (between virtual sharps, on the first bend's outside), its bend
+ * angle, whether it turns the same way as the first bend (`same`) and towards the previous panel's top (`up`). */
+export interface ConvertLevel { angle: number; L: number; same: boolean; up: boolean }
 
 /** Pairs [i, j] of picked edges where edge i ends where edge j starts on the same face. */
 function flangeCorners(st: SheetState, picks: [string, string][]): [number, number][] {
@@ -1704,48 +1728,82 @@ export function unfoldBendLines(st: SheetState): { a: V3; b: V3; up: boolean }[]
   });
 }
 
-/** A corner where two bends starting on one face meet (Corner Relief): `c0` is where their start lines cross, `oa`/`ob`
- * the directions each strip runs off its start line (each points away from the other bend's face side). */
-export interface ReliefCorner { key: string; a: string; b: string; c0: V2; oa: V2; ob: V2; baA: number; baB: number; /** The face's transform. */ M: Mat }
+/** A corner where two bends meet (Corner Relief): `c0` is where their start lines cross, `oa`/`ob` the directions
+ * each strip runs off its start line. Two bends on one face, or a return: `b` starts on the panel `a` bends onto,
+ * next to `a`'s strip. A three-bend corner (`c` = the third bend, a return off `a` or `b`) cuts `box` = [u0, u1, v0,
+ * v1] (along `oa`, `ob` from `c0`), which covers all three bend zones; else the box is [0, baA] × [0, baB]. */
+export interface ReliefCorner {
+  key: string; a: string; b: string; c0: V2; oa: V2; ob: V2; baA: number; baB: number; /** The face's transform. */ M: Mat;
+  c?: string; box?: [number, number, number, number]; ret?: boolean;
+}
 
-/** Every two-bend corner of the sheet: bends on one face whose start lines cross near an end of both. */
+/** Every corner of the sheet where bends meet: two on one face whose start lines cross near an end of both, a bend
+ * and its return (a bend off its far panel starting next to its strip), and three-bend corners joining the two. */
 export function reliefCorners(st: SheetState): ReliefCorner[] {
   const size = Math.max(1, ...st.panels.flatMap(p => p.outer.flatMap(s => s.kind === "line" || s.kind === "arc" ? [...s.a, ...s.b].map(Math.abs) : [])));
-  const out: ReliefCorner[] = [];
+  const two: ReliefCorner[] = [], rets: ReliefCorner[] = [];
   const unit = (b: Bend): V2 => { const l = d2(b.a0, b.a1); return [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l]; };
   const cr = (u: V2, v: V2) => u[0] * v[1] - u[1] * v[0];
+  const dt = (u: V2, v: V2) => u[0] * v[0] + u[1] * v[1];
+  const far = new Map(bendLinks(st).map(l => [l.bid, l.b]));
+  const panelM = new Map(st.panels.map(p => [p.id, p.M]));
+  const D = (A: Bend, B: Bend) => 4 * (st.T + Math.max(A.r, B.r)) + Math.max(A.ba, B.ba);
+  const nearEnd = (t: number, l: number, d: number) => t > -d && t < l + d && Math.min(Math.abs(t), Math.abs(l - t)) <= d;
   st.bends.forEach((A, i) => st.bends.forEach((B, j) => {
-    if (j <= i || !matEq(A.M, B.M, size * 1e-9)) return;
+    if (i === j) return;
+    const same = matEq(A.M, B.M, size * 1e-9);
+    const fm = far.get(A.id) ? panelM.get(far.get(A.id)!) : undefined;
+    const ret = !same && !!fm && matEq(B.M, fm, size * 1e-9);
+    if ((!same || j < i) && !ret) return;
     const ea = unit(A), eb = unit(B), den = cr(ea, eb);
     if (Math.abs(den) < 0.05) return;
     const w: V2 = [B.a0[0] - A.a0[0], B.a0[1] - A.a0[1]];
     const s = cr(w, eb) / den, u = cr(w, ea) / den;
-    const la = d2(A.a0, A.a1), lb = d2(B.a0, B.a1);
-    // Close to an end of both lines: within the setbacks and bend zones a mitred corner leaves.
-    const D = 4 * (st.T + Math.max(A.r, B.r)) + Math.max(A.ba, B.ba);
-    const nearEnd = (t: number, l: number) => t > -D && t < l + D && Math.min(Math.abs(t), Math.abs(l - t)) <= D;
-    if (!nearEnd(s, la) || !nearEnd(u, lb)) return;
-    // Each line runs from the corner into the face; the other strip must run away from it.
-    const da: V2 = Math.abs(s) < Math.abs(la - s) ? ea : [-ea[0], -ea[1]], db: V2 = Math.abs(u) < Math.abs(lb - u) ? eb : [-eb[0], -eb[1]];
+    const la = d2(A.a0, A.a1), lb = d2(B.a0, B.a1), d = D(A, B);
     const oa: V2 = [ea[1], -ea[0]], ob: V2 = [eb[1], -eb[0]];
-    if (oa[0] * db[0] + oa[1] * db[1] >= 0 || ob[0] * da[0] + ob[1] * da[1] >= 0) return;
+    const da: V2 = Math.abs(s) < Math.abs(la - s) ? ea : [-ea[0], -ea[1]];
+    if (ret) {
+      // The return's start line runs off A's far line, close to an end of A; its strip runs away from A's strip.
+      const c0 = p2(A.a0, s2(ea, s)), uf = cr([A.a0[0] + oa[0] * A.ba - B.a0[0], A.a0[1] + oa[1] * A.ba - B.a0[1]], ea) / -den;
+      if (!nearEnd(s, la, d) || !nearEnd(uf, lb, d) || dt(ob, da) >= 0) return;
+      rets.push({ key: `${A.id}+${B.id}`, a: A.id, b: B.id, c0, oa, ob, baA: A.ba, baB: B.ba, M: A.M, ret: true });
+      return;
+    }
+    // Close to an end of both lines: within the setbacks and bend zones a mitred corner leaves.
+    if (!nearEnd(s, la, d) || !nearEnd(u, lb, d)) return;
+    // Each line runs from the corner into the face; the other strip must run away from it.
+    const db: V2 = Math.abs(u) < Math.abs(lb - u) ? eb : [-eb[0], -eb[1]];
+    if (dt(oa, db) >= 0 || dt(ob, da) >= 0) return;
     const [a, b] = A.id < B.id ? [A, B] : [B, A];
-    out.push({ key: `${a.id}+${b.id}`, a: a.id, b: b.id, c0: p2(A.a0, s2(ea, s)), oa: a === A ? oa : ob, ob: a === A ? ob : oa, baA: a.ba, baB: b.ba, M: A.M });
+    two.push({ key: `${a.id}+${b.id}`, a: a.id, b: b.id, c0: p2(A.a0, s2(ea, s)), oa: a === A ? oa : ob, ob: a === A ? ob : oa, baA: a.ba, baB: b.ba, M: A.M });
   }));
-  return out;
+  // A return off either bend of a two-bend corner, at that corner, makes it a three-bend corner.
+  const used = new Set<ReliefCorner>();
+  const out = two.map(c => {
+    const r = rets.find(q => !used.has(q) && (q.a === c.a || q.a === c.b) && d2(q.c0, c.c0) <= 2 * (q.baA + q.baB + st.T));
+    if (!r) return c;
+    used.add(r);
+    const uv = (q: V2): V2 => [dt([q[0] - c.c0[0], q[1] - c.c0[1]], c.oa), dt([q[0] - c.c0[0], q[1] - c.c0[1]], c.ob)];
+    const pts = [[0, 0], [r.baA, 0], [0, r.baB], [r.baA, r.baB]].map(([x, y]) => uv(p2(r.c0, p2(s2(r.oa, x), s2(r.ob, y)))));
+    pts.push([0, 0], [c.baA, c.baB]);
+    const box: [number, number, number, number] = [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))];
+    return { ...c, key: `${c.key}+${r.b}`, c: r.b, box };
+  });
+  return [...out, ...rets.filter(r => !used.has(r))];
 }
 
 /** A corner relief's outline in flat coordinates, counter-clockwise; `w` = clearance (rectangle, circle) or tear radius. */
 export function reliefLoop(c: ReliefCorner, kind: ReliefKind, w: number, round = 0): Seg[] {
   const P = (u: number, v: number): V2 => p2(c.c0, p2(s2(c.oa, u), s2(c.ob, v)));
+  const [u0, u1, v0, v1] = c.box ?? [0, c.baA, 0, c.baB];
   if (kind === "tear") return [{ ent: "relief", kind: "circle", c: c.c0, r: w }];
-  if (kind === "circle") return [{ ent: "relief", kind: "circle", c: P(c.baA / 2, c.baB / 2), r: Math.hypot(c.baA, c.baB) / 2 + w }];
-  let pts = [P(-w, -w), P(c.baA + w, -w), P(c.baA + w, c.baB + w), P(-w, c.baB + w)];
+  if (kind === "circle") return [{ ent: "relief", kind: "circle", c: P((u0 + u1) / 2, (v0 + v1) / 2), r: Math.hypot(u1 - u0, v1 - v0) / 2 + w }];
+  let pts = [P(u0 - w, v0 - w), P(u1 + w, v0 - w), P(u1 + w, v1 + w), P(u0 - w, v1 + w)];
   if (polyArea(pts) < 0) pts = pts.reverse();
   // Obround: rounded as far as it goes (half its narrower side), but for the face's own corner, which keeps the clearance
   // w round it (so it is still cut); rectangular: rounded by `round`.
   if (kind === "obround") {
-    const inner = P(-w, -w);
+    const inner = P(u0 - w, v0 - w);
     return filletLoop(pts, pts.map(q => d2(q, inner) < 1e-9 * (1 + w) ? w : Infinity), "relief");
   }
   if (round > 1e-9) return filletLoop(pts, round, "relief");
@@ -1840,7 +1898,14 @@ export function gussetGeom(st: SheetState, f: SmGussetFeature, shift = 0): Gusse
   // The rib's top wall must clear the bend: its chord at least r + T from the bend's axis.
   const cdist = nc[0] * set + nc[1] * b.r - (k - T);
   if (!(cdist >= b.r + T - 1e-9) || !(nc[0] * G0[0] + nc[1] * G0[1] > k + T * 1e-3)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
-  return { fid: f.id, bend: b.id, rib: [[0, 0], PA, PB].map(q => to3(q as V2)), e: e3, w, groove: [G0, G1, G2].map(q => to3(q, T)), wg: w - 2 * T };
+  const wg = w - 2 * T;
+  let rr = 0, rg = 0;
+  if (f.tip === "round") { rr = w / 2 * 0.995; rg = wg / 2 * 0.995; }
+  else if (f.fillet && f.fillet.v > 0) {
+    if (!(f.fillet.v < w / 2 - 1e-6)) throw new SheetError("E-SM-GUSSETFILLET", "The gusset's edge fillet must be less than half its width.");
+    rr = f.fillet.v; rg = f.fillet.v - T > T * 0.05 ? f.fillet.v - T : 0;
+  }
+  return { fid: f.id, bend: b.id, rib: [[0, 0], PA, PB].map(q => to3(q as V2)), e: e3, w, groove: [G0, G1, G2].map(q => to3(q, T)), wg, rr, rg };
 }
 
 /** Adds a gusset to the sheet state. */

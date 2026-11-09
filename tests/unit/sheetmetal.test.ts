@@ -666,6 +666,29 @@ test("sheet metal: corner relief at two-bend corners (FR-FT-120)", async () => {
   assert.equal(bad.statuses.find(x => x.id === "r")?.code, "E-SM-NOCORNER");
   const gone = m.evaluate(doc([...two, rel({ corners: ["x+y"] })]));
   assert.equal(gone.statuses.find(x => x.id === "r")?.code, "E-SM-CORNERGONE");
+  // A return: a flange off the front flange's right end. Its start line crosses the front bend's at (96, 4); the
+  // relief takes the base corner and the bend zones there, in the folded part and the flat pattern alike.
+  const F = (id: string, faces: [string, string], len = 30): SmFlangeFeature => ({ id, type: "smflange", name: id, edges: [{ faces }], length: { v: len }, angle: { v: Math.PI / 2 } });
+  const ret = [s, base(), F("f", ["b:p0:top", "b:p0:sl1"]), F("g", ["f:p0:top", "f:p0:s1"], 20)];
+  const rr0 = run(doc(ret));
+  const rc = reliefCorners(rr0.sheet!);
+  assert.equal(rc.length, 1);
+  assert.equal(rc[0].key, "f:b0+g:b0");
+  assert.ok(rc[0].ret);
+  close(rc[0].c0[0], 96, 1e-9); close(rc[0].c0[1], 4, 1e-9);
+  const rr = run(doc([...ret, rel()]));
+  assert.ok(inside(rr0, [97, 4.5, 1]) && !inside(rr, [97, 4.5, 1]), "the base corner by the return is cut");
+  assert.ok(inside(rr, [90, 4.5, 1]), "the rest of the base edge stays");
+  const rflat0 = run(doc([...ret, flat])).props.volume, rflat = run(doc([...ret, rel(), flat])).props.volume;
+  assert.ok(rflat0 - rflat > 1);
+  close(rflat0 - rflat, rr0.props.volume - rr.props.volume, 0.05);
+  // With a right flange too, the corner is a three-bend corner: one relief over all three bend zones.
+  const three = [...ret, F("h", ["b:p0:top", "b:p0:sl2"])];
+  const tc = reliefCorners(run(doc(three)).sheet!);
+  assert.equal(tc.length, 1);
+  assert.equal(tc[0].key, "f:b0+h:b0+g:b0");
+  assert.equal(tc[0].c, "g:b0");
+  for (const kind of ["rect", "obround", "circle"] as const) assert.ok(run(doc([...three, rel({ kind })])).props.volume < run(doc(three)).props.volume - 1, `three-bend ${kind}`);
 });
 
 test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120)", async () => {
@@ -713,6 +736,16 @@ test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120
   assert.ok(inside(r4, [48, 4, 10]) && !inside(r, [48, 4, 10]), "the rib wall runs further up the flange");
   assert.equal(code(gus({ count: 3, spacing: { v: 4 } })), "E-SM-GUSSETSPACE");
   assert.equal(code(gus({ count: 0 })), "E-SM-GUSSETCOUNT");
+  // Tip shapes: rounded (a half round across the width) and flat with filleted edges take the top wall's side corners
+  // off and keep its middle; the flat pattern stays the same.
+  for (const over of [{ tip: "round" as const }, { fillet: { v: 1.5 } }]) {
+    const rt = run(doc([...pre, gus(over)]));
+    assert.ok(inside(r, [47.2, 6.9, 6.9]) && !inside(rt, [47.2, 6.9, 6.9]), `${JSON.stringify(over)}: side corner rounded off`);
+    assert.ok(inside(rt, [50, 6.25, 6.25]) && inside(rt, [48, 4, 4]) && !inside(rt, [50, 4, 4]), `${JSON.stringify(over)}: top wall, side wall and groove`);
+    assert.ok(rt.props.volume < r.props.volume && rt.props.volume > r0.props.volume);
+    close(run(doc([...pre, gus(over), flat])).props.volume, run(doc([...pre, flat])).props.volume, 1e-6);
+  }
+  assert.equal(code(gus({ fillet: { v: 3 } })), "E-SM-GUSSETFILLET");
 });
 
 test("sheet metal: normal cut is square to the sheet, across bends too (FR-FT-120)", async () => {
@@ -772,6 +805,15 @@ test("sheet metal: convert a solid box to sheet metal (FR-FT-120)", async () => 
   const hu = run(doc([s, box, hs, hole, conv({ edges: [edge("l1"), edge("l3")] })]));
   close(hu.props.volume, 100 * flatW * 2 - 2 * 50 * Math.PI, 1e-5);
   close(run(doc([s, box, hs, hole, conv({ edges: [edge("l1"), edge("l3")] }), flat])).props.volume, 100 * flatW * 2 - 2 * 50 * Math.PI, 1e-5);
+  // A wall's far edge picked too: the face across it (the box's top) becomes a second wall off the first, an L turned
+  // into a C; it is bent the same way, and the flat pattern keeps the volume.
+  const cl = conv({ edges: [edge("l1"), { faces: ["e:end", "e:side:sl1"] }] });
+  const c2 = run(doc([s, box, cl]));
+  assert.equal(c2.sheet!.bends.length, 2);
+  close(c2.size[0], 100, 1e-6); close(c2.size[1], 60, 1e-6); close(c2.size[2], 40, 1e-6);
+  const inC = (p: [number, number, number]) => new oc.BRepClass3d_SolidClassifier_3(c2.body!.shape, new oc.gp_Pnt_3(...p), 1e-6).State() === oc.TopAbs_State.TopAbs_IN;
+  assert.ok(inC([50, 30, 39]) && inC([50, 30, 1]) && inC([50, 1, 20]) && !inC([50, 30, 20]), "bottom, wall and top, hollow inside");
+  close(run(doc([s, box, cl, flat])).props.volume, c2.props.volume, 1e-5);
   // A bend edge off the fixed face, or a curved fixed face, fails.
   assert.equal(m.evaluate(doc([s, box, conv({ edges: [{ faces: ["e:side:sl1", "e:side:sl2"] }] })])).statuses.find(x => x.id === "c")!.ok, false);
 });
@@ -801,5 +843,19 @@ test("sheet metal: insert bends into a thin-walled U profile (FR-FT-120)", async
   const flatB = 60 - 2 * (10 + T) + 2 * (40 - (10 + T) + (Math.PI / 2) * (10 + T / 2));
   close(big.props.volume, 100 * flatB * T, 1e-5);
   // An inside face has no face behind it at the wall's thickness... it finds the outside one, but no sharp outside edges.
-  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);
+  assert.equal(m.evaluate(doc([u, ex, ins({ face: { name: "e:side:ul4" } })])).statuses.find(x => x.id === "i")!.ok, false);  // A hat section: walls down from the top, brims turning outwards at their feet. The brims don't touch the fixed face;
+  // they are found across the walls' far edges and bent the other way. Mid-line 37 + 2 × 37 + 2 × 21.5, each 90° bend
+  // takes 2(r + T/2) off it and adds a quarter circle of r + T/2.
+  const hp: [number, number][] = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
+  const hat: SketchFeature = { ...u, id: "h", ents: [...hp.map((p, i): SkEnt => ({ id: `hp${i}`, t: "point", x: p[0], y: p[1] })), ...hp.map((_p, i): SkEnt => ({ id: `hl${i}`, t: "line", a: `hp${i}`, b: `hp${(i + 1) % hp.length}` }))] };
+  const hex: Feature = { ...ex, id: "he", sketch: "h" };
+  const hins = ins({ face: { name: "he:side:hl8" } });
+  const hr = run(doc([hat, hex, hins]));
+  assert.equal(hr.sheet!.bends.length, 4, "two walls and two brims");
+  const hatW = 154 + 4 * ((Math.PI / 2 - 2) * (2 + T / 2));
+  close(hr.props.volume, 100 * hatW * T, 1e-5);
+  close(hr.size[0], 80, 1e-6); close(hr.size[1], 40, 1e-6);
+  const hf = run(doc([hat, hex, hins, flat]));
+  close(hf.props.volume, 100 * hatW * T, 1e-5);
+  close(hf.size[0] + hf.size[1] + hf.size[2] - 100 - T, hatW, 1e-6);
 });

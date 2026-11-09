@@ -10019,6 +10019,17 @@ try {
     const gs3 = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, n: l.sheet?.gussets?.length ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
     check(gs2.count === 3 && gs2.spacing > 0 && gs2.field && !gs3.bad && gs3.n === 3 && Math.abs((gs3.v - gsv0) - 3 * (gs1.v - gsv0)) < 1e-3,
       `sheet metal: Sheet Metal Gusset makes three ribs along the bend (${JSON.stringify({ gs2, gs3 })})`);
+    // Rounded tip: the ribs lose their top corners (less volume, still more than none); filleted edges likewise.
+    await mp.evaluate(() => window.__sv.modeller.editFeature(window.__sv.model.store.doc.features.find(f => f.type === "smgusset").id));
+    await settle();
+    await mp.selectOption('#mc-pm select[data-sm="gtip"]', "round");
+    await settle();
+    const gsr0 = await mp.evaluate(() => ({ tip: window.__sv.model.mode().draft?.tip, fil: !!document.querySelector('#mc-pm input[data-sm="gfil"]') }));
+    await mp.click("#mc-ok");
+    await settle();
+    const gsr = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    check(gsr0.tip === "round" && !gsr0.fil && !gsr.bad && gsr.v < gs3.v - 1e-3 && gsr.v > gsv0 + 1e-3,
+      `sheet metal: Sheet Metal Gusset rounded tip (${JSON.stringify({ gsr0, gsr, gs3: gs3.v, gsv0 })})`);
     // Closed Corner: two flanges, material outside, made one at a time leave an open corner; clicking the front one's end face closes it.
     await mp.evaluate(() => window.__sv.model.store.change("Flanges", d => {
       const b = d.features.find(f => f.type === "smbase");
@@ -10189,6 +10200,19 @@ try {
     const ibWant = 100 * 3 * (60 - 10 + 2 * (40 - 5 + (Math.PI / 2) * 3.5));
     check(ib0.title === "Insert Bends" && ib0.face === "ie:side:il0" && !ib1.bad && ib1.bends === 2 && Math.abs(ib1.t - 3) < 1e-9 && Math.abs(ib1.v - ibWant) < 1e-2,
       `sheet metal: Insert Bends turns the thin U section into sheet metal from the clicked face (${JSON.stringify({ ib0, ib1, ibWant })})`);
+    // A hat section: the brims at the walls' feet don't touch the fixed top face; they are found across the walls and bent too.
+    await mp.evaluate(() => window.__sv.model.store.change("Hat section", d => {
+      const q = [[0, 0], [23, 0], [23, 37], [57, 37], [57, 0], [80, 0], [80, 3], [60, 3], [60, 40], [20, 40], [20, 3], [0, 3]];
+      d.features = [
+        { id: "hu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `hq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `hl${i}`, t: "line", a: `hq${i}`, b: `hq${(i + 1) % q.length}` }))] },
+        { id: "he", type: "extrude", name: "Boss-Extrude1", sketch: "hu", op: "boss", end: "blind", depth: { v: 100 } },
+        { id: "hi", type: "sminsert", name: "Insert-Bends1", face: { name: "he:side:hl8" }, radius: { v: 2 }, k: 0.5 },
+      ];
+    }));
+    await settle();
+    const hb = await mp.evaluate(() => { const l = window.__sv.model.last(); return { v: l.props?.volume ?? 0, bends: l.sheet?.bends.length, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";") }; });
+    const hbWant = 100 * 3 * (154 + 4 * ((Math.PI / 2 - 2) * 3.5));
+    check(!hb.bad && hb.bends === 4 && Math.abs(hb.v - hbWant) < 1e-2, `sheet metal: Insert Bends follows a hat section's walls to the brims (${JSON.stringify({ hb, hbWant })})`);
     await ctx.close();
   }
 

@@ -366,6 +366,9 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
           + `<label class="chk pm-chk"><input type="checkbox" data-sm="gd2"${f.depth2 ? " checked" : ""} />${esc(t("Different length on the second face"))}</label>`
           + (f.depth2 ? numField("depth2", t("Second profile length"), f.depth2, "length") : "")
           + numField("width", t("Gusset width"), f.width, "length")
+          + sel("gtip", t("Tip"), [["flat", t("Flat")], ["round", t("Rounded")]], f.tip ?? "flat")
+          + (f.tip === "round" ? "" : `<label class="chk pm-chk"><input type="checkbox" data-sm="gfil"${f.fillet ? " checked" : ""} />${esc(t("Fillet the edges"))}</label>`
+            + (f.fillet ? numField("fillet", t("Edge fillet radius"), f.fillet, "length") : ""))
           + help(t("The rib reaches the profile length along each face from the inside virtual sharp. It keeps the sheet's thickness, with the groove outside; the flat pattern leaves it out.")))
         + group(t("Pattern"), `<label class="pm-field"><span>${esc(t("Number of gussets"))}</span><span class="pm-in"><input type="text" inputmode="numeric" data-sm="gcount" value="${f.count ?? 1}" spellcheck="false" /></span></label>`
           + ((f.count ?? 1) > 1 ? numField("spacing", t("Spacing"), f.spacing ?? { v: 2 * f.width.v }, "length") + help(t("Centre to centre, spread evenly about the position.")) : "")),
@@ -373,13 +376,13 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
   }
   if (f.type === "smrelief") {
     const all = k.sheet && !k.sheet.faceted ? reliefCorners(k.sheet) : [];
-    const rows = all.map((c, i) => `<label class="chk pm-chk"><input type="checkbox" data-sm="rc:${esc(c.key)}"${!f.corners.length || f.corners.includes(c.key) ? " checked" : ""} />${esc(t("Corner {n}", { n: i + 1 }))}</label>`).join("");
+    const rows = all.map((c, i) => `<label class="chk pm-chk"><input type="checkbox" data-sm="rc:${esc(c.key)}"${!f.corners.length || f.corners.includes(c.key) ? " checked" : ""} />${esc(c.c ? t("Three-bend corner {n}", { n: i + 1 }) : t("Corner {n}", { n: i + 1 }))}</label>`).join("");
     const ratio = !f.size;
     return {
       title: t("Corner Relief"),
       body: group(t("Corners"), `<p class="pm-count" data-sm-corners>${esc(f.corners.length ? t("{n} corner|{n} corners", { n: f.corners.length }) : t("All corners ({n})", { n: all.length }))}</p>` + rows
         + (f.corners.length ? `<button class="btn small" data-sm="clear">${esc(t("Collect all corners"))}</button>` : "")
-        + help(t("Corners where two bends meet on one face. Click near a corner in the view to pick it.")))
+        + help(t("Corners where two bends meet on one face, where a bend meets its return flange, and three-bend corners with both. Click near a corner in the view to pick it.")))
         + group(t("Relief type"), sel("kind", t("Type"), [["rect", t("Rectangular")], ["obround", t("Obround")], ["circle", t("Circular")], ["tear", t("Tear")]], f.kind)
           + (f.kind === "rect" ? `<label class="chk pm-chk"><input type="checkbox" data-sm="rround"${f.round ? " checked" : ""} />${esc(t("Add fillet corners"))}</label>` + (f.round ? numField("round", t("Fillet radius"), f.round, "length") : "") : "")
           + `<label class="chk pm-chk"><input type="checkbox" data-sm="useRatio"${ratio ? " checked" : ""} />${esc(t("Use relief ratio"))}</label>`
@@ -430,7 +433,8 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
       body: group(t("Fixed face"), `<p class="pm-count" data-sm-face>${esc(f.face.name ? t("1 face") : t("click a flat face of the solid"))}</p>`)
         + group(t("Bend edges"), `<p class="pm-count" data-sm-edges>${esc(f.edges.length ? t("{n} edge|{n} edges", { n: f.edges.length }) : t("click straight edges of the fixed face"))}</p>`
           + (f.edges.length ? `<button class="btn small" data-sm="clear">${esc(t("Clear edges"))}</button>` : "")
-          + help(t("Each bend edge joins the fixed face to a flat face, which becomes a flange as long and at the angle the solid has. Other edges between converted faces are ripped.")))
+          + help(t("Each bend edge joins the fixed face to a flat face, which becomes a flange as long and at the angle the solid has. Other edges between converted faces are ripped."))
+          + help(t("Pick a wall's far edge too to bend the face across it as one more wall.")))
         + group(t("Sheet metal parameters"), numField("thickness", t("Thickness"), f.thickness, "length") + numField("radius", t("Bend radius"), f.radius, "length")
           + `<label class="pm-field"><span>${esc(t("K-factor"))}</span><span class="pm-in"><input type="text" inputmode="decimal" data-sm="k" value="${esc(String(f.k ?? 0.5))}" spellcheck="false" /></span></label>`)
         + group(t("Rip"), numField("gap", t("Gap distance"), f.gap ?? { v: 0.1 }, "length")),
@@ -623,6 +627,8 @@ export function bindSmPanel(pm: HTMLElement, f: SheetFeature, upd: (fn: () => vo
       }
       if (f.type === "smgusset") {
         if (key === "gmid") upd(() => { if (val) delete f.at; else f.at = { v: 10 }; }, true);
+        if (key === "gtip") upd(() => { if (val === "round") { f.tip = "round"; delete f.fillet; } else delete f.tip; }, true);
+        if (key === "gfil") upd(() => { if (val) f.fillet = { v: +Math.min(2 * T, f.width.v / 4).toFixed(4) }; else delete f.fillet; }, true);
         if (key === "gd2") upd(() => { if (val) f.depth2 = { v: f.depth.v }; else delete f.depth2; }, true);
         if (key === "gcount") {
           const v = Number(val);
