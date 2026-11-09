@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.313.0] - 2026-11-09
+
+### Added
+- Bolt circles in drawings (FR-DRW-023): holes of one size evenly spaced on a circle (a full or partial circular pattern, or the corners of a square) get a centre-line circle, or an arc over the holes, with a radial mark on each hole and a cross on the pattern centre, in place of separate crosses. Bolt circles in the view panel turns them off.
+
 ## [1.308.0] - 2026-11-09
 
 ### Added
@@ -1801,7 +1806,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.308.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.313.0...HEAD
+[1.313.0]: https://github.com/kothf/step-viewer/compare/v1.308.0...v1.313.0
 [1.308.0]: https://github.com/kothf/step-viewer/compare/v1.307.0...v1.308.0
 [1.307.0]: https://github.com/kothf/step-viewer/compare/v1.306.0...v1.307.0
 [1.306.0]: https://github.com/kothf/step-viewer/compare/v1.305.0...v1.306.0
