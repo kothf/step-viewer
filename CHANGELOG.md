@@ -11,6 +11,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Motion studies: a motor's panel now plots its **Displacement**, **Velocity** or **Acceleration** over the study, with the playhead, like the SolidWorks motor graph. It works for every profile, so you can check a data point or segments motor for jumps before you play it (FR-FT-122).
 
+## [1.320.0] - 2026-11-09
+
+### Added
+- Slot centre marks in drawings (FR-DRW-023): a straight slot seen end-on gets a centreline along it, 2 mm past both ends, and a centre line across each rounded end.
+
+### Fixed
+- The rounded ends of a slot were marked as full circles, because their arcs on the top and bottom faces added up to 360°.
+
+## [1.319.0] - 2026-11-09
+
+### Added
+
+- **Measured values into input boxes (FR-MEA-002)**: drag a length, diameter, radius or angle from the measurement card onto a box in a feature panel or any other number box, and it goes in as if typed. A box that already shows the value's unit gets the bare number; another gets number and unit (say 1.5 in in a millimetre box), which the box reads as an expression. Clicking a value still copies it.
+
 ## [1.318.0] - 2026-11-09
 
 ### Added
@@ -1873,7 +1887,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.323.0...HEAD
-[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.323.0
+[1.323.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.323.0
+[1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
+[1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
 [1.318.0]: https://github.com/kothf/step-viewer/compare/v1.317.0...v1.318.0
 [1.317.0]: https://github.com/kothf/step-viewer/compare/v1.316.0...v1.317.0
 [1.316.0]: https://github.com/kothf/step-viewer/compare/v1.315.0...v1.316.0
