@@ -369,6 +369,11 @@ export class ModelController {
   private journalTimer = 0;
   private shownOnce = false;
   private decor = new THREE.Group();
+  /** Hover link (FR-UI-061): the feature whose faces are lit because the pointer is on its tree row or on one of its faces. */
+  private hoverGroup = new THREE.Group();
+  private hoverId: string | null = null;
+  private hoverFrom: "tree" | "view" | null = null;
+  private hoverRaf = 0;
   private planeMeshes: THREE.Mesh[] = [];
   private lineMats: LineMaterial[] = [];
   private down: { x: number; y: number } | null = null;
@@ -388,6 +393,8 @@ export class ModelController {
     document.getElementById("ft-search")?.addEventListener("input", () => this.renderTree());
     this.kernel.onCrash = () => toast(t("The geometry kernel stopped; it was restarted."), "warn");
     host.viewer.scene.add(this.decor);
+    host.viewer.scene.add(this.hoverGroup);
+    this.bindHover();
     onCmTab(() => { if (this.store && !this.inBar) { this.renderBar(); } });
     host.viewer.beforeRender.push(() => {
       for (const m of this.lineMats) m.resolution.set(host.viewer.size.x, host.viewer.size.y);
@@ -529,6 +536,7 @@ export class ModelController {
     this.instantDoc = null;
     this.last = null;
     this.clearDecor();
+    this.hoverId = null; this.drawHover();
     this.kernel.stop();
     document.getElementById("app")!.classList.remove("model");
     this.host.viewer.emptySize = 1;
@@ -2954,6 +2962,7 @@ export class ModelController {
 
   private drawDecor() {
     this.clearDecor();
+    this.drawHover();
     if (!this.store) return;
     const dark = document.documentElement.dataset.theme === "dark";
     const m = this.mode;
@@ -3600,9 +3609,15 @@ export class ModelController {
     const draft = m.kind === "feature" && (m.draft.type === "extrude" || m.draft.type === "revolve" || isSheet(m.draft)) ? m.draft.id : null;
     const id = draft ?? (m.kind === "none" ? this.selected : null);
     if (!id) return;
+    const mesh = this.featureFaceMesh(id, draft ? 0xffd43b : 0x4dabf7, draft ? 0.5 : 0.45);
+    if (mesh) this.decor.add(mesh);
+  }
+
+  /** A see-through overlay of the faces a feature made (or a body / cut list item's faces), in world space; null when it has none. */
+  private featureFaceMesh(id: string, color: number, opacity: number): THREE.Mesh | null {
     const part = this.host.viewer.parts[0];
     const names = this.last?.faceNames;
-    if (!part || !names) return;
+    if (!part || !names) return null;
     const pre = `${id}:`;
     // A body or a cut list item selected in the tree lights up its bodies' faces.
     const keys = id.startsWith("body:") ? [id.slice(5)] : id.startsWith("cut:") ? this.last?.cutList?.[+id.slice(4)]?.bodies ?? [] : null;
@@ -3617,14 +3632,73 @@ export class ModelController {
         out.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi));
       }
     });
-    if (!out.length) return;
+    if (!out.length) return null;
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
-    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: draft ? 0xffd43b : 0x4dabf7, transparent: true, opacity: draft ? 0.5 : 0.45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide }));
     mesh.applyMatrix4(part.mesh.matrixWorld);
     mesh.renderOrder = 2300;
     mesh.raycast = () => {};
-    this.decor.add(mesh);
+    return mesh;
+  }
+
+  /** Tree rows and the view light each other up on hover (FR-UI-061), only while no command is open. */
+  private bindHover() {
+    const tree = document.getElementById("mc-tree");
+    tree?.addEventListener("pointerover", e => {
+      if (e.pointerType === "touch") return;
+      const row = (e.target as HTMLElement).closest?.<HTMLElement>(".ft-row[data-id]");
+      this.setHover(row?.dataset.id ?? null, "tree");
+    });
+    tree?.addEventListener("pointerleave", () => { if (this.hoverFrom === "tree") this.setHover(null, "tree"); });
+    const canvas = this.host.viewer.renderer.domElement;
+    canvas.addEventListener("pointermove", e => {
+      if (e.buttons || e.pointerType === "touch") { if (this.hoverFrom === "view") this.setHover(null, "view"); return; }
+      const x = e.clientX, y = e.clientY;
+      if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
+      this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; this.setHover(this.featureAt(x, y), "view"); });
+    });
+    canvas.addEventListener("pointerleave", () => {
+      if (this.hoverRaf) { cancelAnimationFrame(this.hoverRaf); this.hoverRaf = 0; }
+      if (this.hoverFrom === "view") this.setHover(null, "view");
+    });
+  }
+
+  /** The (unsuppressed) feature that made the face under a screen point. */
+  featureAt(x: number, y: number): string | null {
+    if (!this.store || !this.last || this.mode.kind !== "none") return null;
+    const hit = this.host.faceAt(x, y);
+    const id = hit ? this.last.faceNames[hit.faceId]?.split(":")[0] : undefined;
+    const f = id ? this.store.feature(id) : undefined;
+    return f && !f.suppressed ? f.id : null;
+  }
+
+  /** The hovered feature: from the tree its faces light up in the view (unless it is the selected one); from the view its tree row is marked. */
+  setHover(id: string | null, from: "tree" | "view") {
+    if (this.mode.kind !== "none" || !this.store) id = null;
+    if (id === this.hoverId && (id === null || from === this.hoverFrom)) return;
+    this.hoverId = id;
+    this.hoverFrom = id ? from : null;
+    this.drawHover();
+  }
+
+  private drawHover() {
+    for (const c of [...this.hoverGroup.children]) {
+      this.hoverGroup.remove(c);
+      const m = c as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material | undefined)?.dispose();
+    }
+    const tree = document.getElementById("mc-tree");
+    tree?.querySelectorAll(".ft-row.hover").forEach(r => r.classList.remove("hover"));
+    const id = this.mode.kind === "none" ? this.hoverId : null;
+    if (id && this.hoverFrom === "view") tree?.querySelector(`.ft-row[data-id="${CSS.escape(id)}"]`)?.classList.add("hover");
+    // Geometry under the pointer only marks its row; the view itself already shows what is hovered.
+    if (id && this.hoverFrom === "tree" && id !== this.selected) {
+      const mesh = this.featureFaceMesh(id, 0x74c0fc, 0.3);
+      if (mesh) this.hoverGroup.add(mesh);
+    }
+    this.host.viewer.invalidate();
   }
 
   /**
@@ -4413,6 +4487,7 @@ export class ModelController {
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
     box.innerHTML = html;
+    if (this.hoverId && this.hoverFrom === "view") box.querySelector(`.ft-row[data-id="${CSS.escape(this.hoverId)}"]`)?.classList.add("hover");
     // Name filter (FR-HIS-011): feature rows whose name doesn't match hide; a folder stays while a member matches.
     const q = (document.getElementById("ft-search") as HTMLInputElement | null)?.value.trim().toLowerCase() ?? "";
     if (q) {

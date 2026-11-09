@@ -2447,6 +2447,18 @@ try {
     await idle();
     const vdDrop = { box: vdBox, depth: await mp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth) };
     check(vdPick?.drag && /^40\.0+ mm$/.test(vdPick.text) && vdDrop.depth.v === 40 && !vdDrop.depth.expr, `model 1.319: a measured 40 mm dragged from the readout sets the extrude depth to 40 (${JSON.stringify([vdPick, vdDrop])})`);
+    // 1.324: hover link (FR-UI-061): a tree row lights its feature's faces; a face marks its feature's row.
+    await mp.mouse.move(5, 5);
+    await mp.evaluate(() => { window.__sv.modeller.selected = null; });
+    await mp.hover('#mc-tree .ft-row[data-id="x"]');
+    await mp.waitForTimeout(100);
+    const hvTree = await mp.evaluate(() => window.__sv.modeller.hoverGroup.children.length);
+    const hvAt = await mp.evaluate(() => { const v = window.__sv.viewer, r = v.renderer.domElement.getBoundingClientRect(); const s = new (v.camera.position.constructor)(20, -45, 10).project(v.camera); return [r.left + ((s.x + 1) / 2) * r.width, r.top + ((1 - s.y) / 2) * r.height]; });
+    await mp.mouse.move(hvAt[0], hvAt[1]);
+    await mp.waitForTimeout(200);
+    const hvView = await mp.evaluate(() => ({ rows: [...document.querySelectorAll("#mc-tree .ft-row.hover")].map(r => r.dataset.id), lit: window.__sv.modeller.hoverGroup.children.length }));
+    await mp.mouse.move(5, 5);
+    check(hvTree === 1 && hvView.rows.join() === "x" && hvView.lit === 0, `model 1.324: hovering the Extrude1 row lights its faces, hovering its top face marks the row (${JSON.stringify([hvTree, hvView])})`);
     await ctx.close();
   }
 
