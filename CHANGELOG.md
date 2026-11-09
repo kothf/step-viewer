@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.294.0] - 2026-11-09
+
+### Added
+
+- **Fully define sketch (FR-SK-045)**: a Fully define sketch button beside an under-defined sketch's status in the sketch panel, and the same item in the right-click menu on empty space. It adds horizontal/vertical relations to lines within 1° of level or plumb, diameters to circles, radii to arcs, then horizontal and vertical dimensions from the origin to the points, keeping only what removes freedom, until the sketch is fully defined. One undo takes it all back.
+
 ## [1.290.0] - 2026-11-09
 
 ### Added
@@ -1730,7 +1736,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.290.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.294.0...HEAD
+[1.294.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.294.0
 [1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
 [1.284.0]: https://github.com/kothf/step-viewer/compare/v1.282.0...v1.284.0
