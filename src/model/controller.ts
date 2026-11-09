@@ -184,6 +184,13 @@ const BASES = [...SM_BASES, "Revolve cut", "Sketch", "Extrude", "Cut", "Revolve"
 const d3v = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+/** Eye icons for the tree's show/hide buttons (FR-HIS-013). */
+const EYE = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2.1" fill="currentColor"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5l11-11" stroke="currentColor" stroke-width="1.3"/></svg>`;
+const eyeButton = (hidden: boolean, name: string) => {
+  const tip = hidden ? t("Show") : t("Hide");
+  return `<button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="eye" title="${esc(tip)}" aria-label="${esc(tip)}: ${esc(name)}" aria-pressed="${!hidden}">${hidden ? EYE_OFF : EYE}</button>`;
+};
 
 /** A default feature name ("Extrude2") in the interface language; renamed features stay as typed. */
 export function featureLabel(name: string) {
@@ -523,6 +530,8 @@ export class ModelController {
         if (d.freezeAfter && !have.has(d.freezeAfter)) delete d.freezeAfter;
       };
     }
+    // A part saved rolled back reopens rolled back, with a notice (FR-HIS-012); a parked tab keeps its own state.
+    if (!keep) { this.rollNotice = doc.rollback != null; this.rollPrev = undefined; this.closedFeats.clear(); }
     document.getElementById("app")!.classList.add("model");
     // The start card goes at once, not when the kernel's first rebuild comes back (that can take seconds).
     $("#empty").hidden = true;
@@ -1340,6 +1349,12 @@ export class ModelController {
   private tangentProp = true;
   /** Folders collapsed in the tree (view state, not saved). */
   private closedFolders = new Set<string>();
+  /** Features whose absorbed sketch rows are folded away (view state, FR-HIS-013). */
+  private closedFeats = new Set<string>();
+  /** Where the rollback bar was before it last moved (FR-HIS-012 Roll to previous); undefined: not moved yet. */
+  private rollPrev: number | null | undefined = undefined;
+  /** The part opened rolled back: the notice above the tree shows until it is rolled to the end (FR-HIS-012). */
+  private rollNotice = false;
 
   /** Moves the rollback bar: features from `index` on are not evaluated (null: none). */
   setRollback(index: number | null) {
@@ -1349,7 +1364,43 @@ export class ModelController {
     const n = this.doc.features.length;
     const rb = index == null || index >= n ? null : Math.max(0, index);
     if (rb === this.doc.rollback) return;
+    this.rollPrev = this.doc.rollback;
     this.store.change(rb == null ? "Roll to end" : "Roll back", d => { d.rollback = rb; });
+  }
+
+  /** Roll to previous (FR-HIS-012): back to where the bar was before its last move, else one feature up. */
+  rollToPrevious() {
+    if (!this.store) return;
+    const cur = this.doc.rollback ?? this.doc.features.length;
+    const to = this.rollPrev !== undefined && this.rollPrev !== this.doc.rollback ? this.rollPrev : Math.max(this.frozenCount(), cur - 1);
+    this.setRollback(to);
+  }
+
+  /** The notice of a part opened rolled back (AT-UX-14): how many features are not shown, and Roll to end. */
+  private renderRollNotice() {
+    let bar = document.getElementById("mc-rolled");
+    const n = this.store && this.doc.rollback != null ? this.doc.features.length - this.doc.rollback : 0;
+    if (!n) this.rollNotice = false;
+    if (!this.rollNotice) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "mc-rolled";
+      bar.className = "mc-ro";
+      bar.setAttribute("role", "status");
+      document.getElementById("tab-features")!.prepend(bar);
+    }
+    bar.innerHTML = `<span>${esc(t("The part is rolled back: {n} feature is not shown|The part is rolled back: {n} features are not shown", { n }))}</span><button class="btn small primary" data-a="rollend">${esc(t("Roll to end"))}</button>`;
+    bar.querySelector("button")!.addEventListener("click", () => this.setRollback(null));
+  }
+
+  /** Shift+C (FR-HIS-013): folds every folder and every feature's absorbed sketch. */
+  collapseAll() {
+    if (!this.store) return;
+    for (const g of this.doc.folders ?? []) this.closedFolders.add(g.id);
+    this.closedFolders.add("bodies");
+    this.closedFolders.add("cutlist");
+    for (const f of this.doc.features) if (f.type === "extrude" || f.type === "revolve") this.closedFeats.add(f.id);
+    this.renderTree();
   }
 
   rename(id: string, name: string) {
@@ -1957,6 +2008,8 @@ export class ModelController {
     const inTree = !!tg.closest?.("#tab-features");
     // Enter with no command running repeats the last feature command (FR-UI-111).
     if (k === "enter" && !inTree && !e.shiftKey && this.lastCmd && !tg.matches?.("button, a, summary, [role=treeitem], [role=tab], [role=menuitem]")) { stop(); toast(t("Repeat: {name}", { name: this.cmdLabel(this.lastCmd) })); this.command(this.lastCmd); return; }
+    // Shift+C folds the whole tree (FR-HIS-013).
+    if (k === "c" && e.shiftKey && m.kind === "none") { stop(); this.collapseAll(); return; }
     const feat = this.selected ? this.store.feature(this.selected) : undefined;
     if ((k === "delete" || k === "backspace") && feat && inTree) { stop(); void this.deleteFeature(feat.id); }
     else if (k === "f2" && feat) { stop(); this.startRename(feat.id); }
@@ -4629,6 +4682,7 @@ export class ModelController {
 
   private renderTree() {
     const box = $("#mc-tree");
+    this.renderRollNotice();
     if (!this.store) { box.innerHTML = ""; return; }
     const d = this.doc;
     const st = new Map((this.last?.statuses ?? []).map(s => [s.id, s]));
@@ -4640,7 +4694,10 @@ export class ModelController {
     html += row("material", ICONS.material, d.material ? t(d.material.name) : t("Material <not specified>"), "", " ft-plane");
     html += row("configs", "◇", t("Configuration: {name}", { name: d.config ?? "Default" }), "", " ft-plane");
     html += row("equations", "Σ", d.vars?.length ? t("Equations ({n})", { n: d.vars.length }) : t("Equations"), "", " ft-plane");
-    for (const std of ["XY", "XZ", "YZ"] as const) html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), "", " ft-plane");
+    for (const std of ["XY", "XZ", "YZ"] as const) {
+      const hid = (d.stdHidden ?? []).includes(std);
+      html += row(`std:${std}`, ICONS.plane, t(STD_NAMES[std]), `<span class="ft-tools">${eyeButton(hid, t(STD_NAMES[std]))}</span>`, ` ft-plane${hid ? " hid" : ""}`);
+    }
     html += row("origin", "⊹", t("Origin"), "", " ft-plane");
     html += this.bodiesRows(row);
     html += cutListRows(this.last?.cutList, !this.closedFolders.has("cutlist"), row, this.doc.cutProps);
@@ -4666,14 +4723,18 @@ export class ModelController {
       const icon = f.type === "extrude" && f.op === "cut" ? ICONS.cut : ICONS[f.type];
       const badge = s && !s.ok ? `<span class="ft-err" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Error"))}: ${esc(statusText(s))}">⚠</span>`
         : s?.code === "warning" ? `<span class="ft-warn" title="${esc(statusText(s))}" role="img" aria-label="${esc(t("Warning"))}: ${esc(statusText(s))}">⚠</span>` : "";
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
+      const hid = this.isHidden(f);
+      const tools = `<span class="ft-tools">${hid == null ? "" : eyeButton(hid, featureLabel(f.name))}<button class="icon" tabindex="-1" data-a="sup" title="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}" aria-label="${esc(f.suppressed ? t("Unsuppress") : t("Suppress"))}">${f.suppressed ? "◌" : "●"}</button><button class="icon" tabindex="-1" data-a="del" title="${esc(t("Delete"))}" aria-label="${esc(t("Delete"))}">✕</button></span>`;
       const relMark = rel ? `<span class="ft-rel" title="${esc(relTip)}" role="img" aria-label="${esc(relTip)}">${par.has(f.id) ? "↑" : "↓"}</span>` : "";
       const ice = i < frozen ? `<span class="ft-ice" title="${esc(t("Frozen"))}" role="img" aria-label="${esc(t("Frozen"))}">❄</span>` : "";
       // External reference (FR-ASM-030): -> in context, ->* locked, ->? out of context (SolidWorks marks).
       const pl = (f as { plane?: PlaneRef }).plane, cr = pl && "ctx" in pl ? pl.ctx : null;
       const xm = cr ? (d.ctxLocked || cr.locked ? ["->*", t("External reference (locked)")] : this.context ? ["->", t("External reference")] : ["->?", t("External reference (out of context)")]) : null;
       const ext = xm ? `<span class="ft-ext" title="${esc(xm[1])}" role="img" aria-label="${esc(xm[1])}" translate="no">${xm[0]}</span>` : "";
-      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"`);
+      // A feature with an absorbed sketch folds it away (FR-HIS-013).
+      const kidsOf = [...absorbed.values()].includes(i), open = !this.closedFeats.has(f.id);
+      const twist = kidsOf ? `<button class="icon ft-twist" tabindex="-1" data-a="twist" aria-expanded="${open}" title="${esc(open ? t("Collapse") : t("Expand"))}" aria-label="${esc(open ? t("Collapse") : t("Expand"))}">${open ? "▾" : "▸"}</button>` : "";
+      return row(f.id, icon, featureLabel(f.name), ext + relMark + ice + badge + tools, `${hid ? " hid" : ""}${child ? " child" : ""}${inFolder ? " infolder" : ""}${f.suppressed ? " sup" : ""}${i >= end ? " rolled" : ""}${i < frozen ? " frozen" : ""}${editing ? " editing" : ""}${s && !s.ok ? " bad" : ""}${rel}${kidsOf ? " ft-parentrow" : ""}`, ` data-i="${i}" draggable="${m.kind === "none" && i >= frozen}"${kidsOf ? ` aria-expanded="${open}"` : ""}`).replace('<span class="ft-ico"', `${twist}<span class="ft-ico"`);
     };
     // Folders (FR-HIS-009): a folder row comes before its first member; closed folders hide their members.
     const frozen = this.frozenCount();
@@ -4696,7 +4757,7 @@ export class ModelController {
       }
       if (g && this.closedFolders.has(g.id)) return;
       html += featRow(f, i, false);
-      for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
+      if (!this.closedFeats.has(f.id)) for (const [si, ui] of absorbed) if (ui === i) html += featRow(d.features[si], si, true);
     });
     if (frozen >= d.features.length && frozen > 0) html += freezeBar;
     if (end >= d.features.length) html += bar;
@@ -4761,6 +4822,8 @@ export class ModelController {
       r.addEventListener("click", e => {
         const a = (e.target as HTMLElement).closest<HTMLElement>("[data-a]")?.dataset.a;
         if (a === "sup") { this.toggleSuppress(id); return; }
+        if (a === "eye") { this.toggleHidden(id); return; }
+        if (a === "twist") { this.toggleFeat(id); return; }
         if (a === "del") { void this.deleteFeature(id); return; }
         if (id.startsWith("body:")) {
           const key = id.slice(5);
@@ -4845,6 +4908,7 @@ export class ModelController {
         else if (e.key === "Enter" && id === "equations") { e.preventDefault(); this.editEquations(); }
         else if (e.key === "Enter" && id === "configs") { e.preventDefault(); this.editConfigs(); }
         else if (id.startsWith("folder:") && (e.key === "Enter" || (e.key === "ArrowLeft") === !this.closedFolders.has(id.slice(7)) && (e.key === "ArrowLeft" || e.key === "ArrowRight"))) { e.preventDefault(); this.toggleFolder(id.slice(7)); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
+        else if (r.classList.contains("ft-parentrow") && (e.key === "ArrowLeft") === !this.closedFeats.has(id) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); this.toggleFeat(id); $("#mc-tree").querySelector<HTMLElement>(`.ft-row[data-id="${CSS.escape(id)}"]`)?.focus(); }
         else if (id.startsWith("folder:") && e.key === "F2") { e.preventDefault(); this.startRename(id); }
         else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.store!.feature(id)) {
           // Alt+↑/↓ moves the feature past its neighbour (keyboard reorder).
@@ -4871,8 +4935,11 @@ export class ModelController {
         this.setRollback(Math.max(0, Math.min(n, cur + (e.key === "ArrowDown" ? 1 : -1))));
         setTimeout(() => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus(), 0);
       } else if (e.key === "End") { e.preventDefault(); this.setRollback(null); }
+      else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) { e.preventDefault(); const b = bar.getBoundingClientRect(); this.barMenu(b.left + 30, b.bottom); }
     });
+    bar.addEventListener("contextmenu", e => { e.preventDefault(); this.barMenu(e.clientX, e.clientY); });
     bar.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
       e.preventDefault();
       bar.setPointerCapture(e.pointerId);
       bar.classList.add("drag");
@@ -4934,9 +5001,7 @@ export class ModelController {
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);
       if (f.type === "csys") items.push(csys.active?.src === f.id ? [t("Back to the global coordinate system"), () => this.useCsys(null)] : [t("Use for measurements and export"), () => this.useCsys(f.id)]);
       items.push(null);
-      items.push([t("Roll back to here"), () => this.setRollback(i)]);
-      if (i < end - 1 || i >= end) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
-      if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+      items.push(...this.rollItems(i, end));
       items.push([t("Freeze up to here"), () => this.setFreeze(f.id)]);
       if (this.doc.freezeAfter) items.push([t("Unfreeze all"), () => this.setFreeze(null)]);
       items.push(null);
@@ -4954,6 +5019,22 @@ export class ModelController {
     }
     if (!items.length) return;
     this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-row.sel")?.focus());
+  }
+
+  /** The rollback bar's own menu: Roll to previous and Roll to end. */
+  private barMenu(x: number, y: number) {
+    const items = this.rollItems(null, this.doc.rollback ?? this.doc.features.length);
+    if (items.length) this.showMenu(items, x, y, () => $("#mc-tree").querySelector<HTMLElement>(".ft-rollback")?.focus());
+  }
+
+  /** Rollback commands of the tree menu (FR-HIS-012): Roll back to here, Roll to previous, Roll forward past this, Roll to end. */
+  private rollItems(i: number | null, end: number): [string, () => void][] {
+    const items: [string, () => void][] = [];
+    if (i != null && i !== end) items.push([t("Roll back to here"), () => this.setRollback(i)]);
+    if (this.doc.rollback != null || this.rollPrev !== undefined) items.push([t("Roll to previous"), () => this.rollToPrevious()]);
+    if (i != null && (i < end - 1 || i >= end)) items.push([t("Roll forward past this"), () => this.setRollback(i + 1)]);
+    if (this.doc.rollback != null) items.push([t("Roll to end"), () => this.setRollback(null)]);
+    return items;
   }
 
   /** A pop-up menu at x, y; Esc or Tab closes it and calls `back` (focus returns there). */
@@ -4997,10 +5078,10 @@ export class ModelController {
     const hex = (c?: V3) => "#" + (c ?? this.doc.color ?? DEFAULT_COLOR).map(x => Math.round(Math.max(0, Math.min(1, x)) * 255).toString(16).padStart(2, "0")).join("");
     for (const b of list) {
       const hidden = !!st[b.key]?.hidden, name = this.bodyName(b.key);
-      const tools = `<span class="ft-tools"><button class="icon" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? "◌" : "◉"}</button>`
+      const tools = `<span class="ft-tools"><button class="icon ft-eye${hidden ? " off" : ""}" tabindex="-1" data-a="bhide" title="${esc(hidden ? t("Show body") : t("Hide body"))}" aria-label="${esc(hidden ? t("Show body") : t("Hide body"))}: ${esc(name)}">${hidden ? EYE_OFF : EYE}</button>`
         + `<input type="color" class="ft-color" tabindex="-1" data-bcolor value="${hex(st[b.key]?.color)}" title="${esc(t("Body colour"))}" aria-label="${esc(t("Body colour"))}: ${esc(name)}" />`
         + `<button class="icon" tabindex="-1" data-a="bdel" title="${esc(t("Delete body"))}" aria-label="${esc(t("Delete body"))}: ${esc(name)}">✕</button></span>`;
-      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup" : ""}`);
+      html += row(`body:${b.key}`, "▣", name, tools, ` infolder ft-body${hidden ? " sup hid" : ""}`);
     }
     return html;
   }
@@ -5029,6 +5110,20 @@ export class ModelController {
     this.store.change(`Add ${name}`, x => { const at = x.rollback ?? x.features.length; x.features.splice(at, 0, feat); if (x.rollback != null) x.rollback++; });
     this.renderAll();
     void this.rebuild();
+  }
+
+  /** Folds or unfolds a feature's absorbed sketch row (FR-HIS-013). */
+  private toggleFeat(id: string) {
+    if (this.closedFeats.has(id)) this.closedFeats.delete(id); else this.closedFeats.add(id);
+    this.selected = id;
+    this.renderTree();
+  }
+
+  /** Whether a feature is hidden in the view (eye button, FR-HIS-013); null: it can't be hidden. */
+  private isHidden(f: Feature): boolean | null {
+    if (f.type === "sketch") return !this.sketchShown(f);
+    if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") return !!f.hidden;
+    return null;
   }
 
   private toggleFolder(fid: string) {

@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.350.0] - 2026-11-09
+
+### Added
+
+- **Rollback commands (FR-HIS-012)**: the Features tree's right-click menu has Roll back to here, Roll to previous (back to where the rollback bar was before its last move), Roll forward past this and Roll to end, and right-clicking the rollback bar gives Roll to previous and Roll to end. A part saved rolled back reopens rolled back with a notice above the tree, "The part is rolled back: N features are not shown", and a Roll to end button (AT-UX-14).
+- **Tree housekeeping (FR-HIS-013)**: Shift+C folds the whole Features tree (folders, Solid Bodies, the cut list and the sketches under their extrudes and revolves; the ▸ beside a feature or ←/→ unfold it again). Hovering a sketch, plane, axis, point, coordinate system, curve or body row shows an eye button that hides or shows it, and hidden items have an outlined icon, as in SolidWorks.
+
+### Changed
+
+- The FRS gap tables (`docs/FRS-modelling.md`) now mark the habits and features built since 1.85.0 as done, with the release that brought each.
+
 ## [1.342.0] - 2026-11-09
 
 ### Added
@@ -2042,7 +2053,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.342.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.350.0...HEAD
+[1.350.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.350.0
 [1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
