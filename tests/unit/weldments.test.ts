@@ -7,7 +7,7 @@ import { cutList, pierceSpots, type WeldHost } from "../../src/weldments/kernel"
 import { PROFILE_TYPES, profileArea, profileShape, profileSizes } from "../../src/weldments/profiles";
 import type { Feature, PartDoc, SketchFeature, SkEnt, V2, V3, Sketch3dFeature } from "../../src/model/types";
 import type { MemberFeature } from "../../src/weldments/types";
-import { cutKey } from "../../src/weldments/types";
+import { cutKey, splitSubs } from "../../src/weldments/types";
 import { occ } from "./occ";
 
 const doc = (features: Feature[]): PartDoc => ({ schema: 1, kind: "part", id: "d", name: "t", units: { length: "mm", decimals: 2 }, props: {}, features, rollback: null });
@@ -500,4 +500,22 @@ test("cut list item keys stay put when the volume changes (FR-FT-121)", () => {
   const b = cutKey({ kind: "member", desc: "SHS 40x40x3", qty: 3, length: 420, angle1: 0, angle2: 45, volume: 2, bodies: ["x"] });
   assert.equal(a, b);
   assert.notEqual(a, cutKey({ kind: "member", desc: "SHS 40x40x3", qty: 2, length: 380, angle1: 0, angle2: 45, volume: 1, bodies: [] }));
+});
+
+test("sub-weldments split cut list items by their bodies", () => {
+  const items = [
+    { kind: "member" as const, desc: "SHS 40x40x3", qty: 3, length: 420, angle1: 0, angle2: 0, volume: 10, bodies: ["a", "b", "c"] },
+    { kind: "bead" as const, desc: "4", qty: 2, length: 100, volume: 8, bodies: ["w1", "w2"] },
+    { kind: "plate" as const, desc: "PL 5", qty: 1, plate: [50, 50, 5] as [number, number, number], volume: 1, bodies: ["p"] },
+  ];
+  assert.equal(splitSubs(items, undefined), items);
+  const out = splitSubs(items, [{ id: "s1", name: "Frame", bodies: ["b", "w2", "p", "gone"] }, { id: "s2", name: "Empty", bodies: [] }]);
+  assert.deepEqual(out.map(c => [c.kind, c.sub ?? "", c.qty, c.bodies.join()]), [
+    ["member", "", 2, "a,c"], ["bead", "", 2, "w1"], ["member", "s1", 1, "b"], ["bead", "s1", 2, "w2"], ["plate", "s1", 1, "p"],
+  ]);
+  // A bead's volume and length share out by body; members keep their volume each.
+  assert.equal(out[1].volume, 4); assert.equal(out[1].length, 50); assert.equal(out[2].volume, 10);
+  assert.equal(cutKey(out[0]), cutKey(out[2]));
+  // A body listed by two sub-weldments sits in the first.
+  assert.deepEqual(splitSubs(items, [{ id: "x", name: "X", bodies: ["a"] }, { id: "y", name: "Y", bodies: ["a"] }]).filter(c => c.sub).map(c => c.sub), ["x"]);
 });

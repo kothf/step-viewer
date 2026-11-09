@@ -160,6 +160,7 @@ export const RU: Record<string, string> = {
   // ---------- right panel (3D) ----------
   "Properties and tools": "Свойства и инструменты",
   "Properties": "Свойства",
+  "This part is empty. Start a sketch on a plane to begin.": "Деталь пуста. Начните эскиз на плоскости.",
   "Open a model to begin.": "Откройте модель, чтобы начать.",
   "Smart measure: click one entity for its size, a second for the distance, pitch or angle between them (Esc clears)": "Умное измерение: щёлкните элемент, чтобы узнать его размер, второй — расстояние, шаг или угол между ними (Esc сбрасывает)",
   "Point to point (D)": "Точка–точка (D)",
@@ -3368,6 +3369,10 @@ export const RU: Record<string, string> = {
   "Corner treatment": "Обработка углов",
   "Corner type": "Тип угла",
   "Cut List…": "Список вырезов…",
+  "{name} ({n})": "{name} ({n})",
+  "Create sub-weldment": "Создать сварной подузел",
+  "Remove from sub-weldment": "Убрать из сварного подузла",
+  "Dissolve sub-weldment": "Расформировать сварной подузел",
   "Cut list ({n})": "Список вырезов ({n})",
   "Cut list: members with lengths and end angles, plates and welds, with quantities and mass": "Список вырезов: элементы с длинами и углами торцов, пластины и швы, с количеством и массой",
   "Draw a sketch or a 3D sketch with lines first: the members run along them.": "Сначала нарисуйте эскиз или 3D-эскиз с отрезками: элементы идут вдоль них.",

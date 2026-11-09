@@ -897,6 +897,8 @@ export interface PartDoc {
   massOverride?: { mass?: number; com?: V3 };
   /** Weldment cut list item properties (FR-FT-121), keyed by `cutKey` of the item: own description, part number, notes. */
   cutProps?: Record<string, { desc?: string; part?: string; note?: string; /** Material name from `MATERIALS` for this item's cut list mass (unset = the part's material). */ mat?: string; /** Excluded from the cut list (SolidWorks' Exclude from cut list): no item number, mass or CSV row. */ excl?: boolean }>;
+  /** Sub-weldments (SolidWorks' sub-weldment folders in the cut list): named groups of body keys; a body sits in at most one. */
+  subWelds?: { id: string; name: string; bodies: string[] }[];
   color?: V3;
   features: Feature[];
   /** Features after this index are not evaluated (rollback bar); null: all. */
@@ -929,6 +931,7 @@ export interface FeatureStatus { id: string; ok: boolean; code?: string; message
 
 /** Mass properties of the body for density 1 (mm units): volume, area, centre of mass, principal moments (mm⁵) and axes. */
 /** `bodies`: how many solid bodies the part has (FRS 9.10). */
-export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number }
+/** `box` = exact bounding box corners of the solids (min, max), where the kernel gives one. */
+export interface BodyProps { volume: number; area: number; com: V3; moments?: V3; axes?: [V3, V3, V3]; bodies?: number; box?: [V3, V3] }
 
 export const SCHEMA = 1;

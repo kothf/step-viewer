@@ -71,7 +71,7 @@ const mechFits = (a: Geo["k"], b: Geo["k"]): MateType[] => (a === "axis" && b ==
 const MORE_REFS: ReadonlySet<MateType> = new Set(["symmetric", "width", "hinge", "slot"]);
 const advFits = (a: Geo["k"], b: Geo["k"]): MateType[] => [...(a === b ? ["symmetric" as const] : []), ...(a === "plane" ? ["width" as const] : []), "limitdist", ...(a === b ? ["limitangle" as const] : [])];
 /** The mate being made or edited in the Mate panel. */
-interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
+interface MateDraft { edit?: string; a?: MateRef; b?: MateRef; c?: MateRef; d?: MateRef; type?: MateType; align?: "aligned" | "anti"; alignSet?: boolean; value?: number; flip?: boolean; min?: number; max?: number; ratio?: number; lockRot?: boolean; problem?: string; added?: string }
 
 /** An assembly kept in a document tab while another document is shown. */
 /** The Mate panel's message when a mate cannot be solved even from turned starts. */
@@ -1483,7 +1483,14 @@ export class AsmController {
     if (!m) return;
     m.problem = undefined;
     if (!mate) { this.previewTfs(this.shownTf); this.renderPanel(); return; }
-    const r = this.solveMate(this.withoutEdited(), mate);
+    let r = this.solveMate(this.withoutEdited(), mate);
+    // Face-to-face is only a first guess: when it can't be solved and the other alignment can (the part can't turn
+    // over, e.g. a pin on an axis), take that one, as SolidWorks does (exam #74). A choice made in the panel stays.
+    if (!r.ok && mate.type === "coincident" && mate.align && !m.alignSet && !m.edit) {
+      const other = { ...mate, align: mate.align === "anti" ? "aligned" as const : "anti" as const };
+      const r2 = this.solveMate(this.withoutEdited(), other);
+      if (r2.ok) { m.align = other.align; r = r2; }
+    }
     if (r.ok) this.previewTfs(r.tfs);
     else { this.previewTfs(this.shownTf); m.problem = r.bad.includes(mate.id) || r.missing.includes(mate.id) ? t(MATE_FAILS) : t("The assembly mates cannot all be solved."); }
     this.renderPanel();
@@ -1526,7 +1533,7 @@ export class AsmController {
       const o = this.mateOther, same = o && o.draft === m && Math.hypot(o.x - x, o.y - y) <= 4;
       const i = same ? (o!.i + 1) % faces.length : Math.min(1, faces.length - 1);
       const before = same ? o!.before : { ...m };
-      for (const k of ["a", "b", "c", "d", "type", "align", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
+      for (const k of ["a", "b", "c", "d", "type", "align", "alignSet", "value", "flip", "min", "max", "ratio"] as const) delete m[k];
       Object.assign(m, before);
       this.mateOther = { x, y, i, before, draft: m };
       hit = faces[i];
@@ -1563,7 +1570,7 @@ export class AsmController {
     if (m.a && m.b) {
       const ga = this.worldGeo(m.a)!, gb = this.worldGeo(m.b)!;
       m.type = mateTypes(ga.k, gb.k)[0];
-      Object.assign(m, { align: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
+      Object.assign(m, { align: undefined, alignSet: undefined, value: undefined, flip: undefined }, mateDefaults(m.type, ga, gb));
       if (m.type === "coincident" && ga.k === "plane" && gb.k === "plane") m.align = "anti";
     }
     this.drawPicks();
@@ -1574,6 +1581,7 @@ export class AsmController {
     const m = this.mating;
     if (!m) return;
     m.type = type;
+    m.alignSet = undefined;
     const ga = m.a && this.worldGeo(m.a), gb = m.b && this.worldGeo(m.b);
     if (ga && gb) {
       const d = mateDefaults(type, ga, gb);
@@ -2836,7 +2844,7 @@ export class AsmController {
       inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); inp.dispatchEvent(new Event("change")); this.okMate(); } });
     });
     pm.querySelectorAll<HTMLButtonElement>("[data-mt]").forEach(b => b.addEventListener("click", () => this.setMateType(b.dataset.mt as MateType)));
-    pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; this.previewMate(); }));
+    pm.querySelectorAll<HTMLButtonElement>("[data-al]").forEach(b => b.addEventListener("click", () => { m.align = b.dataset.al as "aligned" | "anti"; m.alignSet = true; this.previewMate(); }));
     pm.querySelector<HTMLInputElement>("[data-a=flip]")?.addEventListener("change", e => { m.flip = (e.target as HTMLInputElement).checked; this.previewMate(); });
     pm.querySelector<HTMLInputElement>("[data-a=lockrot]")?.addEventListener("change", e => { m.lockRot = (e.target as HTMLInputElement).checked || undefined; this.previewMate(); });
     const ri = pm.querySelector<HTMLInputElement>("[data-ratio]");
