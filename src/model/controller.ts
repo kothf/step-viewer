@@ -13,6 +13,7 @@ import type { Viewer } from "../viewer/Viewer";
 import type { EdgeInfo, PartData } from "../topology";
 import { edgeLoop, sameEdges, tangentChain } from "./chain";
 import { DocStore, dependants, moved, newPart, nextName, orderProblem, parents, uid } from "./doc";
+import { canCopy, copyClip, pasteClip, type Clip } from "./paste";
 import { activate, addConfig, applyConfigTable, configTable, nextConfigName, removeConfig, renameConfig } from "./configs";
 import { download } from "../tools/exporters";
 import { evaluate, ExprError, isPlain } from "./expr";
@@ -33,6 +34,8 @@ import { MATERIALS } from "../tools/analysis";
 import { ISO_METRIC, HEAT_INSERTS, holeSize, insertSize, type HoleSize } from "./holes";
 
 /** What a hole favourite keeps: the definition, not the placement. */
+/** Drag data of a Features tree row (FR-HIS-014: Ctrl+drag onto a face or plane pastes a copy). */
+const FEATURE_DRAG = "application/x-mcad-feature";
 const HOLE_DEF_KEYS = ["kind", "size", "fit", "diameter", "end", "depth", "flat", "cbDia", "cbDepth", "csDia", "csAngle", "threadDepth", "major", "pitch", "cdDia", "cdDepth", "cdAngle", "slotLen", "slotAngle"] as const;
 interface HoleFav { name: string; def: Partial<HoleFeature> }
 function loadFavs(): HoleFav[] { try { const v = JSON.parse(localStorage.getItem("mc:holeFavs") ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } }
@@ -718,6 +721,47 @@ export class ModelController {
   }
 
   // ---------- commands ----------
+
+  /** The features Ctrl+C took (FR-HIS-014); kept for this window only, like SolidWorks' clipboard. */
+  private clip: Clip | null = null;
+
+  /** Ctrl+C on the selected tree row: a sketch, an extrude or revolve (with its sketch) or a hole. */
+  copyFeature(id = this.selected, quiet = false): boolean {
+    const f = id ? this.store?.feature(id) : undefined;
+    if (!this.store || !f || !canCopy(f)) return false;
+    this.clip = copyClip(this.doc, f.id);
+    if (this.clip && !quiet) toast(t("Copied {name}: select a plane or a flat face and press Ctrl+V.", { name: featureLabel(f.name) }));
+    return !!this.clip;
+  }
+
+  /** The plane a paste or a new sketch goes on: the picked flat face, else the selected plane in the tree. */
+  private targetPlane(): PlaneRef | null {
+    const cp = this.ctxPick?.plane;
+    if (cp) return cp;
+    const fid = this.pickedFace();
+    if (fid != null) return this.planeOfFace(fid);
+    if (this.selected?.startsWith("std:")) return { std: this.selected.slice(4) as "XY" };
+    const pl = this.selected ? this.store?.feature(this.selected) : undefined;
+    return pl?.type === "plane" && !pl.suppressed ? { plane: pl.id } : null;
+  }
+
+  /** Ctrl+V: the copied features on the selected plane or face, as one undo step (FR-HIS-014). */
+  pasteFeature(plane: PlaneRef | null = this.targetPlane()) {
+    if (!this.store || !this.clip) return;
+    if (this.isFrozen(this.doc.features[(this.doc.rollback ?? this.doc.features.length) - 1]?.id ?? "")) { this.frozenToast(); return; }
+    if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+    const { feats, lost } = pasteClip(this.doc, this.clip, plane);
+    this.store.change("Paste", d => {
+      const at = d.rollback ?? d.features.length;
+      d.features.splice(at, 0, ...feats);
+      if (d.rollback != null) d.rollback += feats.length;
+    });
+    this.selected = feats[feats.length - 1].id;
+    this.ctxPick = null;
+    this.host.clearPick();
+    this.renderTree();
+    toast(lost.length ? t("Pasted. References that could not follow: {list}", { list: lost.map(x => t(x)).join("; ") }) : t("Pasted {name}.", { name: featureLabel(feats[feats.length - 1].name) }), lost.length > 0);
+  }
 
   /** Sketch: on the picked flat face or the selected plane; otherwise asks for one. */
   startSketch() {
@@ -1727,6 +1771,22 @@ export class ModelController {
     const canvas = this.host.viewer.renderer.domElement;
     const onCanvas = (e: Event) => e.target === canvas;
     // In a sketch the left button draws, so the middle button orbits (as in SolidWorks) and the right one pans.
+    // Ctrl+drag of a tree row onto a flat face or a plane pastes a copy there (FR-HIS-014), before the file drop.
+    const featDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(FEATURE_DRAG) && this.mode.kind === "none";
+    vp.addEventListener("dragover", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = e.ctrlKey ? "copy" : "none";
+    }, true);
+    vp.addEventListener("drop", e => {
+      if (!featDrag(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const id = e.dataTransfer!.getData(FEATURE_DRAG);
+      if (!e.ctrlKey || !id) return;
+      const plane = this.pickRef(e as unknown as PointerEvent);
+      if (!plane) { toast(t("Select a plane or a flat face to paste on."), true); return; }
+      if (this.copyFeature(id, true)) this.pasteFeature(plane);
+    }, true);
     vp.addEventListener("pointerdown", () => {
       const mb = this.host.viewer.controls.mouseButtons;
       mb.MIDDLE = this.mode.kind === "sketch" || getPref("middle") === "rotate" ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
@@ -1861,6 +1921,9 @@ export class ModelController {
     if (mod && k === "b") { stop(); this.forceRebuild(false); return; }
     if (mod && k === "k" && !e.shiftKey && !e.altKey) { stop(); this.commandSearch(); return; }
     if (mod && k === "q") { stop(); this.forceRebuild(true); return; }
+    // Copy and paste features (FR-HIS-014): Ctrl+C on a tree row, Ctrl+V with a plane or flat face selected.
+    if (mod && !e.shiftKey && !e.altKey && k === "c" && this.mode.kind === "none" && !window.getSelection()?.toString()) { if (this.copyFeature()) stop(); return; }
+    if (mod && !e.shiftKey && !e.altKey && k === "v" && this.mode.kind === "none" && this.clip) { stop(); this.pasteFeature(); return; }
     // Ctrl+Enter: OK and the same command again in a feature; leaves a sketch (FR-UI-044, FR-UI-106).
     if (mod && k === "enter" && !e.altKey && (this.mode.kind === "feature" || this.mode.kind === "sketch")) { stop(); this.ok(this.mode.kind === "feature"); return; }
     if (mod || e.altKey) return;
@@ -4662,7 +4725,14 @@ export class ModelController {
     const clearDrop = () => box.querySelectorAll(".drop-before, .drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
     box.querySelectorAll<HTMLElement>('.ft-row[draggable="true"]').forEach(r => {
       const id = r.dataset.id!;
-      r.addEventListener("dragstart", e => { dragId = id; e.dataTransfer?.setData("text/plain", id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; r.classList.add("dragging"); });
+      r.addEventListener("dragstart", e => {
+        dragId = id;
+        e.dataTransfer?.setData("text/plain", id);
+        // Ctrl+drag onto a flat face in the view pastes a copy there (FR-HIS-014).
+        if (canCopy(this.store?.feature(id))) e.dataTransfer?.setData(FEATURE_DRAG, id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+        r.classList.add("dragging");
+      });
       r.addEventListener("dragend", () => { dragId = null; r.classList.remove("dragging"); clearDrop(); });
       r.addEventListener("dragover", e => {
         if (!dragId || dragId === id) return;
@@ -4850,6 +4920,7 @@ export class ModelController {
       items.push([t("Rename"), () => this.startRename(id)]);
       items.push([t("Delete folder (keep features)"), () => this.deleteFolder(id.slice(7))]);
     }
+    if (this.clip && (id.startsWith("std:") || (f?.type === "plane" && !f.suppressed))) items.push([t("Paste (Ctrl+V)"), () => this.pasteFeature(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:") || f?.type === "plane") items.push([t("Sketch on this plane"), () => void this.createSketch(id.startsWith("std:") ? { std: id.slice(4) as "XY" } : { plane: id })]);
     if (id.startsWith("std:")) items.push([(this.doc.stdHidden ?? []).includes(id.slice(4) as "XY") ? t("Show") : t("Hide"), () => this.toggleHidden(id)]);
     if (f?.type === "sketch") items.push([this.sketchShown(f) ? t("Hide") : t("Show"), () => this.toggleHidden(f.id)]);
@@ -4857,6 +4928,7 @@ export class ModelController {
       items.push([f.type === "sketch" ? t("Edit sketch") : t("Edit feature"), () => this.editFeature(f.id)]);
       if (f.type === "extrude" || f.type === "revolve") items.push([t("Edit sketch"), () => void this.editSketch(f.sketch)]);
       if (f.type === "sketch") items.push([t("Edit sketch plane"), () => this.editSketchPlane(f.id)]);
+      if (canCopy(f)) items.push([t("Copy (Ctrl+C)"), () => { this.copyFeature(f.id); }]);
       items.push([t("Rename"), () => this.startRename(f.id)]);
       items.push([f.suppressed ? t("Unsuppress") : t("Suppress"), () => this.toggleSuppress(f.id)]);
       if (f.type === "plane" || f.type === "axis" || f.type === "point" || f.type === "csys" || f.type === "helix" || f.type === "curve" || f.type === "sketch3d") items.push([f.hidden ? t("Show") : t("Hide"), () => this.toggleHidden(f.id)]);

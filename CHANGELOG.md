@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - Hole callouts read from the geometry (FR-DRW-022): on a model with no Hole feature (a STEP file, a cut extrude), a hole callout now counts the holes of that size entered from the same side ("4× Ø6.6 THRU"), and adds the counterbore (⌴Ø11 ↧6.4) or countersink (⌵Ø13.44 × 90°) found from the coaxial cylinders and cones. The depth is measured from the entry face to the end of the drill, without its point; THRU now means open at both ends rather than as long as the part. Hole tables list each hole without the count.
 
+## [1.342.0] - 2026-11-09
+
+### Added
+
+- **Copy and paste features (FR-HIS-014)**: as in SolidWorks, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
+
 ## [1.341.0] - 2026-11-09
 
 ### Added
@@ -2042,7 +2048,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.349.0...HEAD
-[1.349.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.349.0
+[1.349.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.349.0
+[1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
 [1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
