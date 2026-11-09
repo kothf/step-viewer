@@ -20,7 +20,7 @@ import type { Prim } from "./prims";
 import { editTitleBlock } from "./tbEditor";
 import { loadFormats } from "./formats";
 import { FIELD_LABEL, isoFormat, editableOf, SIZES, fieldAt, formatPrims, frameOf, sheetSize, tbSize, titleBlockAt, type Fields } from "./sheet";
-import type { Annot, BalloonAnnot, CLineAnnot, DimAnnot, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
+import type { Annot, BalloonAnnot, CLineAnnot, DatumTargetAnnot, DimAnnot, WeldSide, WeldSym, DisplayStyle, DraftStyle, DrawingDoc, DrawingProps, DrawingView, GeoRef, GRow, GSym, HatchPattern, Orient, Sheet, SheetSize, TableAnnot, TangentEdges, Tol } from "./types";
 import { GSYMS, GSYM_NAMES, cellLabel } from "./gdt";
 import { WELD_SYMS, WELD_SYM_NAMES } from "./weld";
 import { fitLimits, splitFit } from "./iso286";
@@ -106,13 +106,15 @@ type AnnotMode =
   | { kind: "gtol"; view: string | null; leader: GeoRef | null; circle?: boolean; at: Pt | null }
   /** Weld symbol (ISO 2553): optionally click the joint's edge for the arrow, then place the knee. */
   | { kind: "weld"; view: string | null; leader: GeoRef | null; at: Pt | null }
+  /** Datum target (ISO 5459): optionally click the target on an edge, then place the frame circle. */
+  | { kind: "dtarget"; view: string | null; leader: GeoRef | null; tp: Pt | null; at: Pt | null }
   /** Datum feature: click an edge, then place the letter. */
   | { kind: "datum"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Surface finish: click an edge, then place the symbol (on the edge, or away from it with a leader). */
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -122,7 +124,7 @@ const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"],
+  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
   ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
@@ -392,6 +394,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
+              <button role="menuitem" data-an="dtarget">${esc(t("Datum target"))}</button>
               <button role="menuitem" data-an="surf">${esc(t("Surface finish"))}</button>
               <button role="menuitem" data-an="cline">${esc(t("Centerline"))}</button>
               <button role="menuitem" data-an="cmark">${esc(t("Center mark"))}</button>
@@ -508,6 +511,7 @@ export class DrawingWorkspace {
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
     else if (m.kind === "note") s = m.leader ? t("Click where the note goes.") : t("Click where the note goes, or first click an edge for a leader.");
+    else if (m.kind === "dtarget") s = m.leader ? t("Click where the datum target frame goes.") : t("Click the target on an edge, or where the datum target frame goes.");
     else if (m.kind === "weld") s = m.leader ? t("Click where the weld symbol goes.") : t("Click the edge of the joint for the arrow, or where the weld symbol goes.");
     else if (m.kind === "gtol") s = m.leader ? t("Click where the tolerance frame goes.") : t("Click where the tolerance frame goes, or first click an edge for a leader.");
     else if (m.kind === "datum") s = m.ref ? t("Click where the datum letter goes.") : t("Click the edge of the datum feature.");
@@ -1056,7 +1060,7 @@ export class DrawingWorkspace {
   }
 
   private startAnnot(kind: AnnotMode["kind"] | "cmark", how: "chain" | "base" | "ord" = "chain") {
-    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld";
+    const free = kind === "note" || kind === "gtol" || kind === "surf" || kind === "cloud" || kind === "weld" || kind === "dtarget";
     if (kind === "balloon" && !this.bom) { toast(t("Balloons and the bill of materials are for drawings of an assembly."), true); return; }
     if (!free && !this.facts) { toast(t("The drawing's model is still loading.")); return; }
     if (!free && !this.sheet.views.length) { toast(t("Place a model view first."), true); return; }
@@ -1067,6 +1071,7 @@ export class DrawingWorkspace {
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
     else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
+    else if (kind === "dtarget") this.mode = { kind, view: null, leader: null, tp: null, at: null };
     else this.mode = { kind, view: null, leader: null, at: null };
     this.sel = null; this.selA = null;
     this.renderStatus(); this.renderProps(); this.renderOverlay();
@@ -1239,6 +1244,15 @@ export class DrawingWorkspace {
         this.addAnnot({ id: uid("a_"), t: "hole", view: m.view!, ref: edgeRef(m.e, "e"), pos: [round(pos[0]), round(pos[1])] }, "Hole callout");
         this.mode = { kind: "none" };
       }
+    } else if (m.kind === "dtarget") {
+      if (!m.leader && vid && this.facts) {
+        const pick = this.pickAt(vid, p);
+        if (pick) { const pl = this.placements.get(vid)!; m.view = vid; m.leader = pick.kind === "pt" ? pick.ref : { ...pick.ref, p: "e" }; m.tp = fromSheet(pl, p[0], p[1]); this.renderStatus(); this.renderOverlay(); return; }
+      }
+      const view = m.view ?? vid ?? undefined, pl = view ? this.placements.get(view) : undefined;
+      const pos: Pt = pl ? fromSheet(pl, p[0], p[1]) : p;
+      this.addAnnot(this.dtargetOf(m, view, pos), "Datum target");
+      this.mode = { kind: "none" };
     } else if (m.kind === "weld") {
       if (!m.leader && vid && this.facts) {
         const pick = this.pickAt(vid, p);
@@ -1355,6 +1369,17 @@ export class DrawingWorkspace {
   }
 
   /** The next datum letter not used on any sheet (I, O, Q skipped). */
+  /** A new datum target from the mode: the letter used last on a datum or target (else the next free one), numbered on. */
+  private dtargetOf(m: Extract<AnnotMode, { kind: "dtarget" }>, view: string | undefined, pos: Pt): DatumTargetAnnot {
+    const all = this.doc.sheets.flatMap(s => s.annots ?? []);
+    let letter = "";
+    for (const a of all) if (a.t === "datum") letter = a.letter; else if (a.t === "dtarget") letter = /^[A-Z]+/.exec(a.label)?.[0] ?? letter;
+    if (!letter) letter = this.nextDatum();
+    const n = Math.max(0, ...all.map(a => (a.t === "dtarget" && a.label.startsWith(letter) ? +(/\d+$/.exec(a.label)?.[0] ?? 0) : 0))) + 1;
+    return { id: uid("a_"), t: "dtarget", ...(view ? { view } : {}), pos: [round(pos[0]), round(pos[1])], ...(m.leader ? { leader: m.leader } : {}),
+      ...(m.tp ? { tp: [round(m.tp[0]), round(m.tp[1])] as [number, number] } : {}), label: letter + n, kind: "point" };
+  }
+
   private nextDatum(): string {
     const used = new Set(this.doc.sheets.flatMap(s => (s.annots ?? []).map(a => (a.t === "datum" ? a.letter : ""))));
     for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
@@ -1456,6 +1481,12 @@ export class DrawingWorkspace {
       if (!m.ref) { const hov = this.pickAt(vid, at); if (hov && compOfKey(hov.e.k)) s += show(hov.kind === "pt" ? { ...hov, kind: hov.e.t === "c" && hov.e.c ? "circle" : "line" } : hov, "drw-edge"); }
       else {
         const pa: Annot = { id: "_pb", t: "balloon", view: vid, ref: m.ref, pos: fromSheet(pl, at[0], at[1]) };
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+      }
+    } else if (m.kind === "dtarget") {
+      if (!m.leader) { const hov = this.pickAt(vid, at); if (hov) s += show(hov, "drw-edge"); }
+      else {
+        const pa: Annot = { ...this.dtargetOf(m, vid, fromSheet(pl, at[0], at[1])), id: "_pt" };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, { ...this.ctx(), topo: { edges: this.factsOf(vid)?.topo.edges ?? [], cyls: [] } }).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "weld") {
@@ -1596,6 +1627,14 @@ export class DrawingWorkspace {
       </fieldset>
       <div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
     }
+    if (a.t === "dtarget") {
+      return `<fieldset class="pm-group"><legend>${esc(t("Datum target"))}</legend>
+        <label class="drw-f">${esc(t("Label"))}<input data-d="dtlabel" value="${esc(a.label)}" maxlength="4" translate="no" placeholder="A1"></label>
+        <label class="drw-f">${esc(t("Target"))}<select data-d="dtkind">${([["point", "Target point"], ["line", "Target line"], ["area", "Target area"]] as const).map(([k, l]) => `<option value="${k}" ${a.kind === k ? "selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>
+        ${a.kind !== "point" ? `<label class="drw-f">${esc(t(a.kind === "area" ? "Area diameter (mm)" : "Line length (mm)"))}<input data-d="dtd" inputmode="decimal" value="${a.d ?? (a.kind === "area" ? 8 : 10)}"></label>` : ""}
+        <label class="drw-f">${esc(t("Size"))}<input data-d="dtsize" value="${esc(a.size ?? "")}" translate="no" placeholder="${a.kind === "area" ? `Ø${a.d ?? 8}` : ""}"></label>
+      </fieldset><div class="row"><button class="btn small danger" data-a="adel">${esc(t("Delete"))}</button></div>`;
+    }
     if (a.t === "weld") {
       const side = (k: "a" | "o", w: WeldSide | undefined, label: string) => `<fieldset class="pm-group"><legend>${esc(t(label))}</legend>
         <label class="drw-f">${esc(t("Symbol"))}<select data-d="w${k}sym"><option value="">${esc(t("None"))}</option>${WELD_SYMS.map(y => `<option value="${y}" ${w?.sym === y ? "selected" : ""}>${esc(t(WELD_SYM_NAMES[y]))}</option>`).join("")}</select></label>
@@ -1707,6 +1746,12 @@ export class DrawingWorkspace {
         else if (a.tol && k === "fshow") { if (val === "code") delete a.tol.show; else a.tol.show = val as Tol["show"]; }
       } else if (a.t === "hole" && k === "htxt") { if (val.trim()) a.txt = val; else delete a.txt; }
       else if (a.t === "note" && k === "nprop") { if (val) a.text += `$PRP:"${val}"`; }
+      else if (a.t === "dtarget") {
+        if (k === "dtlabel") { if (val.trim()) a.label = val.trim().toUpperCase(); }
+        else if (k === "dtkind") { a.kind = val as DatumTargetAnnot["kind"]; if (a.kind === "area" && !a.size) a.size = `Ø${a.d ?? 8}`; }
+        else if (k === "dtd") { const v = num(val); if (v != null && v > 0 && v <= 10000) { if (a.size === `Ø${a.d ?? 8}`) a.size = `Ø${v}`; a.d = v; } }
+        else if (k === "dtsize") { if (val.trim()) a.size = val.trim(); else delete a.size; }
+      }
       else if (a.t === "weld") {
         const m = /^w([ao])(sym|size|len)$/.exec(k);
         if (m) {
