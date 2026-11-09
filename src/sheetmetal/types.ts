@@ -174,6 +174,35 @@ export interface SmVentFeature {
   spar: Num;
 }
 
+/** The forming tools of the library (FR-FT-120): a round dimple, an embossed rib, a louver and an extruded hole. */
+export type FormTool = "dimple" | "rib" | "louver" | "xhole";
+
+/**
+ * Forming tool: a library shape pressed into a flat face of the sheet at one or more points. The material is formed
+ * out of the picked face (the other way when flipped) and keeps the sheet's thickness. The flat pattern leaves the
+ * form out (as SolidWorks does), keeps its footprint as a mark and cuts an extruded hole's pre-pierce hole.
+ */
+export interface SmFormFeature {
+  id: string; type: "smform"; name: string; suppressed?: boolean;
+  /** The panel face (`<panel>:top|bot`) the tool sits on. */
+  face: FaceRef;
+  tool: FormTool;
+  /** Tool centres in the flat coordinates of the face's panel. */
+  pts: [number, number][];
+  /** Dimple: diameter at the face. Rib, louver: length. Extruded hole: hole diameter. */
+  size: Num;
+  /** Rib, louver: width. */
+  width: Num;
+  /** How far the form stands out of the face. */
+  height: Num;
+  /** Dimple, rib: draft of the side walls. */
+  draft?: Num;
+  /** Rib, louver: turn about the face normal, from the panel's x axis. */
+  angle?: Num;
+  /** Form out of the other face. */
+  flip?: boolean;
+}
+
 /** Lofted bend: two open profiles of lines and arcs, each on its own sketch, joined by a ruled sheet. It is made of
  * flat facets folded along straight lines (SolidWorks' "bent" method), so its flat pattern is exact. A base feature. */
 export interface SmLoftFeature {
@@ -191,8 +220,8 @@ export interface SmLoftFeature {
   facets?: number;
 }
 
-export type SheetFeature = SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
-export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
+export type SheetFeature = SmFormFeature | SmVentFeature | SmCrossFeature | SmLoftFeature | SmBaseFeature | SmFlangeFeature | SmHemFeature | SmSketchBendFeature | SmJogFeature | SmTabFeature | SmCornerFeature | SmClosedFeature | SmMiterFeature | SmFlatFeature;
+export const SHEET_TYPES: ReadonlySet<string> = new Set(["smloft", "smbase", "smflange", "smhem", "smbend", "smjog", "smtab", "smcross", "smvent", "smform", "smcorner", "smclosed", "smmiter", "smswept", "smflat"]);
 /** The feature that starts a sheet metal part: a base flange or a lofted bend. */
 export const isSheetBase = (f: { type: string; suppressed?: boolean }) => (f.type === "smbase" || f.type === "smloft") && !f.suppressed;
 export const isSheet = (f: { type: string }): f is SheetFeature => SHEET_TYPES.has(f.type);
