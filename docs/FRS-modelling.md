@@ -438,7 +438,7 @@ Indicative effort for one developer with AI assistance: P0 3–4 weeks, P1 8–1
 
 ### 7.7 Materials and properties
 
-- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library. *Built in 1.366.0 for parts: a library of 170 materials with a searchable dialog and custom materials; per-body materials are still to do.*
+- **FR-MAT-001** (P1, M) Material per part (and per body, P3) chosen from the existing material list (density), extended with: name, density, Young's modulus, Poisson, yield strength, colour hint. Custom materials are saved in the document and in a local library. *Built in 1.372.0 for parts: a library of 170 materials with a searchable dialog and custom materials; per-body materials are still to do.*
 - **FR-MAT-002** (P1, M) Mass properties panel (existing) works on the modelled part using exact kernel values: volume, area, mass, centre of mass, principal moments and axes of inertia (new), relative to origin or a chosen coordinate system.
 - **FR-MAT-003** (P1, M) Appearance: colour and opacity per part, body (P3), feature and face; stored in the document and exported to STEP.
 - **FR-MAT-004** (P2, S) Mass property override (user-entered mass/COM for purchased parts), flagged in BOM.
@@ -1578,14 +1578,14 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Double middle click fits; wheel direction preference | FR-UI-101 | 1.107.0: double middle click fits; 1.329.0: wheel direction in Preferences | Done |
 | Arrow keys rotate/pan/roll, Z / Shift+Z zoom | FR-UI-102 (was only in Appendix A) | 1.107.0: arrows 15°, Shift 90°, Ctrl pan, Z / Shift+Z, Alt+Z previous view | Done |
 | Zoom to selection, zoom to area, previous view | FR-UI-103 (FR-UI-022 named them) | 1.107.0: Zoom to selection, Zoom to area, Previous view (Space picker, Alt+Z) | Done |
-| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); no named views yet | Partly |
+| Space orientation picker, named views | FR-UI-031, FR-UI-104 | 1.107.0: Space picker at the cursor (six views, Isometric, Normal to, zooms); 1.371.0: named views saved with the part/assembly | Done |
 | Animated view changes | FR-UI-103 | 1.107.0: 300 ms moves, instant with reduced motion | Done |
 | Normal to, twice flips | FR-UI-030 | Done (N and Ctrl+8) | Done |
 | Click empty space clears; Ctrl+click toggles | FR-SEL-002, FR-SEL-007 | Esc clears; sketch box select only | Weaker |
 | Box selection in the part | FR-SEL-002, FR-SEL-008 | Sketch only | Weaker |
 | Select other | FR-SEL-004 | Alt+click cycles faces behind | Done |
 | Selection filter F5 | FR-SEL-003 | Done (faces, edges, vertices) | Done |
-| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; assemblies not yet | Partly |
+| Breadcrumbs, D to the cursor | FR-SEL-009 | 1.354.0: part breadcrumbs (face/edge → feature → sketch → body → part) with hover, select and menu; Shift+D; 1.371.0: assemblies (face → part feature → component → sub-assemblies → assembly) | Done |
 | Magnifying glass G | FR-SEL-010 | 1.354.0: G lens at the cursor, wheel factor, picks inside at that zoom | Done |
 | Colour-coded selection boxes | FR-SEL-011 | 1.351.0: box colours on the panel and on the picks with a naming tag for edge/face boxes (fillet, chamfer, draft, shell, face edits, split); other panels' boxes not yet | Partly |
 | Tab / Shift+Tab hide and show under the cursor | FR-UI-105 | 1.351.0: Tab hides the body/component under the cursor, Shift+Tab shows a hidden one there, Ctrl+Shift+Tab held draws them see-through (bodies hidden earlier in the session; hidden ones from a saved file have no ghost until shown once) | Done |
@@ -1603,8 +1603,8 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Panel remembers last options | FR-UI-043 | 1.107.0: options remembered per command (`rememberOptions`) | Done |
 | Value callouts on the model | FR-UI-110 | 1.354.0: callouts for the main values of every feature panel (Modify box, two-way with the panel, ⇄ flip); extrude/revolve/fillet/chamfer/end cap/gusset/flange keep their handles | Done |
 | Enter repeats the last command | FR-UI-111 | 1.107.0: Enter with no command running repeats the last one | Done |
-| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; no editable title, increment field or reverse direction yet | Partly |
-| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; not yet from a tree click, and no angles or other feature values | Partly |
+| Modify box with rebuild, spin, wheel | FR-UI-053, FR-UI-114 | 1.140.0: Modify box with name, ✓ ✕ ⟲, spin arrows, ↑/↓ and wheel (Shift ×10, Alt ×0.1), live solve in sketches; 1.371.0: editable dimension name in the title, increment field (remembered per kind of value), ⇄ Reverse direction for feature values with a direction; no `=` completion list | Done |
+| Feature dimensions on the model, double-click to edit | FR-HIS-010, FR-UI-028, FR-UI-115 | 1.140.0: double-click a face shows its feature's sketch dimensions and extrude depth on the model; a click opens the Modify box, one undo step; 1.371.0: also from a single click on the tree row, with the feature's own values (angles, radii, distances, thicknesses, spacing, instance counts) beside its faces; a double click on a row still opens Edit feature | Done |
 | Instant2D dimension drag; placement lock on right-click | FR-SK-067, FR-SK-068 | Yes (1.282.0) | Done (no arrow flip yet) |
 | Typing a number while drawing | FR-UI-052 | 1.121.0: typed sizes while drawing | Done |
 | Sketch keys (L R C A P T O D K Q) | FR-UI-054 | L R C A D T O Q, plus G polygon, F fillet, E extend, W slot; no K | Weaker (keys differ) |
@@ -1638,7 +1638,7 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | 1.107.0: What's wrong list above the tree; a click selects, a double click edits | Done |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
-| FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
+| FR-UI-022 | Heads-up view bar in the graphics area | 1.371.0: top-centre bar with Zoom to area, Previous view, standard views, projection and display style for parts and assemblies; Display ▾ (hide/show, appearance) and the section toggle stay in the header | Partly |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |

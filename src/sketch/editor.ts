@@ -1700,8 +1700,13 @@ export class SketchEditor {
     const box = new ModifyBox({
       at: { x: lr.right, y: lr.top + lr.height / 2 },
       title: `${dim.name}@${this.sk.name}`,
+      name: {
+        value: dim.name, suffix: this.sk.name,
+        check: n => !validDimName(n) ? "A name starts with a letter and has only letters, digits and _." : orig.dims.some(d => d.id !== dim.id && d.name === n) ? "Another dimension of this sketch has that name." : "",
+      },
       value,
       step: stepFor(dim.t === "angle" ? "angle" : "length", u.name),
+      incKey: dim.t === "angle" ? "angle" : "length",
       live: true,
       preview: text => {
         if (this.disposed) return;
@@ -1711,16 +1716,20 @@ export class SketchEditor {
         this.info = r.r;
         this.render();
       },
-      accept: text => {
+      accept: (text, name) => {
         if (this.input === box.input) this.input = null;
         if (this.disposed) return true;
         const r = tryValue(text);
-        if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); return true; }
-        if (!r) { restore(); if (then) setTimeout(then, 0); return true; }
-        this.sk = r.sk;
-        this.info = r.r;
-        this.commit("Change dimension");
-        this.render();
+        if (r && "err" in r) { restore(); this.host.toast(t(r.err, r.params), "error"); }
+        else if (!r) restore();
+        else {
+          this.sk = r.sk;
+          this.info = r.r;
+          this.commit("Change dimension");
+          this.render();
+        }
+        // A new name typed in the title (FR-SK-065) renames the dimension as its own step.
+        if (name) { const err = this.renameDim(dim.id, name); if (err) this.host.toast(t(err), "error"); }
         if (then) setTimeout(then, 0);
         return true;
       },

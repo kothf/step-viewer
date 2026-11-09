@@ -1982,7 +1982,7 @@ try {
     await idle();
     // Part properties: material Aluminium; the mass panel shows principal moments.
     await mp.dblclick('#mc-tree .ft-row[data-id="part"]');
-    // 1.366.0 (FR-MAT-001): the material comes from the library dialog: categories, search by another standard's name, properties.
+    // 1.372.0 (FR-MAT-001): the material comes from the library dialog: categories, search by another standard's name, properties.
     await mp.waitForSelector("#mc-pm [data-a=matpick]");
     await mp.click("#mc-pm [data-a=matpick]");
     await mp.waitForSelector("#mat-dlg[open]");
@@ -2006,8 +2006,8 @@ try {
     lib.btn = await mp.evaluate(() => ({ text: document.querySelector("#mc-pm [data-a=matpick]").textContent, dens: document.querySelector("#mc-pm [data-p=density]").value, col: document.querySelector("#mc-pm [data-p=color]").value, focus: document.activeElement?.dataset.a }));
     check(lib.all >= 150 && lib.cats >= 15 && lib.ti === 5 && lib.found.length === 1 && /1\.4404/.test(lib.found[0]) && lib.cat === "all" && lib.props.some(r => /Density ?8 g\/cm³/.test(r)) && lib.props.some(r => /Yield strength ?220 MPa/.test(r)) && /EN 10088/.test(lib.src)
       && lib.gost.length === 1 && /2024/.test(lib.gost[0]) && /Aluminium 6061/.test(lib.btn.text) && lib.btn.dens === "2.7" && lib.btn.col === "#c9ced6" && lib.btn.focus === "matpick",
-      `model 1.366: the material library lists 150+ materials by category, finds one by AISI or GOST name, shows its properties and source, Enter applies it with its colour (${JSON.stringify(lib)})`);
-    check(axMat.length === 0, `model 1.366: 0 WCAG 2.1 AA violations with the material library open${axMat.length ? ": " + axMat.join(" | ") : ""}`);
+      `model 1.372: the material library lists 150+ materials by category, finds one by AISI or GOST name, shows its properties and source, Enter applies it with its colour (${JSON.stringify(lib)})`);
+    check(axMat.length === 0, `model 1.372: 0 WCAG 2.1 AA violations with the material library open${axMat.length ? ": " + axMat.join(" | ") : ""}`);
     await mp.fill("#mc-pm input[data-p=partNumber]", "HX-001");
     await mp.press("#mc-pm input[data-p=partNumber]", "Tab");
     const ax2 = await axe();
@@ -2037,7 +2037,7 @@ try {
     await mp.keyboard.press("Escape");
     await mp.waitForSelector("#mat-dlg", { state: "detached" });
     check(matRu.bad.length === 0 && matRu.sel === "Алюминий 6061" && /^Стали/.test(matRu.cat) && own.cat === "custom" && own.rows.join() === "Сплав 7" && own.stored[0]?.density === 3.3 && own.stored[0]?.E === 55 && ownGone === 0,
-      `model 1.366: the material library in Russian, and a material of my own is saved in the browser and deleted again (${JSON.stringify({ matRu, own, ownGone })})`);
+      `model 1.372: the material library in Russian, and a material of my own is saved in the browser and deleted again (${JSON.stringify({ matRu, own, ownGone })})`);
     await mp.click("#lang-btn");
     await mp.click("#mc-ok");
     await idle();
@@ -2820,8 +2820,8 @@ try {
       const before = await mp.evaluate(() => document.querySelector('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle')?.textContent ?? null);
       if (before) {
         await mp.click('#mc-layer .mc-vcall[data-v="thickness"] .mc-handle');
-        await mp.waitForSelector(".mod-box input");
-        await mp.fill(".mod-box input", "2.5");
+        await mp.waitForSelector(".mod-box .mod-in");
+        await mp.fill(".mod-box .mod-in", "2.5");
         await mp.keyboard.press("Enter");
         await idle();
       }
@@ -2830,6 +2830,83 @@ try {
       await idle();
       check(before && after.v === 2.5 && after.inp === "2.5" && /2\.5/.test(after.call ?? "") && !after.box,
         `model 1.354: Shell's thickness callout on the model opens the Modify box and the typed value reaches the panel and the feature (${JSON.stringify({ before, after })})`);
+    }
+    // 1.371 (FR-UI-022): heads-up view bar: with a part open the view groups sit in #hud at the top centre of the view; its Previous view button works.
+    {
+      const hud = await mp.evaluate(() => { const h = document.querySelector("#hud"), r = h?.getBoundingClientRect(), v = document.querySelector("#viewport").getBoundingClientRect(); return h && { shown: !h.hidden, views: !!h.querySelector("#views"), mode: !!h.querySelector("#display-mode"), proj: !!h.querySelector("#projection"), centred: Math.abs((r.left + r.right) / 2 - (v.left + v.right) / 2) < 4, inHeader: !!document.querySelector(".topbar #views") }; });
+      await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); v.viewFrom(new (v.camera.position.constructor)(1, 0, 0), false); });
+      await mp.click('#hud [data-hud="prev"]');
+      await mp.waitForTimeout(500);
+      const dir = await mp.evaluate(() => { const v = window.__sv.viewer, d = v.camera.position.clone().sub(v.controls.target).normalize(); return d.toArray().map(x => Math.round(x * 100) / 100); });
+      check(hud?.shown && hud.views && hud.mode && hud.proj && hud.centred && !hud.inHeader && dir[2] > 0.99,
+        `model 1.371: the heads-up view bar holds the view groups at the top centre of the view and Previous view goes back (${JSON.stringify({ hud, dir })})`);
+    }
+    // 1.371 (FR-UI-104): named views: Space → Save view stores the camera in the part; the picker brings it back.
+    {
+      const vb = await mp.evaluate(() => { const r = window.__sv.viewer.renderer.domElement.getBoundingClientRect(); document.activeElement?.blur(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await mp.mouse.move(vb.x, vb.y);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector(".nav-pick .nav-vname");
+      await mp.fill(".nav-pick .nav-vname", "Close up");
+      await mp.press(".nav-pick .nav-vname", "Enter");
+      const saved = await mp.evaluate(() => ({ views: window.__sv.model.store.doc.views, cam: window.__sv.viewer.camera.position.toArray(), dirty: window.__sv.model.store.dirty }));
+      await mp.keyboard.press("Escape");
+      const shut = await mp.evaluate(() => !document.querySelector(".nav-pick"));
+      await mp.evaluate(() => { document.activeElement?.blur(); const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(0, 0, 1), false); });
+      await mp.waitForTimeout(100);
+      await mp.keyboard.press(" ");
+      await mp.waitForSelector('.nav-pick [data-nv="view:Close up"]');
+      await mp.click('.nav-pick [data-nv="view:Close up"]');
+      await mp.waitForTimeout(600);
+      const back = await mp.evaluate(() => window.__sv.viewer.camera.position.toArray());
+      const d = Math.hypot(...back.map((x, i) => x - saved.cam[i]));
+      check(saved.views?.length === 1 && saved.views[0].name === "Close up" && saved.dirty && shut && d < 1e-3,
+        `model 1.371: Save view in the Space picker stores the camera in the part and picking the named view brings it back (${JSON.stringify({ n: saved.views?.length, d })})`);
+    }
+    // 1.371 (FR-UI-115): a feature picked in the tree shows its dimensions and its own values (angle, radius…) on the model;
+    // a value opens the Modify box and ✓ changes the feature as one undo step.
+    {
+      // A shell (thickness) to show: the part has only sketches and extrudes so far.
+      await mp.evaluate(() => window.__sv.modeller.command("shell"));
+      await mp.waitForSelector('#mc-pm input[data-num="thickness"]');
+      await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = m.mode.draft, names = window.__sv.model.last().faceNames;
+        d.faces = [{ name: names.find(n => n.startsWith("cpe:")) }]; m.draftChanged();
+      });
+      await idle();
+      await mp.evaluate(() => window.__sv.modeller.ok());
+      await idle();
+      const pick = await mp.evaluate(() => {
+        const m = window.__sv.modeller, d = window.__sv.model.store.doc;
+        const f = d.features.find(x => m.featureValues(x).some(v => v.q !== "count") && m.calloutPoint(x));
+        const fv = f && m.featureValues(f).find(v => v.q !== "count");
+        return f ? { id: f.id, type: f.type, key: fv.key, q: fv.q, v: f[fv.key].v } : { types: d.features.map(x => x.type) };
+      });
+      let ival = null, after = null, undone = null;
+      if (pick.id) {
+        await treeClick(mp, `#mc-tree .ft-row[data-id="${pick.id}"]`);
+        await mp.waitForSelector(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`, { timeout: 5000 }).catch(() => {});
+        ival = await mp.evaluate(k => document.querySelector(`#mc-layer .mc-ival[data-v="${k}"] .mc-handle`)?.textContent ?? null, pick.key);
+        if (ival) {
+          const nv = pick.q === "angle" ? "33" : String(Math.round(pick.v * 10) / 10 + 0.5);
+          await mp.click(`#mc-layer .mc-ival[data-v="${pick.key}"] .mc-handle`);
+          await mp.waitForSelector(".mod-box .mod-in");
+          await mp.fill(".mod-box .mod-in", nv);
+          await mp.keyboard.press("Enter");
+          await idle();
+          after = await mp.evaluate(p => ({ v: window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, undo: window.__sv.model.store.undoLabel, box: !!document.querySelector(".mod-box") }), pick);
+          after.want = pick.q === "angle" ? 33 * Math.PI / 180 : Number(nv);
+          await mp.evaluate(() => window.__sv.modeller.undo());
+          await idle();
+          undone = await mp.evaluate(p => window.__sv.model.store.doc.features.find(x => x.id === p.id)[p.key].v, pick);
+        }
+      }
+      await mp.keyboard.press("Escape");
+      // Take the shell off again so the checks below see the part as before.
+      await mp.evaluate(() => { const st = window.__sv.model.store; if (st.doc.features.at(-1)?.type === "shell") window.__sv.modeller.undo(); });
+      await idle();
+      check(!!ival && after && Math.abs(after.v - after.want) < 1e-9 && !after.box && Math.abs(undone - pick.v) < 1e-9,
+        `model 1.371: a feature picked in the tree shows its values on the model; the Modify box changes it as one undo step (${JSON.stringify({ pick, ival, after, undone })})`);
     }
     // FR-UI-100: a middle click on the model sets the rotation centre; orbiting keeps that point still on screen; a middle click on empty space clears it.
     await mp.evaluate(() => { const v = window.__sv.viewer; v.viewFrom(new (v.camera.position.constructor)(1, -1, 0.8), false); v.fit(false); });
@@ -3790,6 +3867,22 @@ try {
     await click([15, 15]); await click([25, 15]); await click([20, 18]);
     await modify("8");
     await modify("30");
+    // 1.371 (FR-UI-114, FR-SK-065): the Modify box title holds the dimension's name; a new name renames it, a taken one is refused.
+    {
+      const d0 = await mp.evaluate(() => { const ed = window.__sv.model.editor(); ed.setTool("select"); const d = ed.sk.dims.filter(x => !x.driven); ed.editDim(d[0].id); return { id: d[0].id, name: d[0].name, other: d[1]?.name }; });
+      await mp.waitForSelector(".mod-box .mod-name");
+      await mp.fill(".mod-box .mod-name", d0.other ?? "1bad");
+      await mp.press(".mod-box .mod-name", "Enter");
+      const refused = await mp.evaluate(() => ({ open: !!document.querySelector(".mod-box"), bad: document.querySelector(".mod-box .mod-name")?.getAttribute("aria-invalid") }));
+      await mp.fill(".mod-box .mod-name", "Width");
+      await mp.press(".mod-box .mod-name", "Enter");
+      await mp.waitForTimeout(150);
+      const named = await mp.evaluate(id => ({ name: window.__sv.model.editor().sk.dims.find(x => x.id === id)?.name, open: !!document.querySelector(".mod-box") }), d0.id);
+      check(refused.open && refused.bad === "true" && named.name === "Width" && !named.open,
+        `sketch 1.371: a name typed in the Modify box title renames the dimension; a taken name is refused (${JSON.stringify({ d0, refused, named })})`);
+      await mp.evaluate(() => window.__sv.model.editor().setTool("cslot"));
+      await mp.waitForTimeout(100);
+    }
     const cs = await mp.evaluate(() => {
       const ed = window.__sv.model.editor(), sk = ed.sk, P = id => sk.ents.find(e => e.id === id);
       const mid = sk.rels.find(r => r.t === "midpoint"), m = P(mid?.e[0]), ax = P(mid?.e[1]);
@@ -5773,6 +5866,25 @@ try {
     await shown(3);
     const tabBack = await mp.evaluate(() => window.__sv.asm.doc.components.every(c => !c.hidden));
     check(tabHid.length === 1 && tabBack, `asm 1.351: Tab hides the component under the cursor, Shift+Tab shows it again (${JSON.stringify([tabAt, tabHid, tabBack])})`);
+    // 1.371 (FR-SEL-009): a click on a component shows face › feature › component › assembly breadcrumbs.
+    await mp.mouse.click(tabAt.x, tabAt.y);
+    await mp.waitForTimeout(150);
+    const crumbs = await mp.evaluate(() => {
+      const el = document.getElementById("asm-crumbs");
+      if (!el) return null;
+      const ids = [...el.querySelectorAll(".mc-crumb")].map(b => b.dataset.id ?? "");
+      const comp = el.querySelector(".mc-crumb[data-id]:not([data-id=asm])");
+      window.__sv.asm.selected = null;
+      comp?.click();
+      return { ids, n: el.querySelectorAll(".mc-crumb").length, sel: window.__sv.asm.selected, cid: comp?.dataset.id, row: !!document.querySelector(`#asm-tree .ft-row.sel[data-id="${comp?.dataset.id}"]`) };
+    });
+    await mp.mouse.move(tabAt.x + 2, tabAt.y);
+    await mp.keyboard.press("Shift+D");
+    const crumbAt = await mp.evaluate(() => { const el = document.getElementById("asm-crumbs"); return el ? { c: el.classList.contains("at-cursor"), x: el.getBoundingClientRect().left } : null; });
+    await mp.keyboard.press("Escape");
+    const crumbGone = await mp.evaluate(() => !document.getElementById("asm-crumbs"));
+    check(!!crumbs && crumbs.n >= 3 && crumbs.ids[0] === "" && crumbs.ids.at(-1) === "asm" && crumbs.sel === crumbs.cid && crumbs.row && crumbAt?.c && crumbGone,
+      `asm 1.371: selection breadcrumbs from a click on a component, a crumb selects its tree row, Shift+D, Esc (${JSON.stringify({ crumbs, crumbAt, crumbGone })})`);
     // Save to bytes and reopen: the same components and poses.
     const re = await mp.evaluate(async () => {
       const sig = () => JSON.stringify(window.__sv.asm.doc.components.map(c => [c.id, c.name, c.part, c.tf, !!c.fixed, !!c.hidden]));
@@ -10370,26 +10482,26 @@ try {
     // The depth in the Modify box: ✕ leaves it, ✓ (Enter) changes it as one undo step.
     const clickDim = async v => { const i = await dp.evaluate(v => [...document.querySelectorAll(".mc-fdim")].findIndex(b => b.textContent === v), v); await dp.click(`.mc-fdim >> nth=${i}`); };
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box input").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
-    await dp.fill(".mod-box input", "25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const box = await dp.evaluate(() => ({ title: document.querySelector(".mod-box .mod-t").textContent, v: document.querySelector(".mod-box .mod-in").value, btns: [...document.querySelectorAll(".mod-box .mod-b button")].map(b => b.textContent).join("") }));
+    await dp.fill(".mod-box .mod-in", "25");
     await dp.click(".mod-box [data-m=x]");
     await dp.waitForTimeout(100);
     const kept = await dp.evaluate(() => window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v);
     await clickDim("10");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "25");
-    await dp.press(".mod-box input", "Enter");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "25");
+    await dp.press(".mod-box .mod-in", "Enter");
     await dp.waitForTimeout(150);
     await idle();
     const after = await dp.evaluate(() => ({ depth: window.__sv.model.store.doc.features.find(f => f.id === "x").depth.v, undo: window.__sv.model.store.undoLabel, labels: [...document.querySelectorAll(".mc-fdim")].map(b => b.textContent).sort().join() }));
-    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
+    check(box.title === "Depth@Extrude1" && box.v === "10" && box.btns === "✓✕⟲⇄" && kept === 10 && after.depth === 25 && /Depth@Extrude1/.test(after.undo) && after.labels === "25,60",
       `modify: the Modify box changes a feature dimension (✕ keeps it, Enter takes it as one undo step) (${JSON.stringify({ box, kept, after })})`);
     // A sketch dimension: ⟲ rebuilds with the typed value, ✕ puts it back.
     const width = () => dp.evaluate(() => { const b = window.__sv.viewer.computeBounds(); return b.max.x - b.min.x; });
     await clickDim("60");
-    await dp.waitForSelector(".mod-box .sk-input");
-    await dp.fill(".mod-box input", "80");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-in", "80");
     await dp.click(".mod-box [data-m=rebuild]");
     await dp.waitForTimeout(300);
     await idle();
@@ -10399,6 +10511,27 @@ try {
     await idle();
     const back = await width();
     check(Math.abs(prev.size - 80) < 1e-6 && prev.stored === 60 && Math.abs(back - 60) < 1e-6, `modify: ⟲ rebuilds with the typed value and ✕ goes back (${JSON.stringify({ prev, back })})`);
+    // 1.371 (FR-UI-114): the increment field sets the spin step (kept for the next box); ⇄ reverses the extrude with the value.
+    await clickDim("25");
+    await dp.waitForSelector(".mod-box .mod-in");
+    await dp.fill(".mod-box .mod-inc", "5");
+    await dp.press(".mod-box .mod-inc", "Enter");
+    await dp.press(".mod-box .mod-in", "ArrowUp");
+    const spun = await dp.evaluate(() => document.querySelector(".mod-box .mod-in").value);
+    await dp.click(".mod-box [data-m=rev]");
+    await dp.press(".mod-box .mod-in", "Enter");
+    await dp.waitForTimeout(150);
+    await idle();
+    const rev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    await clickDim("30");
+    await dp.waitForSelector(".mod-box .mod-in");
+    const incKept = await dp.evaluate(() => document.querySelector(".mod-box .mod-inc").value);
+    await dp.click(".mod-box [data-m=x]");
+    await dp.evaluate(() => window.__sv.modeller.undo());
+    await idle();
+    const unrev = await dp.evaluate(() => { const f = window.__sv.model.store.doc.features.find(f => f.id === "x"); return { depth: f.depth.v, flip: !!f.flip }; });
+    check(spun === "30" && rev.depth === 30 && rev.flip && incKept === "5" && unrev.depth === 25 && !unrev.flip,
+      `modify 1.371: the increment field steps the value and is remembered; Reverse direction flips the extrude with the value as one undo step (${JSON.stringify({ spun, rev, incKept, unrev })})`);
     // Resizable side panel: the grip drags its width, which is remembered; a double-click restores it.
     const grip = await dp.$eval("#app > .grip-left", g => { const r = g.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200, role: g.getAttribute("role"), now: g.getAttribute("aria-valuenow") }; });
     await dp.mouse.move(grip.x, grip.y); await dp.mouse.down(); await dp.mouse.move(grip.x + 80, grip.y, { steps: 4 }); await dp.mouse.up();
