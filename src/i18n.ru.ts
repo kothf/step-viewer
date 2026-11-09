@@ -2954,6 +2954,7 @@ export const RU: Record<string, string> = {
   "Constant speed": "Постоянная скорость",
   "Oscillating": "Колебательный",
   "Data points": "Точки данных",
+  "Duplicate motion study": "Копировать исследование движения",
   "Time (s) and value per line": "Время (с) и значение в каждой строке",
   "One row per line: time after the motor start (s), then the value ({u})": "По строке на точку: время от запуска двигателя (с), затем значение ({u})",
   "Type at least two rows of time and value, with the times increasing.": "Введите хотя бы две строки времени и значения, время должно возрастать.",
