@@ -8399,6 +8399,17 @@ try {
     const kg1 = await kgOf();
     const matRatio = num(kg1[0]) / num(kg0[0]);
     check(Math.abs(matRatio - 2.7 / 7.85) < 0.01 && kg1[1] === kg0[1], `weldments: cut list item material (${JSON.stringify({ kg0, kg1, matRatio })})`);
+    // Exclude from cut list: the row stays (struck through) without an item number, and the total drops its mass; unticked it comes back.
+    const sumOf = () => mp.evaluate(() => document.querySelector("#wld-cut [data-wsum]")?.textContent ?? "");
+    const tot0 = num(await sumOf());
+    await mp.check('#wld-cut input[data-cp="excl"][data-ci="1"]');
+    await settle();
+    const ex = await mp.evaluate(() => { const tr = document.querySelectorAll("#wld-cut tbody tr")[1]; return { item: tr.querySelector("[data-witem]")?.textContent, cls: tr.classList.contains("wld-excl"), excl: Object.values(window.__sv.model.store.doc.cutProps ?? {}).some(p => p.excl) }; });
+    const tot1 = num(await sumOf());
+    await mp.uncheck('#wld-cut input[data-cp="excl"][data-ci="1"]');
+    await settle();
+    const tot2 = num(await sumOf());
+    check(ex.item === "—" && ex.cls && ex.excl && Math.abs(tot1 - num(kg1[0])) < 0.002 && tot2 === tot0, `weldments: exclude from cut list (${JSON.stringify({ ex, tot0, tot1, tot2, kg1 })})`);
     await mp.click('#wld-cut [data-a="close"]');
     check(cl.rows === 2 && /Total mass [\d.,]+ kg/.test(cl.total ?? ""), `weldments: cut list dialog (${JSON.stringify(cl)})`);
     await settle();

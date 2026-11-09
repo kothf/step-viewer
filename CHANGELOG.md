@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.300.0] - 2026-11-09
+
+### Added
+
+- **Exclude from cut list (FR-FT-121).** Each item in the weldment Cut List dialog has an Exclude box, as in SolidWorks: an excluded item stays in the list, struck through, but gets no item number, adds nothing to the total mass and is left out of the CSV. The Cut list folder in the Features tree marks it as excluded.
+
 ## [1.295.0] - 2026-11-09
 
 ### Added
@@ -1737,7 +1743,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.295.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.300.0...HEAD
+[1.300.0]: https://github.com/kothf/step-viewer/compare/v1.295.0...v1.300.0
 [1.295.0]: https://github.com/kothf/step-viewer/compare/v1.290.0...v1.295.0
 [1.290.0]: https://github.com/kothf/step-viewer/compare/v1.286.0...v1.290.0
 [1.286.0]: https://github.com/kothf/step-viewer/compare/v1.284.0...v1.286.0
