@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.364.0] - 2026-11-09
+## [1.369.0] - 2026-11-09
 
 ### Added
 - Tab and Slot (FR-FT-120): tabs grow out of a straight edge of a sheet face, in its plane, through the face they meet (on another body or the sheet itself), which gets matching slots with a clearance all round. Set the tab length and height, the number of tabs with an edge offset or a fixed spacing, and optionally round the slot corners. The tabs are part of the flat pattern, and slots cut in the sheet show in it like any cut.
@@ -2165,8 +2165,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.364.0...HEAD
-[1.364.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.364.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.369.0...HEAD
+[1.369.0]: https://github.com/kothf/step-viewer/compare/v1.363.0...v1.369.0
 [1.363.0]: https://github.com/kothf/step-viewer/compare/v1.357.0...v1.363.0
 [1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
 [1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
