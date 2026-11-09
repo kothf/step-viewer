@@ -814,3 +814,25 @@ test("datum target: split frame, plain leader, cross / phantom line / hatched ph
   assert.ok(hatch.length >= 4 && hatch.every(h => Math.hypot(h.p[0] - 70, h.p[1] - 100) <= 4 + 1e-9 && Math.hypot(h.p[2] - 70, h.p[3] - 100) <= 4 + 1e-9), "hatching inside the area");
   assert.ok(targetRadius({ label: "A1", size: "Ø12.5×20" }) > 4.5, "long texts widen the frame");
 });
+
+test("sheet sketch: entities, pick outlines and horizontal/vertical inference", async () => {
+  const { skPrims, skPoints, orthoSnap } = await import("../../src/drawing/sheetSketch");
+  const { ringDist } = await import("../../src/drawing/annot");
+  const rect = skPrims({ id: "r", t: "sk", k: "rect", pos: [10, 20], pts: [30, -10] });
+  assert.deepEqual(rect.box, [10, 10, 40, 20]);
+  assert.equal(rect.open, false);
+  assert.ok((rect.prims[0] as any).closed && (rect.prims[0] as any).pen === "thin");
+  const line = skPrims({ id: "l", t: "sk", k: "line", pos: [0, 0], pts: [10, 0], pen: "center" });
+  assert.equal(line.prims[0].t, "l");
+  assert.equal((line.prims[0] as any).layer, "CENTER");
+  assert.ok(ringDist(line.ring, 5, 0.5, line.open) < 0.6 && ringDist(line.ring, 15, 0, line.open) > 4, "an open line is picked along itself only");
+  const poly = { id: "p", t: "sk" as const, k: "poly" as const, pos: [0, 0] as [number, number], pts: [0, 0, 10, 0, 10, 10] };
+  assert.ok(ringDist(skPrims(poly).ring, 5, 5, true) > 3, "open polyline: no closing side");
+  assert.ok(ringDist(skPrims({ ...poly, closed: true }).ring, 5, 5, false) < 0.1);
+  const c = skPrims({ id: "c", t: "sk", k: "circle", pos: [50, 50], pts: [3, 4] });
+  assert.equal((c.prims[0] as any).r, 5);
+  assert.deepEqual(skPoints({ id: "r", t: "sk", k: "rect", pos: [0, 0], pts: [2, 3] }), [[0, 0], [2, 0], [2, 3], [0, 3]]);
+  assert.deepEqual(orthoSnap([0, 0], [20, 0.5]), { p: [20, 0], hv: "h" });
+  assert.deepEqual(orthoSnap([0, 0], [0.4, -20]), { p: [0, -20], hv: "v" });
+  assert.equal(orthoSnap([0, 0], [10, 10]).hv, null);
+});
