@@ -9857,9 +9857,9 @@ try {
     const cvWant = 100 * (60 - 8 + 2 * (36 + 1.5 * Math.PI)) * 2;
     check(cv0.title === "Convert to Sheet Metal" && cv0.face === "ce:end" && cv0.edges?.length === 2 && !cv1.bad && cv1.bends === 2 && Math.abs(cv1.v - cvWant) < 1e-2,
       `sheet metal: Convert to Sheet Metal turns the box into a U channel from the clicked face and edges (${JSON.stringify({ cv0, cv1, cvWant })})`);
-    // Insert Bends: a thin U section (walls 3) opening towards -Y, extruded 100; click its outside top (y = 40), ✓: two bends, thickness 3.
+    // Insert Bends: a thin U section (walls 3) opening towards +Y, extruded 100; click its outside bottom (y = 0, seen from the default view), ✓: two bends, thickness 3.
     await mp.evaluate(() => window.__sv.model.store.change("U section", d => {
-      const q = [[0, 40], [60, 40], [60, 0], [57, 0], [57, 37], [3, 37], [3, 0], [0, 0]];
+      const q = [[0, 0], [60, 0], [60, 40], [57, 40], [57, 3], [3, 3], [3, 40], [0, 40]];
       d.features = [
         { id: "iu", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [...q.map((p, i) => ({ id: `iq${i}`, t: "point", x: p[0], y: p[1] })), ...q.map((_p, i) => ({ id: `il${i}`, t: "line", a: `iq${i}`, b: `iq${(i + 1) % q.length}` }))] },
         { id: "ie", type: "extrude", name: "Boss-Extrude1", sketch: "iu", op: "boss", end: "blind", depth: { v: 100 } },
@@ -9869,7 +9869,7 @@ try {
     await mp.evaluate(() => window.__sv.viewer.fit(false));
     await mp.waitForTimeout(300);
     await smMenu("Insert Bends");
-    const [ibx, iby] = await scr([30, 40, 50]);
+    const [ibx, iby] = await scr([30, 0, 50]);
     await mp.mouse.click(ibx, iby);
     await settle();
     const ib0 = await mp.evaluate(() => ({ title: document.querySelector("#mc-pm h3")?.textContent, face: window.__sv.model.mode().draft?.face?.name }));
