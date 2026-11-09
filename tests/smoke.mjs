@@ -9681,6 +9681,38 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: quick previews of slow views while the exact lines are computed (FR-DRW-016, NFR-PERF-040) ---
+  if (inShard(3)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    // A plate with 25 holes: over the edge count that turns quick previews on.
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    const holes = [];
+    for (let i = 0; i < 25; i++) holes.push(P(`h${i}`, -40 + 20 * (i % 5), -40 + 20 * Math.floor(i / 5)), { id: `c${i}`, t: "circle", c: `h${i}`, r: 4 });
+    const part = { schema: 1, kind: "part", id: "d_drwpreview", name: "Grid", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XY" }, rels: [], dims: [], ents: [P("p1", -55, -55), P("p2", 55, -55), P("p3", 55, 55), P("p4", -55, 55),
+        { id: "l1", t: "line", a: "p1", b: "p2" }, { id: "l2", t: "line", a: "p2", b: "p3" }, { id: "l3", t: "line", a: "p3", b: "p4" }, { id: "l4", t: "line", a: "p4", b: "p1" }] },
+      { id: "f1", type: "extrude", name: "Extrude1", sketch: "s1", op: "boss", end: "blind", depth: { v: 10 } },
+      { id: "s2", type: "sketch", name: "Sketch2", plane: { face: { name: "f1:end" } }, rels: [], dims: [], ents: holes },
+      { id: "f2", type: "extrude", name: "Cut1", sketch: "s2", op: "cut", end: "through", depth: { v: 0 } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Grid.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready() && !document.querySelector(".drw.stale"), null, { timeout: 120000 });
+    await dp.waitForTimeout(200);
+    const pv = await dp.evaluate(() => window.__sv.drw.previews());
+    const exact = await dp.evaluate(() => window.__sv.drw.doc().sheets[0].views.every(v => { const p = window.__sv.drw.proj(v.id); return p && !p.preview && p.vis.length > 0; }));
+    check(pv.made >= 3 && pv.shown >= 1 && pv.left === 0 && exact, `drawing: slow model views show a quick preview first, then the exact lines (${JSON.stringify(pv)}, exact ${exact})`);
+    await ctx.close();
+  }
+
   check(errors.length === 0, `no page errors${errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""}`);
 
   // --- Parallel assembly builds (FR-ARC-016): distinct parts are built by helper kernel workers, same result as one worker ---

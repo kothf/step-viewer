@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 
 - **Merge miter trimmed bodies (FR-FT-121).** Structural Member adds **Merge miter trimmed bodies**, as in SolidWorks: the members at each mitred corner are fused into one body, so a welded frame of four mitred tubes is one body, listed once in the cut list with the lengths of its segments added up. With a weld gap the mitred ends don't touch and stay separate bodies. The box shows when a corner of the member is mitred.
+## [1.304.0] - 2026-11-09
+
+### Added
+
+- **Quick previews of drawing views** (FR-DRW-016): views of a big model (80 edges or more, or once an exact view took longer than 0.4 s) first show a paler preview from OCCT's polygonal hidden-line removal, then the exact lines replace it. On the CAx-IF test parts the preview comes in about 14 times sooner than the exact view (0.1–0.3 s instead of 1.8–4 s). Dimensions, picking and exports always use the exact lines.
+
 ## [1.303.0] - 2026-11-09
 
 ### Added
@@ -1779,7 +1785,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.305.0...HEAD
-[1.305.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.305.0
+[1.305.0]: https://github.com/kothf/step-viewer/compare/v1.304.0...v1.305.0
+[1.304.0]: https://github.com/kothf/step-viewer/compare/v1.303.0...v1.304.0
 [1.303.0]: https://github.com/kothf/step-viewer/compare/v1.302.0...v1.303.0
 [1.302.0]: https://github.com/kothf/step-viewer/compare/v1.300.0...v1.302.0
 [1.300.0]: https://github.com/kothf/step-viewer/compare/v1.298.0...v1.300.0
