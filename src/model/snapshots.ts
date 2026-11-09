@@ -27,6 +27,8 @@ export async function snapshotList(docId: string): Promise<Snapshot[]> {
     const ms = parseInt(name, 10);
     if (h.kind !== "file" || !Number.isFinite(ms)) continue;
     const f = await (h as FileSystemFileHandle).getFile();
+    // A save cut short (the page closed while writing) leaves an empty file: it is no snapshot.
+    if (!f.size) continue;
     out.push({ name, at: new Date(ms), size: f.size });
   }
   return out.sort((a, b) => b.at.getTime() - a.at.getTime());
