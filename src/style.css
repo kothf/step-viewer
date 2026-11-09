@@ -772,7 +772,12 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .ft-row.ft-comp .ft-ico { color: var(--accent-text); }
 .open-grp { display: flex; align-items: center; gap: 4px; flex: none; }
 .open-grp #new-part { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.open-grp .new-more { width: 13px; min-width: 13px; padding: 0; margin-left: -5px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.open-grp .new-more { width: 20px; min-width: 20px; padding: 0; margin-left: -3px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+/* File, New part and its ▾ share one height, so the group reads as one row of equal buttons. */
+.open-grp > button { height: 32px; }
+.open-grp #new-part { width: 38px; }
+.open-grp #new-part svg { width: 21px; height: 21px; }
+.open-grp .new-more svg { width: 11px; height: 18px; }
 /* 1.19.0: rollback bar, context menu, empty part, drag handles, child rows */
 .ft-rollback { height: 6px; margin: 2px 6px; border-radius: 3px; background: var(--accent); opacity: .75; cursor: ns-resize; outline-offset: 2px; }
 .ft-rollback:hover, .ft-rollback:focus-visible, .ft-rollback.drag { opacity: 1; height: 8px; }
