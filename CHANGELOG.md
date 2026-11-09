@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.374.0] - 2026-11-09
+
+### Added
+
+- **Gusset profile options (FR-FT-121)**: a polygonal weldment gusset can now have different flats at its two ends, as SolidWorks' polygonal profile does. **Other end** in the Gusset panel takes the same width as before, **Its own width** (the flat at face 2), or **By profile angle**, where the sloping edge's angle from face 1 sets it (it starts at the angle the profile already has, so nothing jumps). The inner corner's chamfer can take a **Different distance along face 2**, for a chamfer that clears an unequal leg weld. An angle too shallow for the legs fails the feature with a message saying what to change.
+
 ## [1.373.0] - 2026-11-10
 
 ### Added
@@ -2195,7 +2201,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.373.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.374.0...HEAD
+[1.374.0]: https://github.com/kothf/step-viewer/compare/v1.373.0...v1.374.0
 [1.373.0]: https://github.com/kothf/step-viewer/compare/v1.372.0...v1.373.0
 [1.372.0]: https://github.com/kothf/step-viewer/compare/v1.371.0...v1.372.0
 [1.371.0]: https://github.com/kothf/step-viewer/compare/v1.365.0...v1.371.0
