@@ -448,7 +448,8 @@ export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?:
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
 export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string }
 /** A cone, torus or surface of revolution: its axis like a cylinder's, extent along it from `o`, angle swept (FR-DRW-023 centrelines). */
-export interface MRev { k: "cone" | "torus" | "rev"; o: V3; ax: V3; v0: number; v1: number; sp: number; f?: string }
+/** A cone, torus, revolved face or sphere (`o` = its centre, `r` = its radius) and the span of its axis it covers. */
+export interface MRev { k: "cone" | "torus" | "rev" | "sphere"; o: V3; ax: V3; v0: number; v1: number; sp: number; r?: number; f?: string }
 /** `com`: the shape's centre of mass (uniform density), for a drawing's centre of mass point; absent for sheets. */
 export interface Topo { edges: MEdge[]; cyls: MCyl[]; revs?: MRev[]; com?: V3; holes?: MHole[] }
 /** One piece of a hole: a cylinder (r0 = r1) or a cone, from v0 to v1 along the hole's axis. */
@@ -525,6 +526,14 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
         if (inward(f, cn.Position())) bores.push({ o, ax, k: "cone", v0, v1, r0: R + v0 * ta, r1: R + v1 * ta, sp, f: names?.[i - 1] ?? `f${i - 1}` });
       }
       if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+      continue;
+    }
+    if (st === S.GeomAbs_Sphere) {
+      // A ball end or a sphere seen from any side gets a centre mark; only spheres that go all round (not corner blends).
+      try {
+        const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter()), a3 = sa.Sphere().Position(), r = sa.Sphere().Radius();
+        if (sp >= 2 * Math.PI - 1e-3) revs.push({ k: "sphere", o: xyz(a3.Location()), ax: unit(xyz(a3.Direction())), v0: -r, v1: r, sp, r, f: names?.[i - 1] ?? `f${i - 1}` });
+      } catch { /* no sphere */ }
       continue;
     }
     if (st !== S.GeomAbs_Cylinder) continue;

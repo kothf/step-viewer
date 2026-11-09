@@ -8814,6 +8814,14 @@ try {
     await ap.selectOption('.drw-props [data-st="ang"]', "");
     const dec2 = await ap.evaluate(() => window.__sv.drw.doc().style);
     check(dec1.lin === 1 && dec1.ang === 2 && dec2.lin === 1 && !("ang" in dec2), `drawing: drafting style keeps default linear/angle decimals, Auto clears them (${JSON.stringify([dec1, dec2])})`);
+    // Default ± tolerance (FR-DRW-025): typed with a comma or a point; cleared, it is gone.
+    await ap.fill('.drw-props [data-st="tol"]', "0,05");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol1 = await ap.evaluate(() => window.__sv.drw.doc().style?.tol);
+    await ap.fill('.drw-props [data-st="tol"]', "");
+    await ap.press('.drw-props [data-st="tol"]', "Tab");
+    const tol2 = await ap.evaluate(() => window.__sv.drw.doc().style);
+    check(tol1 === 0.05 && !("tol" in tol2), `drawing: drafting style keeps a default ± tolerance, empty clears it (${JSON.stringify([tol1, tol2])})`);
     // 1.87.0 view properties (FR-DRW-017): break a projected view's alignment, drag it off line, then put it back in line.
     const pv0 = await ap.evaluate(() => { const sh = window.__sv.drw.doc().sheets[0]; const v = sh.views.find(x => x.parent && x.side && !x.kind); const p = sh.views.find(x => x.id === v.parent); return { id: v.id, x: v.x, y: v.y, px: p.x, py: p.y, side: v.side }; });
     await clickAt(pv0.x, pv0.y);
