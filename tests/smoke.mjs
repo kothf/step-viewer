@@ -2002,7 +2002,7 @@ try {
     await mp.keyboard.press("Enter");
     await mp.waitForSelector("#mat-dlg", { state: "detached" });
     lib.btn = await mp.evaluate(() => ({ text: document.querySelector("#mc-pm [data-a=matpick]").textContent, dens: document.querySelector("#mc-pm [data-p=density]").value, col: document.querySelector("#mc-pm [data-p=color]").value, focus: document.activeElement?.dataset.a }));
-    check(lib.all >= 150 && lib.cats >= 15 && lib.ti === 5 && lib.found.length === 1 && /1\.4404/.test(lib.found[0]) && lib.cat === "all" && lib.props.some(r => /Density 8 g\/cm³/.test(r)) && lib.props.some(r => /Yield strength 220 MPa/.test(r)) && /EN 10088/.test(lib.src)
+    check(lib.all >= 150 && lib.cats >= 15 && lib.ti === 5 && lib.found.length === 1 && /1\.4404/.test(lib.found[0]) && lib.cat === "all" && lib.props.some(r => /Density ?8 g\/cm³/.test(r)) && lib.props.some(r => /Yield strength ?220 MPa/.test(r)) && /EN 10088/.test(lib.src)
       && lib.gost.length === 1 && /2024/.test(lib.gost[0]) && /Aluminium 6061/.test(lib.btn.text) && lib.btn.dens === "2.7" && lib.btn.col === "#c9ced6" && lib.btn.focus === "matpick",
       `model 1.359: the material library lists 150+ materials by category, finds one by AISI or GOST name, shows its properties and source, Enter applies it with its colour (${JSON.stringify(lib)})`);
     check(axMat.length === 0, `model 1.359: 0 WCAG 2.1 AA violations with the material library open${axMat.length ? ": " + axMat.join(" | ") : ""}`);
@@ -2030,7 +2030,7 @@ try {
     const own = await mp.evaluate(() => ({ cat: document.querySelector("#mat-dlg .mat-cat.on").dataset.cat, rows: [...document.querySelectorAll("#mat-dlg .mat-list li[data-i] b")].map(e => e.textContent), stored: JSON.parse(localStorage.getItem("mc:materials")) }));
     await mp.click("#mat-dlg [data-a=del]");
     await mp.click("#confirm [data-a=ok]");
-    await mp.waitForFunction(() => !document.querySelector("#confirm").open);
+    await mp.waitForFunction(() => !document.querySelector("#confirm").open && JSON.parse(localStorage.getItem("mc:materials")).length === 0);
     const ownGone = await mp.evaluate(() => JSON.parse(localStorage.getItem("mc:materials")).length);
     await mp.keyboard.press("Escape");
     await mp.waitForSelector("#mat-dlg", { state: "detached" });

@@ -201,6 +201,7 @@ export function pickMaterial(o: PickOptions = {}): Promise<Picked | undefined> {
           sel = null;
           if (!all.some(m => m.cat === "custom")) cat = "all";
           render();
+          q.focus();
         });
       }
       else if (a === "save") saveForm();
