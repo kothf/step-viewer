@@ -1036,6 +1036,8 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-key.mo-ghost { opacity: 0.55; pointer-events: none; outline: 1px dashed var(--accent); }
 .motion .mo-key.i-snap { rotate: 0deg; border-radius: 0; }
 .motion .mo-key.i-easein, .motion .mo-key.i-easeout, .motion .mo-key.i-ease { border-radius: 50%; }
+.motion .mo-key.colored { background: var(--kc); }
+.motion .mo-key.colored.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .motion .mo-key.i-easein { border-left-width: 4px; }
 .motion .mo-key.i-easeout { border-right-width: 4px; }
 #mo-menu .mo-mk { float: right; margin-left: 18px; color: var(--muted); font-size: 12px; }

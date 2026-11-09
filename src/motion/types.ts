@@ -8,7 +8,8 @@ import type { V3 } from "../model/types";
 export type Interp = "linear" | "snap" | "easein" | "easeout" | "ease";
 
 /** A value at a time. */
-export interface Key { t: number; v: number; interp?: Interp }
+/** `c`: on appearance keys, the colour the component wears from there (#rrggbb, blended between coloured keys). */
+export interface Key { t: number; v: number; interp?: Interp; c?: string }
 
 /** A camera at a time: eye position and the point looked at (world mm). */
 /** `zoom` is the orthographic camera's zoom (a perspective view zooms by moving `pos`). */

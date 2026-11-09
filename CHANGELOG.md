@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.332.0] - 2026-11-09
+
+### Added
+
+- Motion studies: appearance keys can carry a **colour**. Tick **Colour** on a key and pick one: the component wears it from that key and blends to the next coloured key, as SolidWorks appearance keys do. Coloured keys show their colour on the timeline, and the component gets its own colour back when the track goes (FR-FT-122).
+
 ## [1.323.0] - 2026-11-09
 
 ### Added
@@ -1898,7 +1904,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.323.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.332.0...HEAD
+[1.332.0]: https://github.com/kothf/step-viewer/compare/v1.323.0...v1.332.0
 [1.323.0]: https://github.com/kothf/step-viewer/compare/v1.322.0...v1.323.0
 [1.322.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.322.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0

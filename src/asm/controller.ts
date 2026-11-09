@@ -2617,29 +2617,31 @@ export class AsmController {
   }
 
   /** Parts whose look a motion study changed: viewer part index → what it had. */
-  private motionLooks = new Map<number, { visible: boolean; opacity: number }>();
+  private motionLooks = new Map<number, { visible: boolean; opacity: number; color: number; vc: boolean }>();
 
   /**
-   * Shows components at these opacities (by component id, a top-level id covers its sub-assembly's and
-   * pattern-free children); 0 hides. Components left out get their own look back.
+   * Shows components at these opacities and colours (`tint`, #rrggbb) by component id (a top-level id covers
+   * its sub-assembly's and pattern-free children); 0 hides. Components left out get their own look back.
    */
-  motionLook(op: Record<string, number>) {
+  motionLook(op: Record<string, number>, tint: Record<string, string> = {}) {
     const v = this.host.viewer;
     this.shownIds.forEach((id, i) => {
       const p = v.parts[i];
       if (!p) return;
-      const k = op[id] ?? op[topOf(id)];
-      const was = this.motionLooks.get(i);
-      if (k == null) {
+      const k = op[id] ?? op[topOf(id)], c = tint[id] ?? tint[topOf(id)];
+      const was = this.motionLooks.get(i), m = p.material;
+      if (k == null && c == null) {
         if (!was) return;
         p.visible = was.visible; p.opacity = was.opacity; this.motionLooks.delete(i);
+        m.color.setHex(was.color); m.vertexColors = was.vc;
         v.applyPartAppearance(p);
         return;
       }
-      if (!was) this.motionLooks.set(i, { visible: p.visible, opacity: p.opacity });
+      if (!was) this.motionLooks.set(i, { visible: p.visible, opacity: p.opacity, color: m.color.getHex(), vc: m.vertexColors });
       const base = this.motionLooks.get(i)!;
-      p.visible = base.visible && k > 0.005;
-      p.opacity = Math.min(base.opacity, k) >= 0.999 ? 1 : k;
+      if (c != null) { m.color.set(c); m.vertexColors = false; } else { m.color.setHex(base.color); m.vertexColors = base.vc; }
+      p.visible = base.visible && (k ?? 1) > 0.005;
+      p.opacity = k == null ? base.opacity : Math.min(base.opacity, k) >= 0.999 ? 1 : k;
       v.applyPartAppearance(p);
       if (p.opacity < 1) { p.edgeMaterial.transparent = true; p.edgeMaterial.opacity = Math.min(p.edgeMaterial.opacity, p.opacity); }
     });
