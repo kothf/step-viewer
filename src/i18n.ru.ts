@@ -267,6 +267,8 @@ export const RU: Record<string, string> = {
   "Revision": "Ревизия",
   "Part number": "Обозначение",
   "Opacity": "Прозрачность",
+  "Key colour": "Цвет ключа",
+  "Give the component this colour from this key; it blends to the next coloured key": "Окрасить компонент в этот цвет с этого ключа; цвет плавно переходит к следующему ключу с цветом",
   "Isolate (I)": "Изолировать (I)",
   "Hide (H)": "Скрыть (H)",
   "Show all (U)": "Показать все (U)",
