@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.328.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Unfold and Fold (FR-FT-120): Unfold flattens the picked bends (or all of them) with a clicked flat face kept in place, so ordinary features can cut across them; Fold bends them back. Cuts made across a flat bend wrap onto the bend with lengths on the neutral surface kept, cuts in the panels move with them, and forms and other added material go with their panel. Other sheet metal features wait until the bends are folded back; a Flat-Pattern after an Unfold folds back first.
+
 ## [1.321.0] - 2026-11-09
 
 ### Added
@@ -1886,7 +1892,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.321.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.328.0...HEAD
+[1.328.0]: https://github.com/kothf/step-viewer/compare/v1.321.0...v1.328.0
 [1.321.0]: https://github.com/kothf/step-viewer/compare/v1.320.0...v1.321.0
 [1.320.0]: https://github.com/kothf/step-viewer/compare/v1.319.0...v1.320.0
 [1.319.0]: https://github.com/kothf/step-viewer/compare/v1.318.0...v1.319.0
