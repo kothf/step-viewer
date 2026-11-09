@@ -3655,4 +3655,13 @@ export const RU: Record<string, string> = {
   "Single bevel butt": "Стыковой со скосом одной кромки",
   "Plug": "Пробочный",
   "Spot": "Точечный",
+  "Datum target": "Цель базы",
+  "Click where the datum target frame goes.": "Щёлкните, где поставить рамку цели базы.",
+  "Click the target on an edge, or where the datum target frame goes.": "Щёлкните точку на ребре или место для рамки цели базы.",
+  "Target": "Цель",
+  "Target point": "Точка",
+  "Target line": "Линия",
+  "Target area": "Участок",
+  "Area diameter (mm)": "Диаметр участка (мм)",
+  "Line length (mm)": "Длина линии (мм)",
 };
