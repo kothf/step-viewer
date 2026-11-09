@@ -15,7 +15,7 @@ export type Loop = { pts: V2[]; r: number[] } | { circle: number; c: V2 } | { se
 /** `origin`: where the sketch origin of a custom profile lies (the default pierce point). */
 export interface ProfileShape { outer: Loop; holes: Loop[]; w: number; h: number; origin?: V2 }
 
-export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "uangle" | "upn" | "ipe" | "hea" | "heb" | "flat" | "sqbar" | "bar";
+export type ProfileType = "shs" | "rhs" | "chs" | "angle" | "uangle" | "upn" | "upe" | "ipe" | "ipn" | "hea" | "heb" | "hem" | "flat" | "sqbar" | "bar";
 
 /** Profile types in menu order, with English labels (translated where shown). */
 export const PROFILE_TYPES: [ProfileType, string][] = [
@@ -25,9 +25,12 @@ export const PROFILE_TYPES: [ProfileType, string][] = [
   ["angle", "Equal angle (EN 10056)"],
   ["uangle", "Unequal angle (EN 10056)"],
   ["upn", "Channel UPN (DIN 1026)"],
+  ["upe", "Channel UPE (EN 10365)"],
   ["ipe", "I-beam IPE (EN 10365)"],
+  ["ipn", "I-beam IPN (DIN 1025)"],
   ["hea", "H-beam HEA (EN 10365)"],
   ["heb", "H-beam HEB (EN 10365)"],
+  ["hem", "H-beam HEM (EN 10365)"],
   ["flat", "Flat bar"],
   ["sqbar", "Square bar"],
   ["bar", "Round bar"],
@@ -76,6 +79,23 @@ const HEB: Record<string, [number, number, number, number, number]> = {
   "180": [180, 180, 8.5, 14, 15], "200": [200, 200, 9, 15, 18], "220": [220, 220, 9.5, 16, 18], "240": [240, 240, 10, 17, 21],
   "260": [260, 260, 10, 17.5, 24], "280": [280, 280, 10.5, 18, 24], "300": [300, 300, 11, 19, 27],
 };
+const HEM: Record<string, [number, number, number, number, number]> = {
+  "100": [120, 106, 12, 20, 12], "120": [140, 126, 12.5, 21, 12], "140": [160, 146, 13, 22, 12], "160": [180, 166, 14, 23, 15],
+  "180": [200, 186, 14.5, 24, 15], "200": [220, 206, 15, 25, 18], "220": [240, 226, 15.5, 26, 18], "240": [270, 248, 18, 32, 21],
+  "260": [290, 268, 18, 32.5, 24], "280": [310, 288, 18.5, 33, 24], "300": [340, 310, 21, 39, 27],
+};
+/** Parallel flange channels: h, b, tw, tf, r. */
+const UPE: Record<string, [number, number, number, number, number]> = {
+  "80": [80, 50, 4, 7, 10], "100": [100, 55, 4.5, 7.5, 10], "120": [120, 60, 5, 8, 12], "140": [140, 65, 5, 9, 12],
+  "160": [160, 70, 5.5, 9.5, 12], "180": [180, 75, 5.5, 10.5, 12], "200": [200, 80, 6, 11, 13], "220": [220, 85, 6.5, 12, 13],
+  "240": [240, 90, 7, 12.5, 15], "270": [270, 95, 7.5, 13.5, 15], "300": [300, 100, 9.5, 15, 15],
+};
+/** Tapered flange I-beams (14 % slope): h, b, tw, tf (at a quarter of the flange width from its edge), r1, r2. */
+const IPN: Record<string, [number, number, number, number, number, number]> = {
+  "80": [80, 42, 3.9, 5.9, 3.9, 2.3], "100": [100, 50, 4.5, 6.8, 4.5, 2.7], "120": [120, 58, 5.1, 7.7, 5.1, 3.1], "140": [140, 66, 5.7, 8.6, 5.7, 3.4],
+  "160": [160, 74, 6.3, 9.5, 6.3, 3.8], "180": [180, 82, 6.9, 10.4, 6.9, 4.1], "200": [200, 90, 7.5, 11.3, 7.5, 4.5], "220": [220, 98, 8.1, 12.2, 8.1, 4.9],
+  "240": [240, 106, 8.7, 13.1, 8.7, 5.2], "260": [260, 113, 9.4, 14.1, 9.4, 5.6], "280": [280, 119, 10.1, 15.2, 10.1, 6.1], "300": [300, 125, 10.8, 16.2, 10.8, 6.5],
+};
 const FLAT = ["20x3", "20x5", "25x5", "30x3", "30x5", "40x4", "40x5", "40x8", "50x5", "50x6", "50x8", "50x10", "60x6", "60x8", "60x10", "80x8", "80x10", "100x8", "100x10", "120x10", "150x10"];
 const SQBAR = ["8", "10", "12", "14", "16", "20", "25", "30", "35", "40", "50", "60"];
 const BAR = ["8", "10", "12", "14", "16", "18", "20", "22", "25", "30", "35", "40", "45", "50", "60"];
@@ -89,9 +109,12 @@ export function profileSizes(type: ProfileType): string[] {
     case "angle": return Object.keys(ANGLE);
     case "uangle": return Object.keys(UANGLE);
     case "upn": return Object.keys(UPN);
+    case "upe": return Object.keys(UPE);
     case "ipe": return Object.keys(IPE);
+    case "ipn": return Object.keys(IPN);
     case "hea": return Object.keys(HEA);
     case "heb": return Object.keys(HEB);
+    case "hem": return Object.keys(HEM);
     case "flat": return FLAT;
     case "sqbar": return SQBAR;
     case "bar": return BAR;
@@ -100,7 +123,7 @@ export function profileSizes(type: ProfileType): string[] {
 
 /** A short designation for cut lists: "SHS 40x40x3", "IPE 200", "L 50x50x5". */
 export function profileName(type: ProfileType, size: string): string {
-  const pre: Record<ProfileType, string> = { shs: "SHS", rhs: "RHS", chs: "CHS", angle: "L", uangle: "L", upn: "UPN", ipe: "IPE", hea: "HEA", heb: "HEB", flat: "FL", sqbar: "SQ", bar: "RD" };
+  const pre: Record<ProfileType, string> = { shs: "SHS", rhs: "RHS", chs: "CHS", angle: "L", uangle: "L", upn: "UPN", upe: "UPE", ipe: "IPE", ipn: "IPN", hea: "HEA", heb: "HEB", hem: "HEM", flat: "FL", sqbar: "SQ", bar: "RD" };
   return `${pre[type]} ${size}`;
 }
 
@@ -152,7 +175,29 @@ export function profileShape(type: ProfileType, size: string): ProfileShape | nu
       holes: [],
     }, 0, b, -h / 2, h / 2);
   }
-  const [h, b, tw, tf, r] = type === "ipe" ? IPE[size] : type === "heb" ? HEB[size] : HEA[size];
+  if (type === "upe") {
+    const [h, b, tw, tf, r] = UPE[size];
+    // Back of the web on u = 0, parallel flanges towards +u.
+    const y = h / 2 - tf;
+    return centre({
+      outer: { pts: [[0, -h / 2], [b, -h / 2], [b, -y], [tw, -y], [tw, y], [b, y], [b, h / 2], [0, h / 2]], r: [0, 0, 0, r, r, 0, 0, 0] },
+      holes: [],
+    }, 0, b, -h / 2, h / 2);
+  }
+  if (type === "ipn") {
+    const [h, b, tw, tf, r1, r2] = IPN[size];
+    // The flanges' inner faces slope 14 % (thicker at the web); tf is measured a quarter of the flange width from the edge.
+    const y = (x: number) => h / 2 - tf + 0.14 * (x - b / 4);
+    const x = tw / 2, yw = y(x), yb = y(b / 2);
+    return {
+      outer: {
+        pts: [[-b / 2, -h / 2], [b / 2, -h / 2], [b / 2, -yb], [x, -yw], [x, yw], [b / 2, yb], [b / 2, h / 2], [-b / 2, h / 2], [-b / 2, yb], [-x, yw], [-x, -yw], [-b / 2, -yb]],
+        r: [0, 0, r2, r1, r1, r2, 0, 0, r2, r1, r1, r2],
+      },
+      holes: [], w: b, h,
+    };
+  }
+  const [h, b, tw, tf, r] = type === "ipe" ? IPE[size] : type === "heb" ? HEB[size] : type === "hem" ? HEM[size] : HEA[size];
   const x = tw / 2, y = h / 2 - tf;
   return {
     outer: {
