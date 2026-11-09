@@ -774,20 +774,37 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
 export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3) => P2, n: V3): Prim[] {
   const segs: Seg2[] = [];
   const ext = 2 / pl.s;
-  // Circles seen end-on, grouped by centre and radius (STEP often splits a circle in two arcs).
-  const circ = new Map<string, { c: P2; r: number; sp: number }>();
+  // Circles seen end-on, grouped by their 3D centre and radius (STEP often splits a circle in two arcs; the
+  // two 180° ends of a slot's top and bottom faces must not add up to a circle).
+  const circ = new Map<string, { c: P2; r: number; sp: number; m: P2 }>();
   for (const e of topo.edges) {
     if (e.t !== "c" || !e.c || !e.ax || !e.r || Math.abs(Math.abs(dot3(e.ax, n)) - 1) > 1e-6) continue;
-    const c = P(e.c), key = `${c[0].toFixed(4)},${c[1].toFixed(4)},${e.r.toFixed(4)}`;
-    const g = circ.get(key) ?? { c, r: e.r, sp: 0 };
-    g.sp += e.sp ?? 0;
+    const c = P(e.c), key = `${e.c.map(x => x.toFixed(4)).join(",")},${e.r.toFixed(4)}`;
+    const g = circ.get(key) ?? { c, r: e.r, sp: 0, m: [0, 0] as P2 };
+    const sp = e.sp ?? 0, md = unit2([P(e.m)[0] - c[0], P(e.m)[1] - c[1]]);
+    g.sp += sp; g.m = [g.m[0] + md[0] * sp, g.m[1] + md[1] * sp];
     circ.set(key, g);
   }
   const marked = new Map<string, number>();
+  const halves: { c: P2; r: number; m: P2 }[] = [];
   for (const g of circ.values()) {
-    if (g.sp < 2 * Math.PI - 1e-3) continue;
+    if (g.sp < 2 * Math.PI - 1e-3) {
+      if (Math.abs(g.sp - Math.PI) < 1e-3 && g.r * pl.s >= 1) halves.push({ c: g.c, r: g.r, m: unit2(g.m) });
+      continue;
+    }
     const key = `${g.c[0].toFixed(4)},${g.c[1].toFixed(4)}`;
     marked.set(key, Math.max(marked.get(key) ?? 0, g.r));
+  }
+  // Straight slots seen end-on (FR-DRW-023): two half circles of one radius facing away from each other along the
+  // line through their centres get a centreline over the slot and a cross line at each end centre.
+  const slotKeys = new Set<string>();
+  for (const sl of straightSlots(halves)) {
+    const [a, b] = sl.c, d = unit2([b[0] - a[0], b[1] - a[1]]), q: P2 = [-d[1], d[0]], L = sl.r + ext;
+    const key = `${a.map(x => x.toFixed(4))}|${b.map(x => x.toFixed(4))}`;
+    if (slotKeys.has(key)) continue;
+    slotKeys.add(key);
+    segs.push({ k: "l", c: 0, p: [a[0] - d[0] * L, a[1] - d[1] * L, b[0] + d[0] * L, b[1] + d[1] * L] });
+    for (const c of [a, b]) segs.push({ k: "l", c: 0, p: [c[0] - q[0] * L, c[1] - q[1] * L, c[0] + q[0] * L, c[1] + q[1] * L] });
   }
   const holes = [...marked].filter(([, r]) => r * pl.s >= 1).map(([key, r]) => { const [x, y] = key.split(",").map(Number); return { c: [x, y] as P2, r }; });
   const onBolt = new Set<number>();
@@ -840,6 +857,35 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
   for (const g of kept) {
     if (g.k === "l") { const a = toSheet(pl, g.p[0], g.p[1]), b = toSheet(pl, g.p[2], g.p[3]); out.push({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "center", layer: "CENTER" }); }
     else if (g.k === "p") { const p: number[] = []; for (let i = 0; i + 1 < g.p.length; i += 2) p.push(...toSheet(pl, g.p[i], g.p[i + 1])); out.push({ t: "p", p, pen: "center", layer: "CENTER" }); }
+  }
+  return out;
+}
+
+/**
+ * Straight slots among end-on half circles (sweep π, `m` = unit direction from the centre to the arc's middle):
+ * pairs of one radius whose middles point away from each other along the line joining their centres.
+ * Returned once per slot as its two end centres, the first with the smaller x (then y).
+ */
+export function straightSlots(halves: { c: P2; r: number; m: P2 }[]): { c: [P2, P2]; r: number }[] {
+  const out: { c: [P2, P2]; r: number }[] = [], used = new Set<number>();
+  for (let i = 0; i < halves.length; i++) {
+    if (used.has(i)) continue;
+    const h = halves[i];
+    let best = -1, bestD = Infinity;
+    for (let j = 0; j < halves.length; j++) {
+      const g = halves[j];
+      if (j === i || used.has(j) || Math.abs(g.r - h.r) > 1e-6 * Math.max(1, h.r)) continue;
+      const dx = g.c[0] - h.c[0], dy = g.c[1] - h.c[1], D = Math.hypot(dx, dy);
+      if (D < 1e-6) continue;
+      const u: P2 = [dx / D, dy / D];
+      // h opens towards g (its middle points away from g) and g opens towards h.
+      if (h.m[0] * u[0] + h.m[1] * u[1] > -0.999 || g.m[0] * u[0] + g.m[1] * u[1] < 0.999) continue;
+      if (D < bestD) { bestD = D; best = j; }
+    }
+    if (best < 0) continue;
+    used.add(i); used.add(best);
+    const a = h.c, b = halves[best].c;
+    out.push({ c: a[0] < b[0] - 1e-9 || (Math.abs(a[0] - b[0]) <= 1e-9 && a[1] <= b[1]) ? [a, b] : [b, a], r: h.r });
   }
   return out;
 }

@@ -42,12 +42,14 @@ import { KernelClient, type KernelStatus } from "./kernel/client";
 import { isMeshName, parseMesh } from "./meshLoad";
 import { isSolidWorksName } from "./sw/container";
 import { ModelController } from "./model/controller";
+import { gestureDialog } from "./gestureUi";
 import { DrawingWorkspace } from "./drawing/workspace";
 import { isDrawingName } from "./drawing/file";
 import { AsmController } from "./asm/controller";
 import { MotionManager } from "./motion/manager";
 import { flattenSubs } from "./asm/patterns";
 import { makeGrip, rememberDialogSizes } from "./resize";
+import { bindValueDrops, dragValue } from "./valueDrop";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
@@ -113,6 +115,7 @@ const modeller = new ModelController({
     validateDensity();
   },
   normalTo: n => normalTo(n),
+  view: v => { if (v === "fit") viewer.fit(); else if (v === "normal") normalTo(); else if (VIEWS[v]) viewer.viewFrom(VIEWS[v]); },
   setCsys: (c, quiet) => setCsys(c ? { ...makeCsys(c.name, c.o, c.z, c.x), src: c.src } : null, true, quiet),
   clearPick: () => { if (state.tool !== "select") setTool("select"); handlePick(null); },
   setDoc: label => setDoc(label, "ready"),
@@ -1662,19 +1665,19 @@ function renderReadout() {
   const f = formatMeasurement(m);
   box.style.setProperty("--c", m.color);
   const det = f.pairs
-    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" translate="no" title="${esc(t("Click to copy"))}">${esc(x)}</b></span>`)
+    ? f.pairs.map(([k, x]) => `<span>${esc(k)} <b class="cp" translate="no" title="${esc(t("Click to copy, or drag into a box"))}">${esc(x)}</b></span>`)
     : f.details.map(d => `<span>${esc(d)}</span>`);
   const unitOpts = UNIT_LIST.map(u => `<option${u === units.current ? " selected" : ""}>${u}</option>`).join("");
   const decOpts = ["", "0", "1", "2", "3", "4", "5", "6"].map(d => `<option value="${d}"${String(units.decimals ?? "") === d ? " selected" : ""}>${d === "" ? t("auto") : t("{n} dp", { n: d })}</option>`).join("");
   box.classList.toggle("floating", state.readoutFloat);
   box.innerHTML = `<div class="ttl"><span>${esc(f.title)}</span><span class="hud-units"><button class="x dock" title="${t(state.readoutFloat ? "Dock in the corner" : "Float next to the measurement")}">${state.readoutFloat ? "⇲" : "⇱"}</button><select data-hud="units" title="${t("Units")}">${unitOpts}</select><select data-hud="decimals" title="${t("Decimal places")}">${decOpts}</select><button class="x close" title="${t("Close (Esc)")}">✕</button></span></div>
-    <div class="val"><b class="cp" translate="no" title="${t("Click to copy")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
+    <div class="val"><b class="cp" translate="no" title="${t("Click to copy, or drag into a box")}">${esc(f.value)}</b></div>${m === state.live && m.data.modes ? `<div class="modes seg">${CIRCLE_MODES.map(x => `<button data-cmode="${x.mode}" class="${x.mode === m.data.mode ? "on" : ""}">${t(x.label)}</button>`).join("")}</div>` : ""}<div class="det">${det.join("")}</div><div class="acts"></div>`;
   box.querySelector(".dock")!.addEventListener("click", () => {
     state.readoutFloat = !state.readoutFloat;
     storage.set("sv:readout", state.readoutFloat ? "float" : "dock");
     renderReadout();
   });
-  box.querySelectorAll<HTMLElement>(".cp").forEach(el => el.addEventListener("click", () => copyValue(el.textContent ?? "")));
+  box.querySelectorAll<HTMLElement>(".cp").forEach(el => { el.addEventListener("click", () => copyValue(el.textContent ?? "")); dragValue(el); });
   box.querySelector<HTMLSelectElement>('[data-hud="units"]')!.addEventListener("change", e => setUnits((e.target as HTMLSelectElement).value as Unit));
   box.querySelector<HTMLSelectElement>('[data-hud="decimals"]')!.addEventListener("change", e => setDecimals((e.target as HTMLSelectElement).value));
   box.querySelector(".close")!.addEventListener("click", () => {
@@ -1984,6 +1987,7 @@ function selectionBox(): THREE.Box3 | null {
   parts.forEach(p => b.expandByObject(p.mesh));
   return parts.length ? b : null;
 }
+bindValueDrops();
 const nav = bindNavigation({
   viewer,
   views: VIEWS,
@@ -2024,6 +2028,8 @@ function normalTo(given?: [number, number, number]) {
   menu.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); set(false); btn.focus(); } });
   window.addEventListener("resize", () => set(false));
 }
+// Mouse gestures (FR-UI-024): the settings dialog; the part controller reads the stored settings on each right press.
+$("#gestures-btn").addEventListener("click", () => { $("#display-menu").hidden = true; $("#display-btn").setAttribute("aria-expanded", "false"); gestureDialog(c => toast(t(c.on ? "Mouse gestures on: right-drag in a part or a sketch." : "Mouse gestures off."))); });
 $<HTMLInputElement>("#ao").addEventListener("change", e => { viewer.aoEnabled = (e.target as HTMLInputElement).checked; viewer.invalidate(); });
 // Surface analyses (FR-MEA-005): picked in the Display menu, set up and explained in a panel in the view.
 const surfAna = new SurfaceAnalysis(viewer, {

@@ -977,7 +977,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 - **FR-UI-021** (P1, M) **Confirmation corner** (SW habit): ✓ and ✕ buttons in the top-right of the graphics area while a command or sketch is active, mirroring the panel's OK/Cancel; in a sketch it shows "exit sketch" and "discard".
 - **FR-UI-022** (P1, M) **Heads-up view bar** (SW habit), floating top centre: zoom to fit, zoom to area, previous view, section view toggle, view orientation ▾ (standard views + normal to), display style ▾, hide/show items ▾ (planes, axes, origins, sketches, sketch relations, dimensions), appearance, perspective toggle. It reuses existing view commands; in the viewer-only mode the same functions stay in the header as today.
 - **FR-UI-023** (P1, M) **Shortcut bar** (SW habit: S key): pressing S shows a small floating toolbar at the cursor with the commands relevant to the current mode (sketch: line, rectangle, circle, arc, trim, dimension, relation; part: sketch, extrude, revolve, fillet, chamfer, hole, plane; assembly: insert, mate, move). Customisable in Preferences (P2).
-- **FR-UI-024** (P2, S) **Mouse gestures** (SW habit): right-drag in a direction runs one of 4 or 8 commands per mode, with a radial guide; configurable; off for users who choose the MöbiusCAD mouse mapping.
+- **FR-UI-024** (P2, S) **Mouse gestures** (SW habit): right-drag in a direction runs one of 4 or 8 commands per mode, with a radial guide; configurable; off for users who choose the MöbiusCAD mouse mapping. *Done in 1.316.0: an opt-in preference (Display ▾ → Mouse gestures…), part and sketch modes, 4 or 8 directions, every direction configurable.*
 - **FR-UI-025** (P1, M) **Context menu** (right-click) on geometry: a row of icon actions for the selection (Sketch, Extrude, Fillet, Hide, Measure, Select other, Zoom to selection, Normal to) plus a text menu (feature actions from FR-HIS-004, Properties).
 - **FR-UI-026** (P1, M) **Context toolbar** on selection (SW habit): a small icon bar near the cursor after selecting a face/edge, fading with distance; shows Edit sketch, Edit feature, Sketch on face, Normal to, Hide, Appearance.
 - **FR-UI-027** (P1, M) **Drag handles** (SW habit: Instant3D) on the selected feature's faces: arrows for extrude depth, rings for revolve angle, radius handles for fillets; dragging shows a ruler with snap ticks and the live value; snapping to vertices and faces uses the Snapper.
@@ -1040,7 +1040,7 @@ The modelling UI combines SolidWorks' interaction model with MöbiusCAD's existi
 ### 13.11 Measurement and evaluation integration
 
 - **FR-MEA-001** (P1, M) All existing measure tools (smart measure, distances, radius, angle, pitch, coordinates, bounding box) work on modelled parts and assemblies under the Evaluate tab and with the existing shortcuts when no sketch is active.
-- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box.
+- **FR-MEA-002** (P1, S) A measured value can be dragged or copied into a numeric input of a feature or dimension box. *Done in 1.319.0: the result card's values (lengths, diameters, radii, angles) drag onto any text or number box; the box gets the number in its own unit, or number and unit as an expression, and applies as if typed. The sketch Modify box closes when focus leaves it, so a value goes there by click to copy and paste.*
 - **FR-MEA-003** (P1, M) Measurements on a model reference persistent names, so they survive rebuilds and update their values; a measurement whose entity disappeared is flagged.
 - **FR-MEA-004** (P1, M) The section tool (up to 3 planes, caps, hatching, drag arrows) works during feature editing and in the sketcher (section at sketch plane).
 - **FR-MEA-005** (P5, S) Analyses: draft analysis (colour by draft angle against a pull direction), zebra stripes, curvature map, thickness analysis (ray-based), undercut detection.
@@ -1594,7 +1594,7 @@ Each row is a basic SolidWorks habit, where this FRS covers it, and what 1.85.0 
 | Context toolbar on selection | FR-UI-026 | Done | Done |
 | Right-click menu on geometry | FR-UI-025 | Browser menu suppressed; only fillet/chamfer edge helpers | Weaker |
 | Right-click during a command: OK / Cancel / Clear selections | FR-UI-107 | No | New |
-| Mouse gestures | FR-UI-024 (P2, S) | No | Weaker (not started) |
+| Mouse gestures | FR-UI-024 (P2, S) | 1.316.0: right-drag radial guide in parts and sketches, 4 or 8 configurable directions, opt-in | Done |
 | Heads-up view bar | FR-UI-022 | View buttons sit in the header | Weaker |
 | Fly-out mini tree while a panel is open | FR-UI-003 | No | Weaker |
 | Pushpin / OK and repeat | FR-UI-044, FR-UI-106 | No | New |
@@ -1639,13 +1639,13 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel replaces the tree; no mini tree | Partly |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
 | FR-UI-022 | Heads-up view bar in the graphics area | The view buttons sit in the header; 1.87.0 adds the Space picker | Partly |
-| FR-UI-024 | Mouse gestures (P2, S) | No | Not built |
+| FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | Only hole favourites | Not built |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | Selecting a row highlights its faces; no hover link | Partly |
 | FR-UI-080 | Preferences dialog with a Modelling page | Settings live in the Display menu; no Modelling page | Not built |
 | FR-UI-091 | Tablets: touch gestures for parameters and view (P2, S) | No touch gestures | Not built |
 | FR-HLP-003 | Tutorial document "Bracket in 10 steps" (S) | No | Not built |
-| FR-MEA-002 | Drag a measured value into a numeric input (S) | No | Not built |
+| FR-MEA-002 | Drag a measured value into a numeric input (S) | 1.319.0 | Done |
 | FR-CFG-003 | Configuration table as CSV (P5, C) | Done in 1.139.0 (Configurations panel: Export table / Import table…) | Done |
 
 **Sketcher (section 8)**
