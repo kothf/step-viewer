@@ -647,6 +647,15 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-sbar { position: fixed; z-index: 70; display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
 .mc-sbar button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); cursor: pointer; }
 .mc-sbar button:hover, .mc-sbar button:focus-visible { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); outline: none; }
+/* Mouse gestures (FR-UI-024): the radial guide around the right-button press. */
+.mc-gesture { position: fixed; z-index: 75; width: 0; height: 0; pointer-events: none; }
+.mc-gesture-c { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: var(--panel); }
+.mc-gesture-i { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 3px 8px; font-size: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.mc-gesture-i.on { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: 600; }
+#gst-dlg .gst-t { border-collapse: collapse; margin: 8px 0; }
+#gst-dlg .gst-t th, #gst-dlg .gst-t td { padding: 3px 6px; text-align: left; }
+#gst-dlg .gst-t select { max-width: 160px; }
+#gestures-btn { width: 100%; margin-top: 6px; }
 .mc-fly .mc-b { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 3px; }
 .mc-caret { width: 14px; padding: 0; border: 1px solid transparent; border-radius: 0 7px 7px 0; background: none; color: var(--muted); font-size: 10px; cursor: pointer; }
 .mc-caret:hover, .mc-caret[aria-expanded=true] { background: var(--panel-2); border-color: var(--line); color: var(--text); }
@@ -658,7 +667,7 @@ dialog table.keys td:first-child { font-family: inherit; font-size: inherit; whi
 .mc-i { display: grid; place-items: center; height: 16px; }
 .mc-l { font-size: 11px; white-space: nowrap; }
 .mc-line { display: flex; gap: 8px; align-items: center; }
-.mc-status:not(:empty), .mc-busy { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
+.mc-status:not(:empty), .mc-busy { pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 3px 9px; font-size: 12px; box-shadow: var(--shadow); }
 .mc-busy { color: var(--muted); }
 /* Confirmation corner (SolidWorks): ✓/✕ at the top right of the view, left of the nav cube, whenever a command is open. */
 .mc-confirm { position: absolute; right: 132px; top: 10px; z-index: 4; display: flex; gap: 6px; }
