@@ -1,3 +1,4 @@
+import type { NamedView } from "../model/types";
 // Assembly documents (FRS 10, P4): components that place parts by a rigid transform.
 // Every source is kept as a part document: a MöbiusCAD part as it is, a STEP/IGES/BREP
 // model as a part with one Imported feature, so the kernel evaluates them all the same way.
@@ -61,6 +62,8 @@ export interface AsmDoc {
     /** Linked (FR-ASM-003): the source file by path relative to the assembly's folder and the SHA-256 of
      * its bytes when last read; `doc`/`asm` are then the last loaded copy. Unset = embedded. */
     link?: { path: string; hash: string } }>;
+  /** Named views (FR-UI-104), kept out of the undo history. */
+  views?: NamedView[];
 }
 
 /** The kernel's answer for an assembly: one mesh per shown component, and mass properties of the solved assembly. */
