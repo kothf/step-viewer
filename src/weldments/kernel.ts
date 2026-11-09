@@ -451,6 +451,14 @@ export function trimExtend(h: WeldHost, f: TrimExtendFeature, doc: PartDoc, prev
     if (plane) {
       const away = dot(out, plane.n) > 0 ? plane.n : mul(plane.n, -1);
       body = bool(h, "cut", body, halfBox(h, sub(plane.p, mul(away, gap)), away, 4 * (s.L + reach + pl.R * 10), nm), f.id);
+    } else if (f.planar) {
+      // Planar trim: a flat end square to the member where it first meets the body.
+      const pr = new h.oc.Message_ProgressRange_1();
+      const mk = new h.oc.BRepAlgoAPI_Common_3(body.shape, bound.shape, pr);
+      const pts = mk.IsDone() && !mk.HasErrors() ? edgePoints(h, mk.Shape()) : [];
+      if (!pts.length) throw new FeatureError("E-WLD-TRIM", "The member doesn't reach the boundary body.");
+      const t = Math.min(...pts.map(q => dot(sub(q, P), out)));
+      body = bool(h, "cut", body, halfBox(h, add(P, mul(out, t - gap)), out, 4 * (s.L + reach + pl.R * 10), nm), f.id);
     } else {
       // A weld gap against a body: the boundary moved back along the member by the gap.
       const tool = gap > 0 ? shifted(h, bound, mul(out, -gap)) : bound;
