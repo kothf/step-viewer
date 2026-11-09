@@ -447,8 +447,10 @@ function sectionEdges(oc: any, shape: any, cutter: any, capEdges: any, namer: (f
 export interface MEdge { k: string; t: "l" | "c" | "o"; a: V3; b: V3; m: V3; c?: V3; ax?: V3; r?: number; sp?: number }
 /** A cylindrical face: axis point and direction, radius, extent along the axis from `o`, angle swept. */
 export interface MCyl { o: V3; ax: V3; r: number; v0: number; v1: number; sp: number; f?: string }
+/** A cone, torus or surface of revolution: its axis like a cylinder's, extent along it from `o`, angle swept (FR-DRW-023 centrelines). */
+export interface MRev { k: "cone" | "torus" | "rev"; o: V3; ax: V3; v0: number; v1: number; sp: number; f?: string }
 /** `com`: the shape's centre of mass (uniform density), for a drawing's centre of mass point; absent for sheets. */
-export interface Topo { edges: MEdge[]; cyls: MCyl[]; com?: V3 }
+export interface Topo { edges: MEdge[]; cyls: MCyl[]; revs?: MRev[]; com?: V3 }
 
 /** Edges and cylinders of a shape. `names` are the faces' persistent names in TopExp order (else f<i>). */
 export function topology(oc: any, shape: any, names?: string[]): Topo {
@@ -488,12 +490,30 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     edges.push(me);
     byIndex.push(me);
   }
-  const cyls: MCyl[] = [];
+  const cyls: MCyl[] = [], revs: MRev[] = [];
   for (let i = 1; i <= fmap.Extent(); i++) {
     const f = oc.TopoDS.Face_1(fmap.FindKey(i));
     let sa: any;
     try { sa = new oc.BRepAdaptor_Surface_2(f, true); } catch { continue; }
-    if (sa.GetType() !== oc.GeomAbs_SurfaceType.GeomAbs_Cylinder) continue;
+    const S = oc.GeomAbs_SurfaceType, st = sa.GetType();
+    if (st === S.GeomAbs_Cone || st === S.GeomAbs_Torus || st === S.GeomAbs_SurfaceOfRevolution) {
+      // Cones, tori and revolved faces carry their axis too, so a side view draws it (a taper, a countersink, a groove).
+      let o: V3, ax: V3;
+      try {
+        if (st === S.GeomAbs_SurfaceOfRevolution) { const a1 = sa.AxeOfRevolution(); o = xyz(a1.Location()); ax = unit(xyz(a1.Direction())); }
+        else { const a3 = (st === S.GeomAbs_Cone ? sa.Cone() : sa.Torus()).Position(); o = xyz(a3.Location()); ax = unit(xyz(a3.Direction())); }
+      } catch { continue; }
+      let v0 = Infinity, v1 = -Infinity;
+      for (const k of faceEdges[i - 1]) {
+        const me = byIndex[k];
+        if (!me) continue;
+        for (const p of [me.a, me.b, me.m]) { const v = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], ax); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+      }
+      const sp = Math.min(2 * Math.PI, sa.LastUParameter() - sa.FirstUParameter());
+      if (v1 > v0) revs.push({ k: st === S.GeomAbs_Cone ? "cone" : st === S.GeomAbs_Torus ? "torus" : "rev", o, ax, v0, v1, sp, f: names?.[i - 1] ?? `f${i - 1}` });
+      continue;
+    }
+    if (st !== S.GeomAbs_Cylinder) continue;
     const cy = sa.Cylinder(), ax3 = cy.Position();
     const o = xyz(ax3.Location()), ax = unit(xyz(ax3.Direction())), r = cy.Radius();
     let v0 = Infinity, v1 = -Infinity;
@@ -513,7 +533,7 @@ export function topology(oc: any, shape: any, names?: string[]): Topo {
     if (Math.abs(g.Mass()) > 1e-9) { const c = g.CentreOfMass(); com = [c.X(), c.Y(), c.Z()]; }
     g.delete();
   } catch { /* no volume */ }
-  return com ? { edges, cyls, com } : { edges, cyls };
+  return com ? { edges, cyls, revs, com } : { edges, cyls, revs };
 }
 
 // ---------- geometry compare (FR-PDM-050) ----------

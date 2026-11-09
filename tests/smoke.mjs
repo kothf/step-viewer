@@ -10299,6 +10299,39 @@ try {
     await ctx.close();
   }
 
+  // --- Drawings: centreline on a cone seen from the side (FR-DRW-023) ---
+  if (inShard(1)) {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await ctx.newPage();
+    dp.on("pageerror", e => errors.push(e.message));
+    dp.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await dp.addInitScript(() => { try { localStorage.setItem("sv:tips", "off"); } catch {} });
+    await dp.goto(`${origin}/index.html?debug`);
+    await dp.waitForFunction(() => window.__sv);
+    const P = (id, x, y) => ({ id, t: "point", x, y });
+    // A frustum Ø40 → Ø20 over 30 mm revolved about the sketch's y axis: a cone and two flat caps, no cylinder.
+    const pts = [P("p0", 0, 0), P("p1", 20, 0), P("p2", 10, 30), P("p3", 0, 30)], ids = pts.map(p => p.id);
+    const part = { schema: 1, kind: "part", id: "d_drwcone", name: "Cone", units: { length: "mm", decimals: 2 }, props: {}, rollback: null, features: [
+      { id: "s1", type: "sketch", name: "Sketch1", plane: { std: "XZ" }, rels: [], dims: [], ents: [...pts, ...ids.map((a, i) => ({ id: `l${i}`, t: "line", a, b: ids[(i + 1) % ids.length] }))] },
+      { id: "f1", type: "revolve", name: "Revolve1", sketch: "s1", op: "boss", axis: "l3", angle: { v: 2 * Math.PI } },
+    ] };
+    const manifest = { format: "mobiuscad", schema: 1, kind: "part", app: "smoke", modified: "2026-11-09T00:00:00Z", units: "mm" };
+    await dp.setInputFiles("#file-input", { name: "Cone.mcadprt", mimeType: "application/zip", buffer: zip(Object.entries({ "manifest.json": JSON.stringify(manifest), "document.json": JSON.stringify(part) })) });
+    await dp.waitForFunction(() => window.__sv.viewer.parts.length > 0, null, { timeout: 60000 });
+    await dp.click("#new-more"); await dp.click("#new-drawing");
+    await dp.waitForFunction(() => window.__sv.drw.doc()?.sheets[0].views.length === 3 && window.__sv.drw.ready(), null, { timeout: 90000 });
+    // Front view (views[0]): the cone's axis runs vertically through the view, past both ends.
+    const cl = await dp.evaluate(() => {
+      const v = window.__sv.drw.doc().sheets[0].views[0], p = window.__sv.drw.placement(v.id), U = x => (x - p.x) / p.s + p.uc, W = y => (y - p.y) / p.s + p.vc;
+      return window.__sv.drw.prims().filter(q => q.layer === "CENTER" && q.t === "l").map(q => [U(q.p[0]), W(q.p[1]), U(q.p[2]), W(q.p[3])].map(x => Math.round(x * 100) / 100))
+        .filter(q => q.every(x => Math.abs(x) < 40));
+    });
+    // The 2 mm run past each end is in sheet mm, so in model mm it depends on the view's scale.
+    const axis = cl.filter(q => Math.abs(q[0]) < 0.01 && Math.abs(q[2]) < 0.01 && Math.min(q[1], q[3]) < -0.1 && Math.max(q[1], q[3]) > 30.1);
+    check(axis.length === 1, `drawing: a cone seen from the side gets a centreline on its axis (${JSON.stringify(cl)})`);
+    await ctx.close();
+  }
+
   // --- Drawings: weld symbol ---
   if (inShard(1)) {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
