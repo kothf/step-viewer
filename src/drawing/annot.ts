@@ -3,7 +3,7 @@
 // changes they find their edges again and measure them anew (AT-P5-3). Drawn as sheet primitives
 // in mm, ISO 129 style: thin extension lines with a 1 mm gap and 2 mm overshoot, filled arrows,
 // 3.5 mm text above the dimension line, reading from the bottom or the right.
-import { viewAxes, type MEdge, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
+import { viewAxes, type MCyl, type MEdge, type Seg2, type Topo, type V3, type ViewDir } from "../kernel/drawing";
 import type { FlatBend } from "../sheetmetal/sheet";
 import { arrowHead, clipToCircle, decorPrims, toSheet, type Placement } from "./compose";
 import type { HoleInfo, ModelItem, SketchInfo, ThreadInfo } from "./items";
@@ -865,9 +865,10 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     const [cx, cy] = h.c, L = h.r + ext;
     segs.push({ k: "l", c: 0, p: [cx - L, cy, cx + L, cy] }, { k: "l", c: 0, p: [cx, cy - L, cx, cy + L] });
   });
-  // Cylinders seen from the side: one centreline per axis over all the cylinders on it.
+  // Cylinders, cones and tori seen from the side: one centreline per axis over all the faces on it. A cone or torus
+  // counts when it goes all round (a taper, a countersink, a groove); a cylinder when its pieces of one radius do.
   const axes = new Map<string, { a: P2; d: P2; t0: number; t1: number; sp: Map<string, number> }>();
-  for (const y of topo.cyls) {
+  for (const y of [...topo.cyls, ...(topo.revs ?? []).map(q => ({ ...q, r: NaN, rk: `${q.k}:${q.o.map(x => x.toFixed(4))}` }))] as (MCyl & { rk?: string })[]) {
     if (Math.abs(dot3(y.ax, n)) > 1e-6) continue;
     const a3 = (t: number): V3 => [y.o[0] + y.ax[0] * t, y.o[1] + y.ax[1] * t, y.o[2] + y.ax[2] * t];
     const p0 = P(a3(y.v0)), p1 = P(a3(y.v1));
@@ -878,7 +879,7 @@ export function centreMarks(v: DrawingView, pl: Placement, topo: Topo, P: (p: V3
     const g = axes.get(key) ?? { a: p0, d, t0: Infinity, t1: -Infinity, sp: new Map() };
     const t = (p: P2) => (p[0] - g.a[0]) * g.d[0] + (p[1] - g.a[1]) * g.d[1];
     g.t0 = Math.min(g.t0, t(p0), t(p1)); g.t1 = Math.max(g.t1, t(p0), t(p1));
-    const rk = y.r.toFixed(4);
+    const rk = y.rk ?? y.r.toFixed(4);
     g.sp.set(rk, (g.sp.get(rk) ?? 0) + y.sp);
     axes.set(key, g);
   }

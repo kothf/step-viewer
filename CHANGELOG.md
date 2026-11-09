@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.348.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Normal Cut (FR-FT-120): SolidWorks' Extruded Cut with Normal cut. A closed sketch is projected along its normal onto the sheet, and every panel and bend it lands on is cut square to the sheet there (radially through bends), so the flat pattern gets clean openings with no slanted walls. End condition Link to thickness (default), Blind or Through all, with Reverse direction.
+
+## [1.342.0] - 2026-11-09
+
+### Added
+
+- **Copy and paste features (FR-HIS-014)**: as in SolidWorks, Ctrl+C on a sketch, an extrude, a revolve or a hole in the Features tree and Ctrl+V with a flat face or a plane selected puts a copy on it (an extrude or revolve brings a copy of its sketch). Ctrl+dragging the tree row onto a face or plane does the same, and the tree's right-click menu has Copy and Paste. The paste is one undo step. References that cannot follow are listed: On edge relations become fixed points, pierce relations are removed, the sketch X axis follows the new plane, and Up to … ends go back to Blind.
+
+## [1.341.0] - 2026-11-09
+
+### Added
+- Centrelines on cones and tori in drawings (FR-DRW-023): a cone, torus or revolved face seen from the side (a taper, a countersink, a groove, an O-ring) gets a centreline on its axis, 2 mm past its ends, like cylinders; a part with no cylinder on that axis now gets one too.
+
 ## [1.340.0] - 2026-11-09
 
 ### Added
@@ -2031,7 +2048,10 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.340.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.348.0...HEAD
+[1.348.0]: https://github.com/kothf/step-viewer/compare/v1.342.0...v1.348.0
+[1.342.0]: https://github.com/kothf/step-viewer/compare/v1.341.0...v1.342.0
+[1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
 [1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
 [1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
 [1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
