@@ -666,6 +666,29 @@ test("sheet metal: corner relief at two-bend corners (FR-FT-120)", async () => {
   assert.equal(bad.statuses.find(x => x.id === "r")?.code, "E-SM-NOCORNER");
   const gone = m.evaluate(doc([...two, rel({ corners: ["x+y"] })]));
   assert.equal(gone.statuses.find(x => x.id === "r")?.code, "E-SM-CORNERGONE");
+  // A return: a flange off the front flange's right end. Its start line crosses the front bend's at (96, 4); the
+  // relief takes the base corner and the bend zones there, in the folded part and the flat pattern alike.
+  const F = (id: string, faces: [string, string], len = 30): SmFlangeFeature => ({ id, type: "smflange", name: id, edges: [{ faces }], length: { v: len }, angle: { v: Math.PI / 2 } });
+  const ret = [s, base(), F("f", ["b:p0:top", "b:p0:sl1"]), F("g", ["f:p0:top", "f:p0:s1"], 20)];
+  const rr0 = run(doc(ret));
+  const rc = reliefCorners(rr0.sheet!);
+  assert.equal(rc.length, 1);
+  assert.equal(rc[0].key, "f:b0+g:b0");
+  assert.ok(rc[0].ret);
+  close(rc[0].c0[0], 96, 1e-9); close(rc[0].c0[1], 4, 1e-9);
+  const rr = run(doc([...ret, rel()]));
+  assert.ok(inside(rr0, [97, 4.5, 1]) && !inside(rr, [97, 4.5, 1]), "the base corner by the return is cut");
+  assert.ok(inside(rr, [90, 4.5, 1]), "the rest of the base edge stays");
+  const rflat0 = run(doc([...ret, flat])).props.volume, rflat = run(doc([...ret, rel(), flat])).props.volume;
+  assert.ok(rflat0 - rflat > 1);
+  close(rflat0 - rflat, rr0.props.volume - rr.props.volume, 0.05);
+  // With a right flange too, the corner is a three-bend corner: one relief over all three bend zones.
+  const three = [...ret, F("h", ["b:p0:top", "b:p0:sl2"])];
+  const tc = reliefCorners(run(doc(three)).sheet!);
+  assert.equal(tc.length, 1);
+  assert.equal(tc[0].key, "f:b0+h:b0+g:b0");
+  assert.equal(tc[0].c, "g:b0");
+  for (const kind of ["rect", "obround", "circle"] as const) assert.ok(run(doc([...three, rel({ kind })])).props.volume < run(doc(three)).props.volume - 1, `three-bend ${kind}`);
 });
 
 test("sheet metal: gusset across a bend, left out of the flat pattern (FR-FT-120)", async () => {

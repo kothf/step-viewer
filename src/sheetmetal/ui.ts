@@ -376,13 +376,13 @@ export function smPanel(f: SheetFeature, k: PanelKit): { title: string; body: st
   }
   if (f.type === "smrelief") {
     const all = k.sheet && !k.sheet.faceted ? reliefCorners(k.sheet) : [];
-    const rows = all.map((c, i) => `<label class="chk pm-chk"><input type="checkbox" data-sm="rc:${esc(c.key)}"${!f.corners.length || f.corners.includes(c.key) ? " checked" : ""} />${esc(t("Corner {n}", { n: i + 1 }))}</label>`).join("");
+    const rows = all.map((c, i) => `<label class="chk pm-chk"><input type="checkbox" data-sm="rc:${esc(c.key)}"${!f.corners.length || f.corners.includes(c.key) ? " checked" : ""} />${esc(c.c ? t("Three-bend corner {n}", { n: i + 1 }) : t("Corner {n}", { n: i + 1 }))}</label>`).join("");
     const ratio = !f.size;
     return {
       title: t("Corner Relief"),
       body: group(t("Corners"), `<p class="pm-count" data-sm-corners>${esc(f.corners.length ? t("{n} corner|{n} corners", { n: f.corners.length }) : t("All corners ({n})", { n: all.length }))}</p>` + rows
         + (f.corners.length ? `<button class="btn small" data-sm="clear">${esc(t("Collect all corners"))}</button>` : "")
-        + help(t("Corners where two bends meet on one face. Click near a corner in the view to pick it.")))
+        + help(t("Corners where two bends meet on one face, where a bend meets its return flange, and three-bend corners with both. Click near a corner in the view to pick it.")))
         + group(t("Relief type"), sel("kind", t("Type"), [["rect", t("Rectangular")], ["obround", t("Obround")], ["circle", t("Circular")], ["tear", t("Tear")]], f.kind)
           + (f.kind === "rect" ? `<label class="chk pm-chk"><input type="checkbox" data-sm="rround"${f.round ? " checked" : ""} />${esc(t("Add fillet corners"))}</label>` + (f.round ? numField("round", t("Fillet radius"), f.round, "length") : "") : "")
           + `<label class="chk pm-chk"><input type="checkbox" data-sm="useRatio"${ratio ? " checked" : ""} />${esc(t("Use relief ratio"))}</label>`
