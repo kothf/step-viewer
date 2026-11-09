@@ -67,6 +67,8 @@ export interface TrimExtendFeature {
   kind: "face" | "body" | "mitre" | "butt1" | "butt2";
   /** Members that end short of the boundary are not lengthened. */
   noExtend?: boolean;
+  /** Weld gap: trimmed members stop this far short of the boundary (an end miter splits it between the two ends). */
+  gap?: Num;
 }
 
 /** End cap: a plate closing a member's open end face, `inset` in from its outer edges, `thickness` thick, outwards (or into the member). */

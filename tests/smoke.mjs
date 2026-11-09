@@ -8529,6 +8529,18 @@ try {
     await settle();
     const butt = await mp.evaluate(() => { const l = window.__sv.model.last(); return { bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 380) < 0.01)).map(c => [c.qty, Math.round(c.length), c.angle1 + c.angle2]).sort() }; });
     check(!butt.bad && JSON.stringify(butt.rows) === "[[1,380,0],[1,420,0]]", `weldments: Trim/Extend End butt 1 (${JSON.stringify(butt)})`);
+    // Weld gap on the same Trim/Extend: the stopping beam ends 3 mm short of the other's side.
+    await mp.evaluate(id => window.__sv.modeller.editFeature(id), trId);
+    await settle();
+    await mp.click('#mc-pm input[data-k="wGap"]');
+    await settle();
+    await mp.fill('#mc-pm input[data-num="gap"]', "3");
+    await mp.press('#mc-pm input[data-num="gap"]', "Tab");
+    await settle();
+    await mp.click("#mc-ok");
+    await settle();
+    const tg = await mp.evaluate(id => { const l = window.__sv.model.last(), f = window.__sv.model.store.doc.features.find(x => x.id === id); return { gap: f.gap?.v, bad: l.statuses.filter(s => !s.ok).map(s => s.message).join(";"), rows: (l.cutList ?? []).filter(c => c.desc === "SHS 40x40x3" && (Math.abs(c.length - 420) < 0.01 || Math.abs(c.length - 377) < 0.01)).map(c => [c.qty, Math.round(c.length)]).sort() }; }, trId);
+    check(tg.gap === 3 && !tg.bad && JSON.stringify(tg.rows) === "[[1,377],[1,420]]", `weldments: Trim/Extend weld gap (${JSON.stringify(tg)})`);
     // Trim/Extend to a reference plane chosen in the panel (no face picked): Beam A cut at x = 2200.
     await mp.evaluate(() => window.__sv.model.store.change("Plane", d => { d.features.push({ id: "xpl", type: "plane", name: "Cut plane", base: { std: "YZ" }, mode: "offset", offset: { v: 2200 } }); d.rollback = null; }));
     await settle();
