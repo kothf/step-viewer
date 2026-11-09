@@ -185,7 +185,12 @@ export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number,
  *  target on the model; `label` e.g. "A1" (lower half), `size` e.g. "Ø8" (upper half, area targets); `kind` the target marker;
  *  `d` the area diameter or line length in model mm; `tp` (view axes) the clicked point the target sits nearest to on its edge. */
 export interface DatumTargetAnnot { id: string; t: "dtarget"; view?: string; pos: [number, number]; leader?: GeoRef; tp?: [number, number]; label: string; size?: string; kind: "point" | "line" | "area"; d?: number }
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot;
+/** ISO 128 line types a sheet sketch entity can use. */
+export type SkPen = "thin" | "thick" | "center" | "hidden" | "phantom";
+/** A sketch entity on the sheet (sheet mm): `pos` = first point, `pts` = points relative to it (line: the end; rect: the
+ *  opposite corner; circle: a point on it, `pos` the centre; poly: every point, `closed` joins the last to the first). */
+export interface SketchAnnot { id: string; t: "sk"; view?: undefined; pos: [number, number]; k: "line" | "rect" | "circle" | "poly"; pts: number[]; closed?: boolean; pen?: SkPen }
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot | SketchAnnot;
 
 export interface Sheet {
   id: string;

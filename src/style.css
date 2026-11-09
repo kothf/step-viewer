@@ -984,7 +984,9 @@ dialog.wide { width: min(760px, calc(100vw - 32px)); max-width: min(760px, calc(
 .motion .mo-f { display: inline-flex; align-items: center; gap: 4px; }
 .motion .mo-f input[type=text] { width: 9em; }
 .motion .mo-f input.mo-n { width: 4.5em; }
-.motion select, .motion input[type=text] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; min-height: 24px; }
+.motion .mo-pts { align-items: flex-start; }
+.motion .mo-pts textarea { width: 12em; font: inherit; font-variant-numeric: tabular-nums; resize: vertical; }
+.motion select, .motion input[type=text], .motion textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; min-height: 24px; }
 .motion .mo-ib { width: 26px; height: 24px; font-size: 13px; color: var(--text); }
 .motion .mo-sp { flex: 1; }
 .motion .mo-time { font-family: var(--mono); min-width: 8.5em; text-align: center; }

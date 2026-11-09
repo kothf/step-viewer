@@ -5,11 +5,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.277.0] - 2026-11-09
+## [1.281.0] - 2026-11-09
 
 ### Added
 
 - **Bend table on flat pattern drawing views (FR-FT-120)**: Annotate ▾ → Bend table, click a flat pattern view and place the table. The bend lines get tags A, B, … (top to bottom, then left to right) in place of their notes, and the table lists each bend's direction, angle and inner radius, like SolidWorks' Bend Table. The table follows the model and the interface language.
+
+## [1.279.0] - 2026-11-09
+
+### Added
+
+- **Trim/Extend planar trim (FR-FT-121).** Trimming a member against another body now offers SolidWorks' **Planar trim** next to **Body trim**: the member gets a flat end square to its axis where it first meets the body, instead of an end shaped like the body. Weld gap works with it too.
+
+## [1.276.0] - 2026-11-09
+
+### Added
+
+- **Sketch on the drawing sheet**: Line, Rectangle, Circle and Polyline on the Annotation tab (and in Annotate ▾) draw on the sheet itself, as SolidWorks lets you sketch in a drawing. Clicks snap to the model's corners and circle centres in a view, and run horizontal or vertical when close to it; a polyline ends with Enter or closes on its first point. Select an entity to give it an ISO 128 line type (thin, visible, centre, hidden or phantom) or type its length, width and height, or diameter. Entities export to PDF, SVG and DXF on the layer of their line type.
+## [1.275.0] - 2026-11-09
+
+### Added
+
+- **Sketch context menu (FR-SK-045)**: a right-click without moving in a sketch opens a menu with Select chain, Construction geometry on/off, the relations that fit the selection, Merge points, Delete, Zoom to selection, Exit sketch and Discard. An item under the cursor that isn't selected becomes the selection first. While drawing, the menu cancels the shape or ends a spline; with the line tool a right-click ends the chain at once, like a double-click.
+- Zoom to selection (the view navigation key) frames the selected sketch items while sketching.
+
+## [1.274.0] - 2026-11-09
+
+### Added
+
+- Motion studies: two more motor profiles, as in SolidWorks. **Distance** turns or moves the mate by a set angle or distance between the motor's start and end, starting and stopping smoothly. **Data points** follows rows of time after the motor start and value, typed or pasted from a spreadsheet, in straight lines between them (the motor ends at the last row) (FR-FT-122).
 
 ## [1.271.0] - 2026-11-09
 
@@ -1685,8 +1709,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.277.0...HEAD
-[1.277.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.277.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.281.0...HEAD
+[1.281.0]: https://github.com/kothf/step-viewer/compare/v1.279.0...v1.281.0
+[1.279.0]: https://github.com/kothf/step-viewer/compare/v1.276.0...v1.279.0
+[1.276.0]: https://github.com/kothf/step-viewer/compare/v1.275.0...v1.276.0
+[1.275.0]: https://github.com/kothf/step-viewer/compare/v1.274.0...v1.275.0
+[1.274.0]: https://github.com/kothf/step-viewer/compare/v1.271.0...v1.274.0
 [1.271.0]: https://github.com/kothf/step-viewer/compare/v1.269.0...v1.271.0
 [1.269.0]: https://github.com/kothf/step-viewer/compare/v1.268.0...v1.269.0
 [1.268.0]: https://github.com/kothf/step-viewer/compare/v1.266.0...v1.268.0

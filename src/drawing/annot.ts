@@ -15,6 +15,7 @@ import { topoOnly, viewDir, viewOnly } from "./views";
 import { fitLimits } from "./iso286";
 import { weldPrims } from "./weld";
 import { dtargetPrims } from "./dtarget";
+import { skPrims } from "./sheetSketch";
 import { textWidth } from "./textWidth";
 
 type P2 = [number, number];
@@ -252,7 +253,7 @@ export function holeText(e: MEdge, ctx: AnnotCtx): string[] {
 
 /** `dangling`: annotations whose model edge is gone (FR-DRW-026); the workspace shows them in the warning colour. */
 /** `ring`: a revision cloud's corners (sheet mm, closed): it is picked near its outline only, so views inside stay draggable. */
-export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number]; ring?: number[]; band?: number }[]; dangling: string[] }
+export interface AnnotOut { prims: Prim[]; hits: { id: string; box: [number, number, number, number]; ring?: number[]; band?: number; open?: boolean }[]; dangling: string[] }
 
 const thin = (a: P2, b: P2): Prim => ({ t: "l", p: [a[0], a[1], b[0], b[1]], pen: "thin", layer: "ANNOT" });
 const add2 = (a: P2, b: P2, s = 1): P2 => [a[0] + b[0] * s, a[1] + b[1] * s];
@@ -725,10 +726,11 @@ export function cloudPrims(a: CloudAnnot): { prims: Prim[]; box: [number, number
 }
 
 /** Distance from p to the closed polygon `ring` (x, y pairs). */
-export function ringDist(ring: number[], x: number, y: number): number {
+export function ringDist(ring: number[], x: number, y: number, open = false): number {
   let d = Infinity;
   const n = Math.floor(ring.length / 2);
-  for (let i = 0; i < n; i++) {
+  if (n === 1) return Math.hypot(x - ring[0], y - ring[1]);
+  for (let i = 0; i < (open ? n - 1 : n); i++) {
     const ax = ring[2 * i], ay = ring[2 * i + 1], bx = ring[(2 * i + 2) % (2 * n)], by = ring[(2 * i + 3) % (2 * n)];
     const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
     d = Math.min(d, Math.hypot(x - ax - t * dx, y - ay - t * dy));
@@ -744,6 +746,12 @@ export function sheetNotes(sheet: Sheet, label: Label = s => s, dec = ".", bom?:
       const r = cloudPrims(a);
       out.prims.push(...r.prims);
       out.hits.push({ id: a.id, box: r.box, ring: a.pts.map((c, i) => c + a.pos[i % 2]), band: Math.max(1, a.arc ?? 6) });
+      continue;
+    }
+    if (a.t === "sk") {
+      const r = skPrims(a);
+      out.prims.push(...r.prims);
+      out.hits.push({ id: a.id, box: r.box, ring: r.ring, band: 2, open: r.open });
       continue;
     }
     const r = a.t === "weld" ? weldPrims(a, a.pos, null) : a.t === "dtarget" ? dtargetPrims(a, a.pos, null) : a.t === "note" ? notePrims(a, a.pos, null) : a.t === "gtol" ? gtolPrims(a, a.pos, null, dec)

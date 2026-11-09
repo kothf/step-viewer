@@ -1698,7 +1698,14 @@ export class ModelController {
       if (this.arrowDrag) { e.stopPropagation(); this.endArrowDrag(); return; }
       if (!onCanvas(e)) return;
       const m = this.mode;
-      if (m.kind === "sketch") { if (m.editor.pointerUp(e)) e.stopPropagation(); return; }
+      if (m.kind === "sketch") {
+        const d0 = this.down;
+        this.down = null;
+        // Right-click without a drag: the sketch menu (FR-SK-045). Not stopped: the view controls must see the button go up.
+        if (e.button === 2 && d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) <= 4) { this.sketchMenu(e); return; }
+        if (m.editor.pointerUp(e)) e.stopPropagation();
+        return;
+      }
       const d = this.down;
       this.down = null;
       // Not stopped either: the view controls must see the right button go up.
@@ -1754,7 +1761,7 @@ export class ModelController {
     vp.addEventListener("contextmenu", e => {
       // The edge helpers open on the button going up without a drag (a right-drag pans).
       const m = this.mode;
-      if (onCanvas(e) && m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")) e.preventDefault();
+      if (onCanvas(e) && (m.kind === "sketch" || (m.kind === "feature" && (m.draft.type === "fillet" || m.draft.type === "chamfer")))) e.preventDefault();
     }, true);
     vp.addEventListener("dblclick", e => {
       const m = this.mode;
@@ -2154,6 +2161,20 @@ export class ModelController {
   private okItems(): ([string, () => void, string?] | null)[] {
     return [[t("OK"), () => this.ok(), "✓"], [t("Cancel"), () => void this.cancel(), "✕"], null];
   }
+
+  /** The sketch right-click menu (FR-SK-045): the editor's rows, then Exit sketch and Discard. */
+  private sketchMenu(e: MouseEvent) {
+    const m = this.mode;
+    if (m.kind !== "sketch" || m.editor.pattern) return;
+    const rows = m.editor.contextMenu(e);
+    if (!rows) return;
+    if (rows.length && rows.at(-1) !== null) rows.push(null);
+    rows.push([t("Exit sketch"), () => this.ok(), "✓"], [t("Discard"), () => void this.cancel(), "✕"]);
+    this.showMenu(rows, e.clientX, e.clientY, () => this.host.viewer.renderer.domElement.focus());
+  }
+
+  /** World box of the selected sketch items while sketching (Zoom to selection), else null. */
+  sketchSelectionBox() { return this.mode.kind === "sketch" ? this.mode.editor.selectionBox() : null; }
 
   /** Right-click without a drag while a feature or plane pick runs: OK and Cancel. */
   private commandMenu(e: MouseEvent) {
