@@ -786,13 +786,15 @@ export function gusset(h: WeldHost, f: GussetFeature, prev: Named | null, frames
   const leg = (n: V3, other: V3) => { let d = unit(cross(L, n)); if (dot(d, other) < 0) d = mul(d, -1); return d; };
   const u1 = leg(a.n, b.n), u2 = leg(b.n, a.n);
   const d1 = f.d1.v, d2 = f.d2.v, c = Math.min(f.chamfer?.v ?? 0, Math.min(d1, d2) * 0.9);
+  // An unequal chamfer: `chamfer` along face 1, `chamfer2` along face 2.
+  const c2 = c > 1e-9 && f.chamfer2 ? Math.min(f.chamfer2.v, d2 * 0.9) : c;
   const at = (x: number, y: number) => add(add(P, mul(u1, x)), mul(u2, y));
   const pts: V3[] = c > 1e-9 ? [at(c, 0)] : [at(0, 0)];
   if (f.shape === "poly" && f.d3 && f.d3.v > 1e-9) {
-    const d3v = Math.min(f.d3.v, Math.min(d1, d2) * 0.9);
-    pts.push(at(d1, 0), at(d1, d3v), at(d3v, d2), at(0, d2));
+    const { d3, d4 } = gussetEnds(f);
+    pts.push(at(d1, 0), at(d1, d3), at(d4, d2), at(0, d2));
   } else pts.push(at(d1, 0), at(0, d2));
-  if (c > 1e-9) pts.push(at(0, c));
+  if (c > 1e-9) pts.push(at(0, c2));
   const shifted = pts.map(p => sub(p, mul(L, th / 2)));
   const mk = new oc.BRepBuilderAPI_MakePolygon_1();
   for (const p of shifted) mk.Add_1(new oc.gp_Pnt_3(p[0], p[1], p[2]));
@@ -1031,6 +1033,23 @@ function arcLength(h: WeldHost, part: Named, s: PathSeg): number {
   };
   const ts = edgePoints(h, part.shape).map(along);
   return Math.max(...ts) - Math.min(...ts);
+}
+
+/**
+ * A polygonal gusset's end flats: `d3` up face 2's direction at the end of leg 1 and `d4` along face 1's direction at the
+ * end of leg 2. `d4` is the feature's own, or follows the profile angle (the sloping edge's angle from face 1), else = d3.
+ */
+export function gussetEnds(f: GussetFeature): { d3: number; d4: number } {
+  const d1 = f.d1.v, d2 = f.d2.v;
+  const own = f.d4 || f.polyAngle;
+  const d3 = Math.min(f.d3?.v ?? 0, (own ? d2 : Math.min(d1, d2)) * 0.9);
+  if (f.polyAngle) {
+    const a = f.polyAngle.v;
+    const d4 = a > 1e-6 && a < Math.PI - 1e-6 ? d1 - (d2 - d3) / Math.tan(a) : -1;
+    if (!(d4 > 1e-6) || d4 > d1 * 2) throw new FeatureError("E-WLD-GUSSETANG", "The profile angle doesn't fit this gusset: make it steeper, or the leg along face 1 longer.");
+    return { d3, d4 };
+  }
+  return { d3, d4: f.d4 ? Math.min(f.d4.v, d1 * 0.9) : d3 };
 }
 
 /** The weldment cut list (FR-FT-121): members by profile, length and end angles; plates by size; weld beads by size. */

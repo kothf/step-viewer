@@ -1634,11 +1634,11 @@ Every requirement of phases P1–P5 was compared with the code: the feature sche
 
 | ID | Requirement | 1.87.0 | Class |
 | --- | --- | --- | --- |
-| FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); 1.374.0: a tab comes back with its camera, and a part with its selected row | Done |
+| FR-DOC-003 | Several documents open at once in tabs | 1.129.0: document tabs; parked documents keep their undo history; one kernel is live (the shown document is rebuilt on activation); 1.375.0: a tab comes back with its camera, and a part with its selected row | Done |
 | FR-HIS-022 | **What's wrong** list of all errors and warnings, each linking to its feature | 1.107.0: What's wrong list above the tree; a click selects, a double click edits | Done |
 | FR-UI-002 / FR-UI-003 | Left panel tabs, and a fly-out mini tree while a panel is open | The feature panel fills the Features tab and the tree flies out over the view (1.335.0) | Done |
 | FR-UI-014 | Command search (Ctrl+K) | Done in 1.121.0 | Done |
-| FR-UI-022 | Heads-up view bar in the graphics area | 1.371.0: top-centre bar with Zoom to area, Previous view, standard views, projection and display style for parts and assemblies; 1.374.0: Section view toggle and Display ▾ in the bar | Done |
+| FR-UI-022 | Heads-up view bar in the graphics area | 1.371.0: top-centre bar with Zoom to area, Previous view, standard views, projection and display style for parts and assemblies; 1.375.0: Section view toggle and Display ▾ in the bar | Done |
 | FR-UI-024 | Mouse gestures (P2, S) | 1.316.0 | Done |
 | FR-UI-043 | Panels remember the last options per feature type | 1.107.0: `rememberOptions`/`recallOptions` per command | Done |
 | FR-UI-061 | Hovering a tree row highlights the feature, and the other way round | 1.324.0 | Done |
