@@ -14,7 +14,7 @@
 // `…:<edge>` says which panel edge it is without looking at geometry.
 import type { Frame, PartDoc, SketchFeature, V2, V3 } from "../model/types";
 import { inPolygon, loopPolygon, polyArea, sketchCurves, sketchPath, sketchProfile, type Seg } from "../sketch/profile";
-import type { ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
+import type { SmGussetFeature, ReliefKind, SmReliefFeature, FormTool, SmFormFeature, SmUnfoldFeature, BendCalc, BendPosition, SmCrossFeature, SmLoftFeature, SmBaseFeature, SmClosedFeature, SmCornerFeature, SmFlangeFeature, SmHemFeature, SmJogFeature, SmMiterFeature, SmSketchBendFeature, SmTabFeature } from "./types";
 import { isSheetBase } from "./types";
 
 export class SheetError extends Error {
@@ -72,12 +72,17 @@ export interface SheetState {
   crosses?: CrossLine[];
   /** Forming tools pressed into panels: footprints in flat coordinates (left out of the flat pattern). */
   forms?: FormMark[];
+  /** Sheet metal gussets: the groove each one presses into the sheet, left out of the flat pattern. */
+  gussets?: GussetMark[];
   /** Unfold (FR-FT-120): bends flattened, with `fixed`'s panel held at `anchor`. Panels and bends keep their folded M. */
   unfold?: { fixed: string; anchor: Mat; bends: string[] };
 }
 
 /** Where a forming tool sits on the flat pattern: its footprint loop and, for an extruded hole, the pre-pierce hole radius. */
 export interface FormMark { pid: string; fid: string; tool: FormTool; c: V2; loop: Seg[]; /** The footprint drawn on the flat pattern. */ mark: Seg[]; pierce?: number }
+
+/** A gusset's rib and groove in folded coordinates: triangles at the near end, swept along `e` by `w` / `wg`. */
+export interface GussetMark { fid: string; bend: string; rib: V3[]; e: V3; w: number; groove: V3[]; wg: number }
 
 /** One line of a cross break: raised towards the panel's top face when `up`. */
 export interface CrossLine { pid: string; a: V2; b: V2; side: "top" | "bot"; up: boolean; angle: number; r: number }
@@ -1637,6 +1642,7 @@ export function bendOfFace(st: SheetState, name: string): Bend | undefined {
 export function unfoldSheet(st: SheetState, f: SmUnfoldFeature): { state: SheetState; from: SheetPlace; to: SheetPlace } {
   if (st.faceted) throw new SheetError("E-SM-UNFOLDLOFT", "A lofted bend can't be unfolded; use the Flat-Pattern.");
   if (!st.bends.length) throw new SheetError("E-SM-NOBENDS", "The sheet has no bends to unfold.");
+  if (st.gussets?.length) throw new SheetError("E-SM-UNFOLDGUSSET", "Bends with gussets can't be unfolded; use the Flat-Pattern.");
   const from = sheetPlace(st);
   const ids = new Set(st.bends.map(b => b.id));
   for (const b of f.bends) if (!ids.has(b)) throw new SheetError("E-SM-UNFOLDBEND", "A picked bend no longer exists.");
@@ -1725,4 +1731,64 @@ export function cornerRelief(st: SheetState, f: SmReliefFeature): { corners: Rel
   const w = f.size ? f.size.v : (f.ratio ?? 0.5) * st.T;
   if (!(w >= 0) || (f.kind === "tear" && !(w > 1e-6))) throw new SheetError("E-SM-RELIEFSIZE", "The relief size must be more than 0.");
   return { corners, loops: corners.map(c => reliefLoop(c, f.kind, w)) };
+}
+
+const rot3 = (v: V3, k: V3, a: number): V3 => {
+  // Rodrigues: v turned by a about the unit axis k.
+  const c = Math.cos(a), sn = Math.sin(a), kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2], x = cross(k, v);
+  return [v[0] * c + x[0] * sn + k[0] * kv * (1 - c), v[1] * c + x[1] * sn + k[1] * kv * (1 - c), v[2] * c + x[2] * sn + k[2] * kv * (1 - c)];
+};
+
+/**
+ * Sheet metal gusset (FR-FT-120): the rib inside the bend and the groove outside, in folded coordinates. Seen along
+ * the bend, the inside faces meet at the virtual sharp V; the rib is the triangle V, V + d·(along A), V + d·(along B),
+ * and the groove is bounded by the outside faces and the rib's chord moved T towards V, T narrower each side.
+ */
+export function gussetGeom(st: SheetState, f: SmGussetFeature): GussetMark {
+  const b = st.bends.find(x => x.id === f.bend);
+  if (!b) throw new SheetError("E-SM-GUSSETBEND", "Pick a bend for the gusset.");
+  const T = st.T, th = b.angle;
+  if (!(th > 0.05 && th < Math.PI - 0.05)) throw new SheetError("E-SM-GUSSETANGLE", "A gusset needs a bend between 3° and 177°.");
+  const l = d2(b.a0, b.a1), e: V2 = [(b.a1[0] - b.a0[0]) / l, (b.a1[1] - b.a0[1]) / l], o: V2 = [e[1], -e[0]];
+  const d = f.depth.v, w = f.width.v, at = f.at ? f.at.v : l / 2;
+  if (!(w > 2 * T + 1e-6)) throw new SheetError("E-SM-GUSSETWIDTH", "The gusset must be wider than twice the thickness.");
+  if (!(at - w / 2 >= -1e-9 && at + w / 2 <= l + 1e-9)) throw new SheetError("E-SM-GUSSETPOS", "The gusset must lie within the bend's length.");
+  const e3 = applyDir(b.M, [e[0], e[1], 0]), o3 = applyDir(b.M, [o[0], o[1], 0]);
+  const ua = applyDir(b.M, b.up ? [-e[0], -e[1], 0] : [e[0], e[1], 0]);
+  // Where the bend leaves panel A on its inside face, at the near end of the rib.
+  const p0 = p2(b.a0, s2(e, at - w / 2));
+  const S0 = apply(b.M, [p0[0], p0[1], b.up ? T : 0]);
+  const tb = rot3(o3, ua, th);
+  const set = b.r * Math.tan(th / 2);
+  const V: V3 = [S0[0] + o3[0] * set, S0[1] + o3[1] * set, S0[2] + o3[2] * set];
+  if (!(d > set + 1e-6)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
+  // 2D frame at V: X along face A away from the bend, Y so face B runs at φ = π − θ.
+  const X: V3 = [-o3[0], -o3[1], -o3[2]], phi = Math.PI - th;
+  const sp = Math.sin(phi), cp = Math.cos(phi);
+  const Y: V3 = [(tb[0] - cp * X[0]) / sp, (tb[1] - cp * X[1]) / sp, (tb[2] - cp * X[2]) / sp];
+  const to3 = (q: V2, shift = 0): V3 => [V[0] + q[0] * X[0] + q[1] * Y[0] + e3[0] * shift, V[1] + q[0] * X[1] + q[1] * Y[1] + e3[1] * shift, V[2] + q[0] * X[2] + q[1] * Y[2] + e3[2] * shift];
+  const dA: V2 = [1, 0], dB: V2 = [cp, sp];
+  const PA = s2(dA, d), PB = s2(dB, d);
+  // Chord normal towards V, and the lines bounding the groove.
+  let nc: V2 = [PB[1] - PA[1], -(PB[0] - PA[0])];
+  const ln = Math.hypot(...nc); nc = s2(nc, 1 / ln);
+  if (nc[0] * -PA[0] + nc[1] * -PA[1] < 0) nc = s2(nc, -1);
+  const k = nc[0] * PA[0] + nc[1] * PA[1] + T;
+  const nA: V2 = [0, 1], nB: V2 = [sp, -cp];
+  const meet = (n1: V2, c1: number, n2: V2, c2: number): V2 => {
+    const det = n1[0] * n2[1] - n1[1] * n2[0];
+    return [(c1 * n2[1] - c2 * n1[1]) / det, (n1[0] * c2 - n2[0] * c1) / det];
+  };
+  const G0 = meet(nA, -T, nB, -T), G1 = meet(nA, -T, nc, k), G2 = meet(nB, -T, nc, k);
+  // The rib's top wall must clear the bend: its chord at least r + T from the bend's axis.
+  const cdist = nc[0] * set + nc[1] * b.r - (k - T);
+  if (!(cdist >= b.r + T - 1e-9) || !(nc[0] * G0[0] + nc[1] * G0[1] > k + T * 1e-3)) throw new SheetError("E-SM-GUSSETDEPTH", "The gusset profile must reach past the bend onto both faces.");
+  return { fid: f.id, bend: b.id, rib: [[0, 0], PA, PB].map(q => to3(q as V2)), e: e3, w, groove: [G0, G1, G2].map(q => to3(q, T)), wg: w - 2 * T };
+}
+
+/** Adds a gusset to the sheet state. */
+export function gussetSheet(st: SheetState, f: SmGussetFeature): { state: SheetState; mark: GussetMark } {
+  if (st.faceted) throw new SheetError("E-SM-GUSSETLOFT", "A lofted bend's folds take no gussets.");
+  const mark = gussetGeom(st, f);
+  return { state: { ...st, gussets: [...(st.gussets ?? []), mark] }, mark };
 }

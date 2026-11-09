@@ -90,14 +90,19 @@ export function residuals(m: Mate, ga: Geo, gb: Geo, L: number, tfa?: Tf, tfb?: 
       break;
     case "distance": {
       const v = m.value ?? 0;
-      if (ga.k === "plane" && gb.k === "plane") { parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
+      // Between planes the alignment counts, as in a coincident mate, so Aligned / Anti-aligned picks the side b faces (exam #64).
+      if (ga.k === "plane" && gb.k === "plane") { if (m.align) dirs(sub(da, scale(db0, s))); else parallel(); out.push(dot(da, sub(gb.p, ga.p)) - sg * v); }
       else if (ga.k === "axis" && gb.k === "axis") { parallel(); out.push(axisOff(ga, gb.p) - v); }
       else { const pl = ga.k === "plane" ? ga : gb as Geo & { k: "plane" }, ax = (ga.k === "axis" ? ga : gb) as Geo & { k: "axis" }; out.push(dot(pl.n, ax.d) * L, dot(pl.n, sub(ax.p, pl.p)) - sg * v); }
       break;
     }
     case "angle": {
       const b = scale(db0, sg);
-      out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
+      // Signed about the direction kept from when the mate was made (in a's frame), so ±θ differ (exam #72).
+      if (m.about && tfa) {
+        const ax = applyDir(tfa, m.about), c = cross(da, b);
+        out.push(wrap(Math.atan2(dot(c, ax), dot(da, b)) - (m.value ?? 0)) * L);
+      } else out.push((Math.atan2(len(cross(da, b)), dot(da, b)) - (m.value ?? 0)) * L);
       break;
     }
     case "tangent":
@@ -191,6 +196,8 @@ export interface SolveInput {
   start?: Record<string, Tf>;
   /** Assembly size (mm), to weigh directions against lengths. */
   size?: number;
+  /** false skips the degrees of freedom (motion frames, drags): `dof` and `free` are left as if nothing were mated. */
+  dof?: boolean;
 }
 
 /** Solves the mates; on failure no transform changes. */
@@ -255,16 +262,39 @@ export function solve(inp: SolveInput): SolveResult {
   };
   const tol = 1e-7 * L;
   const norm = (r: number[]) => Math.sqrt(r.reduce((s, v) => s + v * v, 0));
+  // The mates each unknown component takes part in: a column of the Jacobian only needs those (exam #62).
+  const usedBy = new Map<string, number[]>(vars.map(id => [id, []]));
+  live.forEach((l, k) => { for (const c of new Set([l.ca, l.cb, l.cc, l.cd])) if (c) usedBy.get(c)?.push(k); });
+  /** One component's transform moved by h along unknown j (0..5) of it. */
+  const nudged = (id: string, j: number, h: number): Tf => {
+    const x = [0, 0, 0, 0, 0, 0];
+    x[j] = h;
+    if (j < 3) return compose(translation([x[0], x[1], x[2]]), tfs[id]);
+    const w: V3 = [x[3] / L, x[4] / L, x[5] / L], a = len(w);
+    return compose(rotation(centreOf(id), scale(w, 1 / a), a), tfs[id]);
+  };
   const jac = (r0: number[]) => {
     const h = 1e-6 * L;
     const J: number[][] = r0.map(() => new Array(n).fill(0));
-    for (let j = 0; j < n; j++) {
-      const x = new Array(n).fill(0);
-      x[j] = h;
-      const r1 = R(moved(x, tfs));
-      x[j] = -h;
-      const r2 = R(moved(x, tfs));
-      for (let i = 0; i < r0.length; i++) J[i][j] = (r1[i] - r2[i]) / (2 * h);
+    // Row offsets of each mate's residuals; a mate whose count changes with the step falls back to a full evaluation.
+    const at: number[] = [];
+    let o = 0;
+    for (const l of live) { at.push(o); o += resOf(l, tfs).length; }
+    const full = o !== r0.length;
+    for (const id of vars) {
+      const c0 = col.get(id)!;
+      for (let j = 0; j < 6; j++) {
+        const tp = { ...tfs, [id]: nudged(id, j, h) }, tm = { ...tfs, [id]: nudged(id, j, -h) };
+        if (full) {
+          const r1 = R(tp), r2 = R(tm);
+          for (let i = 0; i < r0.length; i++) J[i][c0 + j] = (r1[i] - r2[i]) / (2 * h);
+          continue;
+        }
+        for (const k of usedBy.get(id)!) {
+          const r1 = resOf(live[k], tp), r2 = resOf(live[k], tm);
+          for (let i = 0; i < r1.length && i < r2.length; i++) J[at[k] + i][c0 + j] = (r1[i] - r2[i]) / (2 * h);
+        }
+      }
     }
     return J;
   };
@@ -274,17 +304,8 @@ export function solve(inp: SolveInput): SolveResult {
   let kicks = 0;
   for (let it = 0; it < 80 && !ok && n; it++) {
     const J = jac(r);
-    // Minimum-norm damped step: dx = -Jᵀ (J Jᵀ + μI)⁻¹ r.
-    const m = r.length;
-    const A: number[][] = Array.from({ length: m }, (_, i) => Array.from({ length: m }, (_, k) => { let s = 0; for (let j = 0; j < n; j++) s += J[i][j] * J[k][j]; return s; }));
-    let mx = 0;
-    for (let i = 0; i < m; i++) mx = Math.max(mx, A[i][i]);
-    const mu = 1e-10 * mx + 1e-14;
-    for (let i = 0; i < m; i++) A[i][i] += mu;
-    const y = solveLinear(A, r.map(v => -v));
-    if (!y) break;
-    const dx = new Array(n).fill(0);
-    for (let j = 0; j < n; j++) for (let i = 0; i < m; i++) dx[j] += J[i][j] * y[i];
+    const dx = dampedStep(J, r, n);
+    if (!dx) break;
     const f0 = norm(r);
     let step = 1, next = r, tn = tfs;
     for (let ls = 0; ls < 12; ls++) {
@@ -317,7 +338,7 @@ export function solve(inp: SolveInput): SolveResult {
   for (const c of comps) dof[c.id] = c.fixed ? 0 : 6;
   const loose = 6 * comps.filter(c => !c.fixed && !col.has(c.id)).length;
   let free = n + loose;
-  if (ok && n) {
+  if (ok && n && inp.dof !== false) {
     // A limit takes no freedom away, even when it sits at its end.
     for (const l of live) if (l.m.type === "limitdist" || l.m.type === "limitangle") l.m = { ...l.m, min: -Infinity, max: Infinity };
     const J = jac(R(tfs));
@@ -356,28 +377,74 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
   return x;
 }
 
-/** Basis of the null space of J (rows m × n) from the eigenvectors of JᵀJ (Jacobi), as vectors of length n. */
-function nullSpace(J: number[][], n: number): number[][] {
-  const A: number[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, k) => J.reduce((s, row) => s + row[i] * row[k], 0)));
-  const V: number[][] = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, k) => (i === k ? 1 : 0)));
-  for (let sweep = 0; sweep < 60; sweep++) {
-    let off = 0;
-    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) off += A[p][q] * A[p][q];
-    if (off < 1e-30) break;
-    for (let p = 0; p < n; p++) for (let q = p + 1; q < n; q++) {
-      if (Math.abs(A[p][q]) < 1e-300) continue;
-      const th = (A[q][q] - A[p][p]) / (2 * A[p][q]);
-      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
-      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
-      for (let k = 0; k < n; k++) { const akp = A[k][p], akq = A[k][q]; A[k][p] = c * akp - s * akq; A[k][q] = s * akp + c * akq; }
-      for (let k = 0; k < n; k++) { const apk = A[p][k], aqk = A[q][k]; A[p][k] = c * apk - s * aqk; A[q][k] = s * apk + c * aqk; }
-      for (let k = 0; k < n; k++) { const vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; }
+/**
+ * Minimum-norm damped Gauss-Newton step dx = -Jᵀ (J Jᵀ + μI)⁻¹ r, or the same step as -(JᵀJ + μI)⁻¹ Jᵀ r when there
+ * are fewer unknowns than residuals (the smaller system; a big linkage has hundreds of each, exam #62).
+ */
+function dampedStep(J: number[][], r: number[], n: number): number[] | null {
+  const m = r.length;
+  // Nonzero columns per row: a mate touches at most four components.
+  const nz = J.map(row => { const c: number[] = []; for (let j = 0; j < n; j++) if (row[j] !== 0) c.push(j); return c; });
+  if (m <= n) {
+    const A: number[][] = Array.from({ length: m }, () => new Array(m).fill(0));
+    const rowsOf: number[][] = Array.from({ length: n }, () => []);
+    nz.forEach((cs, i) => { for (const j of cs) rowsOf[j].push(i); });
+    for (let j = 0; j < n; j++) {
+      const rs = rowsOf[j];
+      for (const i of rs) for (const k of rs) A[i][k] += J[i][j] * J[k][j];
     }
+    let mx = 0;
+    for (let i = 0; i < m; i++) mx = Math.max(mx, A[i][i]);
+    const mu = 1e-10 * mx + 1e-14;
+    for (let i = 0; i < m; i++) A[i][i] += mu;
+    const y = solveLinear(A, r.map(v => -v));
+    if (!y) return null;
+    const dx = new Array(n).fill(0);
+    nz.forEach((cs, i) => { for (const j of cs) dx[j] += J[i][j] * y[i]; });
+    return dx;
   }
-  const ev = A.map((row, i) => row[i]);
-  const mx = Math.max(1e-30, ...ev.map(Math.abs));
+  const A: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  const b = new Array(n).fill(0);
+  nz.forEach((cs, i) => {
+    const row = J[i];
+    for (const j of cs) { b[j] -= row[j] * r[i]; for (const k of cs) A[j][k] += row[j] * row[k]; }
+  });
+  let mx = 0;
+  for (let j = 0; j < n; j++) mx = Math.max(mx, A[j][j]);
+  const mu = 1e-10 * mx + 1e-14;
+  for (let j = 0; j < n; j++) A[j][j] += mu;
+  return solveLinear(A, b);
+}
+
+/**
+ * Basis of the null space of J (rows m × n), as vectors of length n: an orthonormal basis of the row space by
+ * Gram-Schmidt (twice, for accuracy), then the unit vectors' parts outside it. O(m·n·rank), where the old Jacobi
+ * eigen-solve of JᵀJ was O(n³) per sweep and took most of a motion frame for a big linkage (exam #62).
+ */
+function nullSpace(J: number[][], n: number): number[][] {
+  const dot = (a: number[], b: number[]) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const off = (v: number[], basis: number[][]) => {
+    for (let pass = 0; pass < 2; pass++) for (const q of basis) { const d = dot(v, q); if (d) for (let i = 0; i < v.length; i++) v[i] -= d * q[i]; }
+  };
+  const big = Math.max(1e-30, ...J.map(row => Math.sqrt(dot(row, row))));
+  const rows: number[][] = [];
+  // Longest rows first, so a nearly dependent row is the one judged against the others.
+  for (const row of [...J].sort((a, b) => dot(b, b) - dot(a, a))) {
+    const v = row.slice(), l0 = Math.sqrt(dot(v, v));
+    if (l0 < 1e-9 * big) continue;
+    off(v, rows);
+    const l = Math.sqrt(dot(v, v));
+    if (l > 3e-5 * big) rows.push(v.map(x => x / l));
+  }
   const out: number[][] = [];
-  for (let k = 0; k < n; k++) if (Math.abs(ev[k]) < 1e-9 * mx) out.push(V.map(row => row[k]));
+  for (let k = 0; k < n && rows.length + out.length < n; k++) {
+    const v = new Array(n).fill(0);
+    v[k] = 1;
+    off(v, rows);
+    off(v, out);
+    const l = Math.sqrt(dot(v, v));
+    if (l > 1e-6) out.push(v.map(x => x / l));
+  }
   return out;
 }
 
@@ -388,7 +455,8 @@ function rank(vs: number[][]): number {
     const v = v0.slice();
     for (const b of basis) { const d = v.reduce((s, x, i) => s + x * b[i], 0); for (let i = 0; i < v.length; i++) v[i] -= d * b[i]; }
     const l = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-    if (l > 1e-6) basis.push(v.map(x => x / l));
+    // Null vectors are unit length over every unknown: a block below 1e-4 is round-off, not a freedom (exam #71).
+    if (l > 1e-4) basis.push(v.map(x => x / l));
   }
   return Math.min(6, basis.length);
 }

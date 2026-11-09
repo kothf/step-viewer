@@ -10,6 +10,62 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - Centrelines on cones and tori in drawings (FR-DRW-023): a cone, torus or revolved face seen from the side (a taper, a countersink, a groove, an O-ring) gets a centreline on its axis, 2 mm past its ends, like cylinders; a part with no cylinder on that axis now gets one too.
 
+## [1.340.0] - 2026-11-09
+
+### Added
+
+- Sheet Metal → Sheet Metal Gusset (FR-FT-120): a stiffening rib pressed across a bend, as SolidWorks' Sheet Metal Gusset (flat type). Click the bend to place it, centred or at a distance from the bend's end; the profile length runs along each face from the inside virtual sharp, and the width is the rib's outside width. The rib keeps the sheet's thickness, with the matching groove outside, and the flat pattern leaves it out. Bends with gussets can't be unfolded.
+
+## [1.339.0] - 2026-11-09
+
+### Added
+
+- Angle mates are signed: a new angle mate turns about the direction its two faces make when it is made, so +30° and −30° are different positions and a negative angle can be typed.
+- Assembly Undo and Redo tips name the step ("Undo: Move pin<1>", "Undo: Add Coincident2").
+- The Delete key deletes the mate, component, pattern, exploded view or feature selected in the assembly tree.
+
+### Changed
+
+- Mate: when a new mate cannot be solved from where the parts stand, the solver tries again with the component turned about its own axes (90°, 180°, 270°), so a mate made half a turn away no longer reads as over-defined. When it still fails, the message says the parts may be too far apart; adding a mate takes down that error.
+- Distance mate between flat faces: Aligned / Anti-aligned now picks the side the second face faces, and a negative distance flips the dimension.
+- Move component: Enter applies a box and goes on to the next one; on the last box it closes the panel.
+- Inserted components go into the view, right of its middle, instead of in a line beside the model; they are numbered by their file name, so the first insert of a file is <1>.
+- Save as names the part after its file, so the title, the document tab (without the unsaved mark) and Insert component's list of open documents show that name.
+
+### Fixed
+
+- Save snapshots: a snapshot cut short by closing the page (an empty file) is no longer listed, so Restore no longer fails on it.
+- Tree context menus near the bottom of the window open upwards and stay inside it.
+- Components fixed or locked inside a closed linkage no longer show 1 DOF from round-off.
+- Undo after Move edits shows the restored pose in the Move panel (typed angles of the undone pose are dropped).
+
+## [1.338.0] - 2026-11-09
+
+### Added
+
+- Motion studies: **Key all** adds a key at the playhead to every track that is on, each holding what it shows there, as SolidWorks Place key does, and selects them together so they move as one. Right-clicking the ruler or an empty part of a track offers it at that time (FR-FT-122).
+
+### Fixed
+
+- Motion studies: a key added in the middle of a colour blend on an appearance track keeps the colour shown there instead of dropping it.
+
+## [1.337.0] - 2026-11-09
+
+### Changed
+
+- Assemblies: the mate solver is much faster on big linkages. Each Jacobian column only re-evaluates the mates of the component it moves, the damped step solves the smaller of its two equivalent systems, and the degrees of freedom come from a Gram-Schmidt null space in place of a Jacobi eigen-solve. Motion study frames and constrained drags skip the degrees of freedom altogether. A 50-link hinge chain now solves in about 0.5 s instead of 8 s (exam bug 62: about 57 s per motion frame with the steam engine's link motion).
+
+## [1.336.0] - 2026-11-09
+
+### Added
+
+- **Structural member alignment (FR-FT-121)**: Structural Member gets SolidWorks' Alignment. Pick a straight sketch line (any 2D or 3D sketch line, construction lines too) and choose whether the profile's vertical or horizontal axis points along it: every segment turns its profile that way, square to the segment, and the rotation angle turns it on from there. Members of a 3D sketch can now all face one way instead of following world Z.
+## [1.335.0] - 2026-11-09
+
+### Added
+
+- **Fly-out feature tree (FR-UI-003)**: while a feature, sketch or plane command is open its panel fills the Features tab (as SolidWorks' PropertyManager replaces the FeatureManager), and the feature tree flies out at the top left of the view, so planes, sketches and features can still be picked from it. As in SolidWorks it shows folded to the part name: click the name to open it (remembered). It is see-through until the pointer is over it, and has no suppress or delete buttons, so a click in the view can't remove a feature. Starting a command brings the Features tab forward. On phones the tree stays under the panel.
+
 ## [1.334.0] - 2026-11-09
 
 ### Added
@@ -1982,6 +2038,12 @@ Found while modelling the Leuenberger steam engine through the UI only:
 
 [Unreleased]: https://github.com/kothf/step-viewer/compare/v1.341.0...HEAD
 [1.341.0]: https://github.com/kothf/step-viewer/compare/v1.340.0...v1.341.0
+[1.340.0]: https://github.com/kothf/step-viewer/compare/v1.339.0...v1.340.0
+[1.339.0]: https://github.com/kothf/step-viewer/compare/v1.338.0...v1.339.0
+[1.338.0]: https://github.com/kothf/step-viewer/compare/v1.337.0...v1.338.0
+[1.337.0]: https://github.com/kothf/step-viewer/compare/v1.336.0...v1.337.0
+[1.336.0]: https://github.com/kothf/step-viewer/compare/v1.335.0...v1.336.0
+[1.335.0]: https://github.com/kothf/step-viewer/compare/v1.334.0...v1.335.0
 [1.334.0]: https://github.com/kothf/step-viewer/compare/v1.333.0...v1.334.0
 [1.333.0]: https://github.com/kothf/step-viewer/compare/v1.332.0...v1.333.0
 [1.332.0]: https://github.com/kothf/step-viewer/compare/v1.331.0...v1.332.0
