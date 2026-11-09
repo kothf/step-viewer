@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
-## [1.357.0] - 2026-11-10
+## [1.363.0] - 2026-11-10
 
 ### Changed
 
@@ -20,6 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Coincident mate between two flat faces: the first guess is face to face; when that cannot be solved and the aligned one can (a part that cannot turn over, such as a die block on a pin), the panel takes Aligned instead of refusing the mate. A choice made in the panel stays.
 - Screw mates: moving the nut (a distance mate, a drag) now turns the screw. The solver measured axis offsets × the assembly size, which made its damping swamp the screw's gentle turn, so a handwheel driving a fork could not move; offsets are now in mm, the screw keeps its turn count within a step, and the damping adapts (Levenberg–Marquardt).
 - Overall size of a modelled part is taken from the exact geometry (a Ø15 cylinder read 14.995 × 14.998 from its mesh).
+## [1.356.0] - 2026-11-09
+
+### Added
+- Insert Bends and Convert to Sheet Metal follow walls that don't touch the fixed face (FR-FT-120): Insert Bends finds the next wall across each wall's far edge (a hat section's brims, a Z section's flanges) and bends it too, the right way round; Convert to Sheet Metal does the same for each wall far edge you pick, so a box can become a C channel with lips.
+- Corner Relief at return flanges and three-bend corners (FR-FT-120): a flange off a flange's end (a return) now makes a corner with that flange's bend, and where it meets a two-bend corner the relief covers all three bend zones. The panel names three-bend corners.
+- Sheet Metal Gusset tip shapes (FR-FT-120): a Rounded tip (a half round across the rib's width) or a flat tip with filleted edges; the groove follows, and the flat pattern still leaves the gusset out.
 
 ## [1.355.0] - 2026-11-09
 
@@ -2147,8 +2153,9 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.357.0...HEAD
-[1.357.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.357.0
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.363.0...HEAD
+[1.363.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.363.0
+[1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
 [1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0
 [1.353.0]: https://github.com/kothf/step-viewer/compare/v1.352.0...v1.353.0

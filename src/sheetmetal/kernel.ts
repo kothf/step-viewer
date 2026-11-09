@@ -4,7 +4,7 @@
 import type { EdgeRef, FaceRef, Frame, PartDoc, SketchFeature, SkEnt, V2, V3 } from "../model/types";
 import type { Named } from "../kernel/model";
 import { inPolygon, loopPolygon, polyArea, sketchProfile, type Seg } from "../sketch/profile";
-import { convertFlanges, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
+import { convertFlanges, type ConvertLevel, gussetSheet, type GussetMark, cornerRelief, apply, applyDir, bendStrip, sheetPlace, unfoldSheet, type SheetPlace, baseFlange, crossBreak, formTools, obroundLoop, type FormItem, ventLayout, ventPanel, loftedBend, type SheetMesh, breakCorner, closedCorner, miterFlange, miterProfile, sweptProfile, type FlatEdge, bendSketchLine, edgeFlange, flatLoops, hem, jog, sketchedBend, tab, SheetError, type Bend, type Mat, type Panel, type SheetOp, type SheetState } from "./sheet";
 import type { SheetFeature, SmBaseFeature, SmConvertFeature, SmInsertFeature, SmCutFeature, SmFormFeature, SmVentFeature } from "./types";
 
 /** The few Modeller helpers the sheet metal code needs. */
@@ -80,8 +80,8 @@ export function evalSheet(api: SheetApi, f: SheetFeature, doc: PartDoc, body: Na
     let out = body;
     marks.forEach((mark, i) => {
       const tag = i ? `${i}` : "";
-      out = api.bool("fuse", out, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib${tag}`), f.id);
-      out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g${tag}`), f.id);
+      out = api.bool("fuse", out, prism3(api, mark.rib, mark.e, mark.w, `${f.id}:rib${tag}`, mark.rr), f.id);
+      out = api.bool("cut", out, prism3(api, mark.groove, mark.e, mark.wg, `${f.id}:g${tag}`, mark.rg), f.id);
     });
     return { body: out, sm: state };
   }
@@ -590,11 +590,14 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
   };
   const planes = f.type === "sminsert" ? body.faces.map(plane).filter((q): q is NonNullable<typeof q> => !!q) : [];
   // Insert Bends: every straight outline edge to a flat wall on the inside of the fixed face's plane (a sharp outside edge).
-  const picked = f.type === "smconvert" ? f.edges.map(ref => {
+  // Convert: picked edges off the fixed face are walls' far edges, followed below.
+  const chainEdges: any[] = [];
+  const picked = f.type === "smconvert" ? f.edges.flatMap(ref => {
     const ed = api.edge(body, ref);
-    const hit = ed ? edgeEnt.find(x => x.edge.IsSame(ed)) : undefined;
-    if (!ed || !hit) throw new SheetError("E-SM-CONVEDGE", "Pick bend edges on the outline of the fixed face.");
-    return hit;
+    if (!ed) throw new SheetError("E-SM-CONVEDGE", "Pick bend edges on the outline of the fixed face, or the far edge of a wall already picked.");
+    const hit = edgeEnt.find(x => x.edge.IsSame(ed));
+    if (!hit) chainEdges.push(ed);
+    return hit ? [hit] : [];
   }) : edgeEnt.filter(x => {
     if (new oc.BRepAdaptor_Curve_2(x.edge).GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) return false;
     const { other, op } = across(x.edge);
@@ -603,6 +606,20 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     return planes.some(q => dot(q.n, op.n) < -1 + 1e-6 && Math.abs(dot(sub3(op.o, q.o), op.n) - T) < 1e-4 * (1 + T));
   });
   if (f.type === "sminsert" && !picked.length) throw new SheetError("E-SM-INSERTNONE", "The face has no sharp edges to other flat walls to bend.");
+  // Walls further on (FR-FT-120): the face across a wall's far straight edge (parallel to the bend edge) is the next
+  // wall on the same side of the sheet when it is one (Insert Bends: it has its own face T behind it; Convert: that
+  // edge is picked too). The shared edges are the virtual sharps, so the chain is the profile on the first bend's outside.
+  const followed = new Set<any>();
+  const isWall = (op: { o: V3; n: V3; x?: V3 }) => planes.some(q => dot(q.n, op.n) < -1 + 1e-6 && Math.abs(dot(sub3(op.o, q.o), op.n) - T) < 1e-4 * (1 + T));
+  const pts3 = (sh: any): V3[] => {
+    const out: V3[] = [];
+    for (const x of api.sub(sh, "EDGE")) {
+      const c = new oc.BRepAdaptor_Curve_2(x);
+      const n0 = c.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 16;
+      for (let i = 0; i <= n0; i++) { const q = c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / n0); out.push([q.X(), q.Y(), q.Z()]); }
+    }
+    return out;
+  };
   const items = picked.map(hit => {
     const ed = hit.edge;
     const { other, op } = across(ed);
@@ -610,19 +627,55 @@ function convertSolid(api: SheetApi, body: Named, f: SmConvertFeature | SmInsert
     const cu = new oc.BRepAdaptor_Curve_2(ed);
     const p0 = cu.Value(cu.FirstParameter()), p1 = cu.Value(cu.LastParameter());
     const A: V3 = [p0.X(), p0.Y(), p0.Z()], u = unit3(sub3([p1.X(), p1.Y(), p1.Z()], A));
-    let length = 0;
-    for (const x of api.sub(other, "EDGE")) {
-      const c = new oc.BRepAdaptor_Curve_2(x);
-      const n0 = c.GetType() === oc.GeomAbs_CurveType.GeomAbs_Line ? 1 : 16;
-      for (let i = 0; i <= n0; i++) {
-        const q = c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / n0);
-        const v = sub3([q.X(), q.Y(), q.Z()], A), al = dot(v, u);
-        length = Math.max(length, Math.hypot(v[0] - u[0] * al, v[1] - u[1] * al, v[2] - u[2] * al));
+    // The profile plane: o outwards across the edge in the fixed plane, n into the solid.
+    let o = cross3(u, n);
+    const fm = api.centroid(face);
+    if (dot(sub3(fm, A), o) > 0) o = [-o[0], -o[1], -o[2]];
+    const to2p = (q: V3): V2 => [dot(sub3(q, A), o), dot(sub3(q, A), n)];
+    const prof: V2[] = [[0, 0]];
+    const used: any[] = [face];
+    let cur = other, curOp = op;
+    for (let guard = 0; guard < 32; guard++) {
+      used.push(cur);
+      const last = prof[prof.length - 1];
+      // The far straight edge parallel to the bend edge, and the face across it.
+      let far: { ed: any; d: number; q: V3 } | null = null;
+      let reach = 0, rq: V3 | null = null;
+      for (const q of pts3(cur)) {
+        const p = to2p(q), dd = Math.hypot(p[0] - last[0], p[1] - last[1]);
+        if (dd > reach) { reach = dd; rq = q; }
       }
+      for (const x of api.sub(cur, "EDGE")) {
+        const c = new oc.BRepAdaptor_Curve_2(x);
+        if (c.GetType() !== oc.GeomAbs_CurveType.GeomAbs_Line) continue;
+        const a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+        const qa: V3 = [a.X(), a.Y(), a.Z()], qb: V3 = [b.X(), b.Y(), b.Z()], dir = unit3(sub3(qb, qa));
+        if (Math.abs(Math.abs(dot(dir, u)) - 1) > 1e-6) continue;
+        const pa = to2p(qa), dd = Math.hypot(pa[0] - last[0], pa[1] - last[1]);
+        if (dd > 1e-6 && (!far || dd > far.d)) far = { ed: x, d: dd, q: qa };
+      }
+      let next: any = null, nextOp: { o: V3; n: V3; x: V3 } | null = null;
+      if (far && far.d > reach - 1e-6 * (1 + reach)) {
+        const nf = body.faces.find(fc => !used.some(x => x.IsSame(fc)) && api.sub(fc, "EDGE").some((x: any) => x.IsSame(far!.ed)));
+        const np = nf ? plane(nf) : null;
+        const ok = np && Math.abs(dot(np.n, curOp.n)) < 1 - 1e-6 && (f.type === "smconvert" ? chainEdges.some((x: any) => x.IsSame(far!.ed)) : isWall(np));
+        if (ok) { next = nf; nextOp = np; if (f.type === "smconvert") followed.add(chainEdges.find((x: any) => x.IsSame(far!.ed))); }
+      }
+      if (!next) { prof.push(to2p(rq ?? A)); break; }
+      prof.push(to2p(far!.q));
+      cur = next; curOp = nextOp!;
     }
+    const lines = prof.slice(1).map((q, k) => { const p = prof[k], L = Math.hypot(q[0] - p[0], q[1] - p[1]); return { d: [(q[0] - p[0]) / L, (q[1] - p[1]) / L] as V2, L }; });
+    const more: ConvertLevel[] = lines.slice(1).map((x, k) => {
+      const pd = lines[k].d, turn = pd[0] * x.d[1] - pd[1] * x.d[0];
+      const angle = Math.acos(Math.max(-1, Math.min(1, pd[0] * x.d[0] + pd[1] * x.d[1])));
+      return { angle, L: x.L, same: turn > 0, up: turn > 0 };
+    });
+    // The first wall: as long as its face reaches when it is the last, else up to the next sharp.
     const angle = Math.acos(Math.max(-1, Math.min(1, dot(pl.n, op.n))));
-    return { faces: [`${f.id}:p0:top`, `${f.id}:p0:${hit.ent}`] as [string, string], length, angle };
+    return { faces: [`${f.id}:p0:top`, `${f.id}:p0:${hit.ent}`] as [string, string], length: lines[0].L, angle, more };
   });
+  if (chainEdges.some(x => !followed.has(x))) throw new SheetError("E-SM-CONVEDGE", "Pick bend edges on the outline of the fixed face, or the far edge of a wall already picked.");
   const fl = convertFlanges(state, items, f.id, Math.max(f.gap?.v ?? 0.1, 0));
   let out = applyOps(api, null, ops, state.T, f.id);
   if (fl.ops.length) out = applyOps(api, out, fl.ops, state.T, f.id);
@@ -707,14 +760,32 @@ function footprint(api: SheetApi, M: Mat, loop: Seg[], T: number, tag: string): 
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
 }
 
-/** A prism of a flat polygon given by its 3D corners, swept `w` along `e`. */
-function prism3(api: SheetApi, pts: V3[], e: V3, w: number, tag: string): Named {
+/**
+ * A prism of a flat polygon given by its 3D corners, swept `w` along `e`. With `round` > 0 the edges at both ends of
+ * the side from corner 1 to corner 2 (a gusset's chord) are filleted by it, which rounds the tip across the width.
+ */
+function prism3(api: SheetApi, pts: V3[], e: V3, w: number, tag: string, round = 0): Named {
   const oc = api.oc;
   const P = (q: V3) => new oc.gp_Pnt_3(q[0], q[1], q[2]);
   const mk = new oc.BRepBuilderAPI_MakeWire_1();
   pts.forEach((q, i) => mk.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(P(q), P(pts[(i + 1) % pts.length])).Edge()));
   const face = new oc.BRepBuilderAPI_MakeFace_15(mk.Wire(), true).Face();
-  const shape = prism(api, face, [e[0] * w, e[1] * w, e[2] * w]);
+  let shape = prism(api, face, [e[0] * w, e[1] * w, e[2] * w]);
+  if (round > 1e-6) {
+    const at = (q: V3, s: number): V3 => [q[0] + e[0] * s, q[1] + e[1] * s, q[2] + e[2] * s];
+    const ends = [[pts[1], pts[2]], [at(pts[1], w), at(pts[2], w)]];
+    const xyz = (v: any): V3 => { const p = oc.BRep_Tool.Pnt(v); return [p.X(), p.Y(), p.Z()]; };
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-6 * (1 + w);
+    const fil = new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational);
+    let n = 0;
+    for (const ed of api.sub(shape, "EDGE")) {
+      const a = xyz(oc.TopExp.FirstVertex(ed, true)), b = xyz(oc.TopExp.LastVertex(ed, true));
+      if (ends.some(([p, q]) => (near(a, p) && near(b, q)) || (near(a, q) && near(b, p)))) { fil.Add_2(round, ed); n++; }
+    }
+    try { fil.Build(new oc.Message_ProgressRange_1()); } catch { /* reported below */ }
+    if (n !== 2 || !fil.IsDone()) throw new SheetError("E-SM-GUSSETFILLET", "The gusset's edge fillet must be less than half its width.");
+    shape = fil.Shape();
+  }
   const faces = api.sub(shape, "FACE");
   return { shape, faces, names: faces.map((_x, i) => `${tag}${i}`) };
 }
