@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { MEdge, Projection, Topo, V3 } from "../../src/kernel/drawing";
-import { dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
+import { bendRows, dimGeo, dimPrims, dimText, holeEdges, holeRows, viewAnnots, type AnnotCtx } from "../../src/drawing/annot";
 import { placement } from "../../src/drawing/compose";
 import type { DimAnnot, DrawingView, GeoRef, Sheet } from "../../src/drawing/types";
 
@@ -95,4 +95,22 @@ test("hole table: end-on holes once each, tagged by size from the smallest, X/Y 
   assert.equal(tx.filter(x => x === "B2").length, 2, "in the table and beside the hole");
   const gone = viewAnnots({ ...sh, annots: [{ ...a, holes: [...a.holes, { e: "gone", h: [0, 0, 0] as V3, p: "e" as const }] }] } as unknown as Sheet, view, pl, ctx);
   assert.deepEqual(gone.dangling, ["t"]);
+});
+
+test("bend table: bends tagged top to bottom then left to right, the tags replace the notes on the view", () => {
+  const bends = [
+    { a: [0, 10, 2] as V3, b: [100, 10, 2] as V3, up: true, angle: Math.PI / 2, r: 2 },
+    { a: [0, 60, 2] as V3, b: [100, 60, 2] as V3, up: false, angle: Math.PI / 4, r: 1.5 },
+    { a: [120, 0, 2] as V3, b: [120, 70, 2] as V3, up: true, angle: Math.PI / 2, r: 2 },
+  ];
+  const ctx: AnnotCtx = { topo: { edges: [], cyls: [] }, holes: [], bends, items: [], box: null, dec: ",", label: s => s };
+  const a = { id: "b", t: "btable" as const, view: "v", pos: [0, -40] as [number, number], prec: 1 };
+  assert.deepEqual(bendRows(a, bends, P, ctx), [["A", "DOWN", "45,0°", "1,5"], ["B", "UP", "90,0°", "2,0"], ["C", "UP", "90,0°", "2,0"]]);
+  const sh = { ...sheet, views: [view], annots: [a] } as unknown as Sheet;
+  const tx = viewAnnots(sh, view, pl, ctx).prims.filter(p => p.t === "t").map(p => (p as { s: string }).s);
+  assert.ok(["Tag", "Direction", "Angle", "Inner radius", "DOWN", "45,0°"].every(s => tx.includes(s)), tx.join(" "));
+  assert.equal(tx.filter(x => x === "A").length, 2, "in the table and on the bend line");
+  assert.ok(!tx.some(s => /^(UP|DOWN) /.test(s)), "no bend notes beside a bend table");
+  const none = viewAnnots(sh, view, pl, { ...ctx, bends: [] });
+  assert.deepEqual(none.dangling, ["b"]);
 });

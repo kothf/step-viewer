@@ -3411,6 +3411,12 @@ export const RU: Record<string, string> = {
   // 1.112.0: hole table (FR-DRW-024) and inspection dimensions (FR-DRW-021).
   "Hole table": "Таблица отверстий",
   "Tag": "Обозн.",
+  "Bend table": "Таблица гибов",
+  "Click where the bend table goes.": "Щёлкните, где поставить таблицу гибов.",
+  "Click a flat pattern view.": "Щёлкните вид развёртки.",
+  "This view shows no bend lines. Click a flat pattern view.": "На этом виде нет линий гиба. Щёлкните вид развёртки.",
+  "Bends: {n}. They are tagged on the view in place of their notes.": "Гибов: {n}. На виде вместо надписей стоят их обозначения.",
+  "Inner radius": "Внутренний радиус",
   "X LOC": "X",
   "Y LOC": "Y",
   "{n} holes, measured from the origin along the view's axes.": "Отверстий: {n}, координаты от начала по осям вида.",

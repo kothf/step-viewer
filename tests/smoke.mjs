@@ -9177,6 +9177,18 @@ try {
     const flatLen = 50 - 4 + Math.PI / 2 * 3 + 16;
     check(fv.orient === "top" && Math.abs(fv.w - 100) < 0.6 && Math.abs(fv.h - flatLen) < 0.6 && fv.notes.length === 1 && /^(UP|DOWN) 90° R2$/.test(fv.notes[0]) && fv.props,
       `drawing: a sheet metal part's flat pattern view from the palette, with its bend line and note (${JSON.stringify({ fv, flatLen })})`);
+    // Bend table: click the flat view, then place the table under it; the bend's note turns into its tag.
+    const fp = await dp.evaluate(() => { const v = window.__sv.drw.doc().sheets[0].views.find(x => x.config === "@flat"), p = window.__sv.drw.placement(v.id); return { x: p.x, y: p.y, w: (p.box[2] - p.box[0]) * p.s, h: (p.box[3] - p.box[1]) * p.s }; });
+    const aBefore = await dp.evaluate(() => [...document.querySelectorAll(".drw-svg text")].filter(t => t.textContent === "A").length);
+    await dp.click('#drw [data-a="annot"]'); await dp.click('#drw [data-an="btable"]');
+    for (const [x, y] of [[fp.x, fp.y], [fp.x - fp.w / 2 - 70, fp.y + fp.h / 2]]) {
+      const [cx, cy] = await dp.evaluate(([a, b]) => window.__sv.drw.sheetPt(a, b), [x, y]);
+      await dp.mouse.click(cx, cy);
+    }
+    await ready();
+    const bt = await dp.evaluate(() => ({ n: window.__sv.drw.doc().sheets[0].annots.filter(a => a.t === "btable").length, tx: [...document.querySelectorAll(".drw-svg text")].map(t => t.textContent) }));
+    check(bt.n === 1 && ["Tag", "Direction", "Angle", "Inner radius", "90°", "2"].every(s => bt.tx.includes(s)) && bt.tx.filter(s => s === "A").length === aBefore + 2 && !bt.tx.some(s => /^(UP|DOWN) /.test(s)) && bt.tx.some(s => s === "UP" || s === "DOWN"),
+      `drawing: bend table lists the flat pattern's bend and tags it on the view (${bt.tx.filter(s => /^(Tag|A|UP|DOWN|90|2|Inner)/.test(s)).join(" ")})`);
     await ctx.close();
   }
 

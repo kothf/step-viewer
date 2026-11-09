@@ -157,6 +157,11 @@ export interface BalloonAnnot { id: string; t: "balloon"; view: string; ref: Geo
  * with their X/Y from `origin` along the view's axes and their size. `pos` (the table's top-left corner) is in the view's
  * model axes like other view annotations; `holes` are circle edges, so the table follows the model.
  */
+/** A bend table (SolidWorks' Bend Table, FR-FT-120) on a flat pattern view: the bend lines get tags A, B, … (top to bottom,
+ *  then left to right on the view) in place of their notes, and the table lists each one's direction, angle and inner radius.
+ *  `pos` (the table's top-left corner) is in the view's model axes. */
+export interface BendTableAnnot { id: string; t: "btable"; view: string; pos: [number, number]; prec?: number }
+
 export interface HoleTableAnnot { id: string; t: "htable"; view: string; origin: GeoRef; holes: GeoRef[]; pos: [number, number]; prec?: number }
 
 /** A revision cloud (SolidWorks' Revision Cloud): scallops around a polygon on the sheet. `pts` are x, y pairs relative to `pos`
@@ -180,7 +185,7 @@ export interface WeldAnnot { id: string; t: "weld"; view?: string; pos: [number,
  *  target on the model; `label` e.g. "A1" (lower half), `size` e.g. "Ø8" (upper half, area targets); `kind` the target marker;
  *  `d` the area diameter or line length in model mm; `tp` (view axes) the clicked point the target sits nearest to on its edge. */
 export interface DatumTargetAnnot { id: string; t: "dtarget"; view?: string; pos: [number, number]; leader?: GeoRef; tp?: [number, number]; label: string; size?: string; kind: "point" | "line" | "area"; d?: number }
-export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot;
+export type Annot = DimAnnot | NoteAnnot | HoleAnnot | GtolAnnot | DatumAnnot | SurfAnnot | TableAnnot | BalloonAnnot | HoleTableAnnot | BendTableAnnot | CloudAnnot | CLineAnnot | WeldAnnot | DatumTargetAnnot;
 
 export interface Sheet {
   id: string;

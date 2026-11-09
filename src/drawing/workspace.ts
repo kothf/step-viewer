@@ -94,6 +94,8 @@ type AnnotMode =
   | { kind: "dimset"; how: "chain" | "base" | "ord"; view: string | null; picks: GeoRef[]; axis: "h" | "v" | null; at: Pt | null }
   /** Hole table (FR-DRW-024): click the origin on a view (its end-on holes are taken), then place the table. */
   | { kind: "htable"; view: string | null; origin: GeoRef | null; holes: GeoRef[]; at: Pt | null }
+  /** Bend table (FR-FT-120): click a flat pattern view, then place the table. */
+  | { kind: "btable"; view: string | null; at: Pt | null }
   /** Hole callout (FR-DRW-022): pick a round edge, then place. */
   | { kind: "hole"; view: string | null; e: MEdge | null; at: Pt | null }
   /** Note: click the place (first clicking an edge gives it a leader). */
@@ -114,7 +116,7 @@ type AnnotMode =
   | { kind: "surf"; view: string | null; ref: GeoRef | null; at: Pt | null }
   /** Balloon (FR-DRW-030): click an edge of a component, then place the balloon. */
   | { kind: "balloon"; view: string | null; ref: GeoRef | null; at: Pt | null };
-const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget"]);
+const ANNOT_KINDS = new Set(["dim", "dimset", "htable", "btable", "hole", "note", "gtol", "datum", "surf", "balloon", "cloud", "cline", "weld", "dtarget"]);
 const isAnnotMode = (m: Mode): m is AnnotMode => ANNOT_KINDS.has(m.kind);
 type Line4 = [number, number, number, number];
 
@@ -124,7 +126,7 @@ const SIZE_LIST = Object.keys(SIZES) as Exclude<SheetSize, "custom">[];
 const I = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 /** The annotation palette's tools (FR-UI-072), the same commands as Dimension and Annotate ▾. */
 const ANNOT_TOOLS: [string, string][] = [
-  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
+  ["dim", "Dimension"], ["chain", "Chain dimension"], ["base", "Baseline dimension"], ["ord", "Ordinate dimension"], ["items", "Model items"], ["hole", "Hole callout"], ["htable", "Hole table"], ["btable", "Bend table"], ["note", "Note"], ["gtol", "Geometric tolerance"], ["datum", "Datum feature"], ["dtarget", "Datum target"],
   ["surf", "Surface finish"], ["cline", "Centerline"], ["cmark", "Center mark"], ["weld", "Weld symbol"], ["cloud", "Revision cloud"], ["balloon", "Balloon"], ["auto", "Auto balloon"], ["bom", "Bill of materials"], ["rev", "Revision table"], ["table", "General table"],
 ];
 
@@ -391,6 +393,7 @@ export class DrawingWorkspace {
               <button role="menuitem" data-an="items">${esc(t("Model items"))}</button>
               <button role="menuitem" data-an="hole">${esc(t("Hole callout"))}</button>
               <button role="menuitem" data-an="htable">${esc(t("Hole table"))}</button>
+              <button role="menuitem" data-an="btable">${esc(t("Bend table"))}</button>
               <button role="menuitem" data-an="note">${esc(t("Note"))}</button>
               <button role="menuitem" data-an="gtol">${esc(t("Geometric tolerance"))}</button>
               <button role="menuitem" data-an="datum">${esc(t("Datum feature"))}</button>
@@ -507,6 +510,7 @@ export class DrawingWorkspace {
     else if (m.kind === "dim") s = !m.picks.length ? t("Click an edge, a circle or a point of a view. Esc ends.") : t("Click a second edge or point, or click where the dimension goes. Esc ends.");
     else if (m.kind === "dimset") s = !m.picks.length ? t("Click the base point: a corner or a circle centre.") : t("Click the next point. Enter or Esc ends.");
     else if (m.kind === "htable") s = m.origin ? t("Click where the hole table goes.") : t("Click the origin of the hole table on a view: a corner or a circle centre.");
+    else if (m.kind === "btable") s = m.view ? t("Click where the bend table goes.") : t("Click a flat pattern view.");
     else if (m.kind === "hole") s = m.e ? t("Click where the callout goes.") : t("Click the edge of a hole.");
     else if (m.kind === "cline") s = m.how === "mark" ? t("Click a round edge seen end-on: a circle or an arc. Esc ends.") : !m.picks.length ? t("Click a straight edge or a point (a circle's centre) of a view. Esc ends.") : t("Click a parallel edge, or a second point. Esc ends.");
     else if (m.kind === "cloud") s = m.pts.length < 3 ? t("Click the corners of the area to mark with a revision cloud.") : t("Click more corners; click the first corner or press Enter to close the cloud.");
@@ -1070,6 +1074,7 @@ export class DrawingWorkspace {
     else if (kind === "dimset") this.mode = { kind, how, view: null, picks: [], axis: null, at: null };
     else if (kind === "hole") this.mode = { kind, view: null, e: null, at: null };
     else if (kind === "htable") this.mode = { kind, view: null, origin: null, holes: [], at: null };
+    else if (kind === "btable") this.mode = { kind, view: null, at: null };
     else if (kind === "datum" || kind === "surf" || kind === "balloon") this.mode = { kind, view: null, ref: null, at: null };
     else if (kind === "dtarget") this.mode = { kind, view: null, leader: null, tp: null, at: null };
     else this.mode = { kind, view: null, leader: null, at: null };
@@ -1222,6 +1227,17 @@ export class DrawingWorkspace {
       } else {
         const pl = this.placements.get(m.view!)!, pos = fromSheet(pl, p[0], p[1]);
         this.addAnnot({ id: uid("a_"), t: "htable", view: m.view!, origin: m.origin, holes: m.holes, pos: [round(pos[0]), round(pos[1])] }, "Hole table");
+        this.mode = { kind: "none" };
+      }
+    } else if (m.kind === "btable") {
+      if (!m.view) {
+        if (!vid) return;
+        if (!this.factsOf(vid)?.bends?.length) { toast(t("This view shows no bend lines. Click a flat pattern view."), true); return; }
+        m.view = vid;
+        this.renderStatus();
+      } else {
+        const pl = this.placements.get(m.view)!, pos = fromSheet(pl, p[0], p[1]);
+        this.addAnnot({ id: uid("a_"), t: "btable", view: m.view, pos: [round(pos[0]), round(pos[1])] }, "Bend table");
         this.mode = { kind: "none" };
       }
     } else if (m.kind === "dimset") {
@@ -1461,6 +1477,11 @@ export class DrawingWorkspace {
       if (!m.origin) { const ref = this.pointAt(vid, at), q = ref && refPoint(ref, this.factsOf(vid)?.topo ?? null); if (q) { const w = S(q); s += `<circle class="drw-snap" cx="${w[0]}" cy="${H - w[1]}" r="${this.snapTol() / 2.5}"/>`; } }
       else {
         const pa: Annot = { id: "_pt", t: "htable", view: vid, origin: m.origin, holes: m.holes, pos: fromSheet(pl, at[0], at[1]) };
+        s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
+      }
+    } else if (m.kind === "btable") {
+      if (m.view) {
+        const pa: Annot = { id: "_pt", t: "btable", view: vid, pos: fromSheet(pl, at[0], at[1]) };
         s += `<g class="drw-preview">${svgBody(viewAnnots({ ...this.sheet, annots: [pa] }, v, pl, this.ctx()).prims.filter(x => !AUTO_LAYERS.has(x.layer)), H, "currentColor")}</g>`;
       }
     } else if (m.kind === "dimset") {
@@ -1716,6 +1737,13 @@ export class DrawingWorkspace {
         <div class="row"><button class="btn small" data-trow="+">${esc(t(a.kind === "rev" ? "Add revision" : "Add row"))}</button>${a.rows.length > 1 ? `<button class="btn small" data-trow="-">${esc(t("Remove last row"))}</button>` : ""}${a.kind === "general" ? `<button class="btn small" data-tcol="+">${esc(t("Add column"))}</button>${a.cols.length > 1 ? `<button class="btn small" data-tcol="-">${esc(t("Remove last column"))}</button>` : ""}` : ""}</div>
       </fieldset>${del}`;
     }
+    if (a.t === "btable") {
+      const n = this.factsOf(a.view, sh)?.bends?.length ?? 0;
+      return `<fieldset class="pm-group"><legend>${esc(t("Bend table"))}</legend>
+        <p class="drw-note">${esc(t("Bends: {n}. They are tagged on the view in place of their notes.", { n }))}</p>
+        <label class="drw-f">${esc(t("Decimals"))}<select data-d="bprec"><option value="">${esc(t("Auto"))}</option>${[0, 1, 2, 3].map(k => `<option value="${k}"${a.prec === k ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+      </fieldset>${del}`;
+    }
     if (a.t === "htable") {
       const v = findView(sh, a.view), n = v ? holeRows(a, projector(viewDir(sh, v)).P, this.ctx()).rows.length : 0;
       return `<fieldset class="pm-group"><legend>${esc(t("Hole table"))}</legend>
@@ -1765,6 +1793,7 @@ export class DrawingWorkspace {
       else if (a.t === "cloud") { if (k === "carc") { const v = num(val); if (v && v >= 1) a.arc = v; } else if (k === "crev") { if (val.trim()) a.rev = val.trim(); else delete a.rev; } }
       else if (a.t === "note") { if (k === "ntxt" && val.trim()) a.text = val; else if (k === "nh") a.h = +val; }
       else if (a.t === "htable" && k === "hprec") { if (val === "") delete a.prec; else a.prec = +val; }
+      else if (a.t === "btable" && k === "bprec") { if (val === "") delete a.prec; else a.prec = +val; }
       else if (a.t === "gtol" && k.startsWith("g:")) {
         const [, si, f] = k.split(":"), r = a.rows[+si];
         if (!r) return;
