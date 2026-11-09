@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.357.0] - 2026-11-09
+
+### Added
+
+- **Sub-weldments in the cut list (FR-FT-121)**: right-click a cut list item or a weldment body in the Features tree and pick **Create sub-weldment** to list that part of the weldment on its own, as SolidWorks does. The sub-weldment is a folder in the Cut list with its items under it; rename it with a double-click or F2, add more items or bodies to it with **Add to Sub-weldment1** (or take them out with **Remove from sub-weldment**), and **Dissolve sub-weldment** puts its items back. An item whose bodies sit in different places is split, each part with its own quantity (a weld bead's length and mass share out by its bodies); item properties typed in the Cut List dialog stay shared. Clicking a sub-weldment highlights its bodies, the Cut List dialog heads each one's rows with its name, and the CSV gets a Sub-weldment column.
+
 ## [1.356.0] - 2026-11-09
 
 ### Added
@@ -2138,7 +2144,8 @@ Found while modelling the Leuenberger steam engine through the UI only:
 - STEP header, schema, product revisions, materials and PMI entity counts shown as model metadata.
 - Export: PNG (2-4x, optional transparent background, with labels), STL, OBJ, glTF (GLB), PDF inspection report.
 
-[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.356.0...HEAD
+[Unreleased]: https://github.com/kothf/step-viewer/compare/v1.357.0...HEAD
+[1.357.0]: https://github.com/kothf/step-viewer/compare/v1.356.0...v1.357.0
 [1.356.0]: https://github.com/kothf/step-viewer/compare/v1.355.0...v1.356.0
 [1.355.0]: https://github.com/kothf/step-viewer/compare/v1.354.0...v1.355.0
 [1.354.0]: https://github.com/kothf/step-viewer/compare/v1.353.0...v1.354.0

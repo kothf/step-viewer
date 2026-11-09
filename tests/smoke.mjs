@@ -9275,6 +9275,32 @@ try {
       return { folder: document.querySelector('#mc-tree .ft-row[data-id="folder:cutlist"]')?.textContent, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"] .ft-name')].map(e => e.textContent), tris: hl.reduce((n, o) => n + o.geometry.getAttribute("position").count / 3, 0), faces: window.__sv.model.last().bodies.map(b => b.faces) };
     });
     check(/Cut list \(2\)/.test(ct.folder ?? "") && JSON.stringify(ct.rows) === '["Top rail × 650 mm (2)","SHS 50x50x4 × 450 mm (2)"]' && ct.tris > 0 && ct.faces.every(n => n > 0), `weldments: Cut list folder in the tree highlights an item's bodies (${JSON.stringify(ct)})`);
+    // Sub-weldments: Create sub-weldment on a cut list item puts it in a folder of its own; one body of the other item added
+    // to it splits that item (1 + 1); the dialog heads the sub-weldment's rows; Dissolve puts everything back.
+    const menuPick = async (sel, label) => {
+      await mp.click(sel, { button: "right" });
+      await mp.waitForSelector("#mc-menu button");
+      await mp.locator("#mc-menu button", { hasText: label }).first().click();
+      await settle();
+    };
+    await menuPick('#mc-tree .ft-row[data-id="cut:0"]', "Create sub-weldment");
+    const sw0 = await mp.evaluate(() => ({ subs: window.__sv.model.store.doc.subWelds, rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"], #mc-tree .ft-row[data-id^="wsub:"]')].map(e => `${e.dataset.id.split(":")[0]}${e.classList.contains("child") ? ">" : ""}:${e.querySelector(".ft-name").textContent}`), sel: window.__sv.modeller.selected }));
+    const other = await mp.evaluate(() => window.__sv.model.last().cutList[1].bodies[0]);
+    if (!(await mp.$(`#mc-tree .ft-row[data-id="body:${other}"]`))) await mp.evaluate(() => window.__sv.modeller.toggleFolder("bodies"));
+    await menuPick(`#mc-tree .ft-row[data-id="body:${other}"]`, "Add to Sub-weldment1");
+    const sw1 = await mp.evaluate(() => ({ rows: [...document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"], #mc-tree .ft-row[data-id^="wsub:"]')].map(e => `${e.dataset.id.split(":")[0]}${e.classList.contains("child") ? ">" : ""}:${e.querySelector(".ft-name").textContent}`) }));
+    await mp.evaluate(id => window.__sv.modeller.rename(id, "Frame"), `wsub:${sw0.subs?.[0]?.id}`);
+    await settle();
+    await runCmd(mp, "Cut List");
+    await mp.waitForSelector("#wld-cut[open]");
+    const sw2 = await mp.evaluate(() => ({ heads: [...document.querySelectorAll("#wld-cut tr.wld-subrow")].map(e => e.textContent), rows: document.querySelectorAll("#wld-cut tbody tr[data-ri]").length }));
+    await mp.click('#wld-cut [data-a="close"]');
+    await menuPick(`#mc-tree .ft-row[data-id="wsub:${sw0.subs?.[0]?.id}"]`, "Dissolve sub-weldment");
+    const sw3 = await mp.evaluate(() => ({ subs: window.__sv.model.store.doc.subWelds, rows: document.querySelectorAll('#mc-tree .ft-row[data-id^="cut:"]').length }));
+    check(sw0.subs?.length === 1 && JSON.stringify(sw0.rows) === '["cut:SHS 50x50x4 × 450 mm (2)","wsub:Sub-weldment1 (1)","cut>:Top rail × 650 mm (2)"]' && sw0.sel === `wsub:${sw0.subs[0].id}`
+      && JSON.stringify(sw1.rows) === '["cut:SHS 50x50x4 × 450 mm (1)","wsub:Sub-weldment1 (2)","cut>:Top rail × 650 mm (2)","cut>:SHS 50x50x4 × 450 mm (1)"]'
+      && JSON.stringify(sw2.heads) === '["Frame"]' && sw2.rows === 3 && sw3.subs === undefined && sw3.rows === 2,
+      `weldments: sub-weldments in the cut list (${JSON.stringify({ sw0, sw1, sw2, sw3 })})`);
     // Merge miter trimmed bodies: the four mitred tubes of the frame become one body, one cut list item 2 × 650 + 2 × 450 long.
     const frameId = await mp.evaluate(() => window.__sv.model.store.doc.features.find(x => x.type === "member").id);
     await mp.evaluate(id => window.__sv.modeller.editFeature(id), frameId);
