@@ -515,6 +515,7 @@ export class ModelController {
     if (this.store.dirty) journalSave(this.doc, this.fileName);
     if (csys.active?.src) this.host.setCsys?.(null, true);
     this.store = null;
+    this.selected = null;
     // Hide the part bar and the empty-part card, or they show through in the assembly after New assembly.
     $("#mc-bar").hidden = true;
     $("#mc-confirm").hidden = true;
@@ -1817,7 +1818,9 @@ export class ModelController {
       if (k === "enter") { stop(); this.ok(); return; }
       // A tool key also refreshes the panel: the fillet radius, chamfer and offset distances show there.
       if (m.editor.key(e)) { stop(); this.renderBar(); this.renderPanel(); return; }
-      if (k === "escape") { stop(); void this.cancel(); }
+      // Esc with nothing left to clear leaves an unchanged sketch; a changed one stays open (✕ discards), so a stray Esc
+      // followed by Enter can't throw the sketch away (exam bug 44).
+      if (k === "escape") { stop(); if (JSON.stringify(this.doc) === m.entry) void this.cancel(); else toast(t("The sketch has changes: ✓ keeps them, ✕ discards them.")); }
       return;
     }
     if (m.kind === "feature" && m.draft.type === "sketch3d") {
@@ -3255,8 +3258,9 @@ export class ModelController {
     const ok = (f: Feature | undefined): f is ExtrudeFeature | RevolveFeature | EndCapFeature | GussetFeature | SmFlangeFeature => f?.type === "revolve" || (f?.type === "extrude" && (f.end === "blind" || f.end === "mid"))
       || (f?.type === "endcap" && f.faces.length > 0) || (f?.type === "gusset" && !!f.face1 && !!f.face2) || (f?.type === "smflange" && f.edges.length > 0 && folded());
     if (m.kind === "feature") return ok(m.draft) ? m.draft : null;
-    if (m.kind !== "none" || !this.selected) return null;
-    const f = this.store?.feature(this.selected);
+    // A part that was closed or handed back to its assembly has no store; its last selection must not draw (exam bug 40).
+    if (m.kind !== "none" || !this.selected || !this.store) return null;
+    const f = this.store.feature(this.selected);
     const st = this.last?.statuses.find(x => x.id === f?.id);
     const end = this.doc.rollback ?? this.doc.features.length;
     const i = this.doc.features.findIndex(x => x.id === f?.id);
