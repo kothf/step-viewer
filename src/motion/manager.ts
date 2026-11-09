@@ -135,6 +135,9 @@ export class MotionManager {
     });
     this.pane.addEventListener("keydown", e => this.key(e));
     onLangChange(() => { if (this.open) this.render(); });
+    // Autokey (SolidWorks): a view change made with the mouse while it is on puts a camera key at the playhead.
+    viewer.controls.addEventListener("start", () => { this.camBefore = this.camKey(0); });
+    viewer.controls.addEventListener("end", () => { if (this.autoKey && this.open && !this.playing && !this.recording) this.keyCamera(this.camBefore); });
   }
 
   // ---------- study ----------
@@ -305,6 +308,42 @@ export class MotionManager {
       return;
     }
     this.edit(s => { const k = s.tracks.find(x => x.id === sel.track); if (k && k.kind !== "motor") { const keys = sortKeys(k.keys as Key[]); keys.splice(sel.key!, 1); (k as { keys: unknown[] }).keys = keys; } });
+  }
+
+  /** Autokey: view changes become camera keys at the playhead (view-only, remembered per browser). */
+  autoKey = (() => { try { return localStorage.getItem("mc:moAutokey") === "1"; } catch { return false; } })();
+  private camBefore: CamKey | null = null;
+
+  setAutoKey(on: boolean) {
+    this.autoKey = on;
+    try { localStorage.setItem("mc:moAutokey", on ? "1" : "0"); } catch { /* storage off */ }
+    this.render();
+  }
+
+  /**
+   * Puts the current view as a camera key at the playhead (one undo step). With no camera track yet, one is made,
+   * starting from `before` (the view when the change began) at 0 so the study still opens on it. A click that
+   * did not move the view adds nothing.
+   */
+  keyCamera(before: CamKey | null = null) {
+    const tq = this.snap(this.time), now = this.camKey(tq);
+    const near = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= 1e-6 * Math.max(1, Math.hypot(...a));
+    if (before && near(before.pos, now.pos) && near(before.target, now.target) && (before.zoom ?? 1) === (now.zoom ?? 1)) return false;
+    let id = "";
+    this.edit(s => {
+      let k = s.tracks.find(x => x.kind === "camera" && !x.off);
+      if (!k) {
+        k = { id: uid("mt_"), kind: "camera", keys: tq > 0 && before ? [{ ...before, t: 0 }] : [] };
+        s.tracks.push(k);
+      }
+      this.keyInto(k, tq);
+      id = k.id;
+    });
+    const tr = this.study.tracks.find(x => x.id === id);
+    if (tr && tr.kind === "camera") this.sel = { track: id, key: sortKeys(tr.keys).findIndex(x => x.t === tq) };
+    this.render();
+    this.setStatus(t("Camera key at {t} s", { t: fmt(tq) }));
+    return true;
   }
 
   /** The camera now, as a key at `t`. */
@@ -1151,6 +1190,7 @@ export class MotionManager {
       + ib("zin", "⊕", t("Zoom in on the timeline"), this.zoom >= MAX_ZOOM ? " disabled" : "") + ib("zout", "⊖", t("Zoom out on the timeline"), this.zoom <= 1 ? " disabled" : "") + ib("zfit", "⤢", t("Fit the whole study"), this.zoom <= 1 ? " disabled" : "")
       + `<select data-mo="add" aria-label="${esc(t("Add track…"))}">${addOpts}</select>`
       + `<button class="btn small" data-mo="addkey"${this.sel && this.study.tracks.find(k => k.id === this.sel!.track)?.kind !== "motor" ? "" : " disabled"} title="${esc(t("Add a key at the playhead to the selected track"))}">${esc(t("Add key"))}</button>`
+      + `<button class="btn small mo-autokey" data-mo="autokey" aria-pressed="${this.autoKey}" title="${esc(t("Autokey: turning, panning or zooming the view puts a camera key at the playhead"))}">${esc(t("Autokey"))}</button>`
       + `<button class="btn small" data-mo="keyall"${this.study.tracks.some(k => k.kind !== "motor" && !k.off) ? "" : " disabled"} title="${esc(t("Add a key at the playhead to every track, holding what each shows there"))}">${esc(t("Key all"))}</button>`
       + `<button class="btn small" data-mo="wexplode"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate the exploded view over the study"))}">${esc(t("Explode"))}</button>`
       + `<button class="btn small" data-mo="wcollapse"${doc.explodes?.length ? "" : " disabled"} title="${esc(t("Animate collapsing the exploded view over the study"))}">${esc(t("Collapse"))}</button>`
@@ -1294,6 +1334,7 @@ export class MotionManager {
       else if (a === "end") this.seek(this.study.duration);
       else if (a === "addkey" && this.sel) this.addKey(this.sel.track);
       else if (a === "keyall") this.keyAll();
+      else if (a === "autokey") this.setAutoKey(!this.autoKey);
       else if (a === "zin") this.setZoom(this.zoom * 2);
       else if (a === "zout") this.setZoom(this.zoom / 2);
       else if (a === "zfit") { this.scrollX = 0; this.setZoom(1); }
